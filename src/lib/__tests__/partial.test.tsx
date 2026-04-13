@@ -1,26 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 
-// Mock the pipeline dependencies so Partials doesn't need real schema/API
-vi.mock("../access-recorder.ts", () => ({
-	AccessRecorder: vi.fn().mockImplementation(() => ({
-		getAccessTree: () => ({}),
-	})),
-}));
-
-vi.mock("../proxy-node.ts", () => ({
-	createProxy: () => ({ _fake: true }),
-}));
-
-vi.mock("../discovery.ts", () => ({
-	renderForDiscovery: vi.fn(),
-}));
-
-vi.mock("../query-compiler.ts", () => ({
-	compileQuery: () => "{ __typename }",
-	raw: (s: string) => s,
-}));
-
 // Mock client components — useRef/class components need a full React renderer.
 vi.mock("../partial-client.tsx", () => ({
 	PartialsClient: ({ children }: { children: React.ReactNode }) => children,
@@ -32,7 +12,7 @@ vi.mock("../partial-error-boundary.tsx", () => ({
 }));
 
 import { Partials } from "../partial.tsx";
-import { runWithRequestAsync, getQueryRoot, getQueryMeta } from "../../framework/context.ts";
+import { runWithRequestAsync } from "../../framework/context.ts";
 
 function Hero() {
 	return <h1>Hero</h1>;
@@ -43,9 +23,6 @@ function Stats() {
 function Species() {
 	return <p>Species</p>;
 }
-
-const fakeGetSchema = async () => ({ getQueryTypeName: () => "query_root" }) as any;
-const fakeExecute = async () => ({}) as any;
 
 // Default namespace for tests
 const NS = "test";
@@ -87,7 +64,7 @@ describe("Partial architecture", () => {
 	it("renders all partials when no filter", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 					<Species key="species" />
@@ -100,7 +77,7 @@ describe("Partial architecture", () => {
 	it("filters to requested partials", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: `${p("hero")},${p("stats")}` }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 					<Species key="species" />
@@ -114,7 +91,7 @@ describe("Partial architecture", () => {
 	it("filters to single partial", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: p("stats") }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 					<Species key="species" />
@@ -131,7 +108,7 @@ describe("Partial architecture", () => {
 		}
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Greeting key="greeting" name="world" />
 				</Partials>,
 			),
@@ -141,47 +118,10 @@ describe("Partial architecture", () => {
 		expect(JSON.stringify(rendered)).toContain("world");
 	});
 
-	it("provides query root via ALS context", async () => {
-		function MyPartial() {
-			const q = getQueryRoot();
-			return <span>{q?._fake ? "got-proxy" : "missing"}</span>;
-		}
-		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
-					<MyPartial key="test" />
-				</Partials>,
-			),
-		);
-		const rendered = result.filter(Boolean);
-		expect(rendered).toHaveLength(1);
-		expect(JSON.stringify(rendered)).toContain("got-proxy");
-	});
-
-	it("provides query meta via ALS context", async () => {
-		function DebugPartial() {
-			const meta = getQueryMeta();
-			return <pre>{meta.query}</pre>;
-		}
-		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
-					<DebugPartial key="debug" />
-				</Partials>,
-			),
-		);
-		const rendered = result.filter(Boolean);
-		expect(rendered).toHaveLength(1);
-		// The compiled query from our mock is "{ __typename }"
-		expect(JSON.stringify(rendered)).toContain("__typename");
-	});
-
 	it("passes through when filter targets different namespace", async () => {
-		// ?partials=other/hero doesn't match namespace="test" → renders all
-		// (the filter is for a different namespace, so this instance is transparent)
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: "other/nonexistent" }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</Partials>,
@@ -197,7 +137,7 @@ describe("Partial architecture", () => {
 		}
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: p("cart") }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<div key="header">
 						Timestamp
 						<Cart key="cart" />
@@ -218,7 +158,7 @@ describe("Partial architecture", () => {
 		}
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: p("header") }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<div key="header">
 						Timestamp
 						<Cart key="cart" />
@@ -236,7 +176,7 @@ describe("Partial architecture", () => {
 	it("renders partials without heavy wrapper divs", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 				</Partials>,
 			),
@@ -248,7 +188,7 @@ describe("Partial architecture", () => {
 	it("discovers partials inside keyless wrappers", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 					<main>
 						<Stats key="stats" />
@@ -279,7 +219,7 @@ describe("Partial architecture", () => {
 
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</P>,
@@ -288,12 +228,9 @@ describe("Partial architecture", () => {
 		expect(fingerprints.hero).toBeDefined();
 		expect(fingerprints.stats).toBeDefined();
 
-		// On full page render (no ?partials= filter), even cached fingerprints
-		// don't prevent rendering — the server always renders all partials.
-		// This is correct because URL/context changes can affect output.
 		const { result } = await runWithRequestAsync(fakeRequest({ cached: `${p("hero")}:${fingerprints.hero}` }), async () =>
 			renderToJSON(
-				<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</P>,
@@ -301,7 +238,7 @@ describe("Partial architecture", () => {
 		);
 		const str = JSON.stringify(result);
 		expect(str).toContain("Stats");
-		expect(str).toContain("Hero"); // Hero renders despite matching fingerprint
+		expect(str).toContain("Hero");
 	});
 
 	it("fingerprints are stable for same element tree", async () => {
@@ -318,14 +255,14 @@ describe("Partial architecture", () => {
 
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" />
 				</P>,
 			),
 		);
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" />
 				</P>,
 			),
@@ -348,30 +285,27 @@ describe("Partial architecture", () => {
 
 		const { Partials: P } = await import("../partial.tsx");
 
-		// First render to get fingerprints
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</P>,
 			),
 		);
 
-		// Now request hero explicitly via ?partials= with its fingerprint cached.
-		// Hero MUST still render — it was explicitly invalidated.
 		const { result } = await runWithRequestAsync(
 			fakeRequest({ partials: p("hero"), cached: `${p("hero")}:${fingerprints.hero}` }),
 			async () =>
 				renderToJSON(
-					<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+					<P namespace={NS}>
 						<Hero key="hero" />
 						<Stats key="stats" />
 					</P>,
 				),
 		);
 		expect(freshIds).toContain("hero");
-		expect(freshIds).not.toContain("stats"); // stats not requested
+		expect(freshIds).not.toContain("stats");
 		const str = JSON.stringify(result);
 		expect(str).toContain("Hero");
 	});
@@ -380,11 +314,10 @@ describe("Partial architecture", () => {
 		function Greeting({ name }: { name: string }) {
 			return <span>Hello {name}</span>;
 		}
-		// __inputs keys use namespaced IDs
 		const inputs = JSON.stringify({ [p("greeting")]: { name: "world" } });
 		const { result } = await runWithRequestAsync(fakeRequest({ __inputs: inputs }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Greeting key="greeting" name="default" />
 				</Partials>,
 			),
@@ -401,7 +334,7 @@ describe("Partial architecture", () => {
 		const inputs = JSON.stringify({ [p("a")]: { text: "overridden" } });
 		const { result } = await runWithRequestAsync(fakeRequest({ __inputs: inputs }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Label key="a" text="original-a" />
 					<Label key="b" text="original-b" />
 				</Partials>,
@@ -427,7 +360,7 @@ describe("Partial architecture", () => {
 
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</P>,
@@ -444,7 +377,7 @@ describe("Partial architecture", () => {
 			}),
 			async () =>
 				renderToJSON(
-					<P namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+					<P namespace={NS}>
 						<Hero key="hero" />
 						<Stats key="stats" />
 					</P>,
@@ -459,7 +392,7 @@ describe("Partial architecture", () => {
 			fakeRequest({ partials: p("hero"), cached: `${p("stats")}:somefp` }),
 			async () =>
 				renderToJSON(
-					<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+					<Partials namespace={NS}>
 						<Hero key="hero" />
 						<Stats key="stats" />
 					</Partials>,
@@ -470,27 +403,7 @@ describe("Partial architecture", () => {
 		expect(str).not.toContain("Stats");
 	});
 
-	it("renders without data pipeline when no schema provided", async () => {
-		function StaticHeader() {
-			return <h1>Welcome</h1>;
-		}
-		function StaticFooter() {
-			return <footer>Copyright 2026</footer>;
-		}
-		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<Partials namespace="static">
-					<StaticHeader key="header" />
-					<StaticFooter key="footer" />
-				</Partials>,
-			),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("Welcome");
-		expect(str).toContain("Copyright 2026");
-	});
-
-	it("no-schema Partials respects partial filter", async () => {
+	it("respects partial filter", async () => {
 		function A() {
 			return <span>partial-a</span>;
 		}
@@ -513,7 +426,7 @@ describe("Partial architecture", () => {
 	it("filters nested partial inside keyless wrapper", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: p("stats") }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Hero key="hero" />
 					<main>
 						<Stats key="stats" />
@@ -527,10 +440,9 @@ describe("Partial architecture", () => {
 	});
 
 	it("passes through when other namespace is targeted", async () => {
-		// ?partials=other/hero doesn't match namespace="pokemon" → renders all
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: "other/hero" }), async () =>
 			renderToJSON(
-				<Partials namespace="pokemon" getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace="pokemon">
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</Partials>,
@@ -543,7 +455,7 @@ describe("Partial architecture", () => {
 	it("renders all when no partials param", async () => {
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<Partials namespace="pokemon" getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace="pokemon">
 					<Hero key="hero" />
 					<Stats key="stats" />
 				</Partials>,
@@ -553,18 +465,18 @@ describe("Partial architecture", () => {
 	});
 
 	it("filters partials by tag via ?tags= param", async () => {
-		function CartBadge() {
+		function CartBadge(_props: { tags?: string[] }) {
 			return <span>cart-badge</span>;
 		}
-		function CartDrawer() {
+		function CartDrawer(_props: { tags?: string[] }) {
 			return <div>cart-drawer</div>;
 		}
-		function ProductGrid() {
+		function ProductGrid(_props: { tags?: string[] }) {
 			return <div>products</div>;
 		}
 		const { result } = await runWithRequestAsync(fakeRequest({ tags: "cart" }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<CartBadge key="badge" tags={["cart", "header"]} />
 					<CartDrawer key="drawer" tags={["cart"]} />
 					<ProductGrid key="products" tags={["catalog"]} />
@@ -577,26 +489,37 @@ describe("Partial architecture", () => {
 		expect(str).not.toContain("products");
 	});
 
-	it("?tags= with no matching tag renders nothing", async () => {
-		const { result } = await runWithRequestAsync(fakeRequest({ tags: "nonexistent" }), async () =>
+	it("?tags= with no matching tag passes through (for nested Partials)", async () => {
+		let freshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds: fids,
+			children,
+		}: any) => {
+			freshIds = fids;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest({ tags: "nonexistent" }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace={NS}>
 					<Hero key="hero" tags={["pokemon"]} />
 					<Stats key="stats" tags={["pokemon"]} />
-				</Partials>,
+				</P>,
 			),
 		);
-		const rendered = result.filter(Boolean);
-		expect(rendered).toHaveLength(0);
+		expect(freshIds).toContain("hero");
+		expect(freshIds).toContain("stats");
 	});
 
 	it("combines ?partials= and ?tags= as union", async () => {
 		function A() { return <span>a</span>; }
-		function B() { return <span>b</span>; }
+		function B(_props: { tags?: string[] }) { return <span>b</span>; }
 		function C() { return <span>c</span>; }
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: p("a"), tags: "group" }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<A key="a" />
 					<B key="b" tags={["group"]} />
 					<C key="c" />
@@ -615,7 +538,7 @@ describe("Partial architecture", () => {
 		}
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<MyComponent key="test" tags={["cart"]} cache={60} name="hello" />
 				</Partials>,
 			),
@@ -632,13 +555,12 @@ describe("Partial architecture", () => {
 		}
 		function Page() {
 			return (
-				<Partials namespace="inner" getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace="inner">
 					<InnerContent key="search" />
 					<Stats key="stats" />
 				</Partials>
 			);
 		}
-		// Target inner/search — outer "layout" renders all (no match), inner filters to "search"
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: "inner/search" }), async () =>
 			renderToJSON(
 				<Partials namespace="layout">
@@ -658,12 +580,11 @@ describe("Partial architecture", () => {
 		}
 		function Page() {
 			return (
-				<Partials namespace="inner" getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace="inner">
 					<SearchResult key="search" query="" />
 				</Partials>
 			);
 		}
-		// __inputs keys use namespaced IDs
 		const inputs = JSON.stringify({ "inner/search": { query: "bulbasaur" } });
 		const { result } = await runWithRequestAsync(fakeRequest({ partials: "inner/search", __inputs: inputs }), async () =>
 			renderToJSON(
@@ -679,20 +600,16 @@ describe("Partial architecture", () => {
 	});
 
 	it("nested Partials: outer skips partials with matching cached fingerprints", async () => {
-		// First render: capture fingerprints from both outer and inner
 		let outerFingerprints: Record<string, string> = {};
 		let innerFingerprints: Record<string, string> = {};
-		let renderCount = 0;
 
 		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
 			children,
 			fingerprints: fp,
 			namespace,
-			freshIds,
 		}: any) => {
 			if (namespace === "layout") outerFingerprints = fp;
 			if (namespace === "inner") innerFingerprints = fp;
-			renderCount++;
 			return children;
 		}) as any;
 
@@ -702,14 +619,13 @@ describe("Partial architecture", () => {
 		function InnerHeader() { return <span>header-content</span>; }
 		function Page() {
 			return (
-				<P namespace="inner" getSchema={fakeGetSchema} execute={fakeExecute}>
+				<P namespace="inner">
 					<InnerHeader key="header" />
 					<InnerCart key="cart" />
 				</P>
 			);
 		}
 
-		// Full render to get all fingerprints
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
 				<P namespace="layout">
@@ -719,13 +635,8 @@ describe("Partial architecture", () => {
 			),
 		);
 		expect(outerFingerprints.head).toBeDefined();
-		expect(outerFingerprints.page).toBeDefined();
-		expect(innerFingerprints.header).toBeDefined();
 		expect(innerFingerprints.cart).toBeDefined();
 
-		// Now simulate ?partials=inner/cart with cached fingerprints for everything else.
-		// The outer passes through (no "layout/" prefixed IDs in ?partials=inner/cart),
-		// so ALL outer partials render. The inner filters to only "cart".
 		let outerFreshIds: string[] = [];
 		let innerFreshIds: string[] = [];
 		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
@@ -756,19 +667,200 @@ describe("Partial architecture", () => {
 				),
 		);
 
-		// Outer: pass-through renders ALL partials (no partial filter matches layout namespace)
 		expect(outerFreshIds).toContain("head");
 		expect(outerFreshIds).toContain("page");
-		// Inner: only "cart" should be fresh (explicitly requested via ?partials=inner/cart)
 		expect(innerFreshIds).toEqual(["cart"]);
 	});
 
+	it("pass-through skips HTML-type partials with matching fingerprints", async () => {
+		let outerFingerprints: Record<string, string> = {};
+		let outerFreshIds: string[] = [];
+
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			fingerprints: fp,
+			freshIds,
+			namespace,
+			children,
+		}: any) => {
+			if (namespace === "layout") {
+				outerFingerprints = fp;
+				outerFreshIds = freshIds;
+			}
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function Page() {
+			return <P namespace="inner">
+				<Hero key="content" />
+			</P>;
+		}
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace="layout">
+					<head key="head"><title>Test</title></head>
+					<nav key="nav"><a href="/">Home</a></nav>
+					<Page key="page" />
+				</P>,
+			),
+		);
+
+		const cached = [
+			`layout/head:${outerFingerprints.head}`,
+			`layout/nav:${outerFingerprints.nav}`,
+			`layout/page:${outerFingerprints.page}`,
+		].join(",");
+
+		await runWithRequestAsync(
+			fakeRequest({ partials: "inner/content", cached }),
+			async () =>
+				renderToJSON(
+					<P namespace="layout">
+						<head key="head"><title>Test</title></head>
+						<nav key="nav"><a href="/">Home</a></nav>
+						<Page key="page" />
+					</P>,
+				),
+		);
+
+		expect(outerFreshIds).not.toContain("head");
+		expect(outerFreshIds).not.toContain("nav");
+		expect(outerFreshIds).toContain("page");
+	});
+
+	it("pass-through renders HTML partials when fingerprint mismatches", async () => {
+		let outerFingerprints: Record<string, string> = {};
+		let outerFreshIds: string[] = [];
+
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			fingerprints: fp,
+			freshIds,
+			namespace,
+			children,
+		}: any) => {
+			if (namespace === "layout") {
+				outerFingerprints = fp;
+				outerFreshIds = freshIds;
+			}
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function Page() {
+			return <P namespace="inner">
+				<Hero key="content" />
+			</P>;
+		}
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace="layout">
+					<nav key="nav"><a href="/">Home</a></nav>
+					<Page key="page" />
+				</P>,
+			),
+		);
+
+		const cached = `layout/nav:stale_fp,layout/page:${outerFingerprints.page}`;
+		await runWithRequestAsync(
+			fakeRequest({ partials: "inner/content", cached }),
+			async () =>
+				renderToJSON(
+					<P namespace="layout">
+						<nav key="nav"><a href="/">Home</a></nav>
+						<Page key="page" />
+					</P>,
+				),
+		);
+
+		expect(outerFreshIds).toContain("nav");
+		expect(outerFreshIds).toContain("page");
+	});
+
+	it("full navigation renders all partials regardless of cached fingerprints", async () => {
+		let fingerprints: Record<string, string> = {};
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			fingerprints: fp,
+		}: any) => {
+			fingerprints = fp;
+			return null;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<Stats key="stats" />
+				</P>,
+			),
+		);
+
+		let freshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds: fids,
+			children,
+		}: any) => {
+			freshIds = fids;
+			return children;
+		}) as any;
+
+		await runWithRequestAsync(
+			fakeRequest({ cached: `${p("hero")}:${fingerprints.hero},${p("stats")}:${fingerprints.stats}` }),
+			async () =>
+				renderToJSON(
+					<P namespace={NS}>
+						<Hero key="hero" />
+						<Stats key="stats" />
+					</P>,
+				),
+		);
+
+		expect(freshIds).toContain("hero");
+		expect(freshIds).toContain("stats");
+	});
+
+	it("tag-based invalidation renders only tagged partials", async () => {
+		function Cart(_props: { tags?: string[] }) { return <span>cart-content</span>; }
+		function Products() { return <span>products</span>; }
+
+		let freshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds: fids,
+			children,
+		}: any) => {
+			freshIds = fids;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ tags: "cart" }),
+			async () =>
+				renderToJSON(
+					<P namespace={NS}>
+						<Cart key="cart" tags={["cart"]} />
+						<Products key="products" />
+					</P>,
+				),
+		);
+
+		expect(freshIds).toEqual(["cart"]);
+		const str = JSON.stringify(result);
+		expect(str).toContain("cart-content");
+	});
+
 	it("partials without tags are unaffected by ?tags= filter", async () => {
-		function Tagged() { return <span>tagged</span>; }
+		function Tagged(_props: { tags?: string[] }) { return <span>tagged</span>; }
 		function Untagged() { return <span>untagged</span>; }
 		const { result } = await runWithRequestAsync(fakeRequest({ tags: "cart" }), async () =>
 			renderToJSON(
-				<Partials namespace={NS} getSchema={fakeGetSchema} execute={fakeExecute}>
+				<Partials namespace={NS}>
 					<Tagged key="tagged" tags={["cart"]} />
 					<Untagged key="untagged" />
 				</Partials>,
@@ -777,5 +869,50 @@ describe("Partial architecture", () => {
 		const str = JSON.stringify(result);
 		expect(str).toContain("tagged");
 		expect(str).not.toContain("untagged");
+	});
+
+	it("nested: tag invalidation resolves in inner namespace, outer passes through", async () => {
+		let outerFreshIds: string[] = [];
+		let innerFreshIds: string[] = [];
+
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds,
+			namespace,
+			children,
+		}: any) => {
+			if (namespace === "layout") outerFreshIds = freshIds;
+			if (namespace === "magento") innerFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function CartBadge(_props: { tags?: string[] }) { return <span>cart-badge</span>; }
+		function Products() { return <span>products</span>; }
+		function MagentoPage() {
+			return (
+				<P namespace="magento">
+					<header key="header">Header</header>
+					<CartBadge key="cart" tags={["cart"]} />
+					<Products key="products" />
+				</P>
+			);
+		}
+
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ tags: "cart" }),
+			async () =>
+				renderToJSON(
+					<P namespace="layout">
+						<head key="head"><title>Test</title></head>
+						<MagentoPage key="page" />
+					</P>,
+				),
+		);
+
+		expect(outerFreshIds).toContain("page");
+		expect(innerFreshIds).toEqual(["cart"]);
+		const str = JSON.stringify(result);
+		expect(str).toContain("cart-badge");
 	});
 });

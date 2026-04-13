@@ -2,13 +2,6 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { resolve, resolveData } from "../resolve.ts";
 import { fetchSchema, type SchemaGraph } from "../schema.ts";
-import { Partials } from "../partial.tsx";
-import { runWithRequestAsync, getQueryRoot } from "../../framework/context.ts";
-
-// Mock client component to avoid useRef warnings in tests
-vi.mock("../partial-client.tsx", () => ({
-	PartialsClient: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 const MAGENTO_ENDPOINT = "https://graphcommerce.vercel.app/api/graphql";
 
@@ -39,8 +32,7 @@ describe("Magento E2E: store page", { timeout: 30000 }, () => {
 			return executeMagentoQuery<T>(query);
 		};
 
-		function ProductGrid() {
-			const q = getQueryRoot();
+		await resolve(getSchema, spyExecute, (q) => {
 			const productList = q.products({ filter: {}, pageSize: 12 }).items;
 			return (
 				<div>
@@ -54,18 +46,7 @@ describe("Magento E2E: store page", { timeout: 30000 }, () => {
 					))}
 				</div>
 			);
-		}
-
-		await runWithRequestAsync(
-			new Request("http://localhost/test"),
-			async () =>
-				Partials({
-					namespace: "magento",
-					getSchema,
-					execute: spyExecute,
-					children: <ProductGrid key="products" />,
-				}),
-		);
+		});
 
 		expect(capturedQuery).toContain("products(");
 		expect(capturedQuery).toContain("items");
@@ -76,95 +57,44 @@ describe("Magento E2E: store page", { timeout: 30000 }, () => {
 		expect(capturedQuery).not.toContain("cart(");
 	});
 
-	it("discovery: products + cart page compiles per-partial queries", async () => {
-		const capturedQueries: string[] = [];
-		const spyExecute = async <T,>(query: string): Promise<T> => {
-			capturedQueries.push(query);
-			// Don't hit the real API — fake cart ID would fail. We only check the query.
-			return {} as T;
-		};
-
-		function ProductGrid() {
-			const q = getQueryRoot();
-			const productList = q.products({ filter: {}, pageSize: 12 }).items;
-			return (
-				<div>
-					{productList.map((product: any) => (
-						<div key={product.sku.value}>{product.name.value}</div>
-					))}
-				</div>
-			);
-		}
-
-		function CartPartial() {
-			const q = getQueryRoot();
-			const totalQuantity = q.cart({ cart_id: "fake-cart-id" }).total_quantity.value;
-			return <span>{totalQuantity}</span>;
-		}
-
-		await runWithRequestAsync(
-			new Request("http://localhost/test"),
-			async () =>
-				Partials({
-					namespace: "magento",
-					getSchema,
-					execute: spyExecute,
-					children: [
-						<CartPartial key="cart" />,
-						<ProductGrid key="products" />,
-					],
-				}),
-		);
-
-		// Each partial gets its own query — two separate fetches
-		expect(capturedQueries).toHaveLength(2);
-		const allQueries = capturedQueries.join("\n");
-		expect(allQueries).toContain("products(");
-		expect(allQueries).toContain("cart(");
-		expect(allQueries).toContain("total_quantity");
-		expect(allQueries).toContain("name");
-		expect(allQueries).toContain("sku");
-	});
-
-	it("discovery: partial filter produces minimal query", async () => {
+	it("discovery: products + cart compiles single query with both fields", async () => {
 		let capturedQuery = "";
 		const spyExecute = async <T,>(query: string): Promise<T> => {
 			capturedQuery = query;
 			return {} as T;
 		};
 
-		function ProductGrid() {
-			const q = getQueryRoot();
+		await resolve(getSchema, spyExecute, (q) => {
 			const productList = q.products({ filter: {}, pageSize: 12 }).items;
+			const totalQuantity = q.cart({ cart_id: "fake-cart-id" }).total_quantity.value;
 			return (
 				<div>
 					{productList.map((product: any) => (
 						<div key={product.sku.value}>{product.name.value}</div>
 					))}
+					<span>{totalQuantity}</span>
 				</div>
 			);
-		}
+		});
 
-		function CartPartial() {
-			const q = getQueryRoot();
-			const totalQuantity = q.cart({ cart_id: "fake-cart-id" }).total_quantity.value;
-			return <span>{totalQuantity}</span>;
-		}
+		// Single resolve() compiles one query with both root fields
+		expect(capturedQuery).toContain("products(");
+		expect(capturedQuery).toContain("cart(");
+		expect(capturedQuery).toContain("total_quantity");
+		expect(capturedQuery).toContain("name");
+		expect(capturedQuery).toContain("sku");
+	});
 
-		// Only request the cart partial — products should NOT be in the query
-		await runWithRequestAsync(
-			new Request("http://localhost/test?partials=magento/cart"),
-			async () =>
-				Partials({
-					namespace: "magento",
-					getSchema,
-					execute: spyExecute,
-					children: [
-						<CartPartial key="cart" />,
-						<ProductGrid key="products" />,
-					],
-				}),
-		);
+	it("discovery: resolve.data captures only accessed fields", async () => {
+		let capturedQuery = "";
+		const spyExecute = async <T,>(query: string): Promise<T> => {
+			capturedQuery = query;
+			return {} as T;
+		};
+
+		await resolveData(getSchema, spyExecute, (q: any) => {
+			q.cart({ cart_id: "fake-cart-id" }).total_quantity.value;
+		});
 
 		expect(capturedQuery).toContain("cart(");
 		expect(capturedQuery).toContain("total_quantity");

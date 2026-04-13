@@ -90,11 +90,29 @@ async function handleRequest(
     const inv = (returnValue.data as any).invalidate;
     let needsUpdate = false;
 
+    // Validate and set partial IDs on the render URL
+    const setPartialIds = (ids: string[]) => {
+      if (import.meta.env?.DEV) {
+        for (const id of ids) {
+          if (!id.includes("/")) {
+            throw new Error(
+              `Partial invalidation ID "${id}" has no namespace prefix. ` +
+              `Use the full namespaced ID (e.g., "magento/${id}") or ` +
+              `tag-based invalidation: { invalidate: { tags: ["${id}"] } }`,
+            );
+          }
+        }
+      }
+      const existing = renderRequest.url.searchParams.get("partials");
+      const merged = existing ? `${existing},${ids.join(",")}` : ids.join(",");
+      renderRequest.url.searchParams.set("partials", merged);
+      needsUpdate = true;
+    };
+
     if (Array.isArray(inv)) {
       // Legacy format: string array of partial IDs
       if (inv.length > 0) {
-        renderRequest.url.searchParams.set("partials", inv.join(","));
-        needsUpdate = true;
+        setPartialIds(inv);
       }
     } else if (typeof inv === "object") {
       // New format: { tags?: string[], ids?: string[] }
@@ -107,10 +125,7 @@ async function handleRequest(
         needsUpdate = true;
       }
       if (ids?.length) {
-        const existing = renderRequest.url.searchParams.get("partials");
-        const merged = existing ? `${existing},${ids.join(",")}` : ids.join(",");
-        renderRequest.url.searchParams.set("partials", merged);
-        needsUpdate = true;
+        setPartialIds(ids);
       }
     }
 

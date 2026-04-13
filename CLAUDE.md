@@ -75,18 +75,23 @@ Every `<Partials>` MUST have a `namespace` prop. A namespace is just a prefix fo
 Partials instances can be nested. The outer instance (e.g., `namespace="layout"`) wraps the page shell (head, nav, body). The inner instance (e.g., `namespace="magento"`) wraps the page-specific content (header, cart, products).
 
 When `?partials=magento/cart` is requested:
-1. **Outer (layout)**: no IDs start with `layout/` → pass-through (renders all children so nested instances can run)
+1. **Outer (layout)**: no IDs start with `layout/` → pass-through
 2. **Inner (magento)**: `magento/cart` matches → filters to just cart
 
 Pass-through is necessary because the server must execute the outer's "page" child for the inner Partials to run at all (RSC is server-rendered).
 
-### Fingerprint caching prevents unnecessary work
-The pass-through means the outer renders all its children on every partial refetch. But **fingerprint-based caching** prevents this from being wasteful:
+### Pass-through optimization: HTML vs component heuristic
+During pass-through, the outer instance must render enough for inner instances to execute. But not all outer partials need re-rendering:
 
-- Each partial has a fingerprint (hash of its element tree shape)
-- The client sends `?cached=layout/head:fp,layout/nav:fp,...` with all known fingerprints
-- The server skips rendering any partial whose fingerprint matches the client's cache
-- Only the partial that actually changed goes through the data pipeline
+- **HTML-type partials** (`<head key="head">`, `<nav key="nav">`) can't contain nested Partials or read request context. If their fingerprint matches the client's cached version, they're **skipped** during pass-through.
+- **Component-type partials** (`<PokemonPage key="page" />`) might contain nested Partials instances or depend on URL/context. They **always render** during pass-through.
+
+On full navigation (no `?partials=` filter), ALL partials render regardless — URL changes can affect any component's output.
+
+### Fingerprints
+Each partial has a fingerprint (hash of its element tree shape). The client sends `?cached=layout/head:fp,layout/nav:fp,...` with all known fingerprints. Fingerprints are used for:
+1. **Pass-through skip**: HTML-type partials with matching fingerprints skip during pass-through (see above)
+2. **Client change detection**: the client PartialsClient uses fingerprints to track which partials have changed
 
 **Critical implementation detail**: `_tokensByNamespace` in `partial-client.tsx` accumulates cached tokens across ALL PartialsClient instances (keyed by namespace). If this were a simple overwrite, nested instances would clobber each other's tokens and the outer's fingerprints wouldn't be sent → the outer would re-render everything on every refetch.
 
@@ -112,15 +117,17 @@ Partials can declare tags and cache TTL via reserved props:
 - Reserved props are stripped before rendering the component (via `stripReservedProps`)
 
 ### Server action invalidation
-Server actions return invalidation instructions:
+Server actions return invalidation instructions. **Prefer tags** over IDs — tags are namespace-agnostic and don't couple actions to page structure:
 ```ts
-// By ID (namespaced)
-return { invalidate: ["magento/cart"] };
-// By tag
+// By tag (preferred — namespace-agnostic)
 return { invalidate: { tags: ["cart"] } };
+// By ID (must include namespace prefix)
+return { invalidate: ["magento/cart"] };
 // Mixed
 return { invalidate: { ids: ["layout/nav"], tags: ["cart"] } };
 ```
+
+**IMPORTANT**: ID-based invalidation (`["cart"]`) without the namespace prefix will NOT match any Partials instance — both outer and inner instances pass through and re-render everything. Always use the full namespaced ID or use tag-based invalidation.
 
 ### Template and client merge
 The server sends a structural template (layout wrappers with placeholders for partials) plus fresh partial content. The client `PartialsClient` fills placeholders from its cache, merging fresh content with cached content. This means non-requested partials stay visible without re-rendering.

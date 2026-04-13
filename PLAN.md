@@ -338,3 +338,45 @@ Caching of discovered access patterns. Pre-seeding at build time. Runtime learni
 ### Future: Control Flow Compiler (v2)
 
 If runtime learning proves insufficient (too many cold start penalties, too many supplemental fetches in production), build a Babel/SWC plugin that statically extracts access patterns from component source code. This eliminates the phantom render entirely but requires solving conditional branch analysis.
+
+---
+
+## Why the GraphQL Pipeline Was Set Aside
+
+### What it was
+
+The GraphQL Pipeline (`<GraphQLPipeline>`) was an attempt to integrate the proxy-based discovery pattern directly into the Partial architecture. It would wrap partial children, intercept them before rendering, run a phantom render to discover data needs, compile GraphQL queries, fetch data, then re-render with real data proxies — all transparently.
+
+### Why it didn't work
+
+**The proxy discovery pattern is fundamentally incompatible with the React component model.**
+
+The pipeline needs to pre-render the component tree to record property accesses (the "phantom render"). But React components are opaque — you can't render them outside of React's reconciliation without losing:
+
+1. **Component isolation.** Partials render as flat, independent siblings. The pipeline needed to call component functions directly to discover their data needs, but this breaks React's rendering model. A parent partial can never provide React context to a nested child partial — the flat rendering model enforces this.
+
+2. **Decoupling.** Every approach to connect the pipeline to Partials created coupling:
+   - **Pipeline-as-prop** (`<Partials pipeline={...}>`): Partials had to know about pipelines.
+   - **Pipeline-as-marker-child** (`<Partials><GraphQLPipeline>...</GraphQLPipeline></Partials>`): Required Partials to detect the marker via static properties (`_isPipeline`, `_createPipeline`), intercept it, extract props, and run the pipeline internally. Still tangled.
+   - **Pipeline-as-parent** (`<GraphQLPipeline><Partials>...</Partials></GraphQLPipeline>`): Would use AsyncLocalStorage to provide context. Conceptually clean, but the phantom render still needs to execute components outside React.
+
+3. **Per-partial queries vs single query.** The pipeline compiled separate queries per partial (so refreshing one partial only fetches its data). But `resolve()` naturally compiles a single query from all accesses. Splitting queries per partial required the pipeline to understand partial boundaries — more coupling.
+
+### What replaces it
+
+The `resolve()` function already works: discovery → compile → fetch → render, all in one call. Components call `getQueryRoot()` to access the proxy. For pages, we need a classic GraphQL handler pattern where each partial explicitly fetches its own data using `resolve()` or a similar explicit query mechanism. The developer writes the query shape (via proxy access), not raw GraphQL strings.
+
+The proxy data layer (`resolve()`, `getQueryRoot()`, `AccessRecorder`, `compileQuery`) remains fully functional. The Partials system remains a pure orchestrator: filtering, templates, client merge. They just don't auto-discover data from the component tree anymore.
+
+### Status
+
+- `src/lib/graphql-pipeline.tsx` — preserved but disconnected. Nothing imports it.
+- `src/lib/partial.tsx` — pure orchestrator, no pipeline awareness.
+- `resolve()` and `resolveData()` — working, tested, used in lifecycle tests.
+
+### Revisiting later
+
+The proxy-based auto-discovery idea isn't dead — it just needs a different execution model than "pre-render React components". Possibilities:
+- **Build-time extraction:** A compiler plugin that statically analyzes component source to extract access patterns.
+- **Tagged template literals:** Components declare data needs in a co-located template, not via rendering.
+- **Explicit resolve blocks:** Components call `resolve()` at the top and render with the result — explicit but still proxy-powered.

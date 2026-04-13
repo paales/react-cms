@@ -1,6 +1,6 @@
 "use server";
 
-import { execute } from "../../magento-data.ts";
+import { client } from "../../magento-data.ts";
 import { getCookie, setCookie } from "../../../framework/context.ts";
 
 /**
@@ -12,7 +12,7 @@ export async function getOrCreateCart(): Promise<string> {
   const existing = getCookie("cart_id");
   if (existing) return existing;
 
-  const data = await execute<{ createEmptyCart: string }>(
+  const data = await client.request<{ createEmptyCart: string }>(
     `mutation { createEmptyCart }`,
   );
   const cartId = data.createEmptyCart;
@@ -27,23 +27,23 @@ export async function getOrCreateCart(): Promise<string> {
 export async function addToCart(
   sku: string,
   quantity: number,
-): Promise<{ invalidate: string[] }> {
+): Promise<{ invalidate: { tags: string[] } }> {
   const cartId = await getOrCreateCart();
 
-  const mutation = `
-		mutation {
-			addProductsToCart(
-				cartId: "${cartId}"
-				cartItems: [{ sku: "${sku}", quantity: ${quantity} }]
-			) {
-				cart {
-					total_quantity
-				}
-			}
-		}
-	`;
-  await execute<any>(mutation);
-  return { invalidate: ["cart"] };
+  await client.request(
+    `mutation AddToCart($cartId: String!, $sku: String!, $quantity: Float!) {
+      addProductsToCart(
+        cartId: $cartId
+        cartItems: [{ sku: $sku, quantity: $quantity }]
+      ) {
+        cart {
+          total_quantity
+        }
+      }
+    }`,
+    { cartId, sku, quantity },
+  );
+  return { invalidate: { tags: ["cart"] } };
 }
 
 /**

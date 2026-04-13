@@ -164,7 +164,7 @@ export function SearchDialog({
         maxHeight: "80vh",
         overflow: "auto",
         display: "grid",
-        top: "10vh",
+        top: "15vh",
         justifySelf: "center",
       }}
     >

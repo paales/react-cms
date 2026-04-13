@@ -1,10 +1,7 @@
+import { gql } from "graphql-request";
 import { Partials } from "../../../lib/partial.tsx";
-import { getSchema, execute } from "../../magento-data.ts";
-import {
-  getCookie,
-  getRequest,
-  getQueryRoot,
-} from "../../../framework/context.ts";
+import { client } from "../../magento-data.ts";
+import { getCookie, getRequest } from "../../../framework/context.ts";
 import { AddToCartButton } from "./add-to-cart-button.tsx";
 import { CartBadge } from "./cart-badge.tsx";
 
@@ -13,10 +10,10 @@ export function MagentoPage() {
   const search = url.searchParams.get("q") ?? "";
 
   return (
-    <Partials namespace="magento" getSchema={getSchema} execute={execute}>
+    <Partials namespace="magento">
       <header key="header">
         {new Date().toLocaleString()}
-        <CartPartial key="cart" />
+        <CartPartial key="cart" tags={["cart"]} />
       </header>
       <main>
         <ProductGrid key="products" search={search} />
@@ -26,18 +23,66 @@ export function MagentoPage() {
   );
 }
 
-function CartPartial() {
-  const q = getQueryRoot();
+async function CartPartial(_props: { tags?: string[] }) {
   const cartId = getCookie("cart_id");
   if (!cartId) return <CartBadge quantity={0} />;
-  return (
-    <CartBadge quantity={q.cart({ cart_id: cartId }).total_quantity.value} />
+
+  const data = await client.request<{ cart: { total_quantity: number } }>(
+    gql`
+      query Cart($cartId: String!) {
+        cart(cart_id: $cartId) {
+          total_quantity
+        }
+      }
+    `,
+    { cartId },
   );
+
+  return <CartBadge quantity={data.cart.total_quantity} />;
 }
 
-function ProductGrid({ search }: { search?: string }) {
-  const q = getQueryRoot();
-  const productList = q.products({ filter: {}, pageSize: 12 }).items;
+async function ProductGrid({ search }: { search?: string }) {
+  const data = await client.request<{
+    products: {
+      items: Array<{
+        id: number;
+        name: string;
+        sku: string;
+        small_image: { url: string; label: string };
+        price_range: {
+          minimum_price: {
+            regular_price: { value: number; currency: string };
+          };
+        };
+      }>;
+    };
+  }>(
+    gql`
+      query Products($pageSize: Int!) {
+        products(filter: {}, pageSize: $pageSize) {
+          items {
+            id
+            name
+            sku
+            small_image {
+              url
+              label
+            }
+            price_range {
+              minimum_price {
+                regular_price {
+                  value
+                  currency
+                }
+              }
+            }
+          }
+        }
+      }
+    `,
+    { pageSize: 12 },
+  );
+
   return (
     <div>
       <div
@@ -53,28 +98,37 @@ function ProductGrid({ search }: { search?: string }) {
         </h1>
       </div>
       <p style={{ color: "#888", marginBottom: "1.5rem" }}>
-        Products loaded from GraphCommerce Magento 2 API using the same proxy
-        data layer. Access patterns auto-compile to GraphQL.
+        Products loaded from GraphCommerce Magento 2 API.
       </p>
       <div className="grid">
-        {productList.map((product: any) => (
-          <ProductCard key={product.sku.value} product={product} />
+        {data.products.items.map((product) => (
+          <ProductCard key={product.sku} product={product} />
         ))}
       </div>
     </div>
   );
 }
 
-function ProductCard({ product }: { product: any }) {
-  const name = product.name.value as string;
-  const sku = product.sku.value as string;
-  const imageUrl = product.small_image.url.value as string;
-  const imageLabel = product.small_image.label.value as string;
-  const price = product.price_range.minimum_price.regular_price.value
-    .value as number;
-  const currency = product.price_range.minimum_price.regular_price.currency
-    .value as string;
-  const id = product.id.value;
+function ProductCard({
+  product,
+}: {
+  product: {
+    id: number;
+    name: string;
+    sku: string;
+    small_image: { url: string; label: string };
+    price_range: {
+      minimum_price: {
+        regular_price: { value: number; currency: string };
+      };
+    };
+  };
+}) {
+  const { name, sku, id } = product;
+  const imageUrl = product.small_image.url;
+  const imageLabel = product.small_image.label;
+  const price = product.price_range.minimum_price.regular_price.value;
+  const currency = product.price_range.minimum_price.regular_price.currency;
 
   return (
     <div className="card">

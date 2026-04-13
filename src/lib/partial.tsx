@@ -4,10 +4,9 @@
  * Pages are flat lists of partials. Each partial is independently
  * re-renderable — like Shopify's section rendering for React.
  *
- * <Partials getSchema={getSchema} execute={execute}>
- *   <div key="header">
- *     <Cart key="cart" />
- *   </div>
+ * <Partials namespace="pokemon">
+ *   <header key="header">static content</header>
+ *   <HeroPartial key="hero" pokemonId={1} />
  *   <main>
  *     <ProductGrid key="products" search={search} />
  *   </main>
@@ -17,17 +16,14 @@
  * <main> and <footer> are structural wrappers — preserved in layout
  * but transparent to the partial system.
  *
- * Components read the query root via getQueryRoot() from the request
- * context — no prop injection needed.
- *
  * Nested partials are first-class: `<div key="header"><Cart key="cart" /></div>`
  * renders cart independently of its parent. Refreshing "header" re-renders
  * the header layout but keeps the cached cart. Refreshing "cart" patches
  * just the cart into the cached header. Refreshing both updates everything.
  *
- * Data is optional. Without getSchema/execute, partials render directly —
- * useful for static content (head, nav) or wrapping nested Partials
- * that each bring their own data source.
+ * All partials render as flat siblings — the JSX nesting is a layout
+ * declaration, not a render tree. This enforces isolation: a parent
+ * partial can never provide React context to a nested child partial.
  *
  * On full page render: all partials render.
  * On partial re-fetch (?partials=hero,stats): only those partials render.
@@ -40,28 +36,32 @@
  */
 
 import React, { type ReactNode } from "react";
-import { AccessRecorder } from "./access-recorder.ts";
-import { renderForDiscovery } from "./discovery.ts";
-import { createProxy } from "./proxy-node.ts";
-import { compileQuery } from "./query-compiler.ts";
 import {
   PartialsClient,
   type PartialDebugEntry,
 } from "./partial-client.tsx";
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
-import { getCachedData, setCachedData } from "./partial-cache.ts";
-import type { SchemaGraph } from "./schema.ts";
-import { setQueryRoot, getRequest } from "../framework/context.ts";
+import { getRequest } from "../framework/context.ts";
 
 interface PartialsProps {
   children: ReactNode;
   /** Namespace prefix for partial IDs — required to disambiguate nested Partials instances */
   namespace: string;
-  /** Schema provider for the GraphQL backend (optional — without it, partials render without data) */
-  getSchema?: () => Promise<SchemaGraph>;
-  /** Query executor for the GraphQL backend (optional — required if getSchema is provided) */
-  execute?: <T>(query: string) => Promise<T>;
 }
+
+/**
+ * Reserved props accepted by partial elements.
+ * Stripped by the orchestrator before rendering the component.
+ *
+ * Use at the call site to allow `tags` and `cache` on your component:
+ *
+ *   function CartBadge(props: PartialProps<{ quantity: number }>) { ... }
+ *   <CartBadge key="cart" quantity={3} tags={["cart"]} cache={60} />
+ */
+export type PartialProps<P = {}> = P & {
+  tags?: string[];
+  cache?: number;
+};
 
 /** Props reserved by the Partials system — stripped before rendering the component. */
 const RESERVED_PROPS = new Set(["tags", "cache"]);
@@ -143,7 +143,13 @@ function collectPartials(children: ReactNode, depth = 0): PartialEntry[] {
       const props = child.props as Record<string, unknown>;
       const tags = Array.isArray(props.tags) ? (props.tags as string[]) : [];
       const cacheTtl = typeof props.cache === "number" ? props.cache : 0;
-      entries.push({ id: String(child.key), element: child, depth, tags, cacheTtl });
+      entries.push({
+        id: String(child.key),
+        element: child,
+        depth,
+        tags,
+        cacheTtl,
+      });
       if (child.props.children) {
         entries.push(...collectPartials(child.props.children, depth + 1));
       }
@@ -166,7 +172,10 @@ function stripReservedProps(element: React.ReactElement): React.ReactElement {
   for (const [k, v] of Object.entries(props)) {
     if (!RESERVED_PROPS.has(k)) clean[k] = v;
   }
-  return React.createElement(element.type as any, { ...clean, key: element.key });
+  return React.createElement(element.type as any, {
+    ...clean,
+    key: element.key,
+  });
 }
 
 /**
@@ -213,8 +222,8 @@ function buildTemplate(children: ReactNode): ReactNode[] {
 
 /**
  * Replace nested partials inside an element with keyed placeholders.
- * This allows parent partials to render without triggering discovery
- * or data fetching for their nested children — those render independently.
+ * This allows parent partials to render without triggering rendering
+ * of their nested children — those render independently.
  */
 function stripNested(
   element: React.ReactElement,
@@ -246,141 +255,11 @@ function stripNested(
   return changed ? React.cloneElement(element, {}, ...result) : element;
 }
 
-// ─── Data Pipeline ──────────────────────────────────────────────────────
-// Separated from Partials so partials can render with or without data.
-// When getSchema/execute are provided, active partials go through:
-//   discovery → compile → parallel fetch → PartialScope (proxy per partial)
-// When not provided, partials render directly.
-
-interface DataPipelineResult {
-  wrappedChildren: React.ReactNode[];
-  debug: PartialDebugEntry[];
-  fetchMs: number;
-}
-
-async function runDataPipeline(
-  activeChildren: React.ReactElement[],
-  allIds: string[],
-  freshIds: string[],
-  fingerprints: Map<string, string>,
-  cacheConfig: Map<string, { ttl: number; tags: string[] }>,
-  getSchema: () => Promise<SchemaGraph>,
-  execute: <T>(query: string) => Promise<T>,
-): Promise<DataPipelineResult> {
-  const schema = await getSchema();
-  const queryTypeName = schema.getQueryTypeName();
-  const fetchStart = Date.now();
-
-  // Phase 1: Per-partial discovery — each partial gets its own recorder
-  const partialPlans = activeChildren.map((child) => {
-    const id = React.isValidElement(child) ? String(child.key) : "unknown";
-    const recorder = new AccessRecorder();
-    const phantom = createProxy(schema, queryTypeName, recorder);
-    setQueryRoot(phantom, { query: "" });
-    renderForDiscovery(child);
-    const tree = recorder.getAccessTree();
-    const query = compileQuery(tree);
-    return { child, id, recorder, query };
-  });
-
-  // Phase 2: Parallel fetch — check data cache first, fetch on miss
-  const responses = await Promise.all(
-    partialPlans.map(async (plan) => {
-      const config = cacheConfig.get(plan.id);
-      // Check data cache if partial has a cache TTL
-      if (config && config.ttl > 0) {
-        const cached = getCachedData(plan.query);
-        if (cached) return { data: cached, fromCache: true };
-      }
-      const data = await execute<Record<string, unknown>>(plan.query);
-      // Store in data cache if partial has a cache TTL
-      if (config && config.ttl > 0) {
-        setCachedData(plan.query, data, config.ttl, config.tags);
-      }
-      return { data, fromCache: false };
-    }),
-  );
-  const fetchMs = Date.now() - fetchStart;
-
-  // Phase 3: Wrap each partial in PartialScope (sets queryRoot per partial)
-  const wrappedChildren = partialPlans.map((plan, i) => {
-    const dataProxy = createProxy(
-      schema,
-      queryTypeName,
-      plan.recorder,
-      responses[i].data,
-    );
-    return (
-      <PartialErrorBoundary key={plan.id} partialId={plan.id}>
-        <PartialScope proxy={dataProxy} meta={{ query: plan.query }}>
-          {plan.child}
-        </PartialScope>
-      </PartialErrorBoundary>
-    );
-  });
-
-  // Build debug info
-  const freshSet = new Set(freshIds);
-  const partialQueryMap = new Map(
-    partialPlans.map((plan) => [plan.id, plan.query]),
-  );
-  const cacheHits = new Set(
-    partialPlans
-      .filter((_, i) => responses[i].fromCache)
-      .map((plan) => plan.id),
-  );
-
-  const debug: PartialDebugEntry[] = allIds.map((id) => ({
-    id,
-    status: freshSet.has(id)
-      ? cacheHits.has(id)
-        ? "data-cached"
-        : "fresh"
-      : "cached",
-    fingerprint: fingerprints.get(id) ?? "",
-    query: partialQueryMap.get(id) ?? null,
-  }));
-
-  return { wrappedChildren, debug, fetchMs };
-}
-
-function renderWithoutData(
-  activeChildren: React.ReactElement[],
-  allIds: string[],
-  freshIds: string[],
-  fingerprints: Map<string, string>,
-): DataPipelineResult {
-  const freshSet = new Set(freshIds);
-
-  const wrappedChildren = activeChildren.map((child) => {
-    const id = React.isValidElement(child) ? String(child.key) : "unknown";
-    return (
-      <PartialErrorBoundary key={id} partialId={id}>
-        {child}
-      </PartialErrorBoundary>
-    );
-  });
-
-  const debug: PartialDebugEntry[] = allIds.map((id) => ({
-    id,
-    status: freshSet.has(id) ? "fresh" : "cached",
-    fingerprint: fingerprints.get(id) ?? "",
-    query: null,
-  }));
-
-  return { wrappedChildren, debug, fetchMs: 0 };
-}
-
 // ─── Partials ──────────────────────────────────────────────────────────
-// Partial orchestrator: collects partials, filters, caches, templates.
-// Delegates to the data pipeline when a schema is provided.
+// Pure orchestrator: collects partials, filters, templates, client merge.
+// No data fetching — components are responsible for their own data.
 
-export async function Partials({
-  children,
-  namespace,
-  getSchema,
-  execute,
-}: PartialsProps) {
+export async function Partials({ children, namespace }: PartialsProps) {
   // Read partials, tags, cached, and partial inputs from the current request URL
   const requestUrl = new URL(getRequest().url);
   const partialsParam = requestUrl.searchParams.get("partials");
@@ -415,30 +294,25 @@ export async function Partials({
     }
   }
 
-  // Build cache config per partial (for the data pipeline)
-  const cacheConfig = new Map<string, { ttl: number; tags: string[] }>();
-  for (const entry of allPartials) {
-    if (entry.cacheTtl > 0 || entry.tags.length > 0) {
-      cacheConfig.set(entry.id, { ttl: entry.cacheTtl, tags: entry.tags });
-    }
-  }
-
   // URL params use namespaced IDs (e.g., ?partials=pokemon/hero).
   // Strip the namespace prefix to match against raw child keys.
   const prefix = `${namespace}/`;
 
-  // Resolve ?tags= to partial IDs via the tag index
-  const tagResolvedIds = tagsParam
-    ? new Set(
-        tagsParam
-          .split(",")
-          .map((t) => t.trim())
-          .flatMap((tag) => {
-            const ids = tagIndex.get(tag);
-            return ids ? [...ids] : [];
-          }),
-      )
-    : null;
+  // Resolve ?tags= to partial IDs via the tag index.
+  // Returns null if no tags matched this instance's index (triggers pass-through).
+  const tagResolvedIds = (() => {
+    if (!tagsParam) return null;
+    const ids = new Set(
+      tagsParam
+        .split(",")
+        .map((t) => t.trim())
+        .flatMap((tag) => {
+          const matched = tagIndex.get(tag);
+          return matched ? [...matched] : [];
+        }),
+    );
+    return ids.size > 0 ? ids : null;
+  })();
 
   // Resolve ?partials= (by ID) — only IDs matching this namespace
   const partialResolvedIds = partialsParam
@@ -505,18 +379,34 @@ export async function Partials({
     }
   }
 
-  // Active entries: partials to discover + render.
+  // Pass-through detection: a global filter exists (?partials= or ?tags=) but
+  // no IDs matched this namespace → we must render so nested Partials can run.
+  const hasGlobalFilter = partialsParam != null || tagsParam != null;
+  const isPassthrough = hasGlobalFilter && requestedIds === null;
+
+  // Active entries: partials to render.
   //
-  // When ?partials= is set: only render requested partials (plus __inputs overrides).
-  // When no filter: render all — a partial's output can depend on URL/context
-  // changes that the element-tree fingerprint can't capture.
-  //
-  // Fingerprint-based skipping on the server is intentionally NOT done here.
-  // The client-side PartialsClient cache handles the visual merge — only fresh
-  // partials update the DOM. The fingerprints are sent to the client for
-  // change detection, not used for server-side skip logic.
+  // Three modes:
+  // 1. Full navigation (no filter): render all — URL changes can affect output.
+  // 2. Explicit filter (?partials=ns/id): only render requested partials.
+  // 3. Pass-through (filter targets different namespace): render component-type
+  //    partials (which might contain nested Partials) and skip HTML-type partials
+  //    whose fingerprint matches (pure markup that can't depend on context).
   const activeEntries = allPartials.filter((e) => {
     if (requestedIds && !requestedIds.has(e.id)) return false;
+    if (resolvedInputs[e.id]) return true; // __inputs override → always render
+    if (isPassthrough && cachedFingerprints.has(e.id)) {
+      // HTML elements (div, header, nav, head) can't contain nested Partials
+      // or read request context — safe to skip if fingerprint matches.
+      // Component types (PokemonPage, MagentoPage) might contain inner Partials
+      // or depend on URL params — must always render.
+      const isHtmlElement = typeof e.element.type === "string";
+      if (isHtmlElement) {
+        const clientFp = cachedFingerprints.get(e.id);
+        const serverFp = fingerprints.get(e.id);
+        if (clientFp != null && clientFp === serverFp) return false;
+      }
+    }
     return true;
   });
 
@@ -536,21 +426,26 @@ export async function Partials({
   // Structural template: preserves keyless wrappers, partials become placeholders
   const template = buildTemplate(children);
 
-  const allIds = allPartials.map((e) => e.id);
+  // Wrap each active child with an error boundary
+  const wrappedChildren = activeChildren.map((child) => {
+    if (child.key != null) {
+      return (
+        <PartialErrorBoundary key={child.key} partialId={String(child.key)}>
+          {child}
+        </PartialErrorBoundary>
+      );
+    }
+    return child;
+  });
 
-  // Run data pipeline if schema is available, otherwise render directly
-  const hasData = getSchema != null && execute != null;
-  const { wrappedChildren, debug, fetchMs } = hasData
-    ? await runDataPipeline(
-        activeChildren,
-        allIds,
-        freshIds,
-        fingerprints,
-        cacheConfig,
-        getSchema,
-        execute,
-      )
-    : renderWithoutData(activeChildren, allIds, freshIds, fingerprints);
+  // Debug entries
+  const activeIdSet = new Set(freshIds);
+  const debug: PartialDebugEntry[] = allPartials.map((entry) => ({
+    id: entry.id,
+    status: activeIdSet.has(entry.id) ? "fresh" : "cached",
+    fingerprint: fingerprints.get(entry.id) ?? "",
+    query: null,
+  }));
 
   const fpObject = Object.fromEntries(fingerprints);
   return (
@@ -560,30 +455,9 @@ export async function Partials({
       freshIds={freshIds}
       fingerprints={fpObject}
       debug={debug}
-      fetchMs={fetchMs}
+      fetchMs={0}
     >
       {wrappedChildren}
     </PartialsClient>
   );
-}
-
-/**
- * Sets the query root proxy for a partial's children.
- *
- * React's flight server renders server components depth-first:
- * PartialScope sets the proxy, React renders children (which call
- * getQueryRoot()), then moves to the next sibling's PartialScope.
- * This gives each partial its own isolated data proxy.
- */
-function PartialScope({
-  proxy,
-  meta,
-  children,
-}: {
-  proxy: unknown;
-  meta: { query: string };
-  children: React.ReactNode;
-}) {
-  setQueryRoot(proxy, meta);
-  return <>{children}</>;
 }

@@ -47,8 +47,6 @@ export function Root() {
 			.partial-controls button { background: #2d3748; color: #ededed; border: 1px solid #4a5568; padding: 0.4rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
 			.partial-controls button:hover { background: #4a5568; }
 			@keyframes spin { to { transform: rotate(360deg); } }
-			dialog::backdrop { background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); }
-			dialog { outline: none; }
 		`}</style>
         </head>
         <body>
