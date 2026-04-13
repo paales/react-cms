@@ -35,7 +35,7 @@
  * with `namespace/` in all communication (URL params, cache, debug).
  */
 
-import React, { type ReactNode } from "react";
+import React, { Suspense, type ReactNode } from "react";
 import {
   PartialsClient,
   type PartialDebugEntry,
@@ -61,10 +61,11 @@ interface PartialsProps {
 export type PartialProps<P = {}> = P & {
   tags?: string[];
   cache?: number;
+  fallback?: ReactNode;
 };
 
 /** Props reserved by the Partials system — stripped before rendering the component. */
-const RESERVED_PROPS = new Set(["tags", "cache"]);
+const RESERVED_PROPS = new Set(["tags", "cache", "fallback"]);
 
 interface PartialEntry {
   id: string;
@@ -74,6 +75,8 @@ interface PartialEntry {
   tags: string[];
   /** Data cache TTL in seconds (0 = no cache, default) */
   cacheTtl: number;
+  /** Suspense fallback for streaming */
+  fallback: ReactNode;
 }
 
 /**
@@ -143,18 +146,20 @@ function collectPartials(children: ReactNode, depth = 0): PartialEntry[] {
       const props = child.props as Record<string, unknown>;
       const tags = Array.isArray(props.tags) ? (props.tags as string[]) : [];
       const cacheTtl = typeof props.cache === "number" ? props.cache : 0;
+      const fallback = props.fallback != null ? (props.fallback as ReactNode) : null;
       entries.push({
         id: String(child.key),
         element: child,
         depth,
         tags,
         cacheTtl,
+        fallback,
       });
-      if (child.props.children) {
-        entries.push(...collectPartials(child.props.children, depth + 1));
+      if (props.children) {
+        entries.push(...collectPartials(props.children as ReactNode, depth + 1));
       }
-    } else if (child.props.children) {
-      entries.push(...collectPartials(child.props.children, depth));
+    } else if ((child.props as Record<string, unknown>).children) {
+      entries.push(...collectPartials((child.props as Record<string, unknown>).children as ReactNode, depth));
     }
   });
   return entries;
@@ -183,9 +188,8 @@ function stripReservedProps(element: React.ReactElement): React.ReactElement {
  * are preserved, keyed partials are replaced with placeholders.
  * The client fills these placeholders from its cache.
  */
-function buildTemplate(children: ReactNode): ReactNode[] {
+function buildTemplate(children: ReactNode, counter = { v: 0 }): ReactNode[] {
   const result: ReactNode[] = [];
-  let wrapIdx = 0;
   React.Children.forEach(children, (child) => {
     if (!React.isValidElement(child)) {
       result.push(child);
@@ -200,21 +204,20 @@ function buildTemplate(children: ReactNode): ReactNode[] {
           "data-partial": true,
         }),
       );
-    } else if (child.props.children) {
-      // Structural wrapper — preserve layout, assign key to avoid React warning
-      const wrapKey =
-        typeof child.type === "string"
-          ? `_${child.type}`
-          : `_w${wrapIdx++}`;
+    } else if ((child.props as Record<string, unknown>).children) {
+      // Structural wrapper — preserve layout, assign counter key.
+      // Must match transformForStreaming's key scheme for React reconciliation.
+      const wrapKey = `_${counter.v++}`;
       result.push(
         React.cloneElement(
           child,
           { key: wrapKey },
-          ...buildTemplate(child.props.children),
+          ...buildTemplate((child.props as Record<string, unknown>).children as ReactNode, counter),
         ),
       );
     } else {
-      result.push(child);
+      // Keyless leaf — assign counter key matching transformForStreaming
+      result.push(React.cloneElement(child, { key: `_${counter.v++}` }));
     }
   });
   return result;
@@ -229,7 +232,7 @@ function stripNested(
   element: React.ReactElement,
   nestedIds: Set<string>,
 ): React.ReactElement {
-  const { children } = element.props;
+  const children = (element.props as Record<string, unknown>).children as ReactNode;
   if (!children) return element;
 
   let changed = false;
@@ -253,6 +256,72 @@ function stripNested(
   });
 
   return changed ? React.cloneElement(element, {}, ...result) : element;
+}
+
+/**
+ * Transform the children tree for streaming mode (full render).
+ *
+ * Walks the tree in-place, preserving nesting:
+ * - Keyed elements with a `fallback` prop → wrapped in Suspense (streams)
+ * - Keyed elements without `fallback` → rendered directly (sync)
+ * - All keyed elements have reserved props stripped
+ * - Nested partials stay in-place (unlike cache mode which extracts them).
+ *   On full render, the whole tree renders, so extraction isn't needed.
+ * - Keyless wrappers (main, footer) are preserved structurally
+ */
+function transformForStreaming(children: ReactNode, counter = { v: 0 }): ReactNode[] {
+  const result: ReactNode[] = [];
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) {
+      result.push(child);
+      return;
+    }
+    if (child.key != null) {
+      const props = child.props as Record<string, unknown>;
+      const fallback = props.fallback as ReactNode | undefined;
+      let stripped = stripReservedProps(child);
+      // Recurse into children to handle nested keyed elements
+      if ((stripped.props as any).children) {
+        const inner = transformForStreaming((stripped.props as any).children, counter);
+        stripped = React.cloneElement(stripped, {}, ...inner);
+      }
+      const id = String(child.key);
+      if (fallback != null) {
+        result.push(
+          <Suspense
+            key={child.key}
+            fallback={
+              <PartialErrorBoundary partialId={id}>
+                {fallback}
+              </PartialErrorBoundary>
+            }
+          >
+            <PartialErrorBoundary partialId={id}>
+              {stripped}
+            </PartialErrorBoundary>
+          </Suspense>,
+        );
+      } else {
+        result.push(
+          <PartialErrorBoundary key={child.key} partialId={id}>
+            {stripped}
+          </PartialErrorBoundary>,
+        );
+      }
+    } else if ((child.props as any).children) {
+      // Keyless wrapper — recurse, assign counter key matching buildTemplate's scheme
+      // so React preserves the subtree when switching from streaming to cache mode.
+      const wrapKey = `_${counter.v++}`;
+      const inner = transformForStreaming((child.props as any).children, counter);
+      result.push(
+        React.cloneElement(child, { key: wrapKey }, ...inner),
+      );
+    } else {
+      // Keyless leaf — assign counter key matching buildTemplate
+      result.push(React.cloneElement(child, { key: `_${counter.v++}` }));
+    }
+  });
+  return result;
 }
 
 // ─── Partials ──────────────────────────────────────────────────────────
@@ -392,8 +461,27 @@ export async function Partials({ children, namespace }: PartialsProps) {
   // 3. Pass-through (filter targets different namespace): render component-type
   //    partials (which might contain nested Partials) and skip HTML-type partials
   //    whose fingerprint matches (pure markup that can't depend on context).
+  // ── Determine rendering mode ──────────────────────────────────────
+  //
+  // Two modes:
+  // 1. Streaming (full render): render children directly in the server tree
+  //    so Suspense boundaries can stream. PartialsClient in "streaming" mode
+  //    is a thin passthrough that provides refetch context.
+  // 2. Cache (partial refetch): PartialsClient in "cache" mode uses template
+  //    + cache merge. Only requested partials are fresh; rest from cache.
+  //
+  // __populateCache is set by entry.rsc.tsx when a server action has
+  // invalidation but the client's PartialsClient cache is empty (first
+  // action after a streaming render). Forces cache mode with ALL partials
+  // to populate the client cache.
+  const populateCache = requestUrl.searchParams.has("__populateCache");
+  const isPartialRefetch = hasGlobalFilter || populateCache;
+
+  // When populateCache is set, override filters to render all partials.
+  const effectiveRequestedIds = populateCache ? null : requestedIds;
+
   const activeEntries = allPartials.filter((e) => {
-    if (requestedIds && !requestedIds.has(e.id)) return false;
+    if (effectiveRequestedIds && !effectiveRequestedIds.has(e.id)) return false;
     if (resolvedInputs[e.id]) return true; // __inputs override → always render
     if (isPassthrough && cachedFingerprints.has(e.id)) {
       // HTML elements (div, header, nav, head) can't contain nested Partials
@@ -423,21 +511,6 @@ export async function Partials({ children, namespace }: PartialsProps) {
     return nestedIds.has(e.id) ? element : stripNested(element, nestedIds);
   });
 
-  // Structural template: preserves keyless wrappers, partials become placeholders
-  const template = buildTemplate(children);
-
-  // Wrap each active child with an error boundary
-  const wrappedChildren = activeChildren.map((child) => {
-    if (child.key != null) {
-      return (
-        <PartialErrorBoundary key={child.key} partialId={String(child.key)}>
-          {child}
-        </PartialErrorBoundary>
-      );
-    }
-    return child;
-  });
-
   // Debug entries
   const activeIdSet = new Set(freshIds);
   const debug: PartialDebugEntry[] = allPartials.map((entry) => ({
@@ -448,8 +521,45 @@ export async function Partials({ children, namespace }: PartialsProps) {
   }));
 
   const fpObject = Object.fromEntries(fingerprints);
+
+  // ── Streaming mode (full render) ───────────────────────────────────
+  // Render the filled tree directly in the server component tree.
+  // Suspense boundaries wrap partials with fallbacks → they stream.
+  // PartialsClient in "streaming" mode passes children through.
+  if (!isPartialRefetch) {
+    return (
+      <PartialsClient
+        mode="streaming"
+        template={null}
+        namespace={namespace}
+        freshIds={freshIds}
+        fingerprints={fpObject}
+        debug={debug}
+        fetchMs={0}
+      >
+        {transformForStreaming(children)}
+      </PartialsClient>
+    );
+  }
+
+  // ── Cache mode (partial refetch) ───────────────────────────────────
+  // Structural template: preserves keyless wrappers, partials become placeholders.
+  // PartialsClient fills placeholders from its cache + fresh children.
+  const template = buildTemplate(children);
+
+  const wrappedChildren = activeChildren.map((child) => {
+    if (child.key == null) return child;
+    const id = String(child.key);
+    return (
+      <PartialErrorBoundary key={child.key} partialId={id}>
+        {child}
+      </PartialErrorBoundary>
+    );
+  });
+
   return (
     <PartialsClient
+      mode="cache"
       template={template}
       namespace={namespace}
       freshIds={freshIds}

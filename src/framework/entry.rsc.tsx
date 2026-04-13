@@ -77,10 +77,16 @@ async function handleRequest(
   // so the server only renders those partials (minimal GraphQL queries).
   // The client PartialsClient merges fresh partials with its cache.
   //
+  // Only apply filters when the client reports cached partials via ?cached=.
+  // After a streaming render, the client's cache is empty — applying filters
+  // would render only the invalidated partial and lose the rest of the page.
+  // A full render populates the cache; subsequent actions use it.
+  //
   // Supports two formats:
   //   { invalidate: ["cart", "header"] }           — by partial ID
   //   { invalidate: { tags: ["cart"] } }           — by tag (resolved by Partials)
   //   { invalidate: { ids: ["header"], tags: ["cart"] } } — mixed
+  const clientHasCache = renderRequest.url.searchParams.has("cached");
   if (
     returnValue?.ok &&
     returnValue.data &&
@@ -127,6 +133,15 @@ async function handleRequest(
       if (ids?.length) {
         setPartialIds(ids);
       }
+    }
+
+    // If the client has no cache (first action after streaming render),
+    // tell Partials to use cache mode and render ALL partials to populate
+    // the cache. Without this, only the invalidated partials render and
+    // the rest of the page disappears (empty PartialsClient cache).
+    if (!clientHasCache) {
+      renderRequest.url.searchParams.set("__populateCache", "1");
+      needsUpdate = true;
     }
 
     if (needsUpdate) {

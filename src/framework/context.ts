@@ -56,6 +56,13 @@ export function setRequest(request: Request): void {
 
 export function getCookie(name: string): string | undefined {
   const store = getStore();
+  // Check cookies set during this request first (e.g., by a server action
+  // that ran before the re-render). These are in Set-Cookie format.
+  for (let i = store.cookies.length - 1; i >= 0; i--) {
+    const match = store.cookies[i].match(new RegExp(`^${name}=([^;]*)`));
+    if (match) return match[1];
+  }
+  // Fall back to the incoming request Cookie header
   const header = store.request.headers.get("cookie") ?? "";
   const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   return match?.[1];

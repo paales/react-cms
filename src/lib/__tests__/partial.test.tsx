@@ -315,7 +315,7 @@ describe("Partial architecture", () => {
 			return <span>Hello {name}</span>;
 		}
 		const inputs = JSON.stringify({ [p("greeting")]: { name: "world" } });
-		const { result } = await runWithRequestAsync(fakeRequest({ __inputs: inputs }), async () =>
+		const { result } = await runWithRequestAsync(fakeRequest({ partials: p("greeting"), __inputs: inputs }), async () =>
 			renderToJSON(
 				<Partials namespace={NS}>
 					<Greeting key="greeting" name="default" />
@@ -332,7 +332,7 @@ describe("Partial architecture", () => {
 			return <span>{text}</span>;
 		}
 		const inputs = JSON.stringify({ [p("a")]: { text: "overridden" } });
-		const { result } = await runWithRequestAsync(fakeRequest({ __inputs: inputs }), async () =>
+		const { result } = await runWithRequestAsync(fakeRequest({ partials: `${p("a")},${p("b")}`, __inputs: inputs }), async () =>
 			renderToJSON(
 				<Partials namespace={NS}>
 					<Label key="a" text="original-a" />
@@ -914,5 +914,455 @@ describe("Partial architecture", () => {
 		expect(innerFreshIds).toEqual(["cart"]);
 		const str = JSON.stringify(result);
 		expect(str).toContain("cart-badge");
+	});
+});
+
+describe("Streaming mode", () => {
+	it("full render uses streaming mode", async () => {
+		let capturedMode: string | undefined;
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			mode,
+			children,
+		}: any) => {
+			capturedMode = mode;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<Stats key="stats" />
+				</P>,
+			),
+		);
+		expect(capturedMode).toBe("streaming");
+	});
+
+	it("partial refetch uses cache mode", async () => {
+		let capturedMode: string | undefined;
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			mode,
+			children,
+		}: any) => {
+			capturedMode = mode;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest({ partials: p("hero") }), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<Stats key="stats" />
+				</P>,
+			),
+		);
+		expect(capturedMode).toBe("cache");
+	});
+
+	it("partials with fallback prop are wrapped in Suspense in streaming mode", async () => {
+		let capturedChildren: React.ReactNode;
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			mode,
+			children,
+		}: any) => {
+			capturedChildren = children;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function SlowCart() { return <span>cart</span>; }
+		const fallback = <span>loading...</span>;
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<SlowCart key="cart" fallback={fallback} />
+				</P>,
+			),
+		);
+
+		// Walk the children to find a Suspense boundary
+		const children = React.Children.toArray(capturedChildren!);
+		const hasSuspense = children.some(
+			(child) => React.isValidElement(child) && child.type === React.Suspense,
+		);
+		expect(hasSuspense).toBe(true);
+
+		// Hero should NOT be wrapped in Suspense
+		const heroChild = children.find(
+			(child) => React.isValidElement(child) && child.type !== React.Suspense,
+		);
+		expect(heroChild).toBeDefined();
+	});
+
+	it("sync partials are not wrapped in Suspense in streaming mode", async () => {
+		let capturedChildren: React.ReactNode;
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			children,
+		}: any) => {
+			capturedChildren = children;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<Stats key="stats" />
+				</P>,
+			),
+		);
+
+		// Neither partial has a fallback → no Suspense boundaries
+		const children = React.Children.toArray(capturedChildren!);
+		const hasSuspense = children.some(
+			(child) => React.isValidElement(child) && child.type === React.Suspense,
+		);
+		expect(hasSuspense).toBe(false);
+	});
+
+	it("streaming mode passes all fingerprints to PartialsClient", async () => {
+		let capturedFingerprints: Record<string, string> = {};
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			fingerprints,
+			children,
+		}: any) => {
+			capturedFingerprints = fingerprints;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<Stats key="stats" />
+				</P>,
+			),
+		);
+
+		// All partials should have fingerprints even in streaming mode
+		expect(capturedFingerprints).toHaveProperty("hero");
+		expect(capturedFingerprints).toHaveProperty("stats");
+	});
+
+	it("cache mode renders template and wraps children in error boundaries", async () => {
+		let capturedTemplate: React.ReactNode;
+		let capturedChildren: React.ReactNode;
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			template,
+			children,
+		}: any) => {
+			capturedTemplate = template;
+			capturedChildren = children;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		await runWithRequestAsync(fakeRequest({ partials: p("hero") }), async () =>
+			renderToJSON(
+				<P namespace={NS}>
+					<Hero key="hero" />
+					<Stats key="stats" />
+				</P>,
+			),
+		);
+
+		// Cache mode should provide a template
+		expect(capturedTemplate).toBeDefined();
+		// Only the requested partial should be in children
+		const children = React.Children.toArray(capturedChildren!);
+		expect(children.length).toBe(1);
+	});
+
+	it("__populateCache forces cache mode and renders all partials", async () => {
+		// After a streaming render, the client cache is empty. When a server
+		// action has invalidation, entry.rsc.tsx sets __populateCache.
+		// This forces Partials to use cache mode and render ALL partials
+		// (not just the invalidated ones), so PartialsClient can populate.
+		let capturedMode: string | undefined;
+		let capturedFreshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			mode,
+			freshIds,
+			children,
+		}: any) => {
+			capturedMode = mode;
+			capturedFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function CartBadge(_props: { tags?: string[] }) { return <span>cart-badge</span>; }
+		function Products() { return <span>products</span>; }
+
+		// Simulate: __populateCache + tags=cart (first action after streaming)
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ tags: "cart", __populateCache: "1" }),
+			async () =>
+				renderToJSON(
+					<P namespace={NS}>
+						<CartBadge key="cart" tags={["cart"]} />
+						<Products key="products" />
+					</P>,
+				),
+		);
+
+		// Should use cache mode
+		expect(capturedMode).toBe("cache");
+		// __populateCache renders ALL partials, not just tagged ones
+		expect(capturedFreshIds).toContain("cart");
+		expect(capturedFreshIds).toContain("products");
+
+		const str = JSON.stringify(result);
+		expect(str).toContain("cart-badge");
+		expect(str).toContain("products");
+	});
+
+	it("tag invalidation with ?cached= only renders tagged partial", async () => {
+		// After the cache is populated, ?cached= is sent. Only the
+		// tagged partial should render — the rest is served from cache.
+		let capturedFreshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds,
+			children,
+		}: any) => {
+			capturedFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function CartBadge(_props: { tags?: string[] }) { return <span>cart-badge</span>; }
+		function Products() { return <span>products</span>; }
+
+		// Simulate: ?tags=cart WITH ?cached= (subsequent action, cache populated)
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ tags: "cart", cached: `${p("cart")}:abc,${p("products")}:def` }),
+			async () =>
+				renderToJSON(
+					<P namespace={NS}>
+						<CartBadge key="cart" tags={["cart"]} />
+						<Products key="products" />
+					</P>,
+				),
+		);
+
+		// Only the tagged partial should be fresh
+		expect(capturedFreshIds).toEqual(["cart"]);
+		const str = JSON.stringify(result);
+		expect(str).toContain("cart-badge");
+	});
+});
+
+describe("Cart invalidation: header must not re-render", () => {
+	// Mirrors the actual MagentoPage layout:
+	//   <Partials namespace="magento">
+	//     <header key="header">
+	//       Timestamp: {date}
+	//       <CartPartial key="cart" tags={["cart"]} fallback={...} />
+	//     </header>
+	//     <main>
+	//       <ProductGrid key="products" />
+	//     </main>
+	//   </Partials>
+	//
+	// After add-to-cart, { invalidate: { tags: ["cart"] } } should:
+	// - Re-render only the cart partial
+	// - NOT re-render header (the timestamp must not change)
+	// - NOT re-render products
+
+	function CartBadge({ quantity }: { quantity: number | string; tags?: string[]; fallback?: React.ReactNode }) {
+		return <span data-testid="cart-badge">Cart: {quantity}</span>;
+	}
+	function ProductGrid() {
+		return <div data-testid="products">Products here</div>;
+	}
+
+	it("tag=cart with cache: only cart is fresh, header and products are cached", async () => {
+		let capturedFreshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds,
+			children,
+		}: any) => {
+			capturedFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		// Simulate a subsequent cart invalidation (cache is populated)
+		const { result } = await runWithRequestAsync(
+			fakeRequest({
+				tags: "cart",
+				cached: `${p("header")}:h1,${p("cart")}:c1,${p("products")}:p1`,
+			}),
+			async () =>
+				renderToJSON(
+					<P namespace={NS}>
+						<header key="header">
+							Timestamp: 2024-01-01
+							<CartBadge key="cart" quantity={5} tags={["cart"]} fallback={<span>?</span>} />
+						</header>
+						<main>
+							<ProductGrid key="products" />
+						</main>
+					</P>,
+				),
+		);
+
+		// ONLY cart should be fresh — header and products must stay cached
+		expect(capturedFreshIds).toEqual(["cart"]);
+		expect(capturedFreshIds).not.toContain("header");
+		expect(capturedFreshIds).not.toContain("products");
+	});
+
+	it("tag=cart with cache: header content is NOT in the rendered output", async () => {
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			children,
+		}: any) => {
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		const { result } = await runWithRequestAsync(
+			fakeRequest({
+				tags: "cart",
+				cached: `${p("header")}:h1,${p("cart")}:c1,${p("products")}:p1`,
+			}),
+			async () =>
+				renderToJSON(
+					<P namespace={NS}>
+						<header key="header">
+							Timestamp: 2024-01-01
+							<CartBadge key="cart" quantity={5} tags={["cart"]} fallback={<span>?</span>} />
+						</header>
+						<main>
+							<ProductGrid key="products" />
+						</main>
+					</P>,
+				),
+		);
+
+		const str = JSON.stringify(result);
+		// Cart badge should be present (it's being re-rendered)
+		expect(str).toContain("cart-badge");
+		// Header timestamp must NOT be in the fresh output — it's served from cache
+		expect(str).not.toContain("Timestamp:");
+		// Products must NOT be in the fresh output — served from cache
+		expect(str).not.toContain("products");
+	});
+
+	it("nested layout: cart tag invalidation does not re-render outer layout partials", async () => {
+		const freshIdsByNamespace: Record<string, string[]> = {};
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			namespace,
+			freshIds,
+			children,
+		}: any) => {
+			freshIdsByNamespace[namespace] = freshIds;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		function MagentoPage() {
+			return (
+				<P namespace="magento">
+					<header key="header">
+						Timestamp: {Date.now()}
+						<CartBadge key="cart" quantity={3} tags={["cart"]} fallback={<span>?</span>} />
+					</header>
+					<main>
+						<ProductGrid key="products" />
+					</main>
+				</P>
+			);
+		}
+
+		// Simulate: cart invalidation with populated cache for both namespaces
+		await runWithRequestAsync(
+			fakeRequest({
+				tags: "cart",
+				cached: [
+					"layout/head:lh1", "layout/page:lp1",
+					"magento/header:mh1", "magento/cart:mc1", "magento/products:mp1",
+				].join(","),
+			}),
+			async () =>
+				renderToJSON(
+					<P namespace="layout">
+						<head key="head"><title>Test</title></head>
+						<MagentoPage key="page" />
+					</P>,
+				),
+		);
+
+		// Outer layout: "page" must render (it's component-type, contains nested Partials)
+		// but "head" should be skipped (HTML-type with matching fingerprint)
+		expect(freshIdsByNamespace["layout"]).toContain("page");
+
+		// Inner magento: ONLY cart should be fresh
+		expect(freshIdsByNamespace["magento"]).toEqual(["cart"]);
+		expect(freshIdsByNamespace["magento"]).not.toContain("header");
+		expect(freshIdsByNamespace["magento"]).not.toContain("products");
+	});
+
+	it("__populateCache renders all partials (first action), subsequent only renders cart", async () => {
+		let capturedFreshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds,
+			children,
+		}: any) => {
+			capturedFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { Partials: P } = await import("../partial.tsx");
+
+		const makeTree = () => (
+			<P namespace={NS}>
+				<header key="header">
+					Timestamp: {Date.now()}
+					<CartBadge key="cart" quantity={1} tags={["cart"]} fallback={<span>?</span>} />
+				</header>
+				<main>
+					<ProductGrid key="products" />
+				</main>
+			</P>
+		);
+
+		// First action: __populateCache → all partials
+		await runWithRequestAsync(
+			fakeRequest({ tags: "cart", __populateCache: "1" }),
+			async () => renderToJSON(makeTree()),
+		);
+		const firstActionFreshIds = [...capturedFreshIds];
+		expect(firstActionFreshIds).toContain("header");
+		expect(firstActionFreshIds).toContain("cart");
+		expect(firstActionFreshIds).toContain("products");
+
+		// Subsequent action: with cache → only cart
+		await runWithRequestAsync(
+			fakeRequest({
+				tags: "cart",
+				cached: `${p("header")}:h1,${p("cart")}:c1,${p("products")}:p1`,
+			}),
+			async () => renderToJSON(makeTree()),
+		);
+		expect(capturedFreshIds).toEqual(["cart"]);
 	});
 });

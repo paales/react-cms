@@ -48,6 +48,16 @@ export interface PartialDebugEntry {
 }
 
 interface PartialsClientProps {
+  /**
+   * Rendering mode:
+   * - "streaming": passthrough — renders children directly in the tree.
+   *   Used on full page renders so Suspense boundaries stay in the server
+   *   component tree and can stream.
+   * - "cache": template + cache merge — the existing behavior.
+   *   Used on partial re-fetches where only requested partials are fresh
+   *   and the rest are served from the client cache.
+   */
+  mode?: "streaming" | "cache";
   template: ReactNode;
   namespace: string;
   freshIds: string[];
@@ -175,6 +185,7 @@ export function usePartial(partialId: string) {
 }
 
 export function PartialsClient({
+  mode = "cache",
   template,
   namespace,
   fingerprints,
@@ -188,6 +199,85 @@ export function PartialsClient({
 
   // Namespace prefix for cache tokens exposed to the browser entry
   const prefix = `${namespace}/`;
+
+  // Refetch handler: builds a URL with ?partials=id and optional __inputs,
+  // then triggers a fetch through the browser entry's RSC pipeline.
+  //
+  // On the first refetch after a streaming render, the cache is empty.
+  // We detect this and request ALL partial IDs to populate the cache.
+  // Subsequent refetches use the populated cache normally.
+  const refetchPartial: RefetchFn = useCallback(
+    async (partialId, props) => {
+      const url = new URL(window.location.href);
+      if (props) {
+        url.searchParams.set(
+          "__inputs",
+          JSON.stringify({ [partialId]: props }),
+        );
+      }
+
+      if (cacheRef.current.size === 0) {
+        // First refetch after streaming render: cache is empty.
+        // Request ALL partials for this namespace to populate the cache.
+        // getCachedPartialIds() is also empty (streaming mode cleared
+        // _tokensByNamespace), so fetchRscPayload won't add ?cached=.
+        const allIds = [...fpRef.current.keys()].map(
+          (id) => `${prefix}${id}`,
+        );
+        url.searchParams.set("partials", allIds.join(","));
+      } else {
+        // Normal refetch: request only the target partial.
+        // Excludes the target from ?cached= so the server re-renders it.
+        url.searchParams.set("partials", partialId);
+        const cached = getCachedPartialIds().filter(
+          (t) => !t.startsWith(`${partialId}:`),
+        );
+        if (cached.length > 0) {
+          url.searchParams.set("cached", cached.join(","));
+        }
+      }
+
+      const handler = (window as any).__rsc_partial_refetch as
+        | ((url: string) => Promise<void>)
+        | undefined;
+      if (handler) await handler(url.toString());
+    },
+    [prefix],
+  );
+
+  // ── Streaming mode ──────────────────────────────────────────────────
+  // Passthrough: children are rendered directly in the tree so Suspense
+  // boundaries stay in the server component tree and can stream.
+  // We update fingerprints (for the refetch handler) but do NOT register
+  // tokens in _tokensByNamespace — the cache isn't populated yet, so
+  // getCachedPartialIds() returns nothing until the first cache-mode
+  // render populates it via __populateCache.
+  //
+  // NOTE: RSC-serialized children contain lazy references that cannot be
+  // cached and reused in renderTemplate. The __populateCache mechanism
+  // in entry.rsc.tsx handles the transition by rendering ALL partials in
+  // cache mode on the first action after streaming.
+  if (mode === "streaming") {
+    for (const [id, fp] of Object.entries(fingerprints)) {
+      fpRef.current.set(id, fp);
+    }
+
+    // Clear any stale tokens from a previous cache-mode render
+    _tokensByNamespace.delete(namespace);
+
+    return (
+      <PartialRefetchContext value={refetchPartial}>
+        <PartialNamespaceContext value={namespace}>
+          {children}
+          <PartialDebugPanel entries={debug} fetchMs={fetchMs} />
+        </PartialNamespaceContext>
+      </PartialRefetchContext>
+    );
+  }
+
+  // ── Cache mode ──────────────────────────────────────────────────────
+  // Template + cache merge: fresh children update the cache, the template
+  // is filled from cache. Used on partial re-fetches.
 
   // Index fresh partials by key (direct children only — nested partials
   // arrive as their own independent entries, not buried inside parents)
@@ -220,35 +310,6 @@ export function PartialsClient({
       const fp = fpRef.current.get(id);
       return fp ? `${prefix}${id}:${fp}` : `${prefix}${id}`;
     }),
-  );
-
-  // Refetch handler: builds a URL with ?partials=id and optional __inputs,
-  // then triggers a fetch through the browser entry's RSC pipeline.
-  // Excludes the target partial from ?cached= so the server always re-renders it.
-  const refetchPartial: RefetchFn = useCallback(
-    async (partialId, props) => {
-      const url = new URL(window.location.href);
-      url.searchParams.set("partials", partialId);
-      if (props) {
-        url.searchParams.set(
-          "__inputs",
-          JSON.stringify({ [partialId]: props }),
-        );
-      }
-      // Pre-set cached tokens, excluding the partial being refetched.
-      // This prevents fetchRscPayload from including it in ?cached=.
-      const cached = getCachedPartialIds().filter(
-        (t) => !t.startsWith(`${partialId}:`),
-      );
-      if (cached.length > 0) {
-        url.searchParams.set("cached", cached.join(","));
-      }
-      const handler = (window as any).__rsc_partial_refetch as
-        | ((url: string) => Promise<void>)
-        | undefined;
-      if (handler) await handler(url.toString());
-    },
-    [],
   );
 
   // Fill the structural template with cached partials

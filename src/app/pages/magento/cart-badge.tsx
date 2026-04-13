@@ -1,6 +1,6 @@
 "use client";
 
-export function CartBadge({ quantity = 0 }: { quantity?: number }) {
+export function CartBadge({ quantity = 0 }: { quantity?: number | string }) {
   return (
     <div
       style={{

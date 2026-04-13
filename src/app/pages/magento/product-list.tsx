@@ -1,5 +1,5 @@
 import { gql } from "graphql-request";
-import { Partials } from "../../../lib/partial.tsx";
+import { Partials, type PartialProps } from "../../../lib/partial.tsx";
 import { client } from "../../magento-data.ts";
 import { getCookie, getRequest } from "../../../framework/context.ts";
 import { AddToCartButton } from "./add-to-cart-button.tsx";
@@ -13,7 +13,11 @@ export function MagentoPage() {
     <Partials namespace="magento">
       <header key="header">
         {new Date().toLocaleString()}
-        <CartPartial key="cart" tags={["cart"]} />
+        <CartPartial
+          key="cart"
+          tags={["cart"]}
+          fallback={<CartBadge quantity={"?"} />}
+        />
       </header>
       <main>
         <ProductGrid key="products" search={search} />
@@ -23,7 +27,10 @@ export function MagentoPage() {
   );
 }
 
-async function CartPartial(_props: { tags?: string[] }) {
+async function CartPartial(_props: PartialProps) {
+  // Simulate slow cart API
+  await new Promise((r) => setTimeout(r, 2000));
+
   const cartId = getCookie("cart_id");
   if (!cartId) return <CartBadge quantity={0} />;
 
