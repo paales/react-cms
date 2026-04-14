@@ -1,18 +1,18 @@
 /**
  * Bare streaming test: three Suspense boundaries with staggered async
- * children, rendered directly in Root without any Partials infrastructure.
+ * children, rendered through PartialRoot.
  *
  * Goal: isolate whether RSC streaming + client setState can produce a
  * progressive Suspense reveal on AJAX refetch, separate from all the
- * cache/template/wrapper machinery in `<Partials>`.
+ * cache/template/wrapper machinery.
  */
 
 import { BareRefetchButton } from "../components/bare-refetch-button.tsx";
-import { Partials, type PartialProps } from "../../lib/partial.tsx";
+import { PartialRoot, Partial } from "../../lib/partial.tsx";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function BareStage({ id, ms }: PartialProps<{ id: number; ms: number }>) {
+async function BareStage({ id, ms }: { id: number; ms: number }) {
   await delay(ms);
   return (
     <div
@@ -31,42 +31,44 @@ async function BareStage({ id, ms }: PartialProps<{ id: number; ms: number }>) {
 
 export function BarePage() {
   return (
-    <Partials namespace="bare">
+    <PartialRoot>
       <html lang="en">
-        <head key="head">
-          <meta charSet="UTF-8" />
-          <title>Bare Streaming Test</title>
-          <style>{`
-            body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #ededed; padding: 2rem; max-width: 800px; margin: 0 auto; }
-            button { background: #2d3748; color: #ededed; border: 1px solid #4a5568; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; }
-            button:hover { background: #4a5568; }
-          `}</style>
-        </head>
+        <Partial id="head">
+          <head>
+            <meta charSet="UTF-8" />
+            <title>Bare Streaming Test</title>
+            <style>{`
+              body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #ededed; padding: 2rem; max-width: 800px; margin: 0 auto; }
+              button { background: #2d3748; color: #ededed; border: 1px solid #4a5568; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; }
+              button:hover { background: #4a5568; }
+            `}</style>
+          </head>
+        </Partial>
         <body>
           <h1>Bare Streaming Test (now via Partials)</h1>
           <BareRefetchButton />
           <div style={{ marginTop: "1.5rem" }}>
-            <BareStage
-              key="stage-1"
-              id={1}
-              ms={0}
+            <Partial
+              id="stage-1"
               fallback={<div data-testid="stage-1-fallback">Loading stage 1...</div>}
-            />
-            <BareStage
-              key="stage-2"
-              id={2}
-              ms={1000}
+            >
+              <BareStage id={1} ms={0} />
+            </Partial>
+            <Partial
+              id="stage-2"
               fallback={<div data-testid="stage-2-fallback">Loading stage 2...</div>}
-            />
-            <BareStage
-              key="stage-3"
-              id={3}
-              ms={2000}
+            >
+              <BareStage id={2} ms={1000} />
+            </Partial>
+            <Partial
+              id="stage-3"
               fallback={<div data-testid="stage-3-fallback">Loading stage 3...</div>}
-            />
+            >
+              <BareStage id={3} ms={2000} />
+            </Partial>
           </div>
         </body>
       </html>
-    </Partials>
+    </PartialRoot>
   );
 }

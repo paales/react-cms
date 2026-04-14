@@ -115,19 +115,10 @@ async function handleRequest(
   if (directive) {
     const inv = directive;
 
-    // Validate and set partial IDs on the render URL
+    // Set partial IDs on the render URL. IDs are global (no namespace
+    // prefix) and must match a `<Partial id="...">` declared somewhere
+    // in the tree under `<PartialRoot>`.
     const setPartialIds = (ids: string[]) => {
-      if (import.meta.env?.DEV) {
-        for (const id of ids) {
-          if (!id.includes("/")) {
-            throw new Error(
-              `Partial invalidation ID "${id}" has no namespace prefix. ` +
-              `Use the full namespaced ID (e.g., "magento/${id}") or ` +
-              `tag-based invalidation: { invalidate: { tags: ["${id}"] } }`,
-            );
-          }
-        }
-      }
       const existing = renderRequest.url.searchParams.get("partials");
       const merged = existing ? `${existing},${ids.join(",")}` : ids.join(",");
       renderRequest.url.searchParams.set("partials", merged);

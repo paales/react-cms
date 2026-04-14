@@ -1,4 +1,4 @@
-import { Partials, type PartialProps } from "../../../lib/partial.tsx";
+import { Partial } from "../../../lib/partial.tsx";
 import { client } from "../../magento-data.ts";
 import { graphql, type ResultOf } from "../../magento-graphql.ts";
 import { getCookie, getRequest } from "../../../framework/context.ts";
@@ -48,24 +48,30 @@ export function MagentoPage() {
   const search = url.searchParams.get("q") ?? "";
 
   return (
-    <Partials namespace="magento">
-      <header key="header">
-        {new Date().toLocaleString()}
-        <CartPartial
-          key="cart"
-          tags={["cart"]}
-          fallback={<CartBadge quantity={"?"} />}
-        />
-      </header>
+    <>
+      <Partial id="header">
+        <header>
+          {new Date().toLocaleString()}
+          <Partial
+            id="cart"
+            tags={["cart"]}
+            fallback={<CartBadge quantity={"?"} />}
+          >
+            <CartPartial />
+          </Partial>
+        </header>
+      </Partial>
       <main>
-        <ProductGrid key="products" search={search} />
+        <Partial id="products">
+          <ProductGrid search={search} />
+        </Partial>
       </main>
       <footer />
-    </Partials>
+    </>
   );
 }
 
-async function CartPartial(_props: PartialProps) {
+async function CartPartial() {
   // Simulate slow cart API
   await new Promise((r) => setTimeout(r, 100));
 

@@ -66,7 +66,7 @@ const tests = {
 		// Each is a separate partial with its own delay (0ms, 1000ms, 2000ms).
 		// They should arrive as separate lazy refs on the Flight stream.
 		const url =
-			"http://localhost:5173/pokemon_.rsc?search=url&q=char&partials=pokemon/stage-1,pokemon/stage-2,pokemon/stage-3";
+			"http://localhost:5173/pokemon_.rsc?search=url&q=char&partials=stage-1,stage-2,stage-3";
 		const t0 = Date.now();
 		const response = await fetch(url);
 		const fetchMs = Date.now() - t0;

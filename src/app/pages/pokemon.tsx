@@ -1,4 +1,4 @@
-import { Partials, type PartialProps } from "../../lib/partial.tsx";
+import { Partial } from "../../lib/partial.tsx";
 import { PartialControls } from "../components/partial-controls.tsx";
 import {
   SearchToggle,
@@ -138,75 +138,100 @@ export function PokemonPage() {
   const pagePartials =
     pokemonId == null
       ? Array.from({ length: pages }, (_, i) => (
-          <PokemonListPage
-            key={`page-${i + 1}`}
-            offset={i * PAGE_SIZE}
-            isFirst={i === 0}
-          />
+          <Partial key={`page-${i + 1}`} id={`page-${i + 1}`}>
+            <PokemonListPage offset={i * PAGE_SIZE} isFirst={i === 0} />
+          </Partial>
         ))
       : [];
 
   return (
-    <Partials namespace="pokemon">
-      <header key="header">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <span style={{ color: "#888", fontSize: "0.85rem" }}>
-            {new Date().toLocaleString()}
-          </span>
-          <SearchToggle isOpen={searchOpen} />
-        </div>
-        {pokemonId != null && <PartialControls />}
-      </header>
+    <>
+      <Partial id="header">
+        <header>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span style={{ color: "#888", fontSize: "0.85rem" }}>
+              {new Date().toLocaleString()}
+            </span>
+            <SearchToggle isOpen={searchOpen} />
+          </div>
+          {pokemonId != null && <PartialControls />}
+        </header>
+      </Partial>
       {searchOpen && (
         <SearchDialog open>
           <SearchInput query={searchQuery} mode={searchMode!} />
-          <SearchStage1
-            key="stage-1"
-            query={searchQuery}
+          <Partial
+            id="stage-1"
             fallback={
-              <div data-testid="stage-1-fallback" style={{ color: "#666", padding: "0.5rem" }}>
+              <div
+                data-testid="stage-1-fallback"
+                style={{ color: "#666", padding: "0.5rem" }}
+              >
                 Loading stage 1...
               </div>
             }
-          />
+          >
+            <SearchStage1 query={searchQuery} />
+          </Partial>
           {searchQuery && (
-            <SearchStage2
-              key="stage-2"
-              query={searchQuery}
+            <Partial
+              id="stage-2"
               fallback={
-                <div data-testid="stage-2-fallback" style={{ color: "#666", padding: "0.5rem" }}>
+                <div
+                  data-testid="stage-2-fallback"
+                  style={{ color: "#666", padding: "0.5rem" }}
+                >
                   Loading stage 2...
                 </div>
               }
-            />
+            >
+              <SearchStage2 query={searchQuery} />
+            </Partial>
           )}
           {searchQuery && (
-            <SearchStage3
-              key="stage-3"
-              query={searchQuery}
+            <Partial
+              id="stage-3"
               fallback={
-                <div data-testid="stage-3-fallback" style={{ color: "#666", padding: "0.5rem" }}>
+                <div
+                  data-testid="stage-3-fallback"
+                  style={{ color: "#666", padding: "0.5rem" }}
+                >
                   Loading stage 3...
                 </div>
               }
-            />
+            >
+              <SearchStage3 query={searchQuery} />
+            </Partial>
           )}
         </SearchDialog>
       )}
-      {pokemonId != null
-        ? [
-            <HeroPartial key="hero" pokemonId={pokemonId} />,
-            <StatsPartial key="stats" pokemonId={pokemonId} />,
-            <SpeciesPartial key="species" pokemonId={pokemonId} />,
-          ]
-        : [...pagePartials, <LoadMore key="load-more" nextPage={pages + 1} />]}
-    </Partials>
+      {pokemonId != null ? (
+        <>
+          <Partial id="hero">
+            <HeroPartial pokemonId={pokemonId} />
+          </Partial>
+          <Partial id="stats">
+            <StatsPartial pokemonId={pokemonId} />
+          </Partial>
+          <Partial id="species">
+            <SpeciesPartial pokemonId={pokemonId} />
+          </Partial>
+        </>
+      ) : (
+        <>
+          {pagePartials}
+          <Partial id="load-more">
+            <LoadMore nextPage={pages + 1} />
+          </Partial>
+        </>
+      )}
+    </>
   );
 }
 
@@ -307,9 +332,7 @@ function SearchResultGrid({
 }
 
 /** Stage 1: first 6 results, no delay */
-async function SearchStage1({
-  query: searchQuery,
-}: PartialProps<{ query: string }>) {
+async function SearchStage1({ query: searchQuery }: { query: string }) {
   if (!searchQuery) {
     return (
       <p style={{ color: "#666", marginTop: "1rem", fontSize: "0.85rem" }}>
@@ -331,7 +354,7 @@ async function SearchStage1({
 }
 
 /** Stage 2: next 6 results, 1 second delay */
-async function SearchStage2({ query }: PartialProps<{ query: string }>) {
+async function SearchStage2({ query }: { query: string }) {
   await delay(1000);
   const results = await fetchSearchResults(query, 6, 6);
 
@@ -346,7 +369,7 @@ async function SearchStage2({ query }: PartialProps<{ query: string }>) {
 }
 
 /** Stage 3: next 8 results, 2 second delay */
-async function SearchStage3({ query }: PartialProps<{ query: string }>) {
+async function SearchStage3({ query }: { query: string }) {
   await delay(2000);
   const results = await fetchSearchResults(query, 12, 8);
 

@@ -87,6 +87,13 @@ export function LoadMore({ nextPage }: { nextPage: number }) {
 
     const observer = new IntersectionObserver(
       ([entry]) => {
+        // Don't auto-paginate while the search overlay is active. The
+        // sentinel is geometrically behind the <dialog> but still
+        // "intersecting" the viewport — IntersectionObserver checks
+        // geometry, not occlusion. Auto-firing here would race with
+        // the user's keystroke dispatches into the search stages.
+        if (new URL(window.location.href).searchParams.has("search")) return;
+
         if (entry.isIntersecting && !triggered.current) {
           triggered.current = true;
           // Silent URL update for bookmarkability — bypasses the patched
