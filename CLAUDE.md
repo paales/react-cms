@@ -145,6 +145,8 @@ yarn test       # Run all tests (vitest)
 yarn test:watch # Watch mode
 ```
 
+There are also playwright tests, run and validate those as well.
+
 ## Testing
 
 Tests hit real GraphQL APIs (PokeAPI, GraphCommerce Magento). Timeout is 15-30s for integration tests.

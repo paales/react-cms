@@ -118,6 +118,20 @@ function substituteNested(
     });
     return changed ? mapped : node;
   }
+
+  // Flight lazy refs appear as children of cached client-component
+  // boundaries (e.g. `<PartialErrorBoundary>{lazyRef}</PartialErrorBoundary>`
+  // where the server was still streaming when the cache was
+  // populated). By the time a refetch lands they've been resolved —
+  // unwrap so we can descend into the nested tree and find keyed
+  // partials to swap. Pending / errored lazies return null; we treat
+  // them as opaque and leave the original node in place.
+  const unwrapped = unwrapLazy(node);
+  if (unwrapped !== node) {
+    if (unwrapped == null) return node;
+    return substituteNested(unwrapped as ReactNode, cache, skipId);
+  }
+
   if (!isValidElement(node)) return node;
 
   const keyStr = node.key != null ? String(node.key) : null;

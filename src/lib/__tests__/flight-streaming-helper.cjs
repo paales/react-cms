@@ -5,8 +5,17 @@
 global.__webpack_require__ = Object.assign(() => ({}), { u: () => "" });
 global.__webpack_chunk_load__ = () => Promise.resolve();
 
+// Resolve the vendored react-server-dom client through the installed
+// @vitejs/plugin-rsc package — the yarn pnpm-like `.store` directory
+// includes a content hash in the path that changes on every
+// lockfile update, so a hardcoded absolute path goes stale.
+const path = require("node:path");
+const pluginRscDir = path.dirname(require.resolve("@vitejs/plugin-rsc/package.json"));
 const { createFromReadableStream } = require(
-	"/Users/paulhachmang/Sites/react-cms/node_modules/.store/@vitejs-plugin-rsc-virtual-284e8cda68/package/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-client.browser.development.js",
+	path.join(
+		pluginRscDir,
+		"dist/vendor/react-server-dom/cjs/react-server-dom-webpack-client.browser.development.js",
+	),
 );
 
 function timedStream(chunks) {

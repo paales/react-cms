@@ -48,6 +48,11 @@ import {
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
 import { getRequest } from "../framework/context.ts";
 import { djb2 as hashFingerprint } from "./hash.ts";
+import {
+  getRouteSnapshots,
+  lookupPartial,
+  registerPartial,
+} from "./partial-registry.ts";
 
 export { Partial, type PartialProps };
 
@@ -387,16 +392,45 @@ export async function PartialRoot({ children }: PartialRootProps) {
     allPartials.filter((e) => e.depth > 0).map((e) => e.id),
   );
 
-  // Build tag → partial ID mapping for tag-based invalidation
-  const tagIndex = new Map<string, Set<string>>();
+  // Populate the route-scoped registry for statically-discovered partials
+  // so subsequent refetches can resolve their content directly from the
+  // registry (see `lookupPartial` below). Dynamic partials (those the
+  // static walker can't see through opaque function components) are
+  // registered by `Partial` self-wrapping with `<PartialBoundary>` as it
+  // renders.
+  const routePath = requestUrl.pathname;
   for (const entry of allPartials) {
-    for (const tag of entry.tags) {
-      let ids = tagIndex.get(tag);
-      if (!ids) {
-        ids = new Set();
-        tagIndex.set(tag, ids);
-      }
-      ids.add(entry.id);
+    registerPartial(routePath, entry.id, {
+      content: entry.content,
+      fallback: entry.fallback,
+      errorWith: entry.errorWith,
+      tags: entry.tags,
+    });
+  }
+
+  // Build tag → partial ID mapping for tag-based invalidation.
+  // Include both statically-discovered partials (from `collectPartials`)
+  // and dynamically-produced partials captured in the route registry
+  // on a prior full render. Without the registry lookup, `?tags=price`
+  // would never match a `ProductList.map(p => <Partial
+  // id={`price-${p.sku}`} tags={["price"]}>…)` pattern because those
+  // ids are invisible to the static walker.
+  const tagIndex = new Map<string, Set<string>>();
+  const addTag = (tag: string, id: string) => {
+    let ids = tagIndex.get(tag);
+    if (!ids) {
+      ids = new Set();
+      tagIndex.set(tag, ids);
+    }
+    ids.add(id);
+  };
+  for (const entry of allPartials) {
+    for (const tag of entry.tags) addTag(tag, entry.id);
+  }
+  const routeSnapshots = getRouteSnapshots(requestUrl.pathname);
+  if (routeSnapshots) {
+    for (const [id, snap] of routeSnapshots) {
+      for (const tag of snap.tags) addTag(tag, id);
     }
   }
 
@@ -437,13 +471,76 @@ export async function PartialRoot({ children }: PartialRootProps) {
         ])
       : null;
 
-  // Compute fingerprints for all partials (cheap — walks element tree, no rendering)
+  // ── Determine rendering mode ──────────────────────────────────────
+  // Pulled up ahead of fingerprinting so the registry-supplement step
+  // (which depends on `effectiveRequestedIds` and `populateCache`) can
+  // feed its entries into both fingerprints and debug output.
+  const hasGlobalFilter = partialsParam != null || tagsParam != null;
+  const populateCache = requestUrl.searchParams.has("__populateCache");
+  // `effectiveRequestedIds` is set after the registry-miss check below,
+  // because a miss needs to drop the filter to render all partials as
+  // fresh (navigation-like fallback). Declared via `let` so the
+  // miss-case override is expressible.
+  let effectiveRequestedIds = populateCache ? null : requestedIds;
+
+  // Supplement statically-discovered partials with the route-scoped
+  // registry, for ids that `collectPartials` couldn't see (dynamic
+  // Partials produced inside opaque function components, e.g.
+  // `ProductList.map(p => <Partial id={`price-${p.sku}`}>…</Partial>)`).
+  // The registry gets populated by `PartialBoundary` on each full render.
+  //
+  // A requested id that is neither static nor in the registry is a
+  // genuine "this partial doesn't exist on this route anymore" case —
+  // we fall back to a full render (navigation-like) and let the client
+  // reconcile against the fresh tree.
+  const staticIds = new Set(allPartials.map((e) => e.id));
+  const route = requestUrl.pathname;
+  const registrySupplement: PartialEntry[] = [];
+  let registryMiss = false;
+  if (effectiveRequestedIds && !populateCache) {
+    for (const id of effectiveRequestedIds) {
+      if (staticIds.has(id)) continue;
+      const snap = lookupPartial(route, id);
+      if (snap) {
+        registrySupplement.push({
+          id,
+          content: snap.content,
+          depth: 0,
+          tags: [],
+          cacheTtl: 0,
+          fallback: snap.fallback,
+          errorWith: snap.errorWith,
+        });
+      } else {
+        registryMiss = true;
+        break;
+      }
+    }
+  }
+
+  // Registry miss: drop the filter so the subsequent streaming mode
+  // renders everything fresh. Same shape as `__populateCache`.
+  if (registryMiss) {
+    effectiveRequestedIds = null;
+  }
+
+  // Compute fingerprints for all partials (cheap — walks element tree, no rendering).
+  // Registry supplements are included so the client can detect shape
+  // changes on dynamic partials the same way as static ones.
   const fingerprints = new Map<string, string>();
   for (const entry of allPartials) {
     fingerprints.set(
       entry.id,
       hashFingerprint(fingerprintElement(entry.content)),
     );
+  }
+  for (const entry of registrySupplement) {
+    if (!fingerprints.has(entry.id)) {
+      fingerprints.set(
+        entry.id,
+        hashFingerprint(fingerprintElement(entry.content)),
+      );
+    }
   }
 
   // Parse cached entries: "id:fingerprint,id:fingerprint" or legacy "id,id"
@@ -464,7 +561,7 @@ export async function PartialRoot({ children }: PartialRootProps) {
     }
   }
 
-  // ── Determine rendering mode ──────────────────────────────────────
+  // ── Rendering modes ───────────────────────────────────────────────
   //
   // Two modes:
   // 1. Streaming (full render): render children directly in the server tree
@@ -476,8 +573,6 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // invalidation but the client's PartialsClient cache is empty (first
   // action after a streaming render). Forces streaming mode with ALL partials
   // to populate the client cache.
-  const hasGlobalFilter = partialsParam != null || tagsParam != null;
-  const populateCache = requestUrl.searchParams.has("__populateCache");
   const isPartialRefetch = hasGlobalFilter || populateCache;
 
   // ── Suspense key-stamping: what the `fallback` prop on <Partial> is really for ──
@@ -521,14 +616,14 @@ export async function PartialRoot({ children }: PartialRootProps) {
     ? ""
     : `${requestUrl.searchParams.get("n") ?? ""}-${Date.now()}`;
 
-  // When populateCache is set, override filters to render all partials.
-  const effectiveRequestedIds = populateCache ? null : requestedIds;
-
-  const activeEntries = allPartials.filter((e) => {
-    if (effectiveRequestedIds && !effectiveRequestedIds.has(e.id)) return false;
-    if (partialInputs[e.id]) return true; // __inputs override → always render
-    return true;
-  });
+  const activeEntries = [
+    ...allPartials.filter((e) => {
+      if (effectiveRequestedIds && !effectiveRequestedIds.has(e.id)) return false;
+      if (partialInputs[e.id]) return true; // __inputs override → always render
+      return true;
+    }),
+    ...registrySupplement,
+  ];
 
   const freshIds = activeEntries.map((e) => e.id);
 
@@ -553,12 +648,17 @@ export async function PartialRoot({ children }: PartialRootProps) {
     };
   });
 
-  // Debug entries
+  // Debug entries — include registry-supplement ids so the dev panel
+  // shows dynamic partials that aren't in the static tree.
   const activeIdSet = new Set(freshIds);
-  const debug: PartialDebugEntry[] = allPartials.map((entry) => ({
-    id: entry.id,
-    status: activeIdSet.has(entry.id) ? "fresh" : "cached",
-    fingerprint: fingerprints.get(entry.id) ?? "",
+  const debugIds = [
+    ...allPartials.map((e) => e.id),
+    ...registrySupplement.map((e) => e.id),
+  ];
+  const debug: PartialDebugEntry[] = debugIds.map((id) => ({
+    id,
+    status: activeIdSet.has(id) ? "fresh" : "cached",
+    fingerprint: fingerprints.get(id) ?? "",
     query: null,
   }));
 
@@ -572,7 +672,11 @@ export async function PartialRoot({ children }: PartialRootProps) {
   const template = buildTemplate(children);
 
   // ── Streaming mode (full render) ──────────────────────────────────
-  if (!isPartialRefetch || populateCache) {
+  // `registryMiss` means a requested partial id exists neither in the
+  // static tree nor the registry (e.g. a previously-present dynamic
+  // Partial that's been conditionally removed). Fall back to a full
+  // render so the client reconciles against a fresh tree.
+  if (!isPartialRefetch || populateCache || registryMiss) {
     return (
       <PartialsClient
         mode="streaming"

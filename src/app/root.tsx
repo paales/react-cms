@@ -5,6 +5,7 @@ import { CacheDemoPage } from "./pages/cache-demo.tsx";
 import { PartialRoot, Partial } from "../lib/partial.tsx";
 import { getRequest } from "../framework/context.ts";
 import { matchPath, pickRoute } from "../framework/router.ts";
+import { DebugToolbar } from "./components/debug-toolbar.tsx";
 
 export function Root() {
   const url = new URL(getRequest().url);
@@ -68,6 +69,7 @@ export function Root() {
             ["/magento/*", () => MagentoPage()],
             ["/*", () => PokemonPage()],
           ])}
+          {import.meta.env.DEV && <DebugToolbar />}
         </body>
       </html>
     </PartialRoot>

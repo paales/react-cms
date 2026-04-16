@@ -135,6 +135,12 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
     if (!event.canIntercept) return;
     if (event.hashChange || event.downloadRequest !== null) return;
     if (event.formMethod === "POST") return;
+    // `window.location.reload()` fires a navigate event with
+    // `navigationType: "reload"` that the browser *can* intercept as
+    // same-document. Intercepting defeats the whole point of a reload
+    // (it re-runs against the existing module state). Pass it through
+    // so the browser does a real cross-document reload.
+    if (event.navigationType === "reload") return;
     // Silent URL updates (LoadMore's ?pages=, SearchInput's ?q= in URL
     // mode) flip a short-lived flag via `silentReplace()`. When set, we
     // skip the intercept so the URL updates for bookmarkability but no

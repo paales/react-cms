@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, request } from "@playwright/test";
 
 /**
  * E2E test: first-keystroke behavior after opening search.
@@ -20,6 +20,17 @@ import { test, expect } from "@playwright/test";
  *   3. Type "o" — same sequence.
  *   4. `<header>` stays mounted throughout (no blank body flash).
  */
+
+// Stage 2/3 are wrapped in `<Cache>` with no TTL, so once a prior test
+// (or prior run in the same dev server) has cached `{searchQuery: "p"}`
+// or `{searchQuery: "po"}`, subsequent renders resolve instantly and
+// the Suspense fallback never has a chance to flash. Clear the caches
+// before each test so every run observes a cold-path stream.
+test.beforeEach(async ({ baseURL }) => {
+  const ctx = await request.newContext();
+  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`);
+  await ctx.dispose();
+});
 
 type StateEntry = {
   t: number;

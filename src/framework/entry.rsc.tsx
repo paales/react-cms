@@ -20,6 +20,27 @@ export type RscPayload = {
 export default { fetch: handler };
 
 async function handler(request: Request): Promise<Response> {
+  // Dev-only cache-clear endpoint used by e2e tests that depend on a
+  // cold server-side `<Cache>` (e.g. tests asserting that Suspense
+  // fallbacks flash during an initial stage-2/3 fetch). Also clears
+  // the partial-data cache and the route-scoped partial registry so
+  // each run starts from a deterministic state.
+  if (import.meta.env?.DEV) {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/__test/clear-caches") {
+      const [{ _clearCache }, { clearCache }, { clearRegistry }] =
+        await Promise.all([
+          import("../lib/cache.tsx"),
+          import("../lib/partial-cache.ts"),
+          import("../lib/partial-registry.ts"),
+        ]);
+      _clearCache();
+      clearCache();
+      clearRegistry();
+      return new Response("ok", { status: 200 });
+    }
+  }
+
   const renderRequest = parseRenderRequest(request);
 
   const { result: response, cookies } = await runWithRequestAsync(

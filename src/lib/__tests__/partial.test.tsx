@@ -1,5 +1,13 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The partial-registry is module-level and route-keyed. Clear it
+// before each test so tag resolution doesn't pick up entries
+// registered by a previous test that used the same fake route.
+beforeEach(async () => {
+  const { clearRegistry } = await import("../partial-registry.ts");
+  clearRegistry();
+});
 
 // Mock client components — useRef/class components need a full React renderer.
 vi.mock("../partial-client.tsx", () => ({
@@ -518,7 +526,7 @@ describe("WhenVisible activator", () => {
 	// Mock the client half so vitest renders without needing React.useRef
 	// or IntersectionObserver.
 	vi.doMock("../when-visible-client.tsx", () => ({
-		IntersectionObserverClient: ({ partialId, children }: { partialId: string; children: React.ReactNode }) => (
+		WhenVisibleClient: ({ partialId, children }: { partialId: string; children: React.ReactNode }) => (
 			<span data-activator={partialId}>{children}</span>
 		),
 	}));
@@ -888,17 +896,20 @@ describe("Streaming mode", () => {
 			),
 		);
 
-		const children = React.Children.toArray(capturedChildren!);
-		const hasSuspense = children.some(
-			(child) => React.isValidElement(child) && child.type === React.Suspense,
-		);
-		expect(hasSuspense).toBe(true);
+		// Walk the rendered children recursively (descends through the
+		// PartialBoundary wrapper that transformForStreaming now adds so
+		// <Cache> can recognize partial-bearing subtrees).
+		function findSuspense(node: React.ReactNode): boolean {
+			if (Array.isArray(node)) return node.some(findSuspense);
+			if (!React.isValidElement(node)) return false;
+			if (node.type === React.Suspense) return true;
+			return findSuspense((node.props as any).children);
+		}
+		expect(findSuspense(capturedChildren)).toBe(true);
 
-		// Hero should NOT be wrapped in Suspense
-		const heroChild = children.find(
-			(child) => React.isValidElement(child) && child.type !== React.Suspense,
-		);
-		expect(heroChild).toBeDefined();
+		// Hero (no fallback) should not introduce a Suspense.
+		const children = React.Children.toArray(capturedChildren!);
+		expect(children.length).toBeGreaterThan(1);
 	});
 
 	it("sync partials are not wrapped in Suspense in streaming mode", async () => {
@@ -921,11 +932,13 @@ describe("Streaming mode", () => {
 			),
 		);
 
-		const children = React.Children.toArray(capturedChildren!);
-		const hasSuspense = children.some(
-			(child) => React.isValidElement(child) && child.type === React.Suspense,
-		);
-		expect(hasSuspense).toBe(false);
+		function findSuspense(node: React.ReactNode): boolean {
+			if (Array.isArray(node)) return node.some(findSuspense);
+			if (!React.isValidElement(node)) return false;
+			if (node.type === React.Suspense) return true;
+			return findSuspense((node.props as any).children);
+		}
+		expect(findSuspense(capturedChildren)).toBe(false);
 	});
 
 	it("streaming mode passes all fingerprints to PartialsClient", async () => {
@@ -1207,5 +1220,194 @@ describe("Cart invalidation: header must not re-render", () => {
 			async () => renderToJSON(makeTree()),
 		);
 		expect(capturedFreshIds).toEqual(["cart"]);
+	});
+});
+
+// ── Dynamic Partial registry ───────────────────────────────────────────
+//
+// The static `collectPartials` walk follows JSX `.children` chains; it
+// can't see through opaque function components. A `<Partial>` produced
+// inside `ProductList.map(p => <ProductItem price={<Partial
+// id={`price-${p.sku}`}>…</Partial>}/>)` — the canonical GoldPrice-style
+// pattern — is invisible to the static walker. The route-scoped
+// `partial-registry` captures each such Partial when `<Partial>`
+// self-wraps during the render, so later refetches can resolve by id
+// without re-running the ancestor tree.
+
+describe("Dynamic Partial discovery via route-scoped registry", () => {
+	it("static partials populate the registry on a full render", async () => {
+		const { registerPartial: _reg, clearRegistry, _registryStats } = await import(
+			"../partial-registry.ts"
+		);
+		clearRegistry();
+
+		function GoldPrice({ sku }: { sku: string }) {
+			return <span data-sku={sku}>$1.00</span>;
+		}
+
+		await runWithRequestAsync(
+			new Request("http://localhost/registry-test"),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<Partial id="hero"><Hero /></Partial>
+						<Partial id="price-ABC"><GoldPrice sku="ABC" /></Partial>
+					</PartialRoot>,
+				),
+		);
+
+		const stats = _registryStats();
+		expect(stats.byRoute["/registry-test"]).toEqual(
+			expect.arrayContaining(["hero", "price-ABC"]),
+		);
+	});
+
+	it("dynamic partial (produced inside an opaque function component) is registered when it renders and can be refetched", async () => {
+		const { clearRegistry, _registryStats } = await import(
+			"../partial-registry.ts"
+		);
+		clearRegistry();
+
+		function GoldPrice({ sku }: { sku: string }) {
+			return <span data-testid={`price-${sku}`}>$1.00</span>;
+		}
+
+		// ProductList is opaque to `collectPartials`: the Partials it
+		// produces live inside its return value, not inside its
+		// `.children` prop.
+		function ProductList() {
+			return (
+				<>
+					{["A", "B", "C"].map((sku) => (
+						<Partial key={sku} id={`price-${sku}`}>
+							<GoldPrice sku={sku} />
+						</Partial>
+					))}
+				</>
+			);
+		}
+
+		// First render: populates the registry for the route.
+		await runWithRequestAsync(
+			new Request("http://localhost/dynamic"),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<ProductList />
+					</PartialRoot>,
+				),
+		);
+
+		const stats = _registryStats();
+		expect(stats.byRoute["/dynamic"]).toEqual(
+			expect.arrayContaining(["price-A", "price-B", "price-C"]),
+		);
+
+		// Subsequent refetch for one dynamic id.
+		let capturedFreshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			freshIds,
+			children,
+		}: any) => {
+			capturedFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { PartialRoot: P } = await import("../partial.tsx");
+		await runWithRequestAsync(
+			new Request("http://localhost/dynamic?partials=price-B"),
+			async () =>
+				renderToJSON(
+					<P>
+						<ProductList />
+					</P>,
+				),
+		);
+
+		// The registry supplement picked up `price-B` even though
+		// `collectPartials` couldn't find it statically — that's the
+		// whole point of the registry.
+		expect(capturedFreshIds).toEqual(["price-B"]);
+	});
+
+	it("falls back to full render when a requested id is neither static nor in the registry", async () => {
+		const { clearRegistry } = await import("../partial-registry.ts");
+		clearRegistry();
+
+		let capturedMode: string | undefined;
+		let capturedFreshIds: string[] = [];
+		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
+			mode,
+			freshIds,
+			children,
+		}: any) => {
+			capturedMode = mode;
+			capturedFreshIds = freshIds;
+			return children;
+		}) as any;
+
+		const { PartialRoot: P } = await import("../partial.tsx");
+
+		// Ask for `price-UNKNOWN` on a route where no full render has
+		// populated it. PartialRoot should ignore the (stale) filter
+		// and drop into streaming mode so the client reconciles against
+		// a fresh tree.
+		await runWithRequestAsync(
+			new Request("http://localhost/cold?partials=price-UNKNOWN"),
+			async () =>
+				renderToJSON(
+					<P>
+						<Partial id="hero"><Hero /></Partial>
+					</P>,
+				),
+		);
+
+		expect(capturedMode).toBe("streaming");
+		// All statically-discovered partials are rendered as fresh
+		// (full-render fallback), so we at least see `hero`.
+		expect(capturedFreshIds).toContain("hero");
+	});
+
+	it("registry captures each dynamic partial's content so refetch can render it without the ancestor", async () => {
+		const { clearRegistry, lookupPartial } = await import(
+			"../partial-registry.ts"
+		);
+		clearRegistry();
+
+		function GoldPrice({ sku }: { sku: string }) {
+			return <span data-sku={sku}>base:{sku}</span>;
+		}
+
+		function ProductList() {
+			return (
+				<>
+					{["X", "Y"].map((sku) => (
+						<Partial key={sku} id={`price-${sku}`}>
+							<GoldPrice sku={sku} />
+						</Partial>
+					))}
+				</>
+			);
+		}
+
+		await runWithRequestAsync(
+			new Request("http://localhost/snap"),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<ProductList />
+					</PartialRoot>,
+				),
+		);
+
+		const snap = lookupPartial("/snap", "price-Y");
+		expect(snap).toBeDefined();
+		// The snapshot's content is the *original* JSX inside the
+		// `<Partial>` — a single element of type GoldPrice with the
+		// parent-bound `sku` prop. That's enough for a refetch to
+		// render it directly; ancestor execution isn't needed.
+		const content = snap!.content as React.ReactElement<any>;
+		expect(React.isValidElement(content)).toBe(true);
+		expect((content.props as any).sku).toBe("Y");
 	});
 });

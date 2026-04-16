@@ -1,9 +1,12 @@
 import { Partial } from "../../../lib/partial.tsx";
+import { Cache } from "../../../lib/cache.tsx";
 import { client } from "../../magento-data.ts";
 import { graphql, type ResultOf } from "../../magento-graphql.ts";
 import { getCookie, getRequest } from "../../../framework/context.ts";
 import { AddToCartButton } from "./add-to-cart-button.tsx";
 import { CartBadge } from "./cart-badge.tsx";
+import { LivePrice, LivePriceFallback } from "./live-price.tsx";
+import { RefreshAllPricesButton } from "./refresh-all-prices-button.tsx";
 
 const CartQuery = graphql(`
   query Cart($cartId: String!) {
@@ -62,8 +65,11 @@ export function MagentoPage() {
         </header>
       </Partial>
       <main>
+        <RefreshAllPricesButton />
         <Partial id="products">
-          <ProductGrid search={search} />
+          <Cache id="products" dep={{ search }}>
+            <ProductGrid search={search} />
+          </Cache>
         </Partial>
       </main>
       <footer />
@@ -119,8 +125,10 @@ function ProductCard({ product }: { product: ProductItem }) {
   const { name, sku, id } = product;
   const imageUrl = product.small_image?.url;
   const imageLabel = product.small_image?.label;
-  const price = product.price_range.minimum_price.regular_price.value;
-  const currency = product.price_range.minimum_price.regular_price.currency;
+  const rawPrice = product.price_range.minimum_price.regular_price.value;
+  const currency =
+    product.price_range.minimum_price.regular_price.currency ?? "USD";
+  const price = typeof rawPrice === "number" ? rawPrice : 0;
 
   return (
     <div className="card">
@@ -138,9 +146,29 @@ function ProductCard({ product }: { product: ProductItem }) {
       <div className="meta">
         <code>{sku}</code>
       </div>
-      <div style={{ marginTop: "0.5rem", color: "#48bb78", fontWeight: 600 }}>
-        {currency} {typeof price === "number" ? price.toFixed(2) : price}
-      </div>
+      {sku && (
+        // Dynamic Partial: id is built from the product sku, produced
+        // inside the `.map()` in `ProductGrid` — invisible to the static
+        // `collectPartials` walk. The route-scoped registry captures
+        // each instance on first render so refreshing one live price
+        // doesn't require re-running the product list query. The
+        // `price` tag lets `RefreshAllPricesButton` pull every price
+        // partial in a single tag-based refetch. `fallback` shows the
+        // base price in gray while the refreshed LivePrice is resolving.
+        <Partial
+          id={`price-${sku}`}
+          tags={["price"]}
+          fallback={
+            <LivePriceFallback
+              sku={sku}
+              basePrice={price}
+              currency={currency}
+            />
+          }
+        >
+          <LivePrice sku={sku} basePrice={price} currency={currency} />
+        </Partial>
+      )}
       <div style={{ marginTop: "0.75rem" }}>
         {sku && <AddToCartButton sku={sku} />}
       </div>
