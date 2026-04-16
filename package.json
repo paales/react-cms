@@ -1,36 +1,36 @@
 {
-	"name": "react-cms",
-	"packageManager": "yarn@4.12.0",
-	"private": true,
-	"type": "module",
-	"scripts": {
-		"dev": "vite",
-		"build": "vite build",
-		"preview": "vite preview",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"gql:generate": "gql.tada generate-output"
-	},
-	"dependencies": {
-		"@types/node": "^25.6.0",
-		"graphql": "^16.13.2",
-		"graphql-config": "^5.1.6",
-		"graphql-request": "^7.4.0",
-		"react": "19.3.0-canary-00f063c3-20260415",
-		"react-dom": "19.3.0-canary-00f063c3-20260415"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "2.4.4",
-		"@playwright/test": "^1.59.1",
-		"@types/react": "^19.2.14",
-		"@types/react-dom": "^19.2.3",
-		"@vitejs/plugin-react": "latest",
-		"@vitejs/plugin-rsc": "^0.5.24",
-		"gql.tada": "^1.9.2",
-		"jsdom": "^29.0.2",
-		"rsc-html-stream": "^0.0.7",
-		"typescript": "^5.8.3",
-		"vite": "^8.0.3",
-		"vitest": "^3.1.4"
-	}
+  "name": "react-cms",
+  "packageManager": "yarn@4.12.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gql:generate": "gql.tada generate-output"
+  },
+  "dependencies": {
+    "@types/node": "^25.6.0",
+    "graphql": "^16.13.2",
+    "graphql-config": "^5.1.6",
+    "graphql-request": "^7.4.0",
+    "react": "19.3.0-canary-00f063c3-20260415",
+    "react-dom": "19.3.0-canary-00f063c3-20260415"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.4",
+    "@playwright/test": "^1.59.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "^0.5.24",
+    "gql.tada": "^1.9.2",
+    "jsdom": "^29.0.2",
+    "rsc-html-stream": "^0.0.7",
+    "typescript": "^5.8.3",
+    "vite": "^8.0.3",
+    "vitest": "^3.1.4"
+  }
 }

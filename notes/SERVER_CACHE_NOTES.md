@@ -195,3 +195,75 @@ normally. The manifest is shared across all renders in one process.
    started flushing partial chunks as inner work completed, we'd be
    capturing those progressively. Worth looking at the actual
    behavior to confirm.
+
+---
+
+## Follow-up (2026-04-16) · `<Cache>` + `<Partial>` composition
+
+### The problem
+
+Wrapping a `<Partial>` inside a `<Cache>` naïvely freezes the
+partial's content inside the cached Flight bytes — subsequent
+refetches of the partial served the stale bytes until the Cache
+entry expired. The whole point of a `<Partial>` (live, refreshable
+slice) conflicts with the whole point of `<Cache>` (stable
+snapshot).
+
+### The fix: strip-on-store + reinject-on-return
+
+Before serializing children to bytes, walk the tree and replace
+every partial-bearing subtree with a placeholder (`<i hidden
+data-partial key={id}/>` — same shape `buildTemplate` uses). Store
+*that* template. On output, walk the decoded tree and swap
+placeholders back to the **live** partial elements from the current
+render.
+
+Recognition rules for a partial-bearing subtree (in
+`stripPartials`):
+1. Element is a `<PartialBoundary>` (the self-wrap path for dynamic
+   partials — see `DYNAMIC_PARTIAL_REGISTRY.md`).
+2. Element is an existing `<i data-partial>` placeholder (cache-mode
+   refetch templates already have these).
+3. Element has a `key` matching a known partial id in the
+   route-scoped registry (the streaming-mode Suspense/EB chain
+   produced by `transformForStreaming`).
+
+The cache key folds in the **sorted list of partial ids** inside
+the subtree (`hashDep([dep, ids])`). Adding or removing a partial
+inside a cached region invalidates the entry automatically.
+
+### The lazy-ref snag (must-read)
+
+On a cache hit, `createFromReadableStream(bytesToStream(bytes))`
+returns the root before the nested chunks are fully parsed. Those
+unresolved lazy refs leaked into the outer Flight stream and
+silently truncated downstream walkers on SSR, producing
+**empty-body HTML** on the second `/magento` GET. Fix: after
+decode, `await resolveLazies(decoded)` walks every chunk-lazy to
+completion before returning from `<Cache>`. Both cold-miss and
+warm-hit paths now hand back an equivalent, fully-materialized
+tree. See `STREAMING_DEBUG_NOTES.md · 2026-04-16 · Lazy-ref
+truncation` for the full trace.
+
+The client-side `substituteNested` had the same blind spot for
+dynamic partials nested inside a cached static-partial subtree.
+Same `unwrapLazy` treatment applied there.
+
+### Dynamic partials survive through `<Cache>`
+
+Cache's strip only finds what's reachable through the static
+`children` chain. A Partial produced inside an opaque function
+component (e.g. `ProductList.map(p => <Partial id={"price-" +
+p.sku}/>)`) isn't visible at strip time. **That's fine**: the
+dynamic partial renders once, gets baked into the cached bytes,
+and the client's `substituteNested` — walking the cached `products`
+subtree on refetch — finds the keyed `<Suspense>` there and swaps
+in the fresh content from the partial cache. No extra server work.
+
+### API addition: `bypass={true}`
+
+Skips the cache for a single render. Useful during development
+when you want to observe the component's fresh output without
+nuking the whole cache. Present in the type signature; cache-demo
+doesn't exercise it directly but `MagentoPage` uses it during
+iteration.

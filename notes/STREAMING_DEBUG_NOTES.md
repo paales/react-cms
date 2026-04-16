@@ -445,3 +445,140 @@ Unverified root-cause candidates to investigate next session:
 - `yarn playwright test` — 9/9 pass locally.
 - `yarn vitest run` — 160/160 unit tests pass. (8 test-file collection errors are a pre-existing vitest-picking-up-e2e-specs config issue, unrelated.)
 - User reports real-world behavior is unchanged / broken. Tests are not catching the failure mode.
+
+---
+
+## 2026-04-16 · Lazy-ref truncation in `cacheFromStreamingChildren`
+
+### Symptom
+On the *second* GET of `/magento` (server-side `<Cache>` around
+`<ProductGrid>` hit), the rendered HTML body was effectively empty — no
+`<nav>`, no `<header>`, no product cards — even though
+`PartialRoot`'s debug panel reported every partial as "fresh".
+First render (cache miss) worked fine.
+
+### Repro
+Regression test in `e2e/magento-cache-hit-renders-body.spec.ts`. Curls
+`/magento` twice over raw HTTP (no JS) and asserts `<nav>`, `<header>`,
+`class="grid"`, and many `live-price-*` testids exist in *both*
+responses. Previously failed on the second response.
+
+### Root cause
+1. `<Cache>` on a hit decodes stored Flight bytes via
+   `createFromReadableStream(bytesToStream(existing.bytes))`. React's
+   Flight decoder returns the **root** once chunk 0 arrives, but
+   nested chunks surface as **lazy refs** (`$$typeof ===
+   Symbol(react.lazy)`) whose `_payload._status` is still `0`
+   (pending) when the awaited promise resolves. With cache-miss the
+   bytes are produced inline and all chunks parse synchronously
+   before `await` returns; with cache-hit (bytes come from storage,
+   read through a synthetic `ReadableStream`) the chunks resolve one
+   microtask later.
+2. The outer render serializes Cache's returned tree back into the
+   outer Flight stream. Unresolved lazy refs get **re-emitted as
+   lazy chunks in the outer stream**.
+3. On SSR, `PartialsClient` runs `cacheFromStreamingChildren` over
+   that outer stream. When the walker hits one of those outer lazy
+   refs, `unwrapLazy` calls `_init(payload)`, which throws the
+   pending thenable. The try/catch in `unwrapLazy` silently returns
+   `null`, and `cacheFromStreamingChildren` short-circuits —
+   **truncating the walk** at that position. Every keyed partial
+   past the first unresolved lazy is lost from `_cache`.
+4. `renderTemplate` then fills the static template from the now-
+   partial `_cache`. Partials without cache entries are dropped
+   entirely (`if (cached) result.push(...); return;` — no fallback
+   push). Result: empty body.
+
+### Debug that found it
+Instrumented `cacheFromStreamingChildren` to log each visited node
+plus each `unwrapLazy` result. Trace on a cache-hit run showed:
+```
+[cacheFromStreamingChildren] visit <html key=_0/>
+[cacheFromStreamingChildren] visit <PartialErrorBoundary key=head/>
+[cacheFromStreamingChildren] visit <head key=_1/>
+[cacheFromStreamingChildren] visit <meta …/> <title …/> <style …/>
+[cacheFromStreamingChildren] unwrapped lazy to: null
+# walk ends — nav / header / cart / products never visited
+```
+That single `null` kills the whole traversal.
+
+### Fix
+In `src/lib/cache.tsx`: after `createFromReadableStream`, fully
+resolve every chunk-lazy in the decoded tree before returning.
+
+```ts
+async function awaitLazy(node) {
+  // if payload._status === 1, return payload._result
+  // else call _init(payload); on throw of a thenable, await and retry
+}
+
+async function resolveLazies(node) {
+  // recursively walk; await every chunk lazy to completion; clone
+  // elements when children change. Only unwraps `$$typeof ===
+  // Symbol(react.lazy)` (chunk lazies). Client components are
+  // serialized as normal elements whose `type` is a module ref —
+  // those must stay as references, so we leave them alone.
+}
+
+// Cache hit / SWR hit / miss — all three paths now do:
+const decoded = await createFromReadableStream(bytesToStream(bytes));
+const resolved = await resolveLazies(decoded);
+return reinject(resolved, partials);
+```
+
+Both cold and warm paths now hand back an equivalent, fully-
+materialized tree. The outer Flight stream no longer has
+unresolved chunks to re-emit, so `unwrapLazy` never hits the
+pending-thenable branch and the walker doesn't truncate.
+
+### Related fix — `substituteNested`
+The client's `substituteNested` (used during refetch to swap
+dynamic partials into cached static-partial subtrees) had the same
+blind spot: it returned the original node when it encountered a
+Flight lazy ref, so the price-X `<Suspense>` nested inside a
+cached `<PartialErrorBoundary key="products">` was never found.
+Applied the same `unwrapLazy` treatment at the top of the walk.
+Without this, individual price refetches arrived server-side fine
+but the client DOM never updated.
+
+### Takeaway
+Any userland walker that traverses React trees originating from a
+Flight decode needs to handle lazy refs explicitly. Two
+pitfalls watch for:
+1. `unwrapLazy`-returning-`null`-loses-the-subtree. If a walker's
+   behavior on null differs from its behavior on the original node
+   (common: `null` is a no-op return, non-null recurses), a stale
+   lazy silently erases everything downstream. Prefer recursing
+   into the original node over returning `null`.
+2. A `<Cache>`-style component that crosses the Flight boundary
+   mid-render owes the outer render a fully-resolved tree, not a
+   lazy-skeleton. Otherwise the pending chunks get re-emitted and
+   every downstream walker has to defensively handle them.
+
+### Test coverage added
+- `e2e/magento-cache-hit-renders-body.spec.ts` — raw-HTTP regression
+  for the empty-body bug.
+- `e2e/dynamic-partial-price.spec.ts` — DOM-patch assertion on
+  individual price refresh (failed until the `substituteNested`
+  unwrap was added).
+
+---
+
+## 2026-04-16 · Navigation API intercepts `window.location.reload()`
+
+Debug toolbar: flush-cache then reload. `window.location.reload()`
+appeared not to reload. Root cause: our framework's
+`listenNavigation` handler in `entry.browser.tsx` intercepts every
+same-origin navigation the browser says `canIntercept` for. Modern
+browsers convert `location.reload()` into a same-document navigate
+event (`event.navigationType === "reload"`) with `canIntercept:
+true`, so our handler hijacks it into an RSC refetch against the
+existing module state — defeating the point of a reload.
+
+Fix: filter out reloads in the intercept guard:
+```ts
+if (event.navigationType === "reload") return;
+```
+Now `window.location.reload()` does a real cross-document reload
+while all other same-origin navigations (link clicks, `history.push`)
+still get hijacked into the client-side RSC flow.

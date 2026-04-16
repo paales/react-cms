@@ -151,6 +151,12 @@ There are also playwright tests, run and validate those as well.
 
 Tests hit real GraphQL APIs (PokeAPI, GraphCommerce Magento). Timeout is 15-30s for integration tests.
 
+**Playwright runs with `workers: 1`.** The dev server has process-wide state (the `<Cache>` store, the route-scoped partial registry, session cookies). Parallel workers contended on that state and produced nondeterministic failures. If you add e2e tests, prefer sequential execution + explicit cache clears.
+
+**Dev-only `/__test/clear-caches` endpoint** (in `src/framework/entry.rsc.tsx`) flushes the `<Cache>` store, the partial-data cache, and the partial registry. Used by `test.beforeEach` in specs that need a cold starting state — particularly anything asserting Suspense fallback behavior, since a warm `<Cache>` returns instantly and the fallback never flashes. The same endpoint powers the dev debug toolbar's "flush cache" button (`src/app/components/debug-toolbar.tsx`).
+
+**Vitest's route-keyed fixtures need a registry reset.** `partial.test.tsx` has a top-level `beforeEach(clearRegistry)` because dynamic partials registered under the fake URL (`http://localhost/test`) otherwise leak across tests and contaminate tag resolution.
+
 ## APIs
 
 | API           | Endpoint                                       | Used for                      |
