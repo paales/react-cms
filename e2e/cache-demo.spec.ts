@@ -1,0 +1,141 @@
+import { test, expect } from "@playwright/test";
+
+/**
+ * /cache-demo — server-side Flight-buffer caching.
+ *
+ * Validates that a <Cache dep> wrapper stores and serves a subtree's
+ * rendered output across requests. The key assertion: the slow
+ * component's render counter (embedded in the rendered DOM as
+ * data-render-count) stays stable across cache hits, and bumps only
+ * on cache misses (different dep).
+ *
+ * We also check that <Cache> composes with a normal <Partial>: the
+ * enclosing Partial is still refetchable, and on a refetch targeting
+ * it the cached content is served — server work skipped entirely.
+ */
+
+test("cache hit serves stored subtree without re-running the server component", async ({
+  page,
+  request,
+}) => {
+  // Use raw requests rather than browser navigation for precise control.
+  // First request establishes the cache.
+  const first = await request.get("/cache-demo?flavor=vanilla-a");
+  const firstHtml = await first.text();
+  const firstCount = firstHtml.match(/data-render-count="(\d+)"/)?.[1];
+  expect(firstCount, "initial render must include a count").toBeDefined();
+
+  // Second request for the same dep should NOT bump the render count.
+  const second = await request.get("/cache-demo?flavor=vanilla-a");
+  const secondHtml = await second.text();
+  const secondCount = secondHtml.match(/data-render-count="(\d+)"/)?.[1];
+  expect(secondCount).toBe(firstCount);
+
+  // A different dep should MISS, bumping the count.
+  const third = await request.get("/cache-demo?flavor=vanilla-b");
+  const thirdHtml = await third.text();
+  const thirdCount = thirdHtml.match(/data-render-count="(\d+)"/)?.[1];
+  expect(thirdCount).toBeDefined();
+  expect(Number(thirdCount)).toBeGreaterThan(Number(firstCount));
+
+  // Revisiting the original dep still hits and serves the original body.
+  const fourth = await request.get("/cache-demo?flavor=vanilla-a");
+  const fourthHtml = await fourth.text();
+  const fourthCount = fourthHtml.match(/data-render-count="(\d+)"/)?.[1];
+  expect(fourthCount).toBe(firstCount);
+});
+
+test("partial refetch targeting a cached partial skips server work", async ({
+  request,
+}) => {
+  // Seed the cache.
+  const seed = await request.get("/cache-demo?flavor=vanilla-c");
+  const seedCount = seed.text().then((t) =>
+    t.match(/data-render-count="(\d+)"/)?.[1],
+  );
+  const beforeCount = await seedCount;
+
+  // Refetch only the slow partial. A flight response comes back; count
+  // in the response should still match the seed.
+  const refetch = await request.get(
+    "/cache-demo_.rsc?flavor=vanilla-c&partials=slow",
+  );
+  const refetchBody = await refetch.text();
+  // The RSC Flight body encodes the attr as JSON: "data-render-count":N
+  const refetchCount = refetchBody.match(/"data-render-count":(\d+)/)?.[1];
+  expect(refetchCount).toBeDefined();
+  expect(refetchCount).toBe(beforeCount);
+
+  // Full page load again — still the same count.
+  const revisit = await request.get("/cache-demo?flavor=vanilla-c");
+  const revisitCount = (await revisit.text()).match(
+    /data-render-count="(\d+)"/,
+  )?.[1];
+  expect(revisitCount).toBe(beforeCount);
+});
+
+test("clock partial stays fresh on every request regardless of cache state", async ({
+  request,
+}) => {
+  const first = (await (await request.get("/cache-demo?flavor=clock-a")).text())
+    .match(/Server time: ([^<]+)</)?.[1];
+  // Clock is not cached — a new request should produce a new time.
+  await new Promise((r) => setTimeout(r, 15));
+  const second = (await (await request.get("/cache-demo?flavor=clock-a")).text())
+    .match(/Server time: ([^<]+)</)?.[1];
+  expect(first).toBeDefined();
+  expect(second).toBeDefined();
+  expect(first).not.toBe(second);
+});
+
+test("cache hit is significantly faster than cold miss", async ({
+  request,
+}) => {
+  const uniqueFlavor = `perf-${Date.now()}`;
+  const coldStart = Date.now();
+  await request.get(`/cache-demo?flavor=${uniqueFlavor}`);
+  const coldMs = Date.now() - coldStart;
+
+  const warmStart = Date.now();
+  await request.get(`/cache-demo?flavor=${uniqueFlavor}`);
+  const warmMs = Date.now() - warmStart;
+
+  // Cold has ~500ms of awaited work. Warm skips it via cache.
+  // Generous bounds to tolerate CI jitter.
+  expect(coldMs).toBeGreaterThan(400);
+  expect(warmMs).toBeLessThan(coldMs / 3);
+});
+
+test("client component inside cached subtree hydrates and retains state", async ({
+  page,
+}) => {
+  await page.goto(`/cache-demo?flavor=hydrate-${Date.now()}`);
+  const button = page.locator('[data-testid="click-counter"]');
+  await expect(button).toHaveText(/clicked 0/);
+  await button.click();
+  await expect(button).toHaveText(/clicked 1/);
+  await button.click();
+  await expect(button).toHaveText(/clicked 2/);
+});
+
+test("client component inside cached subtree remains clickable after cache hit", async ({
+  page,
+  request,
+}) => {
+  // Prime the cache with a fresh request first.
+  const flavor = `hydrate-cached-${Date.now()}`;
+  await request.get(`/cache-demo?flavor=${flavor}`);
+  // Now navigate in the browser — this hit serves from cache.
+  await page.goto(`/cache-demo?flavor=${flavor}`);
+  const button = page.locator('[data-testid="click-counter"]');
+  await expect(button).toHaveText(/clicked 0/);
+  // Wait for hydration — otherwise the click races the event handler attach.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="click-counter"]');
+    // Rough hydration check: if the element has a React event key,
+    // hydration has happened for this subtree.
+    return el != null && Object.keys(el).some((k) => k.startsWith("__reactFiber"));
+  });
+  await button.click();
+  await expect(button).toHaveText(/clicked 1/);
+});

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { getRequest } from "../framework/context.ts";
-import { IntersectionObserverClient } from "./when-visible-client.tsx";
+import { WhenVisibleClient } from "./when-visible-client.tsx";
 
 interface WhenVisibleProps {
   /** Partial id this activator belongs to and activates on visibility. */
@@ -52,12 +52,12 @@ export function WhenVisible({
   const isExplicit = partials.includes(partialId) || inputs[partialId] != null;
   if (isExplicit) return children;
   return (
-    <IntersectionObserverClient
+    <WhenVisibleClient
       partialId={partialId}
       rootMargin={rootMargin}
       threshold={threshold}
     >
       {fallback}
-    </IntersectionObserverClient>
+    </WhenVisibleClient>
   );
 }

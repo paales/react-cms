@@ -518,7 +518,7 @@ describe("WhenVisible activator", () => {
 	// Mock the client half so vitest renders without needing React.useRef
 	// or IntersectionObserver.
 	vi.doMock("../when-visible-client.tsx", () => ({
-		WhenVisibleClient: ({ partialId, children }: { partialId: string; children: React.ReactNode }) => (
+		IntersectionObserverClient: ({ partialId, children }: { partialId: string; children: React.ReactNode }) => (
 			<span data-activator={partialId}>{children}</span>
 		),
 	}));

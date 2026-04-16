@@ -1,6 +1,7 @@
 import { PokemonPage } from "./pages/pokemon.tsx";
 import { MagentoPage } from "./pages/magento/product-list.tsx";
 import { BarePage } from "./pages/bare-stream.tsx";
+import { CacheDemoPage } from "./pages/cache-demo.tsx";
 import { PartialRoot, Partial } from "../lib/partial.tsx";
 import { getRequest } from "../framework/context.ts";
 import { matchPath, pickRoute } from "../framework/router.ts";
@@ -9,6 +10,7 @@ export function Root() {
   const url = new URL(getRequest().url);
 
   if (matchPath(url, "/bare")) return <BarePage />;
+  if (matchPath(url, "/cache-demo")) return <CacheDemoPage />;
 
   return (
     <PartialRoot>

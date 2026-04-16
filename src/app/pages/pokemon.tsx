@@ -10,6 +10,7 @@ import { LoadMore, PageSentinel } from "../components/load-more.tsx";
 import { client } from "../data.ts";
 import { graphql, readFragment, type FragmentOf } from "../pokeapi-graphql.ts";
 import { getRequest } from "../../framework/context.ts";
+import { Cache } from "../../lib/cache.tsx";
 
 const PAGE_SIZE = 24;
 
@@ -180,7 +181,9 @@ export function PokemonPage() {
               </div>
             }
           >
-            <SearchStage1 query={searchQuery} />
+            <Cache id="SearchStage1" dep={{ searchQuery }}>
+              <SearchStage1 query={searchQuery} />
+            </Cache>
           </Partial>
           {searchQuery && (
             <Partial
@@ -194,7 +197,9 @@ export function PokemonPage() {
                 </div>
               }
             >
-              <SearchStage2 query={searchQuery} />
+              <Cache id="SearchStage2" dep={{ searchQuery }}>
+                <SearchStage2 query={searchQuery} />
+              </Cache>
             </Partial>
           )}
           {searchQuery && (
@@ -209,7 +214,9 @@ export function PokemonPage() {
                 </div>
               }
             >
-              <SearchStage3 query={searchQuery} />
+              <Cache id="SearchStage3" dep={{ searchQuery }}>
+                <SearchStage3 query={searchQuery} />
+              </Cache>
             </Partial>
           )}
         </SearchDialog>
