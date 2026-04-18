@@ -1,9 +1,14 @@
 "use client";
 
 import React from "react";
+import { registerClientPartial } from "./partial-client.tsx";
 
 interface Props {
   partialId: string;
+  /** Structural fingerprint of the partial's children. When present,
+   *  gets registered into the client-side fingerprint map on render
+   *  so subsequent navigations can send it back via `?cached=`. */
+  partialFingerprint?: string;
   children: React.ReactNode;
   /**
    * Optional error fallback. Rendered when a descendant throws.
@@ -23,6 +28,11 @@ interface State {
  * crash the entire page. When a descendant throws:
  *   - If `fallback` is provided, renders it verbatim.
  *   - Otherwise, shows the default inline error card + retry button.
+ *
+ * Also doubles as the registration vehicle for the partial's
+ * fingerprint on the client: during render we push
+ * `(partialId, partialFingerprint)` into `_fingerprints` so the next
+ * `getCachedPartialIds()` call picks it up.
  */
 export class PartialErrorBoundary extends React.Component<Props, State> {
   state: State = { error: null };
@@ -40,6 +50,9 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
   };
 
   render() {
+    if (this.props.partialFingerprint) {
+      registerClientPartial(this.props.partialId, this.props.partialFingerprint);
+    }
     if (this.state.error) {
       if (this.props.fallback !== undefined) {
         return this.props.fallback;

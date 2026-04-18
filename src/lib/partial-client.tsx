@@ -29,6 +29,53 @@ import React, {
   useRef,
   type ReactNode,
 } from "react";
+/**
+ * Return true if the node looks like the outermost wrapper a
+ * `<Partial>` renders — a keyed `<Suspense>` (partial with fallback)
+ * or a keyed `<PartialErrorBoundary>` (partial without fallback).
+ *
+ * We can't reliably compare `node.type` against the PartialErrorBoundary
+ * class identity — in SSR the class reference can differ from the
+ * one this module imports (different module graphs across the RSC /
+ * SSR boundary). Instead we detect by the `partialId` prop the Partial
+ * component always sets on its wrapper. For the Suspense branch, the
+ * key is the partial id and Suspense wraps a PartialErrorBoundary that
+ * also carries `partialId` — we detect via `type === Suspense`.
+ */
+function isPartialWrapper(node: React.ReactElement): boolean {
+  if (node.key == null) return false;
+  if (node.type === Suspense) return true;
+  const props = node.props as { partialId?: unknown };
+  return typeof props?.partialId === "string";
+}
+
+/**
+ * Extract the partial id from a wrapper node.
+ *
+ * Prefer the `partialId` prop over `node.key`. Flight combines the
+ * outer `.map()` key with a client-component's own `key` into a
+ * composite string like "page-1,page-1" when a `<Partial>` is
+ * produced inside a `.map()`. The `partialId` prop stays clean and
+ * is always the source of truth.
+ *
+ * Suspense (a React built-in) doesn't get double-keyed and doesn't
+ * carry `partialId` itself — but its child is the PartialErrorBoundary
+ * that does. Fall back to the Suspense `key` (which stays clean) or
+ * peek at the direct child's `partialId`.
+ */
+function getPartialId(node: React.ReactElement): string | null {
+  const props = node.props as { partialId?: unknown; children?: unknown };
+  if (typeof props.partialId === "string") return props.partialId;
+  if (node.type === Suspense) {
+    const child = props.children;
+    if (isValidElement(child)) {
+      const cp = (child as React.ReactElement).props as { partialId?: unknown };
+      if (typeof cp.partialId === "string") return cp.partialId;
+    }
+    if (node.key != null) return String(node.key);
+  }
+  return null;
+}
 
 /** Dispatch a single target — batched via microtask in PartialsClient */
 type DispatchFn = (
@@ -82,9 +129,6 @@ interface PartialsClientProps {
    */
   mode?: "streaming" | "cache";
   template: ReactNode;
-  freshIds: string[];
-  /** Partial fingerprints: { partialId: hash } — used for cache invalidation */
-  fingerprints: Record<string, string>;
   /** Per-partial debug metadata */
   debug: PartialDebugEntry[];
   /** Total fetch time for all parallel queries */
@@ -144,17 +188,24 @@ function substituteNested(
 
   if (!isValidElement(node)) return node;
 
-  const partialId = node.key != null ? String(node.key) : null;
-  if (partialId && partialId !== skipId) {
-    if (isPlaceholder(node)) {
-      return cache.get(partialId) ?? node;
-    }
-    const fresh = cache.get(partialId);
-    if (fresh && fresh !== node) return fresh;
+  // Placeholder: substitute from cache (placeholders carry the id on key).
+  if (node.key != null && isPlaceholder(node)) {
+    const id = String(node.key);
+    if (id !== skipId) return cache.get(id) ?? node;
   }
 
-  // Don't walk into Suspense — children may be lazy RSC refs
-  if (node.type === Suspense) return node;
+  // Partial-shape wrapper: substitute with the cache entry if it
+  // differs (this is how nested Partials inside a cached ancestor get
+  // refreshed with newer content on refetch). Don't descend into the
+  // wrapper's own children — they may be unresolved Flight lazies.
+  if (isPartialWrapper(node)) {
+    const id = getPartialId(node);
+    if (id && id !== skipId) {
+      const fresh = cache.get(id);
+      if (fresh && fresh !== node) return fresh;
+      return node;
+    }
+  }
 
   const children = (node.props as any).children;
   if (children == null) return node;
@@ -190,35 +241,52 @@ function unwrapLazy(node: unknown): unknown {
   return null;
 }
 
+/**
+ * Walk the streamed children tree and cache partial contents by id.
+ *
+ * Partials are recognized by their outermost wrapper shape (see
+ * `isPartialWrapper`): a keyed `<Suspense>` or keyed
+ * `<PartialErrorBoundary>`. The key is the partial id. Once we cache
+ * a partial, we do NOT descend into it — children may be unresolved
+ * Flight lazies.
+ *
+ * Placeholders (`<i data-partial hidden key={id}>`) are skipped too —
+ * the existing cache entry from a prior render backs the template.
+ * Everything else recurses normally.
+ */
 function cacheFromStreamingChildren(
   node: ReactNode,
   cache: Map<string, ReactNode>,
-  freshIds: Set<string>,
 ): void {
   if (node == null || typeof node === "boolean") return;
   if (typeof node === "string" || typeof node === "number") return;
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      cacheFromStreamingChildren(node[i] as ReactNode, cache, freshIds);
+      cacheFromStreamingChildren(node[i] as ReactNode, cache);
     }
     return;
   }
   const unwrapped = unwrapLazy(node);
   if (unwrapped !== node) {
-    cacheFromStreamingChildren(unwrapped as ReactNode, cache, freshIds);
+    cacheFromStreamingChildren(unwrapped as ReactNode, cache);
     return;
   }
   if (!isValidElement(node)) return;
 
-  const partialId = node.key != null ? String(node.key) : null;
-  if (partialId && freshIds.has(partialId)) {
-    cache.set(partialId, node);
-    if (node.type === Suspense) return;
+  if (isPartialWrapper(node)) {
+    const id = getPartialId(node);
+    if (id) cache.set(id, node);
+    return; // don't descend — children may be lazy refs
+  }
+  if (isPlaceholder(node)) {
+    // Placeholder means "server skipped this partial; client keeps
+    // its existing cache entry." Don't overwrite and don't descend.
+    return;
   }
 
   const inner = (node.props as any)?.children;
   if (inner != null) {
-    cacheFromStreamingChildren(inner, cache, freshIds);
+    cacheFromStreamingChildren(inner, cache);
   }
 }
 
@@ -260,6 +328,18 @@ function renderTemplate(
 const _cache = new Map<string, ReactNode>();
 const _fingerprints = new Map<string, string>();
 let _debug: PartialDebugEntry[] = [];
+
+/**
+ * Register a partial's fingerprint from the client side.
+ *
+ * Called by `<PartialErrorBoundary>` during its render, which is how
+ * each `<Partial>`'s fingerprint gets into `_fingerprints` without a
+ * server prop round-trip. Later `getCachedPartialIds()` reads from
+ * here to tell the server what's already cached.
+ */
+export function registerClientPartial(id: string, fingerprint: string): void {
+  _fingerprints.set(id, fingerprint);
+}
 
 /**
  * Transient search-params for the next partial refetch.
@@ -344,14 +424,11 @@ export function usePartial(
 export function PartialsClient({
   mode = "cache",
   template,
-  freshIds,
-  fingerprints,
   debug,
   fetchMs,
   children,
 }: PartialsClientProps) {
   const cache = _cache;
-  const fps = _fingerprints;
 
   // ── Microtask-batched dispatch ────────────────────────────────────
   const batchRef = useRef<
@@ -396,10 +473,10 @@ export function PartialsClient({
 
       const targetIds = targets.map((t) => t.id);
 
-      if (cache.size === 0) {
+      if (_cache.size === 0) {
         // First refetch after streaming render: cache is empty.
         // Request ALL partials to populate the cache.
-        const allIds = [...fps.keys()];
+        const allIds = [..._fingerprints.keys()];
         url.searchParams.set("partials", allIds.join(","));
       } else {
         url.searchParams.set("partials", targetIds.join(","));
@@ -444,16 +521,16 @@ export function PartialsClient({
   );
 
   // ── Streaming mode ──────────────────────────────────────────────────
+  //
+  // Cache is populated from the streamed children by walking for keyed
+  // `<Suspense>` elements — that's what `<Partial>` emits. Placeholders
+  // (`<i data-partial hidden>`) are left alone so the existing cache
+  // entry from a prior render still backs the template.
+  //
+  // Fingerprints land in `_fingerprints` via `PartialErrorBoundary`'s
+  // render-time `registerClientPartial` call — no props plumbing here.
   if (mode === "streaming") {
-    for (const [id, fp] of Object.entries(fingerprints)) {
-      fps.set(id, fp);
-    }
-    // Don't clear — the server emits placeholders for partials whose
-    // fingerprint matched the client's `?cached=` list and excludes
-    // them from `freshIds`. Those entries must stay in the cache so
-    // `renderTemplate` can fill the template's placeholders from them.
-    // Fresh partials overwrite their entries in `cacheFromStreamingChildren`.
-    cacheFromStreamingChildren(children, cache, new Set(freshIds));
+    cacheFromStreamingChildren(children, cache);
     _debug = [];
 
     const rendered = renderTemplate(template, cache);
@@ -467,14 +544,10 @@ export function PartialsClient({
 
   // ── Cache mode ──────────────────────────────────────────────────────
   Children.forEach(children, (child) => {
-    if (isValidElement(child) && child.key != null) {
-      cache.set(String(child.key), child);
-    }
+    if (!isValidElement(child)) return;
+    const id = isPartialWrapper(child) ? getPartialId(child) : (child.key != null ? String(child.key) : null);
+    if (id) cache.set(id, child);
   });
-
-  for (const [id, fp] of Object.entries(fingerprints)) {
-    fps.set(id, fp);
-  }
 
   const freshDebugIds = new Set(debug.map((d) => d.id));
   _debug = [

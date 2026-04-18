@@ -77,12 +77,14 @@ test("partial refetch targeting a cached partial skips server work", async ({
 test("clock partial stays fresh on every request regardless of cache state", async ({
   request,
 }) => {
-  const first = (await (await request.get("/cache-demo?flavor=clock-a")).text())
-    .match(/Server time: ([^<]+)</)?.[1];
+  // React 19 SSR inserts a `<!-- -->` marker between adjacent text and
+  // expression children for hydration. Match the ISO after it so we
+  // capture the rendered timestamp, not the Flight-serialized source.
+  const clockTime = /Server time:[^<]*<!-- -->([^<]+)</;
+  const first = (await (await request.get("/cache-demo?flavor=clock-a")).text()).match(clockTime)?.[1];
   // Clock is not cached — a new request should produce a new time.
   await new Promise((r) => setTimeout(r, 15));
-  const second = (await (await request.get("/cache-demo?flavor=clock-a")).text())
-    .match(/Server time: ([^<]+)</)?.[1];
+  const second = (await (await request.get("/cache-demo?flavor=clock-a")).text()).match(clockTime)?.[1];
   expect(first).toBeDefined();
   expect(second).toBeDefined();
   expect(first).not.toBe(second);

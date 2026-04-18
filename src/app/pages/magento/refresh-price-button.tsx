@@ -5,8 +5,8 @@ import { usePartial } from "../../../lib/partial-client.tsx";
 /**
  * Refetches the per-product live-price partial. The partial id mirrors
  * the one declared in the server-side `.map()` — `price-${sku}` — which
- * is only reachable via the route-scoped registry (static `collectPartials`
- * can't see through `ProductGrid`).
+ * is only reachable via the route-scoped registry (the bootstrap walk
+ * in `PartialRoot` can't see through `ProductGrid`).
  */
 export function RefreshPriceButton({ sku }: { sku: string }) {
   const [refetch, isPending] = usePartial(`price-${sku}`);

@@ -148,13 +148,14 @@ function ProductCard({ product }: { product: ProductItem }) {
       </div>
       {sku && (
         // Dynamic Partial: id is built from the product sku, produced
-        // inside the `.map()` in `ProductGrid` — invisible to the static
-        // `collectPartials` walk. The route-scoped registry captures
-        // each instance on first render so refreshing one live price
-        // doesn't require re-running the product list query. The
-        // `price` tag lets `RefreshAllPricesButton` pull every price
-        // partial in a single tag-based refetch. `fallback` shows the
-        // base price in gray while the refreshed LivePrice is resolving.
+        // inside the `.map()` in `ProductGrid`. Invisible to the
+        // bootstrap JSX walk in `PartialRoot`, but each Partial
+        // self-registers in the route-scoped registry on render so
+        // refreshing one live price doesn't require re-running the
+        // product list query. The `price` tag lets
+        // `RefreshAllPricesButton` pull every price partial in a single
+        // tag-based refetch. `fallback` shows the base price in gray
+        // while the refreshed LivePrice is resolving.
         <Partial
           id={`price-${sku}`}
           tags={["price"]}

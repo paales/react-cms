@@ -251,12 +251,11 @@ function partialIdOf(node: ReactElement, route: string): string | null {
 
 /**
  * Walk children, replace any partial-bearing subtree with a placeholder.
- * A subtree is partial-bearing when it's a `<PartialBoundary>` (the
- * self-wrap path for dynamically-produced Partials), an existing
- * `<i data-partial>` placeholder (cache-mode refetch templates), or
- * any keyed element whose key matches a registered partial id (the
- * streaming-mode Suspense/ErrorBoundary produced by
- * `transformForStreaming`).
+ * A subtree is partial-bearing when it's a `<PartialBoundary>` (emitted
+ * by `<Partial>` during render), an existing `<i data-partial>`
+ * placeholder (cache-mode refetch templates), or any keyed element
+ * whose key matches a registered partial id (the streaming-mode
+ * Suspense / PartialErrorBoundary wrapper).
  *
  * Returns the stripped tree, a map of partialId → live element (used
  * to re-inject after decode), and the sorted ids (folded into the

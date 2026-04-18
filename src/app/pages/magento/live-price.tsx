@@ -44,10 +44,10 @@ export function LivePriceFallback({
  * so manual refetches produce visibly different output. Used as a
  * **dynamic Partial** (wrapped in `<Partial id={"price-" + sku}>` inside
  * a `.map()` in `ProductGrid`) to exercise the route-scoped partial
- * registry: the static `collectPartials` walk can't see through
- * `ProductGrid`, but the registry captures each instance on first
- * render so each product's price can be refetched individually
- * without re-running the product list query.
+ * registry: the bootstrap walk in `PartialRoot` can't see through
+ * `ProductGrid`, but each Partial self-registers on render, so each
+ * product's price can be refetched individually without re-running the
+ * product list query.
  *
  * Artificial 200ms delay so a refresh actually suspends — otherwise
  * it commits instantly and you never see the fallback flash.
@@ -61,7 +61,7 @@ export async function LivePrice({
   basePrice: number;
   currency: string;
 }) {
-  // await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 200));
 
   // Fresh fluctuation on every render — `Date.now()` ticks at ms
   // precision so every click produces a new value, and `Math.random`

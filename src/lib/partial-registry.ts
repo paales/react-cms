@@ -5,18 +5,19 @@
  * as a React element) the first time it actually renders. Keyed by
  * `(route path, partial id)`.
  *
- * Why: `collectPartials` statically walks the JSX `children` chain, so
- * it only finds Partials reachable through that chain. A Partial
- * produced inside an opaque function component — the canonical example
+ * Why: the only "static walk" of the JSX children chain is `seedRegistry`
+ * in `PartialRoot` — it bootstraps the registry from statically-visible
+ * Partials so a first-request cache-mode refetch can resolve. A Partial
+ * produced inside an opaque function component (the canonical example
  * is `ProductList.map(p => <ProductItem price={<Partial><GoldPrice
- * sku={p.sku}/></Partial>}/>)` — is invisible to the static walker.
+ * sku={p.sku}/></Partial>}/>)`) is invisible to that bootstrap walk.
  *
- * With this registry, `PartialBoundary` self-registers as it renders
- * during the full page render. A subsequent refetch for that id can
- * render its snapshot directly, skipping ancestor execution entirely
- * (no `ProductList`, no 49 sibling items). The partial's props
- * are already bound in the captured element, so the registered
- * snapshot is complete on its own.
+ * Every `<Partial>` self-registers on every render via `<PartialBoundary>`.
+ * That means dynamic Partials land in the registry on their first render
+ * pass. A subsequent refetch for that id can render its snapshot directly,
+ * skipping ancestor execution entirely (no `ProductList`, no 49 sibling
+ * items). The partial's props are already bound in the captured element,
+ * so the registered snapshot is complete on its own.
  *
  * Lifetime: module-level. Cleared on HMR so stale module references
  * in snapshotted elements don't leak across edits.
@@ -40,8 +41,7 @@ export interface PartialSnapshot {
   /** The errorWith prop on the Partial (for ErrorBoundary fallback). */
   errorWith: ReactNode | undefined;
   /** Tags declared on the Partial — used to resolve `?tags=X` refetches
-   *  against dynamic partials that `collectPartials` can't see
-   *  statically. */
+   *  against dynamic partials that the bootstrap walk can't see. */
   tags: string[];
 }
 

@@ -5,9 +5,9 @@ import { expect, request, test } from "@playwright/test";
  *
  * The /magento page renders each product's live price as a
  * `<Partial id={"price-" + sku}>` produced inside `ProductGrid.map(...)` —
- * invisible to the static `collectPartials` walk. The route-scoped
- * partial registry captures each instance on the first full render so
- * a click on one product's ↻ button refetches that single partial
+ * invisible to the bootstrap JSX walk in `PartialRoot`. Each Partial
+ * self-registers in the route-scoped registry on its first render,
+ * so a click on one product's ↻ button refetches that single partial
  * via the Flight (`_.rsc`) endpoint.
  */
 

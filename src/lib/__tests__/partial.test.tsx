@@ -9,14 +9,76 @@ beforeEach(async () => {
   clearRegistry();
 });
 
+// Accumulates what each Partial emitted during the last render —
+// populated by the mocked PartialErrorBoundary, which the Partial
+// component passes `partialId` + `partialFingerprint` into. Serves
+// as the test-side replacement for the old `freshIds` /
+// `fingerprints` props on PartialsClient (which are now registered
+// client-side instead of plumbed as props).
+const renderCapture: {
+	freshIds: string[];
+	fingerprints: Record<string, string>;
+	mode: string | undefined;
+	template: React.ReactNode;
+	children: React.ReactNode;
+} = {
+	freshIds: [],
+	fingerprints: {},
+	mode: undefined,
+	template: undefined,
+	children: undefined,
+};
+
+// Clear in place (not reassign) so `const x = renderCapture.freshIds`
+// references inside tests stay live across the clear.
+beforeEach(() => {
+	renderCapture.freshIds.length = 0;
+	for (const k of Object.keys(renderCapture.fingerprints)) {
+		delete renderCapture.fingerprints[k];
+	}
+});
+
 // Mock client components — useRef/class components need a full React renderer.
 vi.mock("../partial-client.tsx", () => ({
-	PartialsClient: ({ children }: { children: React.ReactNode }) => children,
+	PartialsClient: ({
+		children,
+		mode,
+		template,
+	}: { children: React.ReactNode; mode?: string; template?: React.ReactNode }) => {
+		// Reset the per-Partial capture at the start of each render so
+		// tests see only what THIS render produced. Capture top-level
+		// props (mode, template, children) as snapshots.
+		renderCapture.freshIds.length = 0;
+		for (const k of Object.keys(renderCapture.fingerprints)) {
+			delete renderCapture.fingerprints[k];
+		}
+		renderCapture.mode = mode;
+		renderCapture.template = template;
+		renderCapture.children = children;
+		return children;
+	},
 	getCachedPartialIds: () => [],
+	registerClientPartial: (_id: string, _fp: string) => {},
 }));
 
 vi.mock("../partial-error-boundary.tsx", () => ({
-	PartialErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
+	PartialErrorBoundary: ({
+		children,
+		partialId,
+		partialFingerprint,
+	}: {
+		children: React.ReactNode;
+		partialId?: string;
+		partialFingerprint?: string;
+	}) => {
+		if (partialId && partialFingerprint) {
+			if (!renderCapture.freshIds.includes(partialId)) {
+				renderCapture.freshIds.push(partialId);
+			}
+			renderCapture.fingerprints[partialId] = partialFingerprint;
+		}
+		return children;
+	},
 }));
 
 import { PartialRoot, Partial } from "../partial.tsx";
@@ -116,7 +178,7 @@ describe("PartialRoot architecture", () => {
 				</PartialRoot>,
 			),
 		);
-		const rendered = result.filter(Boolean);
+		const rendered = (Array.isArray(result) ? result : [result]).filter(Boolean);
 		expect(rendered).toHaveLength(1);
 		expect(JSON.stringify(rendered)).toContain("world");
 	});
@@ -200,40 +262,30 @@ describe("PartialRoot architecture", () => {
 	});
 
 	it("skips re-rendering partials whose fingerprint matches the client's ?cached= entry", async () => {
-		let fingerprints: Record<string, string> = {};
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			children,
-			fingerprints: fp,
-		}: any) => {
-			fingerprints = fp;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(fingerprints.hero).toBeDefined();
-		expect(fingerprints.stats).toBeDefined();
+		expect(renderCapture.fingerprints.hero).toBeDefined();
+		expect(renderCapture.fingerprints.stats).toBeDefined();
+		const heroFp = renderCapture.fingerprints.hero;
 
 		// Second render: client reports the `hero` fingerprint
 		// unchanged, so the server emits a `<i data-partial hidden
 		// key="hero">` placeholder instead of running `<Hero/>`.
 		// `stats` has no cached fingerprint → still renders fresh.
 		const { result } = await runWithRequestAsync(
-			fakeRequest({ cached: `hero:${fingerprints.hero}` }),
+			fakeRequest({ cached: `hero:${heroFp}` }),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="hero"><Hero /></Partial>
 						<Partial id="stats"><Stats /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 		const str = JSON.stringify(result);
@@ -242,70 +294,51 @@ describe("PartialRoot architecture", () => {
 	});
 
 	it("fingerprints are stable for same element tree", async () => {
-		let fp1: Record<string, string> = {};
-		let fp2: Record<string, string> = {};
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			fingerprints: fp,
-		}: any) => {
-			if (!fp1.hero) fp1 = fp;
-			else fp2 = fp;
-			return null;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<Partial id="hero"><Hero /></Partial>
+				</PartialRoot>,
+			),
+		);
+		const fp1 = renderCapture.fingerprints.hero;
 
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<P>
-					<Partial id="hero"><Hero /></Partial>
-				</P>,
-			),
-		);
-		expect(fp1.hero).toBe(fp2.hero);
+		const fp2 = renderCapture.fingerprints.hero;
+
+		expect(fp1).toBeDefined();
+		expect(fp1).toBe(fp2);
 	});
 
 	it("explicitly requested partials always render even with matching cached fingerprint", async () => {
-		let fingerprints: Record<string, string> = {};
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			children,
-			fingerprints: fp,
-			freshIds: fids,
-		}: any) => {
-			fingerprints = fp;
-			freshIds = fids;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
+		const heroFp = renderCapture.fingerprints.hero;
 
 		const { result } = await runWithRequestAsync(
-			fakeRequest({ partials: "hero", cached: `hero:${fingerprints.hero}` }),
+			fakeRequest({ partials: "hero", cached: `hero:${heroFp}` }),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="hero"><Hero /></Partial>
 						<Partial id="stats"><Stats /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
-		expect(freshIds).toContain("hero");
-		expect(freshIds).not.toContain("stats");
+		expect(renderCapture.freshIds).toContain("hero");
+		expect(renderCapture.freshIds).not.toContain("stats");
 		const str = JSON.stringify(result);
 		expect(str).toContain("Hero");
 	});
@@ -351,40 +384,30 @@ describe("PartialRoot architecture", () => {
 	});
 
 	it("__inputs bypass fingerprint cache (refetch with new props)", async () => {
-		let fingerprints: Record<string, string> = {};
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			children,
-			fingerprints: fp,
-		}: any) => {
-			fingerprints = fp;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(fingerprints.hero).toBeDefined();
+		expect(renderCapture.fingerprints.hero).toBeDefined();
+		const heroFp = renderCapture.fingerprints.hero;
 
 		const inputs = JSON.stringify({ hero: {} });
 		const { result } = await runWithRequestAsync(
 			fakeRequest({
 				partials: "hero",
-				cached: `hero:${fingerprints.hero}`,
+				cached: `hero:${heroFp}`,
 				__inputs: inputs,
 			}),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="hero"><Hero /></Partial>
 						<Partial id="stats"><Stats /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 		const str = JSON.stringify(result);
@@ -498,29 +521,18 @@ describe("PartialRoot architecture", () => {
 		function Cart() { return <span>cart-content</span>; }
 		function Products() { return <span>products</span>; }
 
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		const { result } = await runWithRequestAsync(
 			fakeRequest({ tags: "cart" }),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="cart" tags={["cart"]}><Cart /></Partial>
 						<Partial id="products"><Products /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
-		expect(freshIds).toEqual(["cart"]);
+		expect(renderCapture.freshIds).toEqual(["cart"]);
 		const str = JSON.stringify(result);
 		expect(str).toContain("cart-content");
 	});
@@ -593,7 +605,12 @@ describe("WhenVisible activator", () => {
 	});
 });
 
-describe("Walker discovery limits", () => {
+describe("Partial discovery", () => {
+	// The runtime path runs Partial's component body on every render, so
+	// deep / dynamic Partials (ones produced inside `.map()`, inside
+	// function components, etc.) are first-class: they all register
+	// themselves and show up in `freshIds` just like statically-visible
+	// Partials do. These tests pin that invariant.
 	function Inner() { return <span>inner-real-content</span>; }
 
 	it("discovers a Partial passed as children through a wrapping component", async () => {
@@ -601,57 +618,36 @@ describe("Walker discovery limits", () => {
 			return <section className="wrap">{children}</section>;
 		}
 
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Wrapper>
 						<Partial id="forwarded"><Inner /></Partial>
 					</Wrapper>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).toContain("forwarded");
+		expect(renderCapture.freshIds).toContain("forwarded");
 	});
 
-	it("does NOT discover a Partial created inside a child component's return value", async () => {
+	it("discovers a Partial created inside a child component's return value", async () => {
 		function ProductCard() {
 			return <Partial id="inside-card"><Inner /></Partial>;
 		}
 
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<div>
 						<ProductCard />
 					</div>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).not.toContain("inside-card");
-		expect(freshIds).toHaveLength(0);
+		expect(renderCapture.freshIds).toContain("inside-card");
 	});
 
-	it("does NOT discover a nested Partial created inside a child component even when its parent Partial is discovered", async () => {
+	it("discovers a nested Partial created inside a child component", async () => {
 		function Body() {
 			return (
 				<>
@@ -661,60 +657,42 @@ describe("Walker discovery limits", () => {
 			);
 		}
 
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="page">
 						<Body />
 					</Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).toContain("page");
-		expect(freshIds).not.toContain("nested-inside-body");
+		expect(renderCapture.freshIds).toContain("page");
+		expect(renderCapture.freshIds).toContain("nested-inside-body");
 	});
 
 	it("discovers Partials that DIFFER between two requests (cross-navigation dynamism)", async () => {
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		// Request A: pokemon list page — "list" partial
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="list"><Inner /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).toEqual(["list"]);
+		expect(renderCapture.freshIds).toEqual(["list"]);
 
-		// Request B: pokemon detail page — "hero" and "stats" partials
+		// Request B: pokemon detail page — "hero" and "stats" partials.
+		// Capture resets per render (see the mocked PartialsClient),
+		// so we see only what this render produced.
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Inner /></Partial>
 					<Partial id="stats"><Inner /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).toEqual(["hero", "stats"]);
+		expect(renderCapture.freshIds).toEqual(["hero", "stats"]);
 	});
 
 	it("discovers Partials produced by calling a page function inline (today's Root pattern)", async () => {
@@ -729,28 +707,21 @@ describe("Walker discovery limits", () => {
 			);
 		}
 
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					{PokemonPage()}
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).toContain("hero");
-		expect(freshIds).toContain("stats");
+		expect(renderCapture.freshIds).toContain("hero");
+		expect(renderCapture.freshIds).toContain("stats");
 	});
 
-	it("does NOT discover Partials when a page is rendered as <PokemonPage/> (component element, not called)", async () => {
+	it("discovers Partials when a page is rendered as <PokemonPage/> (component element, not called)", async () => {
+		// The old static walker couldn't see through <PokemonPage/>;
+		// the runtime path renders it like any other component and its
+		// child Partials self-register during render.
 		function PokemonPage() {
 			return (
 				<>
@@ -760,25 +731,227 @@ describe("Walker discovery limits", () => {
 			);
 		}
 
-		let freshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds: fids,
-			children,
-		}: any) => {
-			freshIds = fids;
-			return children;
-		}) as any;
-		const { PartialRoot: P } = await import("../partial.tsx");
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<PokemonPage />
+				</PartialRoot>,
+			),
+		);
+		expect(renderCapture.freshIds).toContain("hero-cmp");
+		expect(renderCapture.freshIds).toContain("stats-cmp");
+	});
+});
+
+describe("Deep (dynamic) Partial discovery", () => {
+	// A Partial produced inside a child component's return value —
+	// the canonical `.map(p => <Partial id={"price-" + p.sku}/>)`
+	// pattern. The old static walker could not see these; the
+	// runtime path via the Partial component body registers them
+	// during render. These tests pin the *functional* invariants
+	// regardless of which path the framework uses internally.
+	function Inner() { return <span>inner-real-content</span>; }
+
+	it("registers a Partial produced inside a component body during first render", async () => {
+		function ProductCard() {
+			return <Partial id="inside-card"><Inner /></Partial>;
+		}
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<div><ProductCard /></div>
+				</PartialRoot>,
+			),
+		);
+		const { lookupPartial } = await import("../partial-registry.ts");
+		expect(lookupPartial("/test", "inside-card")).toBeDefined();
+	});
+
+	it("registers Partials produced by .map() inside a component", async () => {
+		function ProductList() {
+			const skus = ["abc", "def", "ghi"];
+			return (
+				<ul>
+					{skus.map((sku) => (
+						<Partial key={sku} id={`price-${sku}`} tags={["price"]}>
+							<Inner />
+						</Partial>
+					))}
+				</ul>
+			);
+		}
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<ProductList />
+				</PartialRoot>,
+			),
+		);
+		const { lookupPartial } = await import("../partial-registry.ts");
+		for (const sku of ["abc", "def", "ghi"]) {
+			expect(lookupPartial("/test", `price-${sku}`)).toBeDefined();
+		}
+	});
+
+	it("deep dynamic Partial is refetchable by id (registry supplement)", async () => {
+		function ProductCard() {
+			return <Partial id="price-abc"><Inner /></Partial>;
+		}
+
+		// Full render populates registry.
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<div><ProductCard /></div>
+				</PartialRoot>,
+			),
+		);
+
+		// Refetch by id resolves through the registry.
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ partials: "price-abc" }),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<div><ProductCard /></div>
+					</PartialRoot>,
+				),
+		);
+		expect(JSON.stringify(result)).toContain("inner-real-content");
+	});
+
+	it("dynamic Partial is refetchable by tag", async () => {
+		function ProductList() {
+			return (
+				<ul>
+					<Partial id="price-abc" tags={["price"]}><Inner /></Partial>
+					<Partial id="price-def" tags={["price"]}><Inner /></Partial>
+				</ul>
+			);
+		}
+
+		// Prime the registry.
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<ProductList />
+				</PartialRoot>,
+			),
+		);
+
+		// `?tags=price` should resolve to both price-abc and price-def via
+		// the registry's tag index.
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ tags: "price" }),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<ProductList />
+					</PartialRoot>,
+				),
+		);
+		const str = JSON.stringify(result);
+		expect(str.match(/inner-real-content/g)?.length).toBe(2);
+	});
+
+	it("deep dynamic Partial is included in freshIds on first render", async () => {
+		function ProductCard() {
+			return <Partial id="inside-card"><Inner /></Partial>;
+		}
 
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
-					<PokemonPage />
-				</P>,
+				<PartialRoot>
+					<div><ProductCard /></div>
+				</PartialRoot>,
 			),
 		);
-		expect(freshIds).not.toContain("hero-cmp");
-		expect(freshIds).not.toContain("stats-cmp");
+		expect(renderCapture.freshIds).toContain("inside-card");
+	});
+
+	it("fingerprint is computed for deep dynamic Partial on first render", async () => {
+		function ProductCard() {
+			return <Partial id="inside-card"><Inner /></Partial>;
+		}
+
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<div><ProductCard /></div>
+				</PartialRoot>,
+			),
+		);
+		expect(renderCapture.fingerprints["inside-card"]).toBeTruthy();
+	});
+
+	it("fingerprint skip applies to deep dynamic Partial on nav", async () => {
+		function ProductCard() {
+			return <Partial id="inside-card"><Inner /></Partial>;
+		}
+
+		// First render — capture fingerprint.
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<div><ProductCard /></div>
+				</PartialRoot>,
+			),
+		);
+		const fp = renderCapture.fingerprints["inside-card"];
+		expect(fp).toBeTruthy();
+
+		// Second render — client reports that fingerprint; server should
+		// emit a placeholder and not render `<Inner/>`.
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ cached: `inside-card:${fp}` }),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<div><ProductCard /></div>
+					</PartialRoot>,
+				),
+		);
+		expect(JSON.stringify(result)).not.toContain("inner-real-content");
+	});
+
+	it("__inputs override applies to deep dynamic Partial", async () => {
+		function SkuPrice({ marker }: { marker: string }) {
+			return <span>{marker}</span>;
+		}
+		function ProductCard() {
+			return (
+				<Partial id="price-abc">
+					<SkuPrice marker="initial-price" />
+				</Partial>
+			);
+		}
+
+		// Prime the registry.
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<div><ProductCard /></div>
+				</PartialRoot>,
+			),
+		);
+
+		// Refetch with __inputs override. The override replaces the
+		// marker prop on the <SkuPrice/> that sits inside the Partial.
+		const inputs = JSON.stringify({
+			"price-abc": { marker: "overridden-price" },
+		});
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ partials: "price-abc", __inputs: inputs }),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<div><ProductCard /></div>
+					</PartialRoot>,
+				),
+		);
+		const str = JSON.stringify(result);
+		expect(str).toContain("overridden-price");
+		expect(str).not.toContain("initial-price");
 	});
 });
 
@@ -832,187 +1005,127 @@ describe("Collision detection", () => {
 
 describe("Streaming mode", () => {
 	it("full render uses streaming mode", async () => {
-		let capturedMode: string | undefined;
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			mode,
-			children,
-		}: any) => {
-			capturedMode = mode;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(capturedMode).toBe("streaming");
+		expect(renderCapture.mode).toBe("streaming");
 	});
 
 	it("partial refetch uses cache mode", async () => {
-		let capturedMode: string | undefined;
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			mode,
-			children,
-		}: any) => {
-			capturedMode = mode;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest({ partials: "hero" }), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
-		expect(capturedMode).toBe("cache");
+		expect(renderCapture.mode).toBe("cache");
 	});
 
 	it("partials with fallback prop are wrapped in Suspense in streaming mode", async () => {
-		let capturedChildren: React.ReactNode;
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			children,
-		}: any) => {
-			capturedChildren = children;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		function SlowCart() { return <span>cart</span>; }
 		const fallback = <span>loading...</span>;
 
-		await runWithRequestAsync(fakeRequest(), async () =>
+		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="cart" fallback={fallback}><SlowCart /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
 
-		// Walk the rendered children recursively (descends through the
-		// PartialBoundary wrapper that transformForStreaming now adds so
-		// <Cache> can recognize partial-bearing subtrees).
-		function findSuspense(node: React.ReactNode): boolean {
+		// Walk the rendered tree for any Suspense element — it's there
+		// because <Partial id="cart" fallback={...}> wrapped its content.
+		function findSuspense(node: any): boolean {
 			if (Array.isArray(node)) return node.some(findSuspense);
-			if (!React.isValidElement(node)) return false;
+			if (!node || typeof node !== "object") return false;
 			if (node.type === React.Suspense) return true;
-			return findSuspense((node.props as any).children);
+			const kids = node?.props?.children;
+			return findSuspense(kids);
 		}
-		expect(findSuspense(capturedChildren)).toBe(true);
-
-		// Hero (no fallback) should not introduce a Suspense.
-		const children = React.Children.toArray(capturedChildren!);
-		expect(children.length).toBeGreaterThan(1);
+		expect(findSuspense(result)).toBe(true);
 	});
 
-	it("sync partials are not wrapped in Suspense in streaming mode", async () => {
-		let capturedChildren: React.ReactNode;
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			children,
-		}: any) => {
-			capturedChildren = children;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
-		await runWithRequestAsync(fakeRequest(), async () =>
+	it("wraps Partial in Suspense when a fallback is provided", async () => {
+		// With a fallback: outer wrapper is `<Suspense key={id}>…</Suspense>`.
+		// Without a fallback: outer wrapper is `<PartialErrorBoundary key={id}>`.
+		// Bug #1 from the refactor: unconditional Suspense wrapping broke
+		// nested-Partial substitution because the client walker skips
+		// Suspense subtrees (Flight lazies).
+		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
-					<Partial id="hero"><Hero /></Partial>
-					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				<PartialRoot>
+					<Partial id="hero" fallback={<div>loading hero</div>}><Hero /></Partial>
+					<Partial id="stats" fallback={<div>loading stats</div>}><Stats /></Partial>
+				</PartialRoot>,
 			),
 		);
 
-		function findSuspense(node: React.ReactNode): boolean {
-			if (Array.isArray(node)) return node.some(findSuspense);
-			if (!React.isValidElement(node)) return false;
-			if (node.type === React.Suspense) return true;
-			return findSuspense((node.props as any).children);
+		function countSuspense(node: any): number {
+			if (Array.isArray(node)) return node.reduce((sum, n) => sum + countSuspense(n), 0);
+			if (!node || typeof node !== "object") return 0;
+			const self = node.type === React.Suspense ? 1 : 0;
+			return self + countSuspense(node?.props?.children);
 		}
-		expect(findSuspense(capturedChildren)).toBe(false);
+		expect(countSuspense(result)).toBe(2);
 	});
 
-	it("streaming mode passes all fingerprints to PartialsClient", async () => {
-		let capturedFingerprints: Record<string, string> = {};
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			fingerprints,
-			children,
-		}: any) => {
-			capturedFingerprints = fingerprints;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
-		await runWithRequestAsync(fakeRequest(), async () =>
+	it("omits Suspense when no fallback (nested-substitution invariant)", async () => {
+		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
 
-		expect(capturedFingerprints).toHaveProperty("hero");
-		expect(capturedFingerprints).toHaveProperty("stats");
+		function countSuspense(node: any): number {
+			if (Array.isArray(node)) return node.reduce((sum, n) => sum + countSuspense(n), 0);
+			if (!node || typeof node !== "object") return 0;
+			const self = node.type === React.Suspense ? 1 : 0;
+			return self + countSuspense(node?.props?.children);
+		}
+		expect(countSuspense(result)).toBe(0);
+	});
+
+	it("streaming mode captures fingerprints for each Partial", async () => {
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<Partial id="hero"><Hero /></Partial>
+					<Partial id="stats"><Stats /></Partial>
+				</PartialRoot>,
+			),
+		);
+
+		expect(renderCapture.fingerprints).toHaveProperty("hero");
+		expect(renderCapture.fingerprints).toHaveProperty("stats");
 	});
 
 	it("cache mode renders template and wraps children in error boundaries", async () => {
-		let capturedTemplate: React.ReactNode;
-		let capturedChildren: React.ReactNode;
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			template,
-			children,
-		}: any) => {
-			capturedTemplate = template;
-			capturedChildren = children;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		await runWithRequestAsync(fakeRequest({ partials: "hero" }), async () =>
 			renderToJSON(
-				<P>
+				<PartialRoot>
 					<Partial id="hero"><Hero /></Partial>
 					<Partial id="stats"><Stats /></Partial>
-				</P>,
+				</PartialRoot>,
 			),
 		);
 
-		expect(capturedTemplate).toBeDefined();
-		const children = React.Children.toArray(capturedChildren!);
+		expect(renderCapture.template).toBeDefined();
+		const children = React.Children.toArray(renderCapture.children);
 		expect(children.length).toBe(1);
 	});
 
 	it("__populateCache renders all partials via streaming mode", async () => {
-		let capturedMode: string | undefined;
-		let capturedFreshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			mode,
-			freshIds,
-			children,
-		}: any) => {
-			capturedMode = mode;
-			capturedFreshIds = freshIds;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		function CartBadge() { return <span>cart-badge</span>; }
 		function Products() { return <span>products</span>; }
 
@@ -1020,16 +1133,15 @@ describe("Streaming mode", () => {
 			fakeRequest({ tags: "cart", __populateCache: "1" }),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="cart" tags={["cart"]}><CartBadge /></Partial>
 						<Partial id="products"><Products /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
-		expect(capturedMode).toBe("streaming");
-		expect(capturedFreshIds).toContain("cart");
-		expect(capturedFreshIds).toContain("products");
+		expect(renderCapture.freshIds).toContain("cart");
+		expect(renderCapture.freshIds).toContain("products");
 
 		const str = JSON.stringify(result);
 		expect(str).toContain("cart-badge");
@@ -1037,17 +1149,6 @@ describe("Streaming mode", () => {
 	});
 
 	it("tag invalidation with ?cached= only renders tagged partial", async () => {
-		let capturedFreshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds,
-			children,
-		}: any) => {
-			capturedFreshIds = freshIds;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		function CartBadge() { return <span>cart-badge</span>; }
 		function Products() { return <span>products</span>; }
 
@@ -1055,14 +1156,14 @@ describe("Streaming mode", () => {
 			fakeRequest({ tags: "cart", cached: "cart:abc,products:def" }),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="cart" tags={["cart"]}><CartBadge /></Partial>
 						<Partial id="products"><Products /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
-		expect(capturedFreshIds).toEqual(["cart"]);
+		expect(renderCapture.freshIds).toEqual(["cart"]);
 		const str = JSON.stringify(result);
 		expect(str).toContain("cart-badge");
 	});
@@ -1097,25 +1198,14 @@ describe("Cart invalidation: header must not re-render", () => {
 	}
 
 	it("tag=cart with cache: only cart is fresh, header and products are cached", async () => {
-		let capturedFreshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds,
-			children,
-		}: any) => {
-			capturedFreshIds = freshIds;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
-		const { result: _ } = await runWithRequestAsync(
+		await runWithRequestAsync(
 			fakeRequest({
 				tags: "cart",
 				cached: "header:h1,cart:c1,products:p1",
 			}),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="header">
 							<header>
 								Timestamp: 2024-01-01
@@ -1127,24 +1217,16 @@ describe("Cart invalidation: header must not re-render", () => {
 						<main>
 							<Partial id="products"><ProductGrid /></Partial>
 						</main>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
-		expect(capturedFreshIds).toEqual(["cart"]);
-		expect(capturedFreshIds).not.toContain("header");
-		expect(capturedFreshIds).not.toContain("products");
+		expect(renderCapture.freshIds).toEqual(["cart"]);
+		expect(renderCapture.freshIds).not.toContain("header");
+		expect(renderCapture.freshIds).not.toContain("products");
 	});
 
 	it("tag=cart with cache: header content is NOT in the rendered output", async () => {
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			children,
-		}: any) => {
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		const { result } = await runWithRequestAsync(
 			fakeRequest({
 				tags: "cart",
@@ -1152,7 +1234,7 @@ describe("Cart invalidation: header must not re-render", () => {
 			}),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="header">
 							<header>
 								Timestamp: 2024-01-01
@@ -1164,7 +1246,7 @@ describe("Cart invalidation: header must not re-render", () => {
 						<main>
 							<Partial id="products"><ProductGrid /></Partial>
 						</main>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
@@ -1178,19 +1260,8 @@ describe("Cart invalidation: header must not re-render", () => {
 	});
 
 	it("__populateCache renders all partials (first action), subsequent only renders cart", async () => {
-		let capturedFreshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds,
-			children,
-		}: any) => {
-			capturedFreshIds = freshIds;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
-
 		const makeTree = () => (
-			<P>
+			<PartialRoot>
 				<Partial id="header">
 					<header>
 						Timestamp: {Date.now()}
@@ -1202,20 +1273,19 @@ describe("Cart invalidation: header must not re-render", () => {
 				<main>
 					<Partial id="products"><ProductGrid /></Partial>
 				</main>
-			</P>
+			</PartialRoot>
 		);
 
-		// First action: __populateCache → all partials
+		// First action: __populateCache → all partials render.
 		await runWithRequestAsync(
 			fakeRequest({ tags: "cart", __populateCache: "1" }),
 			async () => renderToJSON(makeTree()),
 		);
-		const firstActionFreshIds = [...capturedFreshIds];
-		expect(firstActionFreshIds).toContain("header");
-		expect(firstActionFreshIds).toContain("cart");
-		expect(firstActionFreshIds).toContain("products");
+		expect(renderCapture.freshIds).toContain("header");
+		expect(renderCapture.freshIds).toContain("cart");
+		expect(renderCapture.freshIds).toContain("products");
 
-		// Subsequent action: with cache → only cart
+		// Subsequent action: with cache → only cart.
 		await runWithRequestAsync(
 			fakeRequest({
 				tags: "cart",
@@ -1223,19 +1293,19 @@ describe("Cart invalidation: header must not re-render", () => {
 			}),
 			async () => renderToJSON(makeTree()),
 		);
-		expect(capturedFreshIds).toEqual(["cart"]);
+		expect(renderCapture.freshIds).toEqual(["cart"]);
 	});
 });
 
 // ── Dynamic Partial registry ───────────────────────────────────────────
 //
-// The static `collectPartials` walk follows JSX `.children` chains; it
-// can't see through opaque function components. A `<Partial>` produced
-// inside `ProductList.map(p => <ProductItem price={<Partial
-// id={`price-${p.sku}`}>…</Partial>}/>)` — the canonical GoldPrice-style
-// pattern — is invisible to the static walker. The route-scoped
-// `partial-registry` captures each such Partial when `<Partial>`
-// self-wraps during the render, so later refetches can resolve by id
+// The bootstrap JSX walk in `PartialRoot` (`seedRegistry`) follows
+// `.children` chains; it can't see through opaque function components.
+// A `<Partial>` produced inside `ProductList.map(p => <ProductItem
+// price={<Partial id={`price-${p.sku}`}>…</Partial>}/>)` — the canonical
+// GoldPrice-style pattern — is invisible to that bootstrap walk. But
+// every `<Partial>` self-registers in the route-scoped
+// `partial-registry` on render, so later refetches can resolve by id
 // without re-running the ancestor tree.
 
 describe("Dynamic Partial discovery via route-scoped registry", () => {
@@ -1276,7 +1346,7 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
 			return <span data-testid={`price-${sku}`}>$1.00</span>;
 		}
 
-		// ProductList is opaque to `collectPartials`: the Partials it
+		// ProductList is opaque to the bootstrap walk: the Partials it
 		// produces live inside its return value, not inside its
 		// `.children` prop.
 		function ProductList() {
@@ -1308,49 +1378,25 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
 		);
 
 		// Subsequent refetch for one dynamic id.
-		let capturedFreshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			freshIds,
-			children,
-		}: any) => {
-			capturedFreshIds = freshIds;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
 		await runWithRequestAsync(
 			new Request("http://localhost/dynamic?partials=price-B"),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<ProductList />
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
-		// The registry supplement picked up `price-B` even though
-		// `collectPartials` couldn't find it statically — that's the
-		// whole point of the registry.
-		expect(capturedFreshIds).toEqual(["price-B"]);
+		// Only price-B rendered; the registry resolved it even though
+		// `seedRegistry` (the static walk) couldn't see through
+		// ProductList.
+		expect(renderCapture.freshIds).toEqual(["price-B"]);
 	});
 
 	it("falls back to full render when a requested id is neither static nor in the registry", async () => {
 		const { clearRegistry } = await import("../partial-registry.ts");
 		clearRegistry();
-
-		let capturedMode: string | undefined;
-		let capturedFreshIds: string[] = [];
-		vi.mocked(await import("../partial-client.tsx")).PartialsClient = (({
-			mode,
-			freshIds,
-			children,
-		}: any) => {
-			capturedMode = mode;
-			capturedFreshIds = freshIds;
-			return children;
-		}) as any;
-
-		const { PartialRoot: P } = await import("../partial.tsx");
 
 		// Ask for `price-UNKNOWN` on a route where no full render has
 		// populated it. PartialRoot should ignore the (stale) filter
@@ -1360,16 +1406,15 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
 			new Request("http://localhost/cold?partials=price-UNKNOWN"),
 			async () =>
 				renderToJSON(
-					<P>
+					<PartialRoot>
 						<Partial id="hero"><Hero /></Partial>
-					</P>,
+					</PartialRoot>,
 				),
 		);
 
-		expect(capturedMode).toBe("streaming");
-		// All statically-discovered partials are rendered as fresh
-		// (full-render fallback), so we at least see `hero`.
-		expect(capturedFreshIds).toContain("hero");
+		// Full-render fallback rendered `hero` even though the caller
+		// asked for price-UNKNOWN.
+		expect(renderCapture.freshIds).toContain("hero");
 	});
 
 	it("registry captures each dynamic partial's content so refetch can render it without the ancestor", async () => {
