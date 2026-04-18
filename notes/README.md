@@ -11,6 +11,7 @@ design documents and debugging sessions live in `archive/`.
 | `LESSONS.md` | Earlier refetch-mechanics lessons (2026-04-16 → 2026-04-17) — bare-key Suspense reconciliation, fingerprint-based skip, flipped transition default, Flight serialization losing implicit keys. Pairs with `LESSONS_FROM_REFACTOR.md`. |
 | `DYNAMIC_PARTIAL_REGISTRY.md` | Why the route-scoped registry exists, how `<PartialBoundary>` populates it during render, how `<PartialRoot>` consults it on refetch. Updated 2026-04-18 for the unified-path model. |
 | `SERVER_CACHE_NOTES.md` | `<Cache>` component design — Flight-buffer round-trip, TTL + LRU + SWR, strip-on-store / reinject-on-return so dynamic Partials inside a cached region stay live. |
+| `DEFER_ACTIVATORS.md` | `<Partial defer>` + activator components (`<WhenVisible>`, `<WhenStored>`, `<AnyOf>`) and the `useActivate` primitive. Three defer modes, activator contract, state-source interaction. |
 | `IDEAS.md` | Forward-looking backlog — lazy partials, prefetch links, event hooks, `_cache` pruning, per-partial opt-out. Resolved ideas are retained with a "RESOLVED" banner pointing to where the work landed. |
 
 ## Archive

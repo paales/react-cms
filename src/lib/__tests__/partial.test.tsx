@@ -538,73 +538,6 @@ describe("PartialRoot architecture", () => {
 	});
 });
 
-describe("WhenVisible activator", () => {
-	// Mock the client half so vitest renders without needing React.useRef
-	// or IntersectionObserver.
-	vi.doMock("../when-visible-client.tsx", () => ({
-		WhenVisibleClient: ({ partialId, children }: { partialId: string; children: React.ReactNode }) => (
-			<span data-activator={partialId}>{children}</span>
-		),
-	}));
-
-	it("renders fallback on full render", async () => {
-		const { WhenVisible } = await import("../when-visible.tsx");
-		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<PartialRoot>
-					<Partial id="bio">
-						<WhenVisible partialId="bio" fallback={<span>fb-bio</span>}>
-							<article>real-bio</article>
-						</WhenVisible>
-					</Partial>
-				</PartialRoot>,
-			),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("fb-bio");
-		expect(str).not.toContain("real-bio");
-	});
-
-	it("renders children when partial is in ?partials=", async () => {
-		const { WhenVisible } = await import("../when-visible.tsx");
-		const { result } = await runWithRequestAsync(
-			fakeRequest({ partials: "bio" }),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<Partial id="bio">
-							<WhenVisible partialId="bio" fallback={<span>fb-bio</span>}>
-								<article>real-bio</article>
-							</WhenVisible>
-						</Partial>
-					</PartialRoot>,
-				),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("real-bio");
-		expect(str).not.toContain("fb-bio");
-	});
-
-	it("renders children when __inputs overrides target it", async () => {
-		const { WhenVisible } = await import("../when-visible.tsx");
-		const inputs = JSON.stringify({ bio: {} });
-		const { result } = await runWithRequestAsync(
-			fakeRequest({ partials: "bio", __inputs: inputs }),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<Partial id="bio">
-							<WhenVisible partialId="bio" fallback={<span>fb-bio</span>}>
-								<article>real-bio</article>
-							</WhenVisible>
-						</Partial>
-					</PartialRoot>,
-				),
-		);
-		expect(JSON.stringify(result)).toContain("real-bio");
-	});
-});
-
 describe("Partial discovery", () => {
 	// The runtime path runs Partial's component body on every render, so
 	// deep / dynamic Partials (ones produced inside `.map()`, inside
@@ -1458,5 +1391,163 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
 		const content = snap!.content as React.ReactElement<any>;
 		expect(React.isValidElement(content)).toBe(true);
 		expect((content.props as any).sku).toBe("Y");
+	});
+});
+
+describe("Partial defer prop", () => {
+	function Dormant() {
+		return <div data-testid="dormant">dormant</div>;
+	}
+	function Activated() {
+		return <div data-testid="activated">activated</div>;
+	}
+
+	it("emits fallback when defer={true} and not explicitly requested", async () => {
+		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<Partial id="feed" defer fallback={<Dormant />}>
+						<Activated />
+					</Partial>
+				</PartialRoot>,
+			),
+		);
+		const str = JSON.stringify(result);
+		expect(str).toContain("dormant");
+		expect(str).not.toContain("activated");
+	});
+
+	it("renders content when the deferred id is in ?partials=", async () => {
+		const { result } = await runWithRequestAsync(
+			fakeRequest({ partials: "feed" }),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<Partial id="feed" defer fallback={<Dormant />}>
+							<Activated />
+						</Partial>
+					</PartialRoot>,
+				),
+		);
+		const str = JSON.stringify(result);
+		expect(str).toContain("activated");
+		expect(str).not.toContain("dormant");
+	});
+
+	it("renders content when deferred id has an __inputs entry", async () => {
+		const { result } = await runWithRequestAsync(
+			fakeRequest({
+				partials: "feed",
+				__inputs: JSON.stringify({ feed: { foo: "bar" } }),
+			}),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<Partial id="feed" defer fallback={<Dormant />}>
+							<Activated />
+						</Partial>
+					</PartialRoot>,
+				),
+		);
+		const str = JSON.stringify(result);
+		expect(str).toContain("activated");
+	});
+
+	it("clones an activator element with partialId + fallback as children", async () => {
+		function Activator({
+			partialId,
+			children,
+		}: {
+			partialId?: string;
+			children?: React.ReactNode;
+		}) {
+			return (
+				<div data-activator data-id={partialId}>
+					{children}
+				</div>
+			);
+		}
+		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<Partial id="feed" defer={<Activator />} fallback={<Dormant />}>
+						<Activated />
+					</Partial>
+				</PartialRoot>,
+			),
+		);
+		const str = JSON.stringify(result);
+		expect(str).toContain("dormant");
+		expect(str).toContain('"data-id":"feed"');
+		expect(str).not.toContain("activated");
+	});
+
+	it("preserves user-set activator props when cloning", async () => {
+		function Activator({
+			partialId,
+			children,
+			label,
+		}: {
+			partialId?: string;
+			children?: React.ReactNode;
+			label?: string;
+		}) {
+			return (
+				<div data-label={label} data-id={partialId}>
+					{children}
+				</div>
+			);
+		}
+		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<Partial
+						id="feed"
+						defer={<Activator label="hello" />}
+						fallback={<Dormant />}
+					>
+						<Activated />
+					</Partial>
+				</PartialRoot>,
+			),
+		);
+		const str = JSON.stringify(result);
+		expect(str).toContain('"data-label":"hello"');
+		expect(str).toContain('"data-id":"feed"');
+	});
+
+	it("registers the deferred partial so activation refetches can look it up", async () => {
+		const { lookupPartial } = await import("../partial-registry.ts");
+		await runWithRequestAsync(
+			new Request("http://localhost/defer-route"),
+			async () =>
+				renderToJSON(
+					<PartialRoot>
+						<Partial id="feed" defer fallback={<Dormant />}>
+							<Activated />
+						</Partial>
+					</PartialRoot>,
+				),
+		);
+		const snap = lookupPartial("/defer-route", "feed");
+		expect(snap).toBeDefined();
+		// The registered content is the REAL content, not the fallback —
+		// so an activation refetch renders `<Activated/>`, not `<Dormant/>`.
+		const content = snap!.content as React.ReactElement<any>;
+		expect(React.isValidElement(content)).toBe(true);
+		expect(content.type).toBe(Activated);
+	});
+
+	it("emits a partial fingerprint even when deferred (so nav-skip still works)", async () => {
+		await runWithRequestAsync(fakeRequest(), async () =>
+			renderToJSON(
+				<PartialRoot>
+					<Partial id="feed" defer fallback={<Dormant />}>
+						<Activated />
+					</Partial>
+				</PartialRoot>,
+			),
+		);
+		expect(renderCapture.fingerprints.feed).toBeDefined();
 	});
 });

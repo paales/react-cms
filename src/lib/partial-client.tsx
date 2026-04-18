@@ -25,6 +25,7 @@ import React, {
   Suspense,
   useCallback,
   useContext,
+  useEffect,
   useState,
   useRef,
   type ReactNode,
@@ -419,6 +420,61 @@ export function usePartial(
   );
 
   return [dispatch, isPending];
+}
+
+/**
+ * Activator building block. Subscribe a client-side trigger to a
+ * Partial's activation refetch.
+ *
+ * Typical use inside an activator component:
+ *
+ *   useActivate(partialId, (fire) => {
+ *     const obs = new IntersectionObserver(
+ *       (e) => e.some(x => x.isIntersecting) && fire(),
+ *       { rootMargin },
+ *     );
+ *     obs.observe(node);
+ *     return () => obs.disconnect();
+ *   });
+ *
+ * `fire(inputs?)` triggers `usePartial(partialId).refetch(inputs)`.
+ * Inputs land in `__inputs` and get applied as prop overrides on the
+ * Partial's content via `cloneElement`. Calling `fire` more than once
+ * is a no-op by default (one-shot activation). Pass `{once: false}` if
+ * you need an activator that can fire repeatedly (rare — most state
+ * transitions should use `usePartial().refetch()` directly).
+ *
+ * `subscribe` is registered once per mount and is captured via ref, so
+ * the latest closure is used when the subscription fires. The effect
+ * itself does not re-run when `subscribe` changes — if you need to
+ * re-subscribe on prop changes, remount the activator by setting a
+ * `key` that changes with those props.
+ */
+export function useActivate(
+  partialId: string,
+  subscribe: (
+    fire: (inputs?: Record<string, unknown>) => void,
+  ) => (() => void) | void,
+  opts?: { once?: boolean },
+): void {
+  const [refetch] = usePartial(partialId);
+  const once = opts?.once ?? true;
+  const firedRef = useRef(false);
+  const subscribeRef = useRef(subscribe);
+  subscribeRef.current = subscribe;
+
+  useEffect(() => {
+    const cleanup = subscribeRef.current(
+      (inputs?: Record<string, unknown>) => {
+        if (once && firedRef.current) return;
+        firedRef.current = true;
+        void refetch(inputs);
+      },
+    );
+    return () => {
+      if (typeof cleanup === "function") cleanup();
+    };
+  }, [refetch, once]);
 }
 
 export function PartialsClient({

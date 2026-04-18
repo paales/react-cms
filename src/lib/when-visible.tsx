@@ -1,14 +1,16 @@
-import type { ReactNode } from "react";
-import { getRequest } from "../framework/context.ts";
-import { WhenVisibleClient } from "./when-visible-client.tsx";
+"use client";
 
-interface WhenVisibleProps {
-  /** Partial id this activator belongs to and activates on visibility. */
-  partialId: string;
-  /** Content rendered once the block is activated. */
-  children: ReactNode;
-  /** Placeholder rendered until activation. */
-  fallback: ReactNode;
+import {
+  Fragment,
+  useCallback,
+  useRef,
+  type FragmentInstance,
+  type ReactNode,
+} from "react";
+import { useActivate } from "./partial-client.tsx";
+import type { ActivatorProps } from "./partial-component.tsx";
+
+export interface WhenVisibleProps extends ActivatorProps {
   /** `IntersectionObserver.rootMargin`. Default `"0px"`. */
   rootMargin?: string;
   /** `IntersectionObserver.threshold`. */
@@ -16,48 +18,53 @@ interface WhenVisibleProps {
 }
 
 /**
- * Activator: render `fallback` with an IntersectionObserver that
- * activates a partial on first visibility. Once the partial has
- * been explicitly rendered (client called
- * `usePartial(id).refetch()`), this component renders `children`
- * directly instead.
+ * Activator: fires the enclosing Partial's refetch when the fallback
+ * enters the viewport.
  *
- * `partialId` must match the enclosing `<Partial id=…>` — the
- * activator reads the current request's `?partials=` / `__inputs`
- * to decide which branch to take. The framework doesn't inject
- * ambient partial context (RSC has no cheap story for server-to-
- * server context propagation), so the id is declared explicitly.
+ *   <Partial id="feed" fallback={<Skel/>} defer={<WhenVisible rootMargin="200px"/>}>
+ *     <Feed/>
+ *   </Partial>
+ *
+ * `partialId` and `children` are INJECTED by `<Partial defer=…>`. If
+ * you need to render `<WhenVisible>` outside a `defer` slot (you
+ * probably don't), pass `partialId` explicitly.
+ *
+ * Uses React 19 Fragment refs so there's no wrapper element around
+ * the fallback. The IntersectionObserver attaches to the fragment's
+ * DOM range.
  */
 export function WhenVisible({
   partialId,
   children,
-  fallback,
-  rootMargin,
+  rootMargin = "0px",
   threshold,
-}: WhenVisibleProps): ReactNode {
-  const url = new URL(getRequest().url);
-  const partials = (url.searchParams.get("partials") ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  let inputs: Record<string, unknown> = {};
-  const inputsRaw = url.searchParams.get("__inputs");
-  if (inputsRaw) {
-    try {
-      inputs = JSON.parse(inputsRaw);
-    } catch {
-      /* malformed — treat as no inputs */
-    }
+}: WhenVisibleProps) {
+  if (!partialId) {
+    throw new Error(
+      "<WhenVisible> requires `partialId`. Use it as the `defer` prop " +
+        "of a <Partial> (framework injects the id) or pass `partialId` " +
+        "explicitly.",
+    );
   }
-  const isExplicit = partials.includes(partialId) || inputs[partialId] != null;
-  if (isExplicit) return children;
-  return (
-    <WhenVisibleClient
-      partialId={partialId}
-      rootMargin={rootMargin}
-      threshold={threshold}
-    >
-      {fallback}
-    </WhenVisibleClient>
+  const ref = useRef<FragmentInstance | null>(null);
+  const subscribe = useCallback(
+    (fire: () => void) => {
+      const instance = ref.current;
+      if (!instance) return;
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) fire();
+        },
+        { rootMargin, threshold },
+      );
+      instance.observeUsing(observer);
+      return () => {
+        instance.unobserveUsing(observer);
+        observer.disconnect();
+      };
+    },
+    [rootMargin, threshold],
   );
+  useActivate(partialId, subscribe);
+  return <Fragment ref={ref}>{children}</Fragment>;
 }

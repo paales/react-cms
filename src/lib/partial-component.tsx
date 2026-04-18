@@ -38,14 +38,45 @@ export function PartialBoundary({
   return children;
 }
 
+/**
+ * Defer specification for `<Partial defer=…>`.
+ *
+ * - `true` — server emits fallback only; Partial is dormant until
+ *   something in the app calls `usePartial(id).refetch()`. The
+ *   framework does not install any trigger; the caller owns wiring.
+ * - `ReactElement` — an activator component. The framework clones it
+ *   with `{partialId: id}` and passes the Partial's fallback as
+ *   children. The activator is responsible for calling
+ *   `usePartial(partialId)[0]()` when its condition fires. See
+ *   `WhenVisible` / `WhenStored` for canonical implementations.
+ */
+export type DeferSpec = true | ReactElement<ActivatorProps>;
+
+/**
+ * Contract every `defer={<Activator/>}` component must meet. Both props
+ * are INJECTED by `<Partial>` via `cloneElement` — custom activators
+ * should type them as optional on the public API (author doesn't set
+ * them) but treat them as required at runtime.
+ */
+export interface ActivatorProps {
+  /** The id of the enclosing `<Partial>`. Injected. */
+  partialId?: string;
+  /** The Partial's fallback, to render while dormant. Injected. */
+  children?: ReactNode;
+}
+
 export interface PartialProps {
   id: string;
   children: ReactNode;
   tags?: string[];
   cache?: number;
   /**
-   * Suspense fallback. Shown while async children resolve. When set,
-   * the framework auto-wraps the partial's children in `<Suspense>`.
+   * Framework-provided display when the Partial isn't showing its
+   * real content. Two activation paths:
+   *   1. Async content: shown as Suspense fallback while children
+   *      resolve (auto-wraps in `<Suspense>`).
+   *   2. Deferred content (`defer` prop): shown in place of children
+   *      until the activator fires a refetch.
    */
   fallback?: ReactNode;
   /**
@@ -53,6 +84,13 @@ export interface PartialProps {
    * If omitted, a built-in red card with a retry button is used.
    */
   errorWith?: ReactNode;
+  /**
+   * Opt into deferred rendering. See `DeferSpec` for the two forms.
+   * When set AND this id wasn't explicitly requested on the current
+   * refetch, the Partial emits the fallback (optionally wrapped by
+   * the activator) instead of executing its children.
+   */
+  defer?: DeferSpec;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -149,6 +187,7 @@ export function Partial({
   fallback,
   errorWith,
   tags,
+  defer,
 }: PartialProps): ReactNode {
   const state = requirePartialState();
 
@@ -205,6 +244,51 @@ export function Partial({
       tags: effectiveTags,
     });
     return placeholderFor(id);
+  }
+
+  // ── Defer branch ───────────────────────────────────────────────────
+  //
+  // When `defer` is set AND this id wasn't explicitly requested, emit
+  // a "dormant" form: the fallback wrapped by the activator (if any).
+  // The content children do not execute this pass — that's the whole
+  // point of defer. Once a client-side trigger fires a refetch, the
+  // next request puts this id in `state.explicitIds` and we fall
+  // through to the normal render path.
+  //
+  // We still wrap in PartialBoundary (registers the id in the route
+  // registry so activation refetches can look it up) and
+  // PartialErrorBoundary (makes the wrapper recognizable to client
+  // walkers via the `partialId` prop).
+  if (defer && !isExplicit) {
+    const dormant =
+      defer === true
+        ? effectiveFallback
+        : isValidElement(defer)
+          ? cloneElement(
+              defer as ReactElement<ActivatorProps>,
+              { partialId: id },
+              effectiveFallback,
+            )
+          : effectiveFallback;
+
+    return (
+      <PartialBoundary
+        id={id}
+        content={content}
+        fallback={effectiveFallback}
+        errorWith={errorWith}
+        tags={effectiveTags}
+      >
+        <PartialErrorBoundary
+          key={id}
+          partialId={id}
+          partialFingerprint={fp}
+          fallback={errorWith}
+        >
+          {dormant}
+        </PartialErrorBoundary>
+      </PartialBoundary>
+    );
   }
 
   // ── Render ─────────────────────────────────────────────────────────

@@ -1,12 +1,12 @@
 ## Borrowed-from-Inertia candidates (2026-04-16)
 
-### Lazy partials (`<Partial lazy>`)
+### Lazy partials — SHIPPED as `<Partial defer>` (2026-04-18)
 
-Server-side counterpart to `<WhenVisible>`. On initial render the partial's content does not execute — only the fallback is streamed. An explicit `usePartial(id).refetch()` (from a button, WhenVisible, hover-prefetch, websocket, whatever) triggers the first real render. Rationale: `<WhenVisible>` is one specific _activation_ strategy; `lazy` is the _deferral_ decision, orthogonal to who triggers it. Inspired by Inertia's `Inertia::lazy()`. See chat 2026-04-16.
+`defer={true}` emits fallback only; app calls `usePartial(id).refetch()` whenever. `defer={<Activator/>}` wires a client-side trigger automatically. Companion hook `useActivate(partialId, subscribe)` is the primitive every activator is built on. See `DEFER_ACTIVATORS.md`.
 
-### Refetch-trigger pattern (not a new primitive)
+### Refetch-trigger pattern — SHIPPED as `useActivate`
 
-Document `<WhenVisible>` as one instance of a broader pattern: any client condition → `usePartial(id).refetch()`. Likely a `useRefetchTrigger(id, signal)` hook or just a convention. Other canonical instances: poll (`setInterval`), hover-prefetch, websocket message, `visibilitychange`. No framework code needed — just a coherent story + a couple of examples in the docs.
+`<WhenVisible>` is now one of several activators composed from the `useActivate(partialId, subscribe)` hook. Adding a new trigger type (idle, event, mediaQuery) is ~30 lines against that contract. Canonical activators today: `<WhenVisible>`, `<WhenStored>`, `<AnyOf>`.
 
 ### Prefetch links
 

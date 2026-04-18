@@ -17,6 +17,7 @@
 import { PartialRoot, Partial } from "../../lib/partial.tsx";
 import { NextObserver } from "../components/next-observer.tsx";
 import { ScrollRestore } from "../components/scroll-restore.tsx";
+import { AppNav } from "../components/app-nav.tsx";
 import { getRequest } from "../../framework/context.ts";
 
 const ITEMS_PER_PAGE = 10;
@@ -85,6 +86,9 @@ export function BarePage() {
         </Partial>
         <body>
           <ScrollRestore />
+          <Partial id="nav">
+            <AppNav />
+          </Partial>
           <h1>Infinite Scroll (renderOn-style singleton slot)</h1>
           <p style={{ color: "#888", marginBottom: "1rem" }}>
             <a href="/" data-testid="link-home">← Home</a>

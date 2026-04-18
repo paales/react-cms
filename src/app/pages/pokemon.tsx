@@ -235,30 +235,18 @@ export function PokemonPage() {
           <div style={{ height: "80vh" }} data-testid="lazy-spacer" />
           <Partial
             id="trivia"
+            defer={<WhenVisible />}
             fallback={
               <div
                 className="card"
-                data-testid="trivia-loading"
+                data-testid="trivia-fallback"
                 style={{ color: "#888", fontStyle: "italic" }}
               >
                 Loading trivia…
               </div>
             }
           >
-            <WhenVisible
-              partialId="trivia"
-              fallback={
-                <div
-                  className="card"
-                  data-testid="trivia-fallback"
-                  style={{ color: "#888", fontStyle: "italic" }}
-                >
-                  Loading trivia…
-                </div>
-              }
-            >
-              <TriviaPartial pokemonId={pokemonId} />
-            </WhenVisible>
+            <TriviaPartial pokemonId={pokemonId} />
           </Partial>
         </>
       ) : (

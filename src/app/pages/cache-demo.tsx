@@ -15,6 +15,7 @@ import { Partial, PartialRoot } from "../../lib/partial.tsx";
 import { Cache, _cacheStats } from "../../lib/cache.tsx";
 import { CacheControls } from "../components/cache-controls.tsx";
 import { ClickCounter } from "../components/click-counter.tsx";
+import { AppNav } from "../components/app-nav.tsx";
 import { getRequest } from "../../framework/context.ts";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -95,10 +96,13 @@ export function CacheDemoPage() {
           </head>
         </Partial>
         <body>
+          <Partial id="nav">
+            <AppNav />
+          </Partial>
           <h1>Server-side cache spike</h1>
           <p style={{ color: "#888" }}>
-            <a href="/">← Home</a> · flavor=<code>{flavor}</code> ·
-            cache size: <code data-testid="cache-size">{stats.size}</code>
+            flavor=<code>{flavor}</code> · cache size:{" "}
+            <code data-testid="cache-size">{stats.size}</code>
           </p>
 
           <CacheControls />

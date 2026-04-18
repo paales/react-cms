@@ -2,16 +2,19 @@ import { PokemonPage } from "./pages/pokemon.tsx";
 import { MagentoPage } from "./pages/magento/product-list.tsx";
 import { BarePage } from "./pages/bare-stream.tsx";
 import { CacheDemoPage } from "./pages/cache-demo.tsx";
+import { DeferDemoPage } from "./pages/defer-demo.tsx";
 import { PartialRoot, Partial } from "../lib/partial.tsx";
 import { getRequest } from "../framework/context.ts";
 import { matchPath, pickRoute } from "../framework/router.ts";
 import { DebugToolbar } from "./components/debug-toolbar.tsx";
+import { AppNav } from "./components/app-nav.tsx";
 
 export function Root() {
   const url = new URL(getRequest().url);
 
   if (matchPath(url, "/bare")) return <BarePage />;
   if (matchPath(url, "/cache-demo")) return <CacheDemoPage />;
+  if (matchPath(url, "/defer-demo")) return <DeferDemoPage />;
 
   return (
     <PartialRoot>
@@ -58,11 +61,7 @@ export function Root() {
         </Partial>
         <body>
           <Partial id="nav">
-            <nav>
-              <a href="/">Pokemon</a>
-              {" · "}
-              <a href="/magento">Magento Store</a>
-            </nav>
+            <AppNav />
           </Partial>
           {pickRoute(url, [
             ["/magento", () => MagentoPage()],

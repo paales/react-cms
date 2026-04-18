@@ -42,7 +42,7 @@ test("second /magento render (Cache hit) still produces full body HTML", async (
     ["cold", firstHtml],
     ["cached", secondHtml],
   ] as const) {
-    expect(html, `${label} render should contain <nav>`).toContain("<nav>");
+    expect(html, `${label} render should contain <nav>`).toContain("<nav");
     expect(html, `${label} render should contain <header>`).toContain("<header");
     expect(
       html,
