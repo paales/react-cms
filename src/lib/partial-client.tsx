@@ -166,6 +166,30 @@ function getPlaceholderId(node: React.ReactElement): string | null {
 }
 
 /**
+ * Collect the ids of all `<i data-partial>` placeholders in a derived
+ * template. `deriveTemplate` replaces every live Partial wrapper (fresh
+ * OR previously-skipped) with a placeholder keyed by id, so this set is
+ * exactly the top-level Partial ids present on the current page. Used
+ * to prune `_cache` entries left over from prior routes.
+ */
+function collectTemplateIds(node: ReactNode, out: Set<string>): void {
+  if (node == null || typeof node === "boolean") return;
+  if (typeof node === "string" || typeof node === "number") return;
+  if (Array.isArray(node)) {
+    for (const child of node) collectTemplateIds(child as ReactNode, out);
+    return;
+  }
+  if (!isValidElement(node)) return;
+  if (isPlaceholder(node)) {
+    const id = getPlaceholderId(node);
+    if (id) out.add(id);
+    return;
+  }
+  const inner = (node.props as any)?.children;
+  if (inner != null) collectTemplateIds(inner, out);
+}
+
+/**
  * Walk a cached element tree and substitute any nested partial wrappers
  * with the current cache entry for that partial id.
  */
@@ -684,6 +708,20 @@ export function PartialsClient({
       _templateRoute = window.location.pathname + window.location.search;
     }
     _debug = [];
+
+    // Drop entries carried over from a prior route. The derived template
+    // lists exactly the Partial ids present on the current page; anything
+    // still in `_cache` / `_fingerprints` but not in that set is a leak
+    // from a previous navigation. `_fingerprints` is fully rewritten by
+    // `PartialErrorBoundary` renders in this pass (including deep/dynamic
+    // Partials that live inside cached ancestors), so clearing it here
+    // is safe and simpler than the selective walk `_cache` needs.
+    const liveIds = new Set<string>();
+    collectTemplateIds(derived, liveIds);
+    for (const id of [..._cache.keys()]) {
+      if (!liveIds.has(id)) _cache.delete(id);
+    }
+    _fingerprints.clear();
 
     const rendered = renderTemplate(derived, cache);
     return (

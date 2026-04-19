@@ -61,12 +61,18 @@ Follow-ups worth considering:
    costs a render to compute. Probably not worth it unless we see
    "server re-rendering identical output repeatedly" in practice.
 
-2. **Prune stale `_cache` entries.** `cache.clear()` used to run on
-   every streaming render to evict stale entries. That's gone (it
-   was clobbering the new skipped partials). Entries accumulate
-   across navigations. For the demo app it's fine; a real CMS with
-   many routes needs a drop-if-not-in-template pass. Keep entries
-   only for ids present in the current `template`.
+2. **Prune stale `_cache` entries — RESOLVED (2026-04-19).** After
+   every streaming render, the client now collects the placeholder
+   ids in the derived template and drops `_cache` entries whose id
+   isn't in that set. `_fingerprints` is cleared in the same pass —
+   every live id is re-registered by its `PartialErrorBoundary`
+   during the subsequent React render (both top-level and deep
+   inside cached ancestors). The old problem — an earlier
+   `cache.clear()` was clobbering skipped placeholders — is avoided
+   by pruning AFTER `cacheFromStreamingChildren` + `deriveTemplate`
+   run, so placeholders emitted for fingerprint-match ids still find
+   their cache entry. Regression cover:
+   `e2e/cache-prune-across-nav.spec.ts`.
 
 3. **Per-partial opt-out.** An author may want a partial that
    _always_ re-renders on nav regardless of fingerprint match

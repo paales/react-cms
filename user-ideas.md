@@ -32,17 +32,19 @@
 - Question, not a discredit: I'm unclear why we are still using stripPartials and statically walking the children tree, this doesn't scale and needs to be abolished if possible. Its ok for now, but It remains unclear what subtle bugs this is causing, because how do opaque children work, we need those as well? If we've got Dynamic Partial holes, why can't all Partials by dynamic, what is the tradeoff?
 
 - Is the cache global or route specific, what if exactly the same Partial is used on multiple locations, will that work?
+
 - I read something about a Route cache for the partial templates, we don't strictly have routes in the framework, so what consists as a route?
 
-- As for defer; I see a future where `const consent = async getLocalStorage('consent')` would work. It would immediatly bail the render of the
-  component and show the fallback of the component and move effectively set the component in defer mode from there-on. const {x,y} = getMousePosition(), ahhaha, that would be insane, streaming all the mouse positions to the server and continiously return the newly updated component. Oh that brings in a cute research would websockets with a continuous stream back work, effectively making multiplayer possible.
+- As for defer; I see a future where `const consent = async getLocalStorage('consent')` would work. It would immediatly bail the render of the component and show the fallback of the component and move effectively set the component in defer mode from there-on. const {x,y} = getMousePosition(), ahhaha, that would be insane, streaming all the mouse positions to the server and continiously return the newly updated component. Oh that brings in a cute research would websockets with a continuous stream back work, effectively making multiplayer possible.
 
-- The getSearchParam _also_ needs to be called before any other async stuff as the ALS will not really pick it up or wont that matter as it is still executed? Should we do getPartial().header('x') would that be a better equivalent of usePartial()?
+- Should we do getPartial().header('x') would that be a better equivalent of usePartial()?
 
 - What are we going to do with the stingly typed ids? What if we don't want to give ids and only have tags? For example for the product list, we dont really care about the ids in this case? Can an id be optional. I thought about usePartial('.price') and
   usePartial('#header') as a way to distinguish between these to. And thought about simplifying tags to a tagName={'price product'} and maybe also accept an array so it becomes more css-y. A future with different selectors might become interesting as well.
 
   Attribute selectors eliminate the id-family problem. Instead of PriceOf(sku) you write <Partial tagName="price" data-sku={sku}> and refetch with usePartial('.price[data-sku="ABC"]'). Dynamic partials stop being a special case — they're just selectors. Also worth considering: are ids even necessary, or are they just "tag with a uniqueness constraint"? If you commit to selectors, id might just be syntactic sugar for "tag that must be unique on the page" — and #foo is shorthand for the uniqueness-checked version of .foo. That collapses two concepts into one.
+
+- How is the 'server' doing? I assume each module scoped variable should be request scoped? We can wrap everything in a ALS to get this isolation right?
 
 - Later: GraphQL @defer support in combination with Suspense.
 - Later: GraphQL response cache and query caching. Add a product to the cart and dont need to refetch the cart because the same normalized cache is shared between the two requests, creating a faster roundtrip.
