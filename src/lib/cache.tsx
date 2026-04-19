@@ -1,37 +1,45 @@
 /**
  * Server-side render-output caching.
  *
- * `<Cache dep={...}>` wraps a subtree; on miss it renders the children
- * to Flight bytes (via plugin-rsc's `renderToReadableStream`), stores
- * the bytes keyed by `hash(dep)`, and also decodes them back into a
- * React element tree (via `createFromReadableStream`) which it returns
- * to the outer render. On hit it retrieves the stored bytes, decodes
- * into a tree, and returns that.
+ * `<Cache>` wraps a subtree; on miss it renders the children to Flight
+ * bytes (via plugin-rsc's `renderToReadableStream`), stores the bytes
+ * keyed by a hash derived from the Partial's access manifest (the set
+ * of request-state keys the content reads through tracked accessors)
+ * plus any `vary` scalars declared on the cache options. The bytes are
+ * also decoded back into a React element tree (via
+ * `createFromReadableStream`) which it returns to the outer render.
+ * On hit it retrieves the stored bytes, decodes into a tree, and
+ * returns that.
  *
- * The outer render serializes the returned tree to Flight normally —
- * no row-id splicing, no module-id remapping. React's reconciler and
- * the plugin-rsc manifest take care of all coherence.
+ * Cache is an internal detail of `<Partial cache={...}>`: authors
+ * don't render it directly.
  *
- * Why not just cache the React element tree directly?
- *   An async server component returns a Promise<ReactElement>. React
- *   renders that element, which may contain further async server
- *   components and lazy client references. Capturing the *final*
- *   resolved tree from userland isn't exposed by React — we can't
- *   observe what React produces. Going through Flight is what lets
- *   us "snapshot" a subtree after it has fully resolved.
+ * ── Access manifest ────────────────────────────────────────────────
  *
- * ── Composition with <Partial> ─────────────────────────────────────
+ * The manifest is a per-`<Cache>` Set<string> populated during render
+ * by tracked accessors (`getCookie`, `getHeader`, `getSearchParam`,
+ * `getPathname` — see `src/framework/context.ts`). Each call pushes
+ * `"kind:name"` into the manifest. The manifest is the cache key
+ * surface: on subsequent requests we resolve the same keys against
+ * the current request, hash the values, and look up the entry.
+ *
+ * Manifest membership must be stable across renders of the same
+ * `(id, fingerprint)`. Conditional reads — one render touches cookie
+ * A, another touches cookie B — would produce different manifests
+ * across requests, thrashing the cache. We throw a hoisting-violation
+ * error when a render's manifest disagrees with the stored one. See
+ * `notes/AUTO_TRACKED_CACHE_KEYS.md`.
+ *
+ * ── Composition with <Partial> ────────────────────────────────────
  *
  * Cached Flight bytes capture the rendered subtree as-is. If the
- * subtree contains a <Partial>, the partial's content would be frozen
- * in those bytes — refetching the partial wouldn't refresh until the
- * Cache entry expires. To make Cache and Partial compose orthogonally,
- * Cache strips inner partials to placeholders before serializing
- * (recognized by their PartialBoundary wrapper or by the existing
- * `<i data-partial>` placeholder shape used by buildTemplate). The
- * placeholders are what go into the cached bytes; on output, Cache
- * re-injects the *current* live partial elements. Result: Cache
- * captures the stable scaffolding, partials stay live.
+ * subtree contains a `<Partial>`, the partial's content would be
+ * frozen in those bytes — refetching the partial wouldn't refresh
+ * until the Cache entry expires. To make Cache and Partial compose
+ * orthogonally, Cache strips inner partials to placeholders before
+ * serializing. On output, Cache re-injects the *current* live partial
+ * elements. Result: Cache captures the stable scaffolding, partials
+ * stay live.
  *
  * Partial ids that live inside the subtree are folded into the cache
  * key so adding/removing a partial inside a Cache invalidates
@@ -52,52 +60,32 @@ import {
 } from "@vitejs/plugin-rsc/rsc";
 import { djb2 } from "./hash.ts";
 import { Partial, PartialBoundary } from "./partial-component.tsx";
-import { getRequest } from "../framework/context.ts";
 import {
-  getRouteSnapshots,
+  getCurrentCacheManifest,
+  getRequest,
+  resolveManifest,
+  runWithCacheManifest,
+  type ManifestScope,
+} from "../framework/context.ts";
+import {
   lookupPartial,
   registerPartial,
   type PartialSnapshot,
 } from "./partial-registry.ts";
+import type { CacheOptions } from "./cache-options.ts";
 
 // ─── Store ─────────────────────────────────────────────────────────────
 
-/**
- * Portable entry stored by a `CacheStore` backend. All fields are
- * primitives or Uint8Array, so this round-trips cleanly over Redis /
- * KV / SQLite / HTTP.
- *
- * Note the absence of dynamic-partial snapshots: those hold live
- * React element references (component functions like `LivePrice`) that
- * can't cross a process boundary. They live in a process-local
- * `snapshotIndex` (below), keyed by the same cache key. On a cache hit
- * where the snapshot side-table is empty (fresh process, or a
- * hypothetical distributed backend handed us bytes from another
- * instance), we force a miss so the snapshots repopulate.
- */
 interface Entry {
   bytes: Uint8Array;
   /** Fresh until this timestamp (ms epoch); Infinity = never expire. */
   expiresAt: number;
-  /** Servable (as stale) until this timestamp. If > expiresAt, we have a
-   *  stale-while-revalidate window: serve cached, kick off async refresh. */
+  /** Servable (as stale) until this timestamp. If > expiresAt, we have
+   *  a stale-while-revalidate window: serve cached, kick off async
+   *  refresh. */
   staleUntil: number;
 }
 
-/**
- * Storage surface for the cache — async by contract so callers have
- * to `await` every access. The in-memory implementation resolves
- * immediately, but a real backend (Redis, KV, SQLite, etc.) would
- * not; keeping the signature async up front prevents sync-only
- * assumptions (e.g. "the value is there the instant I set it",
- * "keys() is O(1)") from leaking into `Cache` and becoming bugs
- * the day someone swaps the implementation.
- *
- * LRU semantics are the store's responsibility: the in-memory impl
- * bumps on `get` (re-insert to move to the tail of the iteration
- * order) and evicts the oldest on `set` when size exceeds the cap.
- * A Redis backend would use its own TTL + maxmemory-policy.
- */
 interface CacheStore {
   get(key: string): Promise<Entry | undefined>;
   set(key: string, entry: Entry): Promise<void>;
@@ -117,8 +105,6 @@ class MemoryCacheStore implements CacheStore {
   async get(key: string): Promise<Entry | undefined> {
     const entry = this.map.get(key);
     if (entry !== undefined) {
-      // LRU bump — re-insert to move this key to the tail of the
-      // iteration order.
       this.map.delete(key);
       this.map.set(key, entry);
     }
@@ -149,27 +135,11 @@ class MemoryCacheStore implements CacheStore {
 
 const store: CacheStore = new MemoryCacheStore();
 
-/**
- * Process-local side-table holding dynamic-partial snapshots per
- * cache key. Populated on miss, read on hit. Deliberately NOT part of
- * `CacheStore`:
- *
- *   • A `PartialSnapshot.content` is a live React element whose
- *     `type` points at a server-component function (e.g. `LivePrice`).
- *     Flight doesn't serialize server-component references as
- *     "re-executable" — it runs them at encode time and stores the
- *     output. Round-tripping through bytes would freeze LivePrice's
- *     tick for the Cache entry's whole lifetime.
- *   • The registry in `partial-registry.ts` has the same live-element
- *     dependency. It's in-process by design.
- *
- * On a hit, if the snapshot side-table is empty for this key (fresh
- * process, HMR reload, or a hypothetical distributed CacheStore that
- * handed us bytes from another instance), the Cache component forces
- * a miss so the snapshots repopulate. That costs one render per
- * process per key, which is a bounded cost — far cheaper than
- * serving `<i data-partial>` placeholders with no fill.
- */
+// Process-local side-table holding dynamic-partial snapshots per
+// cache key. Populated on miss, read on hit. See the long explanation
+// retained from the previous version: dynamic partial snapshots
+// reference live React element functions that can't serialize, so
+// they stay in-process.
 const snapshotIndex = new Map<string, Map<string, PartialSnapshot>>();
 const SNAPSHOT_INDEX_MAX = 10_000;
 
@@ -183,10 +153,16 @@ function setSnapshots(key: string, snaps: Map<string, PartialSnapshot>): void {
   }
 }
 
-/** Async SWR refreshes currently in progress. Prevents duplicate
- *  refreshes when many requests hit a stale entry concurrently.
- *  In-process only — distributed stampede control is a separate
- *  layer (a distributed lock at the store boundary). */
+/**
+ * Manifest side-table: `(id, fingerprint, ids-hash)` → the Set of
+ * tracked accessor keys read during the Partial's body execution.
+ *
+ * Lives alongside `snapshotIndex` — process-local, in-memory. Doesn't
+ * need to cross process boundaries (a fresh process rebuilds it on
+ * first render). Never serialized.
+ */
+const manifestStore = new Map<string, Set<string>>();
+
 const refreshing = new Set<string>();
 
 function stableStringify(value: unknown): string {
@@ -209,34 +185,27 @@ function stableStringify(value: unknown): string {
   );
 }
 
-function hashDep(dep: unknown): string {
-  return djb2(stableStringify(dep));
+function hashParts(...parts: unknown[]): string {
+  return djb2(stableStringify(parts));
+}
+
+function manifestToSorted(m: Set<string>): string[] {
+  return [...m].sort();
+}
+
+function manifestsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
 }
 
 // ─── Lazy-ref resolution ───────────────────────────────────────────────
 //
 // `createFromReadableStream` returns a tree whose nested chunks may
-// still be represented as Flight lazy refs (`$$typeof ===
-// Symbol(react.lazy)`). When our outer render serializes that tree
-// back into its own Flight stream, any unresolved lazy ref gets
-// re-emitted as a lazy chunk in the outer stream. That cascades:
-// downstream walkers like `cacheFromStreamingChildren` call
-// `unwrapLazy` on the client component's children and hit the
-// pending-chunk case, which silently returns `null` — truncating the
-// walk and wiping out every keyed partial beyond that point.
-//
-// On a cache *miss* the bytes are produced inline, so by the time we
-// decode they're already fully resolved synchronously. On a cache
-// *hit* (bytes come from storage and `createFromReadableStream` reads
-// them through `bytesToStream`) the nested chunks sometimes surface
-// to userland before they've been fully parsed. Forcing resolution
-// here — by walking the tree and awaiting every lazy ref's init
-// thenable — guarantees that both paths return an equivalent, fully-
-// resolved React element tree.
-//
-// We only unwrap *chunk* lazies (elements whose `$$typeof` is
-// `Symbol(react.lazy)`). Client components are serialized as regular
-// elements whose `type` is a module reference; those stay untouched.
+// still be represented as Flight lazy refs. We force resolution here
+// so both cache-hit and cache-miss paths return an equivalent, fully
+// materialized tree. See `notes/SERVER_CACHE_NOTES.md` for the full
+// explanation.
 
 const LAZY_SYMBOL_STR = "Symbol(react.lazy)";
 
@@ -254,8 +223,6 @@ async function awaitLazy(node: unknown): Promise<unknown> {
     const init = n._init;
     if (typeof init === "function") return init(payload);
   } catch (pending) {
-    // React's lazy `_init` throws a thenable while the chunk is still
-    // pending. Await it, then re-invoke.
     if (pending && typeof (pending as { then?: unknown }).then === "function") {
       await pending;
       const init = n._init;
@@ -299,13 +266,6 @@ async function resolveLazies(node: ReactNode): Promise<ReactNode> {
   if (children == null) return node;
   const newChildren = await resolveLazies(children);
   if (newChildren === children) return node;
-  // Spread arrays as variadic so React treats each child as a
-  // positional sibling (implicit key) rather than an explicit
-  // array member (requires `key=`). Flight serializes static JSX
-  // siblings like `<a><img/><h2/><div/></a>` as an array on the
-  // children prop, so without this the decoded tree would trip
-  // React's "each child in a list should have a unique key" warning
-  // every time the cloned element is committed on the client.
   return Array.isArray(newChildren)
     ? cloneElement(node, {}, ...newChildren)
     : cloneElement(node, {}, newChildren);
@@ -313,17 +273,7 @@ async function resolveLazies(node: ReactNode): Promise<ReactNode> {
 
 // ─── Partial strip / reinject ──────────────────────────────────────────
 
-/**
- * Marker element used in cached bytes wherever a Partial lived. Same
- * shape the framework's buildTemplate uses, so `PartialsClient` fills
- * it through a single code path regardless of whether the placeholder
- * came from a Cache hit or a refetch template.
- */
 function placeholderFor(id: string): ReactElement {
-  // `data-partial-id` is the stable id for the placeholder — Flight
-  // may composite the outer `.map()` key with the element's own key
-  // into `"outer,inner"` for placeholders produced inside a dynamic
-  // Partial, so `String(node.key)` isn't safe as an id source.
   return createElement("i", {
     key: id,
     hidden: true,
@@ -347,12 +297,6 @@ function placeholderIdOf(node: ReactElement): string | null {
   return node.key != null ? String(node.key) : null;
 }
 
-/**
- * Extract the partial id from a keyed element, if the key matches a
- * known partial in the current route's registry. Keys look like `id`
- * (sync) or `id#version` (versioned Suspense on refetch). Returns
- * `null` if the element's key doesn't resolve to a registered partial.
- */
 function partialIdOf(node: ReactElement, route: string): string | null {
   if (node.key == null) return null;
   const keyStr = String(node.key);
@@ -361,25 +305,6 @@ function partialIdOf(node: ReactElement, route: string): string | null {
   return lookupPartial(route, candidate) ? candidate : null;
 }
 
-/**
- * Walk children, replace any partial-bearing subtree with a placeholder.
- * A subtree is partial-bearing when it's a `<PartialBoundary>` (emitted
- * by `<Partial>` during render), an existing `<i data-partial>`
- * placeholder (cache-mode refetch templates), or any keyed element
- * whose key matches a registered partial id (the streaming-mode
- * Suspense / PartialErrorBoundary wrapper).
- *
- * Returns the stripped tree, a map of partialId → live element (used
- * to re-inject after decode), and the sorted ids (folded into the
- * cache key).
- *
- * Limitation: only finds partials reachable through the static
- * `children` chain. Partials produced inside opaque function components
- * within a Cache whose id isn't yet in the registry won't be stripped —
- * first render bakes them in, subsequent full renders populate the
- * registry, and the HMR/deploy-triggered registry clear keeps this
- * from going stale.
- */
 function stripPartials(node: ReactNode): {
   stripped: ReactNode;
   partials: Map<string, ReactElement>;
@@ -430,12 +355,6 @@ function stripPartials(node: ReactNode): {
   return { stripped, partials, ids: [...partials.keys()].sort() };
 }
 
-/**
- * Walk a decoded tree and replace `<i data-partial key={id}>` placeholders
- * with the live element captured during the most recent strip. No-op if
- * `partials` is empty (cache-mode call: there's nothing live to put back,
- * the placeholders themselves are the desired output).
- */
 function reinject(
   node: ReactNode,
   partials: Map<string, ReactElement>,
@@ -473,42 +392,16 @@ function reinject(
 }
 
 // ─── Dynamic partial strip / reinject ────────────────────────────────────
-//
-// `stripPartials` (above) walks the JSX input. It can't see Partials
-// produced inside opaque async components (e.g. `ProductGrid` ->
-// `.map(p => <Partial id={"price-" + p.sku}/>)`) because those only
-// exist AFTER render. The helpers below operate on the rendered
-// output tree — they find every already-rendered Partial wrapper
-// and strip it so the stored cache bytes are hole-only. On every
-// hit, we re-register the captured snapshots into the current
-// route registry (so tag-based refetches like `?tags=price` see
-// them) and reinject a fresh `<Partial>` element at each hole
-// position so the held content renders live per request.
 
-/**
- * True if `node` is a rendered wrapper emitted by `<Partial>`. Two
- * shapes: (a) a keyed `<Suspense>` (fallback-bearing Partial), or
- * (b) any element carrying a `partialId` string prop
- * (`PartialErrorBoundary` without a Suspense).
- */
 function renderedWrapperId(node: ReactElement): string | null {
   const props = node.props as { partialId?: unknown };
   if (typeof props.partialId === "string") return props.partialId;
   if (node.type === Suspense && node.key != null) {
-    // Flight keeps Suspense keys clean (React built-in, not
-    // composited with outer .map keys). Safe to use.
     return String(node.key);
   }
   return null;
 }
 
-/**
- * Walk a rendered tree. For every rendered Partial wrapper whose id
- * is NOT already tracked (i.e. not stripped statically from input
- * JSX), capture the corresponding snapshot from the route registry
- * and replace with a placeholder. Returns the stripped tree + the
- * captured dynamic snapshots.
- */
 function stripDynamicWrappers(
   node: ReactNode,
   skipIds: Set<string>,
@@ -551,13 +444,6 @@ function stripDynamicWrappers(
   return { stripped: walk(node), snapshots };
 }
 
-/**
- * Walk a decoded tree and replace every placeholder whose id is a
- * known dynamic snapshot with a fresh `<Partial>` element built
- * from that snapshot. The Partial body re-runs each request, so
- * the held content renders live even though the surrounding
- * cached bytes are frozen.
- */
 function reinjectDynamic(
   node: ReactNode,
   snapshots: Map<string, PartialSnapshot>,
@@ -589,8 +475,6 @@ function reinjectDynamic(
             errorWith: snap.errorWith,
             tags: snap.tags,
             cache: snap.cache,
-            ttl: snap.ttl,
-            staleWhileRevalidate: snap.staleWhileRevalidate,
           },
           snap.content,
         );
@@ -608,12 +492,6 @@ function reinjectDynamic(
     : cloneElement(node, {}, nk);
 }
 
-/**
- * Push every snapshot in `snapshots` into the route-scoped registry
- * so cache-mode refetches (`?partials=ID` / `?tags=…`) can resolve
- * dynamic Partials produced inside this cached subtree even when
- * the producer (e.g. `ProductGrid`) didn't run this request.
- */
 function registerDynamicSnapshots(
   route: string,
   snapshots: Map<string, PartialSnapshot>,
@@ -626,18 +504,12 @@ function registerDynamicSnapshots(
 // ─── Cache component ────────────────────────────────────────────────────
 
 interface CacheProps {
-  /** Unique identifier for this cache boundary. Pair with dep for the key. */
+  /** Partial id. Forms the stable half of the cache key. */
   id: string;
-  /** Inputs the cached subtree depends on. Hashed for the cache key. */
-  dep: unknown;
-  /** Seconds until expiry. Default: never expire (rely on LRU eviction). */
-  ttl?: number;
-  /** Additional seconds after `ttl` during which the stale entry is served
-   *  while an async background refresh repopulates the cache. Default: 0.
-   *  Total servable lifetime is `ttl + staleWhileRevalidate` seconds. */
-  staleWhileRevalidate?: number;
-  /** Skip caching for this render. Useful for preview/dev. */
-  bypass?: boolean;
+  /** Structural fingerprint of the Partial's children (from Partial). */
+  fingerprint: string;
+  /** Cache-Control-shaped options: maxAge, swr, vary, bypass. */
+  options: CacheOptions;
   children: ReactNode;
 }
 
@@ -676,179 +548,291 @@ async function renderAndBuffer(children: ReactNode): Promise<Uint8Array> {
 
 export async function Cache({
   id,
-  dep,
-  ttl,
-  staleWhileRevalidate,
-  bypass,
+  fingerprint,
+  options,
   children,
 }: CacheProps): Promise<ReactNode> {
-  if (bypass) return children;
+  if (options.bypass) return children;
 
-  // Strip inner partials before hashing/rendering. The cached bytes
-  // contain placeholders, never partial content; the live partial
-  // elements get re-injected on output so the outer render still
-  // executes them fresh.
+  // Pre-compute the stored manifest so accessor calls can throw
+  // synchronously when a new key is introduced (vs. the stored set).
+  const baseKeyPrefix = `${id}:${fingerprint}:`;
+  const scope: ManifestScope = {
+    current: new Set(),
+    stored: null,
+    partialId: id,
+  };
+  // We can't know the baseKey (which includes `ids` hash) until
+  // stripPartials runs, but the `(id, fp)` prefix is enough to find
+  // the stored manifest for this Partial. The `ids` component only
+  // changes when partials inside are added/removed, which would
+  // produce a different stored manifest entry — fall through to miss
+  // either way.
+  const prior = findStoredManifestByPrefix(baseKeyPrefix);
+  if (prior) scope.stored = prior;
+
+  return runWithCacheManifest(scope, async () =>
+    cacheImpl(id, fingerprint, options, children, scope),
+  );
+}
+
+function findStoredManifestByPrefix(prefix: string): Set<string> | undefined {
+  for (const [k, v] of manifestStore) {
+    if (k.startsWith(prefix)) return v;
+  }
+  return undefined;
+}
+
+async function cacheImpl(
+  id: string,
+  fingerprint: string,
+  options: CacheOptions,
+  children: ReactNode,
+  scope: ManifestScope,
+): Promise<ReactNode> {
+  const manifest = scope.current;
+  // Strip statically-visible partials. Placeholders go into the cached
+  // bytes; live elements are re-injected on the way out so partials
+  // stay live inside a cached region.
   const { stripped, partials, ids } = stripPartials(children);
-  const key = `${id}:${hashDep([dep, ids])}`;
+
+  // The "stable" half of the key — same across all snapshots of this
+  // Partial. Includes ids so adding/removing an inner Partial
+  // invalidates automatically.
+  const baseKey = `${id}:${fingerprint}:${djb2(ids.join(","))}`;
   const now = Date.now();
   const route = new URL(getRequest().url).pathname;
 
-  const existing = await store.get(key);
-  // Snapshots are process-local — if the bytes came from another
-  // process (or we're post-restart / post-HMR), the index is empty
-  // for this key. Treat that as a miss so the snapshot side-table
-  // repopulates from a fresh render. See `snapshotIndex` for why.
-  const existingSnapshots = existing ? snapshotIndex.get(key) : undefined;
-  if (existing && existingSnapshots) {
-    if (existing.expiresAt > now || existing.staleUntil > now) {
-      // Fresh or stale-SWR hit. Either way, decode, reinject both
-      // static and dynamic partials, and re-register dynamics into
-      // the route registry so tag/id refetches can find them.
-      // (`store.get` already bumped the LRU order for us.)
-      registerDynamicSnapshots(route, existingSnapshots);
-      // If stale, kick off a background refresh (same flow as miss
-      // below).
-      if (existing.expiresAt <= now && !refreshing.has(key)) {
-        refreshing.add(key);
-        void refreshEntry(key, stripped, partials, ttl, staleWhileRevalidate)
-          .catch((err) => console.error(`[cache] SWR refresh failed for ${key}:`, err))
-          .finally(() => refreshing.delete(key));
+  const storedManifest = manifestStore.get(baseKey);
+  // `scope.stored` was set eagerly by `Cache` (without knowing the
+  // `ids`-component); narrow it to the exact base-key entry here so
+  // the synchronous hoisting check matches the post-render one.
+  scope.stored = storedManifest ?? null;
+
+  // ── Hit path ────────────────────────────────────────────────────
+  //
+  // Only reachable when we have a stored manifest: without it we don't
+  // know which request-state values participate in the key, so we
+  // can't look anything up. First render of a Partial is always a
+  // miss in this sense.
+  if (storedManifest) {
+    const values = resolveManifest(storedManifest);
+    const key = `${baseKey}:${hashParts(values, options.vary ?? null)}`;
+
+    const existing = await store.get(key);
+    const existingSnapshots = existing ? snapshotIndex.get(key) : undefined;
+    if (existing && existingSnapshots) {
+      if (existing.expiresAt > now || existing.staleUntil > now) {
+        registerDynamicSnapshots(route, existingSnapshots);
+        if (existing.expiresAt <= now && !refreshing.has(key)) {
+          refreshing.add(key);
+          void refreshEntry(
+            baseKey,
+            key,
+            stripped,
+            ids,
+            options,
+            id,
+          )
+            .catch((err) =>
+              console.error(`[cache] SWR refresh failed for ${key}:`, err),
+            )
+            .finally(() => refreshing.delete(key));
+        }
+        const decoded = await createFromReadableStream<ReactNode>(
+          bytesToStream(existing.bytes),
+        );
+        const resolved = await resolveLazies(decoded);
+        const withStatic = reinject(resolved, partials);
+        return reinjectDynamic(withStatic, existingSnapshots);
       }
-      const decoded = await createFromReadableStream<ReactNode>(
-        bytesToStream(existing.bytes),
-      );
-      const resolved = await resolveLazies(decoded);
-      const withStatic = reinject(resolved, partials);
-      return reinjectDynamic(withStatic, existingSnapshots);
     }
-    // Past staleUntil — treat as miss.
+    // Entry past staleUntil, absent, or lost its snapshots → miss.
   }
 
-  // Miss or fully expired. Dedupe concurrent misses so only one
-  // render runs.
+  // ── Miss path ───────────────────────────────────────────────────
+  //
+  // Render the stripped subtree. The manifest ALS is already active
+  // (opened in the `Cache` wrapper above); tracked accessor calls
+  // inside the render populate `manifest`. After the render finishes
+  // we verify the manifest matches any previously-stored one and
+  // store the entry under the key derived from its resolved values.
   const staticIdSet = new Set(ids);
-  let pending = inFlightMiss.get(key);
+
+  // Dedupe concurrent misses for the same Partial (same baseKey). The
+  // first caller renders; others await the same result.
+  let pending = inFlightMiss.get(baseKey);
   if (!pending) {
     pending = renderMissAndStore(
-      key,
+      baseKey,
+      id,
       stripped,
       staticIdSet,
-      ttl,
-      staleWhileRevalidate,
-    ).finally(() => inFlightMiss.delete(key));
-    inFlightMiss.set(key, pending);
+      ids,
+      options,
+      manifest,
+      storedManifest,
+    ).finally(() => inFlightMiss.delete(baseKey));
+    inFlightMiss.set(baseKey, pending);
   }
   const { liveTree } = await pending;
 
-  // `liveTree` is the decoded user-facing branch of the teed Flight
-  // stream. It resolves as soon as the top-level chunk is parsed —
-  // inner Suspense boundaries stay as lazy refs so the outer render
-  // serializes them as lazy chunks and the client sees fallbacks
-  // until they stream in. Dynamic Partials inside registered
-  // themselves during the inner render itself, so `seenIds`'s
-  // duplicate guard is not tripped (we're not rebuilding those
-  // Partials here — they exist as ordinary subtrees inside the
-  // resolved Flight output).
   return reinject(liveTree, partials);
 }
 
 // ─── Miss helpers ──────────────────────────────────────────────────────
 
-/** Replaces the old renderAndBuffer-only inFlight map with one that
- *  also memoizes the stripped dynamic snapshots so concurrent misses
- *  get the same tree + snapshot set, not two independent renders. */
 const inFlightMiss = new Map<
   string,
   Promise<{ liveTree: ReactNode; dynamicSnapshots: Map<string, PartialSnapshot> }>
 >();
 
 async function renderMissAndStore(
-  key: string,
+  baseKey: string,
+  id: string,
   stripped: ReactNode,
   staticIds: Set<string>,
-  ttl: number | undefined,
-  staleWhileRevalidate: number | undefined,
+  ids: string[],
+  options: CacheOptions,
+  manifest: Set<string>,
+  storedManifest: Set<string> | undefined,
 ): Promise<{ liveTree: ReactNode; dynamicSnapshots: Map<string, PartialSnapshot> }> {
-  // Render the subtree to Flight ONCE, then tee the stream:
-  //   • one branch is decoded immediately and handed back to the
-  //     outer render. Its inner Suspense boundaries stay as lazy
-  //     refs, so the outer Flight serializer re-emits them as lazy
-  //     chunks and the client paints fallbacks until they stream in.
-  //   • the other branch is buffered, fully resolved, stripped of
-  //     dynamic Partial wrappers, re-encoded, and stored. This runs
-  //     in the background so it never blocks the current response.
+  // Render to Flight ONCE, then tee:
+  //   • user branch → decoded immediately, returned to outer render.
+  //     Inner Suspense boundaries stay lazy so the client paints
+  //     fallbacks until they stream in.
+  //   • storage branch → buffered, fully resolved, stripped of dynamic
+  //     partial wrappers, re-encoded, stored. Runs in the background.
+  //
+  // The manifest ALS was opened in the `Cache` wrapper, so tracked
+  // accessor calls inside the inner render populate `manifest` via
+  // async_hooks inheritance even though the consumer of the stream
+  // (this function) sits outside the immediate `als.run` scope.
   const stream = renderToReadableStream(stripped);
   const [userBranch, storageBranch] = stream.tee();
 
-  const dynamicSnapshotsPromise = (async () => {
+  const storagePromise = (async () => {
     const rawBytes = await readAll(storageBranch);
+    // At this point the inner render has completed — every accessor
+    // call has fired — so `manifest` is final. Verify against any
+    // stored manifest. Added-key violations already threw synchronously
+    // during render; here we catch the "missing-key" case (stored had
+    // X, current didn't touch X). That's a soft failure: log + preserve
+    // the old entry. Overwriting would flip the cache shape.
+    if (storedManifest && !manifestsEqual(storedManifest, manifest)) {
+      console.error(
+        `[cache] manifest mismatch on miss for "${id}" — preserving old entry.`,
+        {
+          previous: manifestToSorted(storedManifest),
+          current: manifestToSorted(manifest),
+        },
+      );
+      return new Map<string, PartialSnapshot>();
+    }
+
     const rawDecoded = await createFromReadableStream<ReactNode>(
       bytesToStream(rawBytes),
     );
     const rawResolved = await resolveLazies(rawDecoded);
 
-    // Strip dynamic Partial wrappers from the rendered tree.
-    // `staticIds` accounts for partials that `stripPartials` already
-    // pulled from the INPUT JSX; we don't want to double-strip those.
     const { stripped: holeTree, snapshots } = stripDynamicWrappers(
       rawResolved,
       staticIds,
     );
 
-    // Re-encode the fully-stripped tree for storage. Hit-path decode
-    // is then tiny (placeholders only); reinjectDynamic rebuilds
-    // fresh Partial elements from snapshots on every hit so held
-    // content stays live.
     const cleanBytes = await renderAndBuffer(holeTree);
+
+    // Derive the entry key from the (now verified) manifest.
+    const values = resolveManifest(manifest);
+    const key = `${baseKey}:${hashParts(values, options.vary ?? null)}`;
+
+    manifestStore.set(baseKey, new Set(manifest));
     await store.set(
       key,
-      freshEntry(cleanBytes, ttl, staleWhileRevalidate, Date.now()),
+      freshEntry(cleanBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
     );
-    // Index the snapshots in the process-local side-table so future
-    // hits on this key (in this process) can rebuild the dynamic
-    // holes with live element references.
     setSnapshots(key, snapshots);
     return snapshots;
   })();
 
-  // Don't drop uncaught background errors — surface them so a broken
-  // storage path is visible instead of silently poisoning future hits
-  // (which would correctly take the miss path but do so forever).
-  dynamicSnapshotsPromise.catch((err) => {
-    console.error(`[cache] storage finalize failed for ${key}:`, err);
+  storagePromise.catch((err) => {
+    console.error(`[cache] storage finalize failed for ${baseKey}:`, err);
   });
 
   const liveTree = await createFromReadableStream<ReactNode>(userBranch);
+  // `ids` kept around so TS doesn't prune the parameter — it's folded
+  // into baseKey by the caller before we're invoked.
+  void ids;
   return { liveTree, dynamicSnapshots: new Map() };
 }
 
 async function refreshEntry(
-  key: string,
+  baseKey: string,
+  _oldKey: string,
   stripped: ReactNode,
-  partials: Map<string, ReactElement>,
-  ttl: number | undefined,
-  staleWhileRevalidate: number | undefined,
+  ids: string[],
+  options: CacheOptions,
+  partialId: string,
 ): Promise<void> {
-  // SWR refresh: re-render + re-strip + re-store with updated
-  // dynamic snapshots. The current response already served the
-  // stale bytes; this runs in the background.
-  void partials; // reserved for future: static partials could drift too
-  const staticIds = new Set<string>(); // refresh only the bytes + dynamic set
-  await renderMissAndStore(key, stripped, staticIds, ttl, staleWhileRevalidate);
+  // SWR refresh runs in a separate async chain; open its own manifest
+  // scope so accessor calls during re-render go into the right bucket.
+  const storedManifest = manifestStore.get(baseKey);
+  const scope: ManifestScope = {
+    current: new Set(),
+    stored: storedManifest ?? null,
+    partialId,
+  };
+
+  await runWithCacheManifest(scope, async () => {
+    const stream = renderToReadableStream(stripped);
+    const bytes = await readAll(stream);
+
+    const manifest = scope.current;
+    if (storedManifest && !manifestsEqual(storedManifest, manifest)) {
+      // Log and preserve the existing entry rather than overwriting
+      // with the conflicting one.
+      console.error(
+        `[cache] SWR refresh for ${baseKey}: manifest mismatch, preserving old entry.`,
+        {
+          previous: manifestToSorted(storedManifest),
+          current: manifestToSorted(manifest),
+        },
+      );
+      return;
+    }
+
+    const decoded = await createFromReadableStream<ReactNode>(
+      bytesToStream(bytes),
+    );
+    const resolved = await resolveLazies(decoded);
+    const { stripped: holeTree, snapshots } = stripDynamicWrappers(
+      resolved,
+      new Set(ids),
+    );
+    const cleanBytes = await renderAndBuffer(holeTree);
+
+    const values = resolveManifest(manifest);
+    const key = `${baseKey}:${hashParts(values, options.vary ?? null)}`;
+
+    manifestStore.set(baseKey, new Set(manifest));
+    await store.set(
+      key,
+      freshEntry(cleanBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
+    );
+    setSnapshots(key, snapshots);
+  });
 }
 
 function freshEntry(
   bytes: Uint8Array,
-  ttl: number | undefined,
+  maxAge: number | undefined,
   swr: number | undefined,
   now: number,
 ): Entry {
   const expiresAt =
-    ttl != null ? now + ttl * 1000 : Number.POSITIVE_INFINITY;
+    maxAge != null ? now + maxAge * 1000 : Number.POSITIVE_INFINITY;
   const staleUntil =
-    swr != null && ttl != null
-      ? expiresAt + swr * 1000
-      : expiresAt;
+    swr != null && maxAge != null ? expiresAt + swr * 1000 : expiresAt;
   return { bytes, expiresAt, staleUntil };
 }
 
@@ -861,16 +845,11 @@ export function _cacheStats(): Promise<{ size: number; keys: string[] }> {
 export async function _clearCache(): Promise<void> {
   await store.clear();
   snapshotIndex.clear();
+  manifestStore.clear();
   inFlightMiss.clear();
   refreshing.clear();
 }
 
-// Dev: invalidate the whole cache on HMR. Cached Flight bytes
-// reference client-component module ids that Vite may reassign
-// between updates; rather than try to detect stale ids, we just
-// blow it away and let misses repopulate. Fire-and-forget — Vite
-// HMR hooks are synchronous; clearing is cheap enough in-memory
-// that we don't need to serialize against incoming renders.
 if (import.meta.hot) {
   import.meta.hot.on("vite:beforeUpdate", () => {
     void _clearCache();
@@ -879,3 +858,6 @@ if (import.meta.hot) {
     void _clearCache();
   });
 }
+
+// `getCurrentCacheManifest` is re-exported so tests can introspect.
+export { getCurrentCacheManifest };

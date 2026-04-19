@@ -512,7 +512,7 @@ describe("PartialRoot architecture", () => {
 		const { result } = await runWithRequestAsync(fakeRequest(), async () =>
 			renderToJSON(
 				<PartialRoot>
-					<Partial id="test" tags={["cart"]} cache={60}>
+					<Partial id="test" tags={["cart"]} cache={{ maxAge: 60 }}>
 						<MyComponent name="hello" />
 					</Partial>
 				</PartialRoot>,

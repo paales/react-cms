@@ -32,6 +32,7 @@
  * request repopulates.
  */
 import type { ReactNode } from "react";
+import type { CacheOptions } from "./cache-options.ts";
 
 export interface PartialSnapshot {
   /** Content JSX as it appeared inside `<Partial>` at capture time. */
@@ -43,11 +44,9 @@ export interface PartialSnapshot {
   /** Tags declared on the Partial — used to resolve `?tags=X` refetches
    *  against dynamic partials that the bootstrap walk can't see. */
   tags: string[];
-  /** Cache dep object (if the Partial declared `cache={…}`). Stored so
+  /** Cache options if the Partial declared `cache={…}`. Stored so
    *  cache-mode refetches re-apply the same cache semantics. */
-  cache?: unknown;
-  ttl?: number;
-  staleWhileRevalidate?: number;
+  cache?: CacheOptions;
 }
 
 const registry = new Map<string, Map<string, PartialSnapshot>>();

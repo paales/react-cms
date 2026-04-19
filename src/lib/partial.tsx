@@ -104,8 +104,6 @@ function refreshRegistry(children: ReactNode, route: string): void {
           errorWith: props.errorWith,
           tags: props.tags ?? [],
           cache: props.cache,
-          ttl: props.ttl,
-          staleWhileRevalidate: props.staleWhileRevalidate,
         });
       }
       refreshRegistry(props.children, route);
@@ -178,8 +176,6 @@ function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNode {
       errorWith: snap.errorWith,
       tags: snap.tags,
       cache: snap.cache,
-      ttl: snap.ttl,
-      staleWhileRevalidate: snap.staleWhileRevalidate,
     },
     snap.content,
   );

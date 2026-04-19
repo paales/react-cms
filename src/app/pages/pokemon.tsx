@@ -179,13 +179,13 @@ export function PokemonPage() {
             per-chunk streaming — appropriate for a fast "always-on"
             slice that sits at the top of the dialog.
           */}
-          <Partial id="stage-1" cache={{ searchQuery }}>
+          <Partial id="stage-1" cache={{}}>
             <SearchStage1 query={searchQuery} />
           </Partial>
           {searchQuery && (
             <Partial
               id="stage-2"
-              cache={{ searchQuery }}
+              cache={{}}
               fallback={
                 <div
                   data-testid="stage-2-fallback"
@@ -201,7 +201,7 @@ export function PokemonPage() {
           {searchQuery && (
             <Partial
               id="stage-3"
-              cache={{ searchQuery }}
+              cache={{}}
               fallback={
                 <div
                   data-testid="stage-3-fallback"

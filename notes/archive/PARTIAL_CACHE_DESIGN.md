@@ -1,9 +1,9 @@
 # `<Partial cache>` — folding `<Cache>` into `<Partial>`
 
-**Status:** design, not yet implemented.
+**Status:** design, not yet implemented. **`cache` value semantics superseded by `AUTO_TRACKED_CACHE_KEYS.md`** — the fold still lands, but `cache` carries Cache-Control directives (`{maxAge, staleWhileRevalidate, extra, bypass}`) rather than an opaque dep object, and the key derives from tracked accessor reads instead of author-declared deps.
 **Adds:** `cache` prop on `<Partial>`.
 **Removes:** standalone `<Cache>` component.
-**Related:** `SERVER_CACHE_NOTES.md` (current `<Cache>` implementation — will move to archive once this lands), `LESSONS_2026-04-19.md` §3 (the compose problem this fixes).
+**Related:** `SERVER_CACHE_NOTES.md` (current `<Cache>` implementation — will move to archive once this lands), `AUTO_TRACKED_CACHE_KEYS.md` (what `cache` means in the final form), `LESSONS_2026-04-19.md` §3 (the compose problem this fixes).
 
 ---
 

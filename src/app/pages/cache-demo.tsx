@@ -16,14 +16,19 @@ import { _cacheStats } from "../../lib/cache.tsx";
 import { CacheControls } from "../components/cache-controls.tsx";
 import { ClickCounter } from "../components/click-counter.tsx";
 import { AppNav } from "../components/app-nav.tsx";
-import { getRequest } from "../../framework/context.ts";
+import { getRequest, getSearchParam } from "../../framework/context.ts";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Module-level counter to prove whether the body actually ran this request.
 let slowRenderCount = 0;
 
-async function SlowContent({ flavor }: { flavor: string }) {
+async function SlowContent() {
+  // Demonstrates auto-tracked cache keys: `getSearchParam` records
+  // `url:flavor` in the enclosing `<Partial cache>`'s access manifest,
+  // so cached bytes are automatically keyed per flavor without any
+  // `vary` declaration on the Partial.
+  const flavor = getSearchParam("flavor") ?? "vanilla";
   slowRenderCount++;
   await delay(500);
   return (
@@ -103,11 +108,10 @@ export async function CacheDemoPage() {
 
           <Partial
             id="slow"
-            cache={{ flavor }}
-            ttl={60}
+            cache={{ maxAge: 60 }}
             fallback={<div data-testid="slow-fallback">Loading slow…</div>}
           >
-            <SlowContent flavor={flavor} />
+            <SlowContent />
           </Partial>
 
           <Partial id="clock" fallback={<div>Loading clock…</div>}>

@@ -5,6 +5,7 @@ import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
 import { requirePartialState } from "./partial-request-state.ts";
 import { djb2 as hashFingerprint } from "./hash.ts";
 import { Cache } from "./cache.tsx";
+import type { CacheOptions } from "./cache-options.ts";
 
 /**
  * Recognizable wrapper around a rendered Partial.
@@ -24,8 +25,6 @@ export function PartialBoundary({
   errorWith,
   tags,
   cache,
-  ttl,
-  staleWhileRevalidate,
   children,
 }: {
   id: string;
@@ -35,9 +34,7 @@ export function PartialBoundary({
   fallback: ReactNode;
   errorWith: ReactNode | undefined;
   tags: string[];
-  cache?: unknown;
-  ttl?: number;
-  staleWhileRevalidate?: number;
+  cache?: CacheOptions;
   children: ReactNode;
 }): ReactNode {
   const route = new URL(getRequest().url).pathname;
@@ -47,8 +44,6 @@ export function PartialBoundary({
     errorWith,
     tags,
     cache,
-    ttl,
-    staleWhileRevalidate,
   });
   return children;
 }
@@ -82,29 +77,19 @@ export interface ActivatorProps {
 
 export interface PartialProps {
   id: string;
-  children: ReactNode;
+  children?: ReactNode;
   tags?: string[];
   /**
-   * Server-side render-output caching. When set, the Partial's
-   * rendered content is buffered into Flight bytes keyed by
-   * `(id, hash(cache + fingerprint))` and served from the store on
-   * subsequent hits. Any nested `<Partial>` inside the cached
-   * region remains a live hole — its own cache semantics apply.
+   * Server-side render-output caching. Shape follows HTTP
+   * `Cache-Control`: `{maxAge, staleWhileRevalidate, vary?, bypass?}`.
    *
-   * - absent → no caching, render normally.
-   * - a plain object → hashed to a cache key (`{search}`, `{locale,
-   *   userId}`, etc).
-   * - `false` → explicit opt-out (currently equivalent to absent;
-   *   reserved for a future `cacheInherit` story).
+   * Presence of the prop opts into caching. The cache key is derived
+   * automatically from request state the Partial body reads through
+   * the tracked accessor surface (`getCookie`, `getHeader`,
+   * `getSearchParam`, `getPathname`) plus any scalar values passed as
+   * `cache.vary`. See `notes/AUTO_TRACKED_CACHE_KEYS.md`.
    */
-  cache?: unknown;
-  /** Seconds until the cached entry expires. Undefined = never expire. */
-  ttl?: number;
-  /**
-   * Additional seconds after `ttl` during which the stored entry is
-   * served stale while a background refresh runs.
-   */
-  staleWhileRevalidate?: number;
+  cache?: CacheOptions;
   /**
    * Framework-provided display when the Partial isn't showing its
    * real content. Two activation paths:
@@ -204,22 +189,6 @@ function placeholderFor(id: string): ReactElement {
  * inside a `.map()`. That means "deep Partials" inside opaque
  * function components are first-class; there's no static walker to
  * miss them.
- *
- * Responsibilities of this body:
- *   1. Read the request-scoped state set up by `<PartialRoot>`.
- *   2. Detect duplicate ids in the same request (throws).
- *   3. Register content + metadata in the route-scoped registry
- *      (via `<PartialBoundary>`).
- *   4. Compute a structural fingerprint of the children tree.
- *   5. Decide whether to render fresh or emit a placeholder:
- *        - Cache mode + id not requested + no __inputs → placeholder
- *        - Streaming mode + fingerprint matches client's cached fp →
- *          placeholder
- *        - Otherwise → render
- *   6. Apply any `__inputs` override to the children.
- *   7. Wrap in `<Suspense key={id}>` (for Flight key preservation) and
- *      `<PartialErrorBoundary>` (with fingerprint so the client can
- *      register it into `_fingerprints`).
  */
 export function Partial({
   id,
@@ -229,8 +198,6 @@ export function Partial({
   tags,
   defer,
   cache,
-  ttl,
-  staleWhileRevalidate,
 }: PartialProps): ReactNode {
   const state = requirePartialState();
 
@@ -257,15 +224,6 @@ export function Partial({
   const content = override ? applyInputs(children, override) : children;
 
   // ── Skip decisions ─────────────────────────────────────────────────
-  //
-  // In cache mode (`?partials=` or `?tags=` was set), we only render
-  // partials that were explicitly requested. Everything else emits a
-  // placeholder; the client fills it from its existing `_cache` entry.
-  //
-  // In streaming mode, we render everything except partials whose
-  // fingerprint matches what the client already has cached. Those
-  // emit a placeholder too — no work done, no GraphQL call, no bytes
-  // streamed for the content.
   const cachedFp = state.cachedFingerprints.get(id);
   const fingerprintMatches = cachedFp != null && cachedFp === fp;
 
@@ -277,8 +235,7 @@ export function Partial({
 
   if (shouldSkip) {
     // Register so tag refetches / subsequent lookups still find the
-    // partial, even though we didn't render it this pass. Content is
-    // the (input-overridden) tree.
+    // partial, even though we didn't render it this pass.
     const route = new URL(getRequest().url).pathname;
     registerPartial(route, id, {
       content,
@@ -286,25 +243,11 @@ export function Partial({
       errorWith,
       tags: effectiveTags,
       cache,
-      ttl,
-      staleWhileRevalidate,
     });
     return placeholderFor(id);
   }
 
   // ── Defer branch ───────────────────────────────────────────────────
-  //
-  // When `defer` is set AND this id wasn't explicitly requested, emit
-  // a "dormant" form: the fallback wrapped by the activator (if any).
-  // The content children do not execute this pass — that's the whole
-  // point of defer. Once a client-side trigger fires a refetch, the
-  // next request puts this id in `state.explicitIds` and we fall
-  // through to the normal render path.
-  //
-  // We still wrap in PartialBoundary (registers the id in the route
-  // registry so activation refetches can look it up) and
-  // PartialErrorBoundary (makes the wrapper recognizable to client
-  // walkers via the `partialId` prop).
   if (defer && !isExplicit) {
     const dormant =
       defer === true
@@ -325,8 +268,6 @@ export function Partial({
         errorWith={errorWith}
         tags={effectiveTags}
         cache={cache}
-        ttl={ttl}
-        staleWhileRevalidate={staleWhileRevalidate}
       >
         <PartialErrorBoundary
           key={id}
@@ -342,21 +283,17 @@ export function Partial({
 
   // ── Cache (server-side render-output caching) ─────────────────────
   //
-  // When `cache` is set, wrap the content in a `<Cache>` element so the
-  // Suspense boundary below treats the (async) Cache render the same
-  // way it treats any other async server component. Inlining Cache as
-  // a child — rather than `await`ing it here and threading the result
-  // through — keeps the Partial sync, so React RSC doesn't open an
-  // implicit async-server-component chunk around Partial itself. The
-  // outer Suspense only suspends on the Cache's await, which is what
-  // we want for fallback behavior.
-  //
-  // `applyInputs` has already been applied above, so Cache receives
-  // the overridden content. The cache key folds in the Partial id +
-  // the `cache` object + the structural fingerprint.
+  // When `cache` is set, wrap the content in a `<Cache>` element so
+  // the Suspense boundary below treats the (async) Cache render the
+  // same way it treats any other async server component. Cache opens
+  // its own manifest ALS scope so tracked accessor reads inside the
+  // content populate an access manifest; that manifest is what keys
+  // the cached bytes. The Partial id + structural fingerprint form
+  // the stable "which Partial is this?" half of the key; manifest
+  // values + `cache.vary` form the "which snapshot?" half.
   const cachedContent: ReactNode =
-    cache !== undefined && cache !== false ? (
-      <Cache id={id} dep={[cache, fp]} ttl={ttl} staleWhileRevalidate={staleWhileRevalidate}>
+    cache !== undefined ? (
+      <Cache id={id} fingerprint={fp} options={cache}>
         {content}
       </Cache>
     ) : (
@@ -366,20 +303,6 @@ export function Partial({
   // ── Render ─────────────────────────────────────────────────────────
   //
   // Wrap in Suspense ONLY when the caller provided a fallback.
-  //
-  // Why: the client's `substituteNested` walker deliberately does not
-  // descend into Suspense elements (children may be unresolved Flight
-  // lazies). If every Partial were unconditionally wrapped in
-  // Suspense, nested Partials inside a cached ancestor's subtree
-  // would never be substituted with fresh cache entries on a
-  // cache-mode refetch — the "refresh one nested partial" flow would
-  // keep rendering stale content. Wrapping only on opt-in preserves
-  // the walker's ability to find and swap nested Partials.
-  //
-  // The key (for Flight preservation) goes on the outermost
-  // client-visible element: Suspense if there's a fallback,
-  // PartialErrorBoundary otherwise. Both preserve their key through
-  // Flight — PartialErrorBoundary is a `"use client"` class component.
   const rendered =
     effectiveFallback != null ? (
       <Suspense
@@ -421,8 +344,6 @@ export function Partial({
       errorWith={errorWith}
       tags={effectiveTags}
       cache={cache}
-      ttl={ttl}
-      staleWhileRevalidate={staleWhileRevalidate}
     >
       {rendered}
     </PartialBoundary>

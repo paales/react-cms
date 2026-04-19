@@ -73,10 +73,8 @@ All `<Partial>` content must render in the RSC environment. Client components ar
   </header>
 </Partial>
 
-<Partial id="products">
-  <Cache id="products" dep={{ search }} ttl={60}>
-    <ProductGrid search={search} />
-  </Cache>
+<Partial id="products" cache={{ maxAge: 60 }}>
+  <ProductGrid search={search} />
 </Partial>
 ```
 
@@ -97,9 +95,28 @@ Each Partial computes a structural fingerprint (hash of component types + scalar
 - `refetch()` — re-render with current props.
 - `refetch({ query: "pika" })` — re-render with `__inputs` overrides applied via `cloneElement`.
 
-### `<Cache>` composition
+### Caching (`<Partial cache={…}>`)
 
-`<Cache id dep ttl staleWhileRevalidate>` wraps a subtree and serves stored Flight bytes on hit. Dynamic Partials inside the cached region stay live via strip-on-store / reinject-on-return (see `notes/SERVER_CACHE_NOTES.md`). Cache key folds `dep` with the sorted list of partial ids inside the subtree, so adding/removing a Partial invalidates the entry.
+`cache` opts a Partial into server-side render-output caching. The shape mirrors HTTP `Cache-Control`:
+
+```tsx
+<Partial id="products" cache={{ maxAge: 60, staleWhileRevalidate: 300 }}>
+  <ProductGrid />
+</Partial>
+```
+
+| Field | Meaning |
+|---|---|
+| `maxAge` | Fresh window (seconds). |
+| `staleWhileRevalidate` | Additional window where stale bytes are served while a background refresh runs. |
+| `vary` | Scalar values that identify *which snapshot* this is — for inputs the auto-tracker can't see (route params like `sku`, pre-computed values). Typed scalar-only. |
+| `bypass` | Skip caching this render (dev/preview escape hatch). |
+
+The cache key derives automatically from the Partial body's tracked accessor reads (`getCookie`, `getHeader`, `getSearchParam`, `getPathname` from `src/framework/context.ts`) plus any `vary` scalars. Authors don't restate dependencies — the runtime tracks them.
+
+Tracked accessors must be called **unconditionally at the top of the body**, like React hooks. Reading a key that wasn't read on previous renders throws a `HoistingViolationError` synchronously — silent cache thrash is worse than a hard failure. See `notes/AUTO_TRACKED_CACHE_KEYS.md`.
+
+Dynamic Partials inside a cached region stay live via strip-on-store / reinject-on-return. Inner Partial ids are folded into the key so adding/removing one invalidates automatically.
 
 ### Server action invalidation
 
