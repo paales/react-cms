@@ -47,6 +47,27 @@ async function SlowContent() {
     </div>
   );
 }
+
+/**
+ * Render-delayed body for the concurrent-refetch demo. Each instance
+ * awaits its own delay before producing a timestamp — so three
+ * concurrent refetches that hit the same server take max(delay), not
+ * sum(delay).
+ */
+async function DelayedClock({
+  delayMs,
+  label,
+}: {
+  delayMs: number;
+  label: string;
+}) {
+  await new Promise((r) => setTimeout(r, delayMs));
+  return (
+    <div data-testid={`concurrent-${label}`}>
+      <strong>{label}</strong> ({delayMs}ms): {new Date().toISOString()}
+    </div>
+  );
+}
 function Timestamp({ prefix }: { prefix: string }) {
   return (
     <span>
@@ -276,6 +297,106 @@ export function DeferDemoPage() {
                   <Timestamp prefix="race defer activated at" />
                 </div>
               </Partial>
+            </section>
+
+            {/* ── 6. Concurrent refetches across distinct ids ───────── */}
+            <section
+              data-testid="section-concurrent"
+              className="card"
+              style={{ marginBottom: "2rem" }}
+            >
+              <h2>6. Concurrent refetches — independent ids</h2>
+              <p style={{ color: "#888", marginBottom: "0.75rem" }}>
+                Three Partials with staggered artificial delays (400ms,
+                800ms, 1200ms). Clicking the buttons in rapid succession
+                fires three independent RSC requests that run in
+                parallel on the server. Total wall time is{" "}
+                <em>max(delays)</em>, not <em>sum</em>.
+              </p>
+              <p style={{ color: "#888", marginBottom: "0.75rem" }}>
+                <strong>Behavior notes.</strong> Each click is its own
+                event task → own microtask → own RSC request. Clicking
+                in quick succession (one click at a time) fires three
+                overlapping requests that run in parallel on the server.
+                The buttons pass{" "}
+                <code>disableTransition: true</code> so each response
+                commits on arrival; the default transition-wrapped mode
+                is safest for same-id repeats (suppresses stale
+                flashes) but can collapse intermediate commits under
+                heavy fan-out — use <code>disableTransition</code> for
+                disjoint-id parallelism like this.
+              </p>
+              <Partial
+                id="concurrent-a"
+                tags="concurrent"
+                fallback={
+                  <div
+                    data-testid="concurrent-a-fallback"
+                    style={{ color: "#888" }}
+                  >
+                    a (400ms): streaming…
+                  </div>
+                }
+              >
+                <DelayedClock delayMs={400} label="a" />
+              </Partial>
+              <div style={{ height: "0.5rem" }} />
+              <Partial
+                id="concurrent-b"
+                tags="concurrent"
+                fallback={
+                  <div
+                    data-testid="concurrent-b-fallback"
+                    style={{ color: "#888" }}
+                  >
+                    b (800ms): streaming…
+                  </div>
+                }
+              >
+                <DelayedClock delayMs={800} label="b" />
+              </Partial>
+              <div style={{ height: "0.5rem" }} />
+              <Partial
+                id="concurrent-c"
+                tags="concurrent"
+                fallback={
+                  <div
+                    data-testid="concurrent-c-fallback"
+                    style={{ color: "#888" }}
+                  >
+                    c (1200ms): streaming…
+                  </div>
+                }
+              >
+                <DelayedClock delayMs={1200} label="c" />
+              </Partial>
+              <div
+                style={{
+                  marginTop: "0.75rem",
+                  display: "flex",
+                  gap: "0.5rem",
+                  flexWrap: "wrap",
+                }}
+              >
+                <ActivateButton
+                  partialId="concurrent-a"
+                  label="refetch a (400ms)"
+                  testId="refresh-concurrent-a"
+                  disableTransition
+                />
+                <ActivateButton
+                  partialId="concurrent-b"
+                  label="refetch b (800ms)"
+                  testId="refresh-concurrent-b"
+                  disableTransition
+                />
+                <ActivateButton
+                  partialId="concurrent-c"
+                  label="refetch c (1200ms)"
+                  testId="refresh-concurrent-c"
+                  disableTransition
+                />
+              </div>
             </section>
 
             {/* ── 3. <WhenVisible> — viewport-triggered ─────────────── */}

@@ -21,8 +21,6 @@
   - Evaluate of building a ServiceWorker compatible renderer makes sense here as well.
   - Allow defining security semantics to implement this.
 
-- Is it possible multiple fetches can happen simultaneously? So for example we are refreshing the LivePrice and also fetch the cart and paginate to the next page? Or should these actions be sequential? What happens in race conditions, will that just work?
-
 - The refetch policy of a Partial and how it should fall back should depend on the Partial and not the caller I think. By default everything should resolve synchronously without any additional configuration.
 
 - Question, not a discredit: I'm unclear why we are still using stripPartials and statically walking the children tree, this doesn't scale and needs to be abolished if possible. Its ok for now, but It remains unclear what subtle bugs this is causing, because how do opaque children work, we need those as well? If we've got Dynamic Partial holes, why can't all Partials by dynamic, what is the tradeoff?

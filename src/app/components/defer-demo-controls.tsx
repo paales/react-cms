@@ -12,17 +12,25 @@ export function ActivateButton({
   partialId,
   label,
   testId,
+  disableTransition,
 }: {
   partialId: string;
   label?: string;
   testId?: string;
+  /**
+   * If true, the refetch bypasses React's `startTransition` wrapper —
+   * each response commits on arrival rather than being held back
+   * waiting for a newer transition. Useful for concurrent-refetch
+   * demos where each response should be observable independently.
+   */
+  disableTransition?: boolean;
 }) {
   const [refetch, isPending] = usePartial(partialId);
   return (
     <button
       type="button"
       data-testid={testId ?? `activate-${partialId}`}
-      onClick={() => refetch()}
+      onClick={() => refetch(undefined, { disableTransition })}
       disabled={isPending}
       style={{
         background: "#2d3748",
