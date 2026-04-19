@@ -61,7 +61,7 @@ export async function LivePrice({
   basePrice: number;
   currency: string;
 }) {
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 1000));
 
   // Fresh fluctuation on every render — `Date.now()` ticks at ms
   // precision so every click produces a new value, and `Math.random`
