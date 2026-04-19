@@ -21,10 +21,6 @@
   - Evaluate of building a ServiceWorker compatible renderer makes sense here as well.
   - Allow defining security semantics to implement this.
 
-- On the /defer-demo page It would be nice if lets say the two local storage partials are loading on the page we make a single request to the server to fetch both partials instead of one. I think this should be possible as refetching the 3 search areas already works like that, just a timing issue with activate?
-
-- On the /defer-demo It would be nice if we could demonstrate how multiple racing conditions can happen; Say we have a streaming bit on this page, a fallback partial is loading and taking a second. During the pageload we want initialize the defer components as soon as possible.
-
 - Is it possible multiple fetches can happen simultaneously? So for example we are refreshing the LivePrice and also fetch the cart and paginate to the next page? Or should these actions be sequential? What happens in race conditions, will that just work?
 
 - The refetch policy of a Partial and how it should fall back should depend on the Partial and not the caller I think. By default everything should resolve synchronously without any additional configuration.

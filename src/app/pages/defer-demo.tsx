@@ -1,6 +1,7 @@
 import { Partial, PartialRoot } from "../../lib/partial.tsx";
 import { WhenVisible } from "../components/when-visible.tsx";
 import { WhenStored } from "../components/when-stored.tsx";
+import { WhenMounted } from "../components/when-mounted.tsx";
 import {
   ActivateButton,
   StorageKeyEditor,
@@ -18,6 +19,16 @@ import { AppNav } from "../components/app-nav.tsx";
  *   3. `defer={<WhenVisible/>}` — visibility-triggered activation via
  *      IntersectionObserver.
  *
+ * Plus two dispatch-behavior exercises:
+ *
+ *   4. Batched activation — two `<WhenStored>` Partials firing from the
+ *      same commit pass. The microtask-batched dispatch should coalesce
+ *      them into ONE RSC request listing both ids in `?partials=`.
+ *   5. Streaming + defer race — a slow-async Partial suspends on its
+ *      initial render; a deferred Partial on the same page activates
+ *      immediately on mount. The two must not block each other: the
+ *      defer refetch lands while the slow Partial is still streaming.
+ *
  * `WhenVisible` / `WhenStored` live in `src/app/components/` — they
  * are userspace activators built against the framework's
  * `useActivate` primitive, not library exports.
@@ -25,6 +36,17 @@ import { AppNav } from "../components/app-nav.tsx";
  * Each activated content renders a server timestamp so the RSC
  * round-trip is visible (and assertable).
  */
+
+async function SlowContent() {
+  // ~1.5s delay so the Suspense fallback is visibly up while the
+  // deferred Partial in the same section activates + refetches.
+  await new Promise((r) => setTimeout(r, 1500));
+  return (
+    <div data-testid="slow-content">
+      <Timestamp prefix="slow stream resolved at" />
+    </div>
+  );
+}
 function Timestamp({ prefix }: { prefix: string }) {
   return (
     <span>
@@ -145,6 +167,115 @@ export function DeferDemoPage() {
                 <StoredContent />
               </Partial>
               <StorageKeyEditor storageKey="demo-stored" testId="demo-stored" />
+            </section>
+
+            {/* ── 4. Batched activation: two WhenStored → one RSC ──── */}
+            <section
+              data-testid="section-batch"
+              className="card"
+              style={{ marginBottom: "2rem" }}
+            >
+              <h2>
+                4. Batched activation
+              </h2>
+              <p style={{ color: "#888", marginBottom: "0.75rem" }}>
+                Two <code>&lt;Partial defer=&lt;WhenStored/&gt;&gt;</code>
+                siblings with distinct keys. Pre-set both keys (via
+                <code>localStorage.setItem</code> BEFORE the page loads),
+                and the two activators fire in the same commit pass. The
+                microtask-batched dispatch should coalesce them into a
+                SINGLE RSC request listing both ids in{" "}
+                <code>?partials=</code>.
+              </p>
+              <Partial
+                id="batch-a"
+                defer={<WhenStored storageKey="batch-a-key" as="stored" />}
+                fallback={
+                  <div
+                    data-testid="batch-a-fallback"
+                    style={{ color: "#888", fontStyle: "italic" }}
+                  >
+                    dormant — set <code>localStorage["batch-a-key"]</code>{" "}
+                    before loading to activate
+                  </div>
+                }
+              >
+                <StoredContent />
+              </Partial>
+              <div style={{ height: "0.5rem" }} />
+              <Partial
+                id="batch-b"
+                defer={<WhenStored storageKey="batch-b-key" as="stored" />}
+                fallback={
+                  <div
+                    data-testid="batch-b-fallback"
+                    style={{ color: "#888", fontStyle: "italic" }}
+                  >
+                    dormant — set <code>localStorage["batch-b-key"]</code>{" "}
+                    before loading to activate
+                  </div>
+                }
+              >
+                <StoredContent />
+              </Partial>
+              <div style={{ marginTop: "0.75rem" }}>
+                <StorageKeyEditor
+                  storageKey="batch-a-key"
+                  testId="batch-a-key"
+                />
+                <StorageKeyEditor
+                  storageKey="batch-b-key"
+                  testId="batch-b-key"
+                />
+              </div>
+            </section>
+
+            {/* ── 5. Streaming + defer race ──────────────────────────── */}
+            <section
+              data-testid="section-race"
+              className="card"
+              style={{ marginBottom: "2rem" }}
+            >
+              <h2>5. Streaming + defer race</h2>
+              <p style={{ color: "#888", marginBottom: "0.75rem" }}>
+                The <code>&lt;SlowContent/&gt;</code> partial suspends for
+                ~1.5s during initial render. A neighboring deferred
+                Partial (<code>defer=&lt;WhenVisible/&gt;</code>, fallback
+                already on-screen) activates on mount. Its refetch should
+                land and its content should appear <em>before</em> the
+                slow partial resolves — proving the two flows don't
+                serialize.
+              </p>
+              <Partial
+                id="slow-stream"
+                fallback={
+                  <div
+                    data-testid="slow-fallback"
+                    style={{ color: "#888", fontStyle: "italic" }}
+                  >
+                    slow content streaming… (1.5s)
+                  </div>
+                }
+              >
+                <SlowContent />
+              </Partial>
+              <div style={{ height: "0.5rem" }} />
+              <Partial
+                id="race-defer"
+                defer={<WhenMounted />}
+                fallback={
+                  <div
+                    data-testid="race-defer-fallback"
+                    style={{ color: "#888", fontStyle: "italic" }}
+                  >
+                    dormant — activates immediately on mount
+                  </div>
+                }
+              >
+                <div data-testid="race-defer-content">
+                  <Timestamp prefix="race defer activated at" />
+                </div>
+              </Partial>
             </section>
 
             {/* ── 3. <WhenVisible> — viewport-triggered ─────────────── */}
