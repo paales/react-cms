@@ -15,9 +15,20 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+interface FrameworkControl {
+  notFound?: boolean;
+  redirect?: { url: string; status: number };
+}
+
 interface RequestStore {
   request: Request;
   cookies: string[];
+  /**
+   * Populated by `Root`'s framework-sentinel catch branch. Read by
+   * the RSC entry after rendering to pick the right HTTP status /
+   * `Location` header / payload marker.
+   */
+  control?: FrameworkControl;
 }
 
 const requestContext = new AsyncLocalStorage<RequestStore>();
@@ -274,6 +285,15 @@ export function getPathname(
     new URL(getStore().request.url).pathname,
     pattern,
   );
+}
+
+export function setFrameworkControl(patch: FrameworkControl): void {
+  const store = getStore();
+  store.control = { ...store.control, ...patch };
+}
+
+export function getFrameworkControl(): FrameworkControl | undefined {
+  return getStore().control;
 }
 
 export function setCookie(

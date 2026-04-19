@@ -151,6 +151,44 @@ return { invalidate: { ids: ["nav"], tags: ["cart"] } };
 
 Ids are global — no prefix — and match 1:1 against `<Partial id>`.
 
+### notFound + redirect
+
+Two framework sentinels let a page or a deep async server component
+abort with an HTTP-meaningful outcome:
+
+```ts
+import { notFound, redirect } from "./framework/errors.ts";
+
+async function ProductPage() {
+  const product = await fetchProduct(getPathname("/p/:slug")?.slug);
+  if (!product) notFound();
+  if (product.archivedTo) redirect(`/p/${product.archivedTo}`);
+  return <Hero product={product} />;
+}
+```
+
+Mechanics:
+
+- `notFound()` / `redirect()` mutate the request's framework-control
+  channel *and* throw. Sync throws are caught by `Root`'s try/catch
+  and mapped to `<NotFoundPage/>` / `<Redirect url=…/>` directly.
+  Deep async throws bubble past `PartialErrorBoundary` (which
+  re-throws framework sentinels via the `__framework` brand) and
+  surface via the control channel after `renderHTML` awaits.
+- HTML responses return `404` with the `NotFoundPage` body or `302 + Location`
+  for redirects. Async `notFound()` causes a re-render of the tree
+  with `NotFoundPage` so the body matches the status.
+- RSC refetch responses can't return native `302` (fetch would
+  transparently follow and commit the destination's payload for the
+  current route). The `<Redirect>` client component is shipped
+  inline in the payload instead — its `useEffect` calls
+  `navigation.navigate` on mount. For `notFound` on a refetch, the
+  rendered `<NotFoundPage/>` is committed by the client.
+
+Known limitation: RSC refetch status is always 200 — the framework
+communicates via rendered output, not HTTP status, because Root's
+sync catch isn't what drives the RSC response path.
+
 ### Refetch commit behavior
 
 The client wraps refetches in `React.startTransition` by default: preserve UI, atomic swap, no fallback flash. Opt into per-chunk streaming (fallback + per-boundary reveal as each chunk arrives) per refetch:

@@ -8,8 +8,13 @@ import {
 } from "@vitejs/plugin-rsc/rsc";
 import type { ReactFormState } from "react-dom/client";
 import { Root } from "../app/root.tsx";
+import { NotFoundPage } from "../app/pages/not-found.tsx";
 import { parseRenderRequest } from "./request.tsx";
-import { runWithRequestAsync, setRequest } from "./context.ts";
+import {
+  getFrameworkControl,
+  runWithRequestAsync,
+  setRequest,
+} from "./context.ts";
 
 export type RscPayload = {
   root: React.ReactNode;
@@ -162,7 +167,22 @@ async function handleRequest(
     temporaryReferences,
   });
 
+  // Root is a synchronous function — the plugin's renderToReadableStream
+  // does an eager first render pass that executes Root's body before
+  // returning. If Root caught a sentinel, `getFrameworkControl()` is
+  // populated by the time we get here; if the catch happened inside
+  // an async descendant instead, control stays unset and we fall back
+  // to letting the stream flow.
   if (renderRequest.isRsc) {
+    // For RSC refetches we can't pre-check the framework-control
+    // channel (Root hasn't necessarily run yet — the plugin renders
+    // lazily as the stream is pulled). Both `notFound` and `redirect`
+    // are communicated via the rendered payload instead:
+    //   - notFound → Root returned <NotFoundPage/>; client commits it.
+    //   - redirect → Root returned <Redirect url=…/>; client commits,
+    //     its useEffect calls `navigation.navigate(url)`.
+    // Status stays 200. Refetches don't observe status codes — the
+    // client reads the rendered output — so the miss is cosmetic.
     return new Response(rscStream, {
       status: actionStatus,
       headers: { "content-type": "text/x-component;charset=utf-8" },
@@ -176,6 +196,41 @@ async function handleRequest(
     formState,
     debugNojs: renderRequest.url.searchParams.has("__nojs"),
   });
+
+  // Post-render check — catches async sentinels thrown from deep
+  // inside the tree too. By this point renderHTML has awaited the
+  // whole render, so the control channel is final.
+  const finalControl = getFrameworkControl();
+
+  if (finalControl?.redirect) {
+    return new Response(null, {
+      status: finalControl.redirect.status,
+      headers: { location: finalControl.redirect.url },
+    });
+  }
+
+  // Async `notFound()` — the first render produced the partially-
+  // broken page (whatever content got past the throw + error stubs
+  // where partials tore). Re-render NotFoundPage cleanly so the 404
+  // body matches the 404 status.
+  if (finalControl?.notFound) {
+    const notFoundPayload: RscPayload = {
+      root: <NotFoundPage />,
+      formState,
+    };
+    const notFoundStream = renderToReadableStream<RscPayload>(
+      notFoundPayload,
+      { temporaryReferences: createTemporaryReferenceSet() },
+    );
+    const notFoundSsr = await ssrEntryModule.renderHTML(notFoundStream, {
+      formState,
+      debugNojs: renderRequest.url.searchParams.has("__nojs"),
+    });
+    return new Response(notFoundSsr.stream, {
+      status: 404,
+      headers: { "Content-type": "text/html" },
+    });
+  }
 
   return new Response(ssrResult.stream, {
     status: ssrResult.status,

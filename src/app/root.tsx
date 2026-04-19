@@ -4,16 +4,50 @@ import { BarePage } from "./pages/bare-stream.tsx";
 import { CacheDemoPage } from "./pages/cache-demo.tsx";
 import { DeferDemoPage } from "./pages/defer-demo.tsx";
 import { SelectorDemoPage } from "./pages/selector-demo.tsx";
+import { NotFoundPage } from "./pages/not-found.tsx";
 import { PartialRoot, Partial } from "../lib/partial.tsx";
 import { matchPath, pickRoute } from "../framework/router.ts";
+import {
+  NotFoundError,
+  RedirectError,
+  notFound,
+  redirect,
+} from "../framework/errors.ts";
+import { setFrameworkControl } from "../framework/context.ts";
+import { Redirect } from "../framework/redirect-client.tsx";
 import { DebugToolbar } from "./components/debug-toolbar.tsx";
 import { AppNav } from "./components/app-nav.tsx";
 
 export function Root() {
+  try {
+    return renderRoute();
+  } catch (e) {
+    if (e instanceof NotFoundError) {
+      setFrameworkControl({ notFound: true });
+      return <NotFoundPage />;
+    }
+    if (e instanceof RedirectError) {
+      setFrameworkControl({
+        redirect: { url: e.url, status: e.status },
+      });
+      // HTML path: the entry handler catches this via the control
+      // channel after `renderHTML` awaits and returns a 302 + Location
+      // header before this component mounts on the client.
+      // RSC-refetch path: the stream includes `<Redirect>`, client
+      // commits, its useEffect fires `navigation.navigate(url)`.
+      return <Redirect url={e.url} />;
+    }
+    throw e;
+  }
+}
+
+function renderRoute() {
   if (matchPath("/bare")) return <BarePage />;
   if (matchPath("/cache-demo")) return <CacheDemoPage />;
   if (matchPath("/defer-demo")) return <DeferDemoPage />;
   if (matchPath("/selector-demo")) return <SelectorDemoPage />;
+  if (matchPath("/not-found-demo")) return notFound();
+  if (matchPath("/redirect-demo")) return redirect("/cache-demo");
 
   return (
     <PartialRoot>
@@ -71,3 +105,4 @@ export function Root() {
     </PartialRoot>
   );
 }
+

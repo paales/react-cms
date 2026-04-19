@@ -10,6 +10,7 @@ import { LoadMore, PageSentinel } from "../components/load-more.tsx";
 import { client } from "../data.ts";
 import { graphql, readFragment, type FragmentOf } from "../pokeapi-graphql.ts";
 import { getPathname, getSearchParam } from "../../framework/context.ts";
+import { notFound } from "../../framework/errors.ts";
 
 const PAGE_SIZE = 24;
 
@@ -480,7 +481,12 @@ async function HeroPartial({ pokemonId }: { pokemonId: number }) {
   const data = await client.request(PokemonHeroQuery, { id: pokemonId });
 
   const pokemon = data.pokemon_v2_pokemon[0];
-  if (!pokemon) return null;
+  // Async 404: the PokeAPI returns an empty array for ids outside its
+  // range (there are ~1025 pokemon; /pokemon/9999999 produces this).
+  // Calling `notFound()` here sets the framework control channel and
+  // throws — the RSC entry picks up the flag after `renderHTML`
+  // awaits and returns HTTP 404.
+  if (!pokemon) notFound();
   const { id, name, height, weight } = pokemon;
   const types = pokemon.pokemon_v2_pokemontypes.map((t) => ({
     slot: t.slot,
