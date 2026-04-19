@@ -62,11 +62,17 @@ interface PartialSnapshot {
   fallback: ReactNode;
   errorWith: ReactNode | undefined;
   tags: string[];
+  cache?: CacheOptions; // replayed on cache-mode refetch
 }
 
 const registry = new Map<string, Map<string, PartialSnapshot>>();
 //                       ^ route-path        ^ partial id
 ```
+
+Scaling + cross-route sharing live in `CACHE_SCOPING.md` — short
+reference covering the three storage tiers, what "route" means
+(pathname vs pathname+search), and the `getPathname(pattern)` +
+pending LRU cap story for high-cardinality routes.
 
 Exposed functions: `registerPartial`, `lookupPartial`,
 `getRouteSnapshots`, `clearRegistry`, `_registryStats`. HMR listener

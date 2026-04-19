@@ -25,11 +25,5 @@
 
 - Question, not a discredit: I'm unclear why we are still using stripPartials and statically walking the children tree, this doesn't scale and needs to be abolished if possible. Its ok for now, but It remains unclear what subtle bugs this is causing, because how do opaque children work, we need those as well? If we've got Dynamic Partial holes, why can't all Partials by dynamic, what is the tradeoff?
 
-- Is the cache global or route specific, what if exactly the same Partial is used on multiple locations, will that work?
-
-- I read something about a Route cache for the partial templates, we don't strictly have routes in the framework, so what consists as a route?
-
-- Should we do getPartial().header('x') would that be a better equivalent of usePartial()?
-
 - Later: GraphQL @defer support in combination with Suspense.
 - Later: GraphQL response cache and query caching. Add a product to the cart and dont need to refetch the cart because the same normalized cache is shared between the two requests, creating a faster roundtrip.

@@ -159,7 +159,7 @@ The client wraps refetches in `React.startTransition` by default: preserve UI, a
 refetch({ query: "pika" }, { disableTransition: true });
 ```
 
-See `notes/archive/BARE_KEY_REFETCH.md` for the history.
+`disableTransition` has a second use: concurrent refetches across disjoint ids. Transitions can collapse overlapping refetches — a newer pending transition can supersede an older one whose bytes have arrived but haven't committed yet. For same-id rapid-fire (search-as-you-type), that's the right default (no stale-data flash). For disjoint-id fan-outs (refresh cart + live price + next page from independent event handlers), pass `disableTransition: true` on each so every response commits on arrival. See `e2e/defer-concurrent-refetches.spec.ts` and `notes/archive/BARE_KEY_REFETCH.md`.
 
 ## Development
 
