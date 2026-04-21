@@ -232,12 +232,13 @@ A running list of design follow-ups that haven't been scheduled yet. Most live w
 ## Development
 
 ```bash
-yarn dev        # Start dev server (Vite 8 + RSC)
-yarn test       # Run all tests (vitest)
-yarn test:watch # Watch mode
+yarn dev          # Start dev server (Vite 8 + RSC)
+yarn test         # Vitest — unit/integration tests under src/ only
+yarn test:watch   # Vitest in watch mode
+yarn test:e2e     # Playwright — end-to-end specs under e2e/
 ```
 
-There are also playwright tests, run and validate those as well.
+`yarn test` and `yarn test:e2e` cover disjoint suites — both must pass before a change is done. Vitest's `include` is scoped to `src/**/*.{test,spec}.?(c|m)[jt]s?(x)` in `vite.config.ts`; without that scope vitest would pick up `e2e/*.spec.ts` and the legacy `archive/proxy-design/__tests__/` tests.
 
 ## Testing
 

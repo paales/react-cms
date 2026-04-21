@@ -35,6 +35,10 @@ export default defineConfig({
 	},
 	test: {
 		setupFiles: ["./vitest.setup.ts"],
+		// Vitest only owns unit/integration tests under src/. Playwright
+		// specs live in e2e/ (run via `yarn test:e2e`); the legacy proxy
+		// data layer in archive/ has its own tests that aren't wired up.
+		include: ["src/**/*.{test,spec}.?(c|m)[jt]s?(x)"],
 	},
 	resolve: {
 		dedupe: ["react", "react-dom"],
