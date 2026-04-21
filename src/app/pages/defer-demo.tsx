@@ -7,15 +7,18 @@ import {
   StorageKeyEditor,
 } from "../components/defer-demo-controls.tsx";
 import { AppNav } from "../components/app-nav.tsx";
+import { getSearchParam } from "../../framework/context.ts";
 
 /**
  * `/defer-demo` — exercises the three shapes of `<Partial defer>`:
  *
  *   1. `defer={true}` — bare defer. No framework-installed trigger; an
- *      app-level button calls `usePartial(id).refetch()` to activate.
+ *      app-level button calls `useNavigation().reload({ids: [id]})` to
+ *      activate.
  *   2. `defer={<WhenStored .../>}` — activator reads localStorage on
- *      mount and on `storage` events; passes the value into the Partial
- *      via `__inputs`.
+ *      mount and on `storage` events; writes the value to the page URL
+ *      (`?<as>=<value>`) before firing the targeted refetch. The
+ *      Partial's content reads it back via `getSearchParam(as)`.
  *   3. `defer={<WhenVisible/>}` — visibility-triggered activation via
  *      IntersectionObserver.
  *
@@ -76,7 +79,8 @@ function Timestamp({ prefix }: { prefix: string }) {
   );
 }
 
-function StoredContent({ stored }: { stored?: string }) {
+function StoredContent({ paramName }: { paramName: string }) {
+  const stored = getSearchParam(paramName);
   return (
     <div data-testid="stored-content">
       <Timestamp prefix="activated at" /> — value:{" "}
@@ -133,7 +137,7 @@ export function DeferDemoPage() {
               </h2>
               <p style={{ color: "#888", marginBottom: "0.75rem" }}>
                 No automatic trigger. Click the button to call{" "}
-                <code>usePartial("manual").refetch()</code>.
+                <code>useNavigation().reload({'{ids: ["manual"]}'})</code>.
               </p>
               <Partial
                 id="manual"
@@ -169,8 +173,9 @@ export function DeferDemoPage() {
               <p style={{ color: "#888", marginBottom: "0.75rem" }}>
                 The activator reads <code>localStorage["demo-stored"]</code> on
                 mount and on <code>storage</code> events. When present,
-                activates the Partial and passes the value in via{" "}
-                <code>__inputs.stored</code>.
+                writes the value to the page URL as <code>?stored=…</code>{" "}
+                and activates the Partial. The content reads the value
+                back via <code>getSearchParam("stored")</code>.
               </p>
               <Partial
                 id="stored"
@@ -185,7 +190,7 @@ export function DeferDemoPage() {
                   </div>
                 }
               >
-                <StoredContent />
+                <StoredContent paramName="stored" />
               </Partial>
               <StorageKeyEditor storageKey="demo-stored" testId="demo-stored" />
             </section>
@@ -210,7 +215,7 @@ export function DeferDemoPage() {
               </p>
               <Partial
                 id="batch-a"
-                defer={<WhenStored storageKey="batch-a-key" as="stored" />}
+                defer={<WhenStored storageKey="batch-a-key" as="batch-a" />}
                 fallback={
                   <div
                     data-testid="batch-a-fallback"
@@ -221,12 +226,12 @@ export function DeferDemoPage() {
                   </div>
                 }
               >
-                <StoredContent />
+                <StoredContent paramName="batch-a" />
               </Partial>
               <div style={{ height: "0.5rem" }} />
               <Partial
                 id="batch-b"
-                defer={<WhenStored storageKey="batch-b-key" as="stored" />}
+                defer={<WhenStored storageKey="batch-b-key" as="batch-b" />}
                 fallback={
                   <div
                     data-testid="batch-b-fallback"
@@ -237,7 +242,7 @@ export function DeferDemoPage() {
                   </div>
                 }
               >
-                <StoredContent />
+                <StoredContent paramName="batch-b" />
               </Partial>
               <div style={{ marginTop: "0.75rem" }}>
                 <StorageKeyEditor

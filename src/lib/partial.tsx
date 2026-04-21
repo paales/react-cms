@@ -23,21 +23,19 @@
  * wraps the output in `<PartialsClient>`.
  *
  * Every decision about an individual partial — "render fresh?",
- * "emit placeholder because the fingerprint matched?", "apply an
- * __inputs override?" — lives in the `Partial` component itself.
- * There is no static walker; each Partial discovers itself by
- * running. Deep Partials produced inside `.map()` loops or other
- * opaque component bodies are first-class: they register themselves
- * via `<PartialBoundary>` on every render.
+ * "emit placeholder because the fingerprint matched?" — lives in the
+ * `Partial` component itself. There is no static walker; each Partial
+ * discovers itself by running. Deep Partials produced inside `.map()`
+ * loops or other opaque component bodies are first-class: they
+ * register themselves via `<PartialBoundary>` on every render.
  *
  * Snapshots stored by `<PartialBoundary>` are captured JSX from the
- * ancestor's most recent execution. `__inputs` overrides reach the
- * content via `cloneElement` (now unimpeded — `<Cache>` is folded
- * into `<Partial cache>`, so there is no intermediate wrapper); the
- * Partial's fingerprint is computed from the content AFTER
- * `applyInputs`, so cache-mode refetches with new inputs produce
- * distinct keys and correctly miss stale entries. This replaces what
- * the old `refreshRegistry` walker used to handle.
+ * ancestor's most recent execution. Cache-mode refetches render that
+ * snapshot directly through a fresh `<Partial>` body — the Partial
+ * re-evaluates its fingerprint, opens any frame scope, and
+ * re-registers the snapshot. All request-varying state flows through
+ * tracked accessors (`getSearchParam`, `getCookie`, `getPathname`,
+ * frame URLs), not props.
  */
 
 import React, { type ReactNode } from "react";
@@ -146,7 +144,6 @@ export async function PartialRoot({ children }: PartialRootProps) {
   const partialsParam = requestUrl.searchParams.get("partials");
   const tagsParam = requestUrl.searchParams.get("tags");
   const cachedParam = requestUrl.searchParams.get("cached");
-  const inputsParam = requestUrl.searchParams.get("__inputs");
   const populateCache = requestUrl.searchParams.has("__populateCache");
 
   // Frame navigation: `?__frame=name&__frameUrl=/path` carries the
@@ -158,15 +155,6 @@ export async function PartialRoot({ children }: PartialRootProps) {
   if (frameNames.length > 0 && frameNames.length === frameUrls.length) {
     for (let i = 0; i < frameNames.length; i++) {
       setSessionFrameUrl(frameNames[i], frameUrls[i]);
-    }
-  }
-
-  let partialInputs: Record<string, Record<string, unknown>> = {};
-  if (inputsParam) {
-    try {
-      partialInputs = JSON.parse(inputsParam);
-    } catch {
-      // Malformed — ignore.
     }
   }
 
@@ -187,13 +175,11 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // they're what the caller asked for.
   const explicitIds = new Set<string>();
   if (requestedIds) for (const id of requestedIds) explicitIds.add(id);
-  for (const id of Object.keys(partialInputs)) explicitIds.add(id);
 
   const state: PartialRequestState = {
     requestedIds: populateCache ? null : requestedIds,
     isPartialRefetch: isPartialRefetch && !populateCache,
     populateCache,
-    partialInputs,
     cachedFingerprints: parseCachedFingerprints(cachedParam),
     explicitIds,
     seenIds: new Set(),
@@ -240,20 +226,19 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // ── Cache mode (partial refetch) ──────────────────────────────────
   //
   // Render each explicitly-requested partial from its registry
-  // snapshot as a flat sibling. The `<Partial>` body re-runs (applying
-  // `__inputs`, wrapping in Suspense + ErrorBoundary, re-registering)
-  // — but its ancestors do not. No server-side template: the client
-  // re-renders against the `_template` derived during the most recent
-  // streaming render.
+  // snapshot as a flat sibling. The `<Partial>` body re-runs (wrapping
+  // in Suspense + ErrorBoundary, re-registering) — but its ancestors
+  // do not. No server-side template: the client re-renders against
+  // the `_template` derived during the most recent streaming render.
   //
   // Why no refresh walk: snapshots store the JSX captured at the
-  // ancestor's most-recent execution. With `<Cache>` folded into
-  // `<Partial cache>`, there's no intermediate wrapper between
-  // `<Partial>` and its content, so `cloneElement(__inputs)` reaches
-  // the content component directly — parameterising by the current
-  // request. Closures that cloneElement can't reach stay stable-by-
-  // construction (sku from `.map()` iteration, etc.) and don't need
-  // refreshing.
+  // ancestor's most-recent execution. Request-varying state flows
+  // through tracked accessors (`getSearchParam`, `getCookie`,
+  // `getPathname`, frame URLs) read inside the Partial's content on
+  // re-render — the snapshot doesn't have to be re-baked to pick up
+  // new inputs because inputs don't live on the JSX at all. Closures
+  // that would have been stale (sku from a `.map()` iteration, etc.)
+  // stay stable-by-construction.
   enterPartialState(state);
 
   const activeIds = [...(state.requestedIds ?? [])];

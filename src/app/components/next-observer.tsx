@@ -1,17 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePartial, usePartialParams } from "../../lib/partial-client.tsx";
-import { silentReplace } from "../../framework/silent-replace.ts";
+import { useNavigation } from "../../lib/partial-client.tsx";
 
 /**
  * Sentinel rendered as the content of the singleton `<Partial id="next">`
  * at the bottom of the infinite-scroll list.
  *
- * On intersection it widens the active range by one: bumps `?end=N+1` in
- * the URL silently (for bookmarkable resume after browser back-nav),
- * sets the same `end` on the next refetch URL via transient params, and
- * dispatches refetches for the new page partial and this `next` slot.
+ * On intersection it widens the active range by one: bumps `?end=N+1`
+ * in the URL (for bookmarkable resume after browser back-nav) and
+ * dispatches a targeted refetch for the new page partial and this
+ * `next` slot in a single `navigate` call.
  *
  * The server response brings page-N+1 fresh and re-renders this slot
  * with `currentEnd={N+1}` — the new instance's effect re-arms the
@@ -19,9 +18,7 @@ import { silentReplace } from "../../framework/silent-replace.ts";
  */
 export function NextObserver({ currentEnd }: { currentEnd: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [dispatchNext] = usePartial("next");
-  const [dispatchPage] = usePartial(`page-${currentEnd + 1}`);
-  const setParams = usePartialParams();
+  const nav = useNavigation();
 
   useEffect(() => {
     const el = ref.current;
@@ -40,14 +37,14 @@ export function NextObserver({ currentEnd }: { currentEnd: number }) {
       const nextEnd = currentEnd + 1;
       const url = new URL(window.location.href);
       url.searchParams.set("end", String(nextEnd));
-      silentReplace(url);
-      setParams({ end: String(nextEnd) });
-      dispatchPage();
-      dispatchNext();
+      void nav.navigate(url.toString(), {
+        history: "replace",
+        ids: [`page-${nextEnd}`, "next"],
+      });
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [currentEnd, dispatchNext, dispatchPage, setParams]);
+  }, [currentEnd, nav]);
 
   return (
     <div

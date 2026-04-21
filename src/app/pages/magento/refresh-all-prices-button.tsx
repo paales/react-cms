@@ -1,30 +1,28 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState } from "react";
+import { useNavigation } from "../../../lib/partial-client.tsx";
 
 /**
  * Refreshes every product's live-price partial in a single request.
  *
  * Works via tag-based refetch: each `<Partial id={"price-" + sku}
  * tags={["price"]}>…</Partial>` registers its tag on the server, so
- * `?tags=price` resolves (through the route registry) to the full
- * set of currently-known price partial ids. Rather than dispatch N
- * individual `usePartial` calls, we hit `__rsc_partial_refetch`
- * directly with the tag query — one roundtrip, one cache mode render.
+ * `reload({tags: ["price"]})` resolves (through the route registry)
+ * to the full set of currently-known price partial ids — one
+ * roundtrip, one cache-mode render.
  */
 export function RefreshAllPricesButton() {
-  const [isPending, startTransition] = useTransition();
+  const nav = useNavigation();
+  const [isPending, setIsPending] = useState(false);
 
-  function refreshAll() {
-    startTransition(async () => {
-      const handler = (window as Window & {
-        __rsc_partial_refetch?: (url: string) => Promise<void>;
-      }).__rsc_partial_refetch;
-      if (!handler) return;
-      const url = new URL(window.location.href);
-      url.searchParams.set("tags", "price");
-      await handler(url.toString());
-    });
+  async function refreshAll() {
+    setIsPending(true);
+    try {
+      await nav.reload({ tags: ["price"] });
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (

@@ -11,7 +11,7 @@ import { useEffect } from "react";
  *    debounce-persists it via updateCurrentEntry.
  *  - On a push/traverse navigate event we also persist (so a forward
  *    navigation has the outgoing entry's scroll). For "replace"
- *    navigations (silentReplace bumping ?end=N), we save on
+ *    navigations (history:"replace" bumping ?end=N), we save on
  *    `navigatesuccess`, because updateCurrentEntry called inside the
  *    navigate handler is overwritten by the navigation's own commit.
  *  - We persist `lastScrollY` rather than the live `window.scrollY`
@@ -94,7 +94,7 @@ export function ScrollRestore() {
     // For push/traverse: save in the navigate handler so the outgoing
     //   entry (currentEntry at that moment) gets the scroll position
     //   before the new entry takes over.
-    // For replace (silentReplace): save in navigatesuccess. Saving in
+    // For replace (silent/targeted navigate): save in navigatesuccess. Saving in
     //   the navigate handler doesn't stick because the replace
     //   navigation commits the new state (null from replaceState) over
     //   our updateCurrentEntry call. After commit, currentEntry has

@@ -139,9 +139,7 @@ export function PokemonPage() {
   const routeIdStr = getPathname("/pokemon/:id")?.id;
   const pokemonId =
     routeIdStr && /^\d+$/.test(routeIdStr) ? Number(routeIdStr) : undefined;
-  const searchMode = getSearchParam("search") as "url" | "partial" | null;
-  const searchOpen = searchMode != null;
-  const searchQuery = getSearchParam("q") ?? "";
+  const urlSearchOpen = getSearchParam("search") != null;
   const pages = Math.max(1, Number(getSearchParam("pages")) || 1);
   const pagePartials =
     pokemonId == null
@@ -166,61 +164,43 @@ export function PokemonPage() {
             <span style={{ color: "#888", fontSize: "0.85rem" }}>
               {new Date().toLocaleString()}
             </span>
-            <SearchToggle isOpen={searchOpen} />
+            {/* URL-mode open state comes from the page URL;
+                frame-mode open state is read client-side inside the
+                toggle via `useNavigation("search").currentUrl`. */}
+            <SearchToggle urlOpen={urlSearchOpen} />
           </div>
           {pokemonId != null && <PartialControls />}
         </header>
       </Partial>
-      {searchOpen && (
-        <SearchDialog open>
-          <SearchInput query={searchQuery} mode={searchMode!} />
-          {/*
-            Stage 1 has no `fallback` — the framework therefore does
-            not wrap it in a Suspense boundary. SearchStage1 still
-            awaits a GraphQL query, but that suspend resolves in the
-            outer RSC stream before the enclosing partial's chunk
-            emits, so the client commits stage-1's content inline
-            with the rest of the response. No loading flash, no
-            per-chunk streaming — appropriate for a fast "always-on"
-            slice that sits at the top of the dialog.
-          */}
-          <Partial id="stage-1" cache={{}}>
-            <SearchStage1 query={searchQuery} />
-          </Partial>
-          {searchQuery && (
-            <Partial
-              id="stage-2"
-              cache={{}}
-              fallback={
-                <div
-                  data-testid="stage-2-fallback"
-                  style={{ color: "#666", padding: "0.5rem" }}
-                >
-                  Loading stage 2...
-                </div>
-              }
-            >
-              <SearchStage2 query={searchQuery} />
-            </Partial>
-          )}
-          {searchQuery && (
-            <Partial
-              id="stage-3"
-              cache={{}}
-              fallback={
-                <div
-                  data-testid="stage-3-fallback"
-                  style={{ color: "#666", padding: "0.5rem" }}
-                >
-                  Loading stage 3...
-                </div>
-              }
-            >
-              <SearchStage3 query={searchQuery} />
-            </Partial>
-          )}
-        </SearchDialog>
-      )}
+
+      {/*
+        Two symmetric instances of the same component.
+
+        URL mode (page-scoped): reads `?search=` / `?q=` from the PAGE
+        URL. Its open/close is driven by `useNavigation().navigate(...)`.
+
+        Frame mode (frame-scoped): reads `?search=` / `?q=` from the
+        FRAME URL. Its open/close is driven by `frame("search")
+        .navigate(...)`. The wrapping `<Partial frame="search">` swaps
+        the ambient request before descendants read accessors.
+
+        The inner `<SearchArea/>` is identical in both places — the
+        scope around it decides which URL it sees.
+      */}
+      {/* The container Partials are what the typing input refetches
+          via `tags: ["search-results"]`. Page scope: tag resolves to
+          `search-page` and its body re-runs — `<SearchArea/>` reads a
+          fresh `?q=` from the page URL and builds fresh stage
+          elements with the new prop. Frame scope: tag filter is
+          ignored by frame navigation (frame nav always refetches its
+          own subtree), so the behavior is symmetric either way. */}
+      <Partial id="search-page" tags="search-results">
+        <SearchArea scope="page" />
+      </Partial>
+      <Partial id="search" tags="search-results" frame="search" frameUrl="/">
+        <SearchArea scope="frame" />
+      </Partial>
+
       {pokemonId != null ? (
         <>
           <Partial id="hero">
@@ -258,6 +238,76 @@ export function PokemonPage() {
         </>
       )}
     </>
+  );
+}
+
+/**
+ * Scope-agnostic search UI. Reads `?search=` and `?q=` from the
+ * AMBIENT request (page URL or frame URL depending on what wraps us).
+ *
+ * Rendered twice in the pokemon page:
+ *   - page-scoped:  <Partial id="search-page"><SearchArea scope="page"/></Partial>
+ *   - frame-scoped: <Partial frame="search"><SearchArea scope="frame"/></Partial>
+ *
+ * The `scope` prop is purely a namespace for the stage Partial ids
+ * (to avoid colliding when both instances happen to render at the
+ * same time) — it does NOT change behavior.
+ *
+ * Every stage carries `tags="search-results"` so `useNavigation()
+ * .navigate(url, {tags: ["search-results"]})` from inside the input
+ * refetches them together. Tag → id resolution runs server-side
+ * against the route-scoped registry; dynamic / conditional Partials
+ * resolve as long as they've rendered on a prior pass.
+ */
+function SearchArea({ scope }: { scope: "page" | "frame" }) {
+  const isOpen = getSearchParam("search") != null;
+  if (!isOpen) return null;
+  const q = getSearchParam("q") ?? "";
+  return (
+    <SearchDialog open>
+      <SearchInput query={q} />
+      {/*
+        Stage 1 has no `fallback` — the framework therefore does
+        not wrap it in a Suspense boundary. SearchStage1 still
+        awaits a GraphQL query, but that suspend resolves in the
+        outer RSC stream before the enclosing partial's chunk
+        emits, so the client commits stage-1's content inline
+        with the rest of the response. No loading flash, no
+        per-chunk streaming — appropriate for a fast "always-on"
+        slice that sits at the top of the dialog.
+      */}
+      <Partial id={`${scope}-stage-1`} cache={{}}>
+        <SearchStage1 query={q} />
+      </Partial>
+      <Partial
+        id={`${scope}-stage-2`}
+        cache={{}}
+        fallback={
+          <div
+            data-testid="stage-2-fallback"
+            style={{ color: "#666", padding: "0.5rem" }}
+          >
+            Loading stage 2...
+          </div>
+        }
+      >
+        <SearchStage2 query={q} />
+      </Partial>
+      <Partial
+        id={`${scope}-stage-3`}
+        cache={{}}
+        fallback={
+          <div
+            data-testid="stage-3-fallback"
+            style={{ color: "#666", padding: "0.5rem" }}
+          >
+            Loading stage 3...
+          </div>
+        }
+      >
+        <SearchStage3 query={q} />
+      </Partial>
+    </SearchDialog>
   );
 }
 
@@ -359,9 +409,25 @@ function SearchResultGrid({
   );
 }
 
+/**
+ * Stages take `query` as a scalar prop.
+ *
+ * `SearchArea` reads `getSearchParam("q")` from the ambient scope
+ * (page URL or frame URL) and passes the value to each stage. Reading
+ * the accessor *inside* each stage would sound simpler, but the
+ * stages are wrapped in `<Partial cache>` and `<Cache>`'s inner
+ * render (`renderToReadableStream`) opens a fresh React internal
+ * render context that doesn't inherit the frame-scope cell — so a
+ * frame-scoped stage would read the page URL and miss `?q=`.
+ * Lifting the read out of Cache keeps the accessor inside the
+ * correct scope and also folds `query` into the stage's structural
+ * fingerprint, so different `q` values produce different cache keys
+ * (instead of relying solely on the Cache manifest's URL capture).
+ */
+
 /** Stage 1: first 6 results, no delay */
-async function SearchStage1({ query: searchQuery }: { query: string }) {
-  if (!searchQuery) {
+async function SearchStage1({ query }: { query: string }) {
+  if (!query) {
     return (
       <p style={{ color: "#666", marginTop: "1rem", fontSize: "0.85rem" }}>
         Start typing to search...
@@ -369,7 +435,7 @@ async function SearchStage1({ query: searchQuery }: { query: string }) {
     );
   }
 
-  const results = await fetchSearchResults(searchQuery, 0, 6);
+  const results = await fetchSearchResults(query, 0, 6);
 
   return (
     <>
@@ -381,8 +447,9 @@ async function SearchStage1({ query: searchQuery }: { query: string }) {
   );
 }
 
-/** Stage 2: next 6 results, 1 second delay */
+/** Stage 2: next 6 results, 1 second delay. No-ops when q is empty. */
 async function SearchStage2({ query }: { query: string }) {
+  if (!query) return null;
   await delay(1000);
   const results = await fetchSearchResults(query, 6, 6);
 
@@ -394,8 +461,9 @@ async function SearchStage2({ query }: { query: string }) {
   );
 }
 
-/** Stage 3: next 8 results, 2 second delay */
+/** Stage 3: next 8 results, 2 second delay. No-ops when q is empty. */
 async function SearchStage3({ query }: { query: string }) {
+  if (!query) return null;
   await delay(2000);
   const results = await fetchSearchResults(query, 12, 8);
 

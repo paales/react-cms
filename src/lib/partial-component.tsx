@@ -1,5 +1,13 @@
 import { Suspense, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
-import { getRequest, setCurrentFrameScope } from "../framework/context.ts";
+// `cloneElement` is still used for the defer-activator injection path
+// below (cloning `<WhenVisible/>` with `{partialId}`). The Partial body
+// itself never clones content with prop overrides — there is no
+// `__inputs` mechanism on the client.
+import {
+  getCurrentFrameScope,
+  getRequest,
+  setCurrentFrameScope,
+} from "../framework/context.ts";
 import { getSessionFrameUrl } from "../framework/session.ts";
 import { registerPartial } from "./partial-registry.ts";
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
@@ -60,14 +68,16 @@ export function PartialBoundary({
  * Defer specification for `<Partial defer=…>`.
  *
  * - `true` — server emits fallback only; Partial is dormant until
- *   something in the app calls `usePartial(id).refetch()`. The
- *   framework does not install any trigger; the caller owns wiring.
+ *   something in the app calls `useNavigation().reload({ids: [id]})`
+ *   (or uses `useActivate` with a custom subscriber). The framework
+ *   does not install any trigger; the caller owns wiring.
  * - `ReactElement` — an activator component. The framework clones it
  *   with `{partialId: id}` and passes the Partial's fallback as
- *   children. The activator is responsible for calling
- *   `usePartial(partialId)[0]()` when its condition fires. Authors
- *   write their own activators — see `src/app/components/when-visible.tsx`
- *   / `when-stored.tsx` in the demo app for reference implementations.
+ *   children. The activator is responsible for triggering a targeted
+ *   reload when its condition fires — `useActivate(partialId, …)` is
+ *   the primitive. Authors write their own activators — see
+ *   `src/app/components/when-visible.tsx` / `when-stored.tsx` in the
+ *   demo app for reference implementations.
  */
 export type DeferSpec = true | ReactElement<ActivatorProps>;
 
@@ -86,10 +96,11 @@ export interface ActivatorProps {
 
 export interface PartialProps {
   /**
-   * Unique-per-page identifier. Addressable via `usePartial("id")` or
-   * `usePartial("#id")`. Optional when `tags` is provided — an id-less
-   * Partial synthesizes `__anon:<sorted-tags>` internally and can only
-   * be refetched via a tag selector (`usePartial(".tag")`).
+   * Unique-per-page identifier. Addressable via
+   * `useNavigation().reload({ids: ["id"]})`. Optional when `tags` is
+   * provided — an id-less Partial synthesizes `__anon:<sorted-tags>`
+   * internally and can only be refetched via a tag refresh
+   * (`useNavigation().reload({tags: ["…"]})`).
    */
   id?: string;
   children?: ReactNode;
@@ -97,8 +108,9 @@ export interface PartialProps {
    * Non-unique labels. Accepts an array or a whitespace-separated
    * string (`"price product"` ≡ `["price", "product"]`), same shape as
    * DOM `className`. Used for family-wide refetch/invalidation:
-   * `usePartial(".price")` refetches every Partial with the `price`
-   * tag; `.price.product` matches the intersection.
+   * `useNavigation().reload({tags: ["price"]})` refetches every
+   * Partial with the `price` tag; passing multiple tags refetches
+   * their union.
    */
   tags?: string | string[];
   /**
@@ -203,21 +215,6 @@ function fingerprintElement(node: ReactNode): string {
 }
 
 /**
- * Apply `__inputs` overrides to a Partial's content. If content is a
- * single element, clone it with the overrides as new props. Otherwise
- * returns content unchanged — overrides require a single root child.
- */
-function applyInputs(
-  content: ReactNode,
-  overrides: Record<string, unknown>,
-): ReactNode {
-  if (isValidElement(content)) {
-    return cloneElement(content as ReactElement, overrides);
-  }
-  return content;
-}
-
-/**
  * Normalize a `tags` prop (array OR whitespace-separated string) into a
  * deduplicated string array. Empty / all-whitespace input yields `[]`.
  */
@@ -247,7 +244,8 @@ function resolveEffectiveId(
   if (tags.length === 0) {
     throw new Error(
       "<Partial> requires either `id` or `tags`. An id-less Partial needs " +
-        "at least one tag so it can be addressed via `usePartial(\".tag\")`.",
+        "at least one tag so it can be addressed via " +
+        "`useNavigation().reload({tags: [\"...\"]})`.",
     );
   }
   return `__anon:${[...tags].sort().join(",")}`;
@@ -361,14 +359,10 @@ export function Partial({
   }
   state.seenIds.add(id);
 
-  const override = state.partialInputs[id];
   const isExplicit = state.explicitIds.has(id);
   const effectiveFallback = fallback ?? null;
 
-  // Apply __inputs override (if any) for both the rendered content
-  // and the registered snapshot, so a later refetch replays with the
-  // already-applied props.
-  const rawContent = override ? applyInputs(children, override) : children;
+  const rawContent = children;
 
   // Frame scope: if `frame` is set, wrap the children in a
   // `<FrameWrapper>` component that does the Flight round-trip when
@@ -401,50 +395,52 @@ export function Partial({
   // used both for the client→server "did this change?" handshake and
   // for registering the snapshot so nav-time skip decisions are stable.
   //
-  // Hashed AFTER `applyInputs` so that in cache-mode (where `children`
-  // is a snapshot captured from an earlier request) a refetch whose
-  // `__inputs` change a prop still produces a distinct fingerprint,
-  // and therefore a distinct Cache key. Without this, the snapshot's
-  // stale props would drive the fingerprint even though the actual
-  // rendered content has different prop values — causing the Cache to
-  // return the previous request's bytes. This replaces the need for
-  // the old `refreshRegistry` static walker.
-  //
-  // Frame URL is folded in: a framed Partial whose frame URL changes
-  // produces a distinct fingerprint, so the client-reported fp no
-  // longer matches and the server re-renders with the new scope.
-  const frameKey =
+  // Frame URL folding:
+  //   - Own frame (this Partial declares `frame=…`): fold the frame's
+  //     URL so a frame-URL change produces a distinct fp and the
+  //     fingerprint-match skip path re-renders the frame contents.
+  //   - Ambient frame (this Partial sits INSIDE a `<Partial frame=…>`
+  //     ancestor): fold the enclosing frame's URL for the same reason —
+  //     nested Partials' structural fp doesn't capture URL-derived
+  //     state read via `getSearchParam` / `getPathname` inside their
+  //     body, so without this fold a stage Partial inside a frame
+  //     whose URL changed would match its prior fp and skip, leaving
+  //     the client with stale cached bytes.
+  const ownFrameKey =
     frame != null && frameRequest != null
       ? `|frame=${frame}:${frameRequest.url}`
       : "";
-  const fp = hashFingerprint(fingerprintElement(rawContent) + frameKey);
+  const ambientScope = getCurrentFrameScope();
+  const ambientFrameKey =
+    ambientScope && ambientScope.name !== frame
+      ? `|inFrame=${ambientScope.name}:${ambientScope.request.url}`
+      : "";
+  const fp = hashFingerprint(
+    fingerprintElement(rawContent) + ownFrameKey + ambientFrameKey,
+  );
 
   // ── Skip decisions ─────────────────────────────────────────────────
   //
   // Skip when the client already has content the server would
   // re-produce. That's determined per-Partial by the fingerprint
   // handshake: `?cached=id:fp,…` lists what the client has; we skip
-  // (emit a placeholder) when fp matches or when the partial wasn't
-  // requested and the client reports a cache for it.
+  // (emit a placeholder) when fp matches.
   //
-  // The OLD logic skipped every non-explicit partial in a refetch
-  // (`isPartialRefetch ? true : fingerprintMatches`) on the
-  // assumption that a refetch only happens after a streaming render
-  // primed the client cache. That breaks when a refetch exposes a
-  // NEW nested partial (e.g., navigating a frame to a URL whose
-  // subtree introduces a `<Partial id="menu-slow-inner">` the client
-  // has never seen). Without a matching cached fingerprint, skipping
-  // emits a placeholder the client can't fill — the user sees a gap.
+  // History: earlier revisions tried `isPartialRefetch ? true` and
+  // then `isPartialRefetch ? clientHasCache`. Both are too aggressive
+  // when a refetch re-renders a parent whose new content carries
+  // DIFFERENT nested-partial props — the nested partial's new
+  // fingerprint differs from the cached one, but the old logic
+  // skipped anyway and the client held the stale body. Frame
+  // navigation trips this: `frame("search").navigate("/search/open?q=pika")`
+  // refetches id="search" and inside that the `frame-stage-1` body
+  // goes from `<SearchStage1 query="">` (A) to `<SearchStage1
+  // query="pika">` (B) — fingerprint changes, content must not skip.
   // Skip only on an actual fingerprint match.
   const cachedFp = state.cachedFingerprints.get(id);
-  const clientHasCache = state.cachedFingerprints.has(id);
   const fingerprintMatches = cachedFp != null && cachedFp === fp;
 
-  const shouldSkip = isExplicit
-    ? false
-    : state.isPartialRefetch
-      ? clientHasCache
-      : fingerprintMatches;
+  const shouldSkip = isExplicit ? false : fingerprintMatches;
 
   if (shouldSkip) {
     // Register so tag refetches / subsequent lookups still find the
@@ -493,7 +489,6 @@ export function Partial({
           key={id}
           partialId={id}
           partialFingerprint={fp}
-          partialTags={effectiveTags}
           fallback={errorWith}
         >
           {dormant}
@@ -532,8 +527,7 @@ export function Partial({
           <PartialErrorBoundary
             partialId={id}
             partialFingerprint={fp}
-            partialTags={effectiveTags}
-            fallback={errorWith}
+              fallback={errorWith}
           >
             {effectiveFallback}
           </PartialErrorBoundary>
@@ -542,7 +536,6 @@ export function Partial({
         <PartialErrorBoundary
           partialId={id}
           partialFingerprint={fp}
-          partialTags={effectiveTags}
           fallback={errorWith}
         >
           {cachedContent}
@@ -553,7 +546,6 @@ export function Partial({
         key={id}
         partialId={id}
         partialFingerprint={fp}
-        partialTags={effectiveTags}
         fallback={errorWith}
       >
         {cachedContent}

@@ -1,6 +1,7 @@
 "use client";
 
-import { usePartial } from "../../../lib/partial-client.tsx";
+import { useState } from "react";
+import { useNavigation } from "../../../lib/partial-client.tsx";
 
 /**
  * Refetches the per-product live-price partial. The partial id mirrors
@@ -9,12 +10,21 @@ import { usePartial } from "../../../lib/partial-client.tsx";
  * in `PartialRoot` can't see through `ProductGrid`).
  */
 export function RefreshPriceButton({ sku }: { sku: string }) {
-  const [refetch, isPending] = usePartial(`price-${sku}`);
+  const nav = useNavigation();
+  const [isPending, setIsPending] = useState(false);
+  async function refresh() {
+    setIsPending(true);
+    try {
+      await nav.reload({ ids: [`price-${sku}`] });
+    } finally {
+      setIsPending(false);
+    }
+  }
   return (
     <button
       type="button"
       data-testid={`refresh-price-${sku}`}
-      onClick={() => refetch()}
+      onClick={refresh}
       disabled={isPending}
       style={{
         background: "transparent",

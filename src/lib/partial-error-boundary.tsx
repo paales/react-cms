@@ -9,9 +9,6 @@ interface Props {
    *  gets registered into the client-side fingerprint map on render
    *  so subsequent navigations can send it back via `?cached=`. */
   partialFingerprint?: string;
-  /** Tags for this partial — registered client-side so `usePartial(".tag")`
-   *  selectors can resolve to the matching id set. */
-  partialTags?: readonly string[];
   children: React.ReactNode;
   /**
    * Optional error fallback. Rendered when a descendant throws.
@@ -65,7 +62,6 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
       registerClientPartial(
         this.props.partialId,
         this.props.partialFingerprint,
-        this.props.partialTags,
       );
     }
     if (this.state.error) {

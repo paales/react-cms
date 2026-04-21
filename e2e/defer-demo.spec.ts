@@ -3,9 +3,12 @@ import { test, expect, request } from "@playwright/test";
 /**
  * /defer-demo — exercises all three shapes of `<Partial defer>`:
  *
- *   1. `defer={true}` — button-triggered manual activation.
- *   2. `defer={<WhenStored/>}` — localStorage-triggered activation with
- *      value passed to the server via `__inputs`.
+ *   1. `defer={true}` — button-triggered manual activation via
+ *      `useNavigation().reload({ids: [id]})`.
+ *   2. `defer={<WhenStored/>}` — localStorage-triggered activation.
+ *      The activator writes the stored value to the page URL
+ *      (`?<as>=<value>`) before firing; the server reads it back via
+ *      `getSearchParam(as)`.
  *   3. `defer={<WhenVisible/>}` — IntersectionObserver-triggered
  *      activation when the fallback enters the viewport.
  *
@@ -20,7 +23,7 @@ test.beforeEach(async ({ baseURL }) => {
 });
 
 test.describe("Partial defer demo", () => {
-  test("defer={true}: button click activates via usePartial.refetch()", async ({
+  test("defer={true}: button click activates via useNavigation.reload()", async ({
     page,
   }) => {
     const rscCalls: Array<{ partials: string | null }> = [];
@@ -59,10 +62,10 @@ test.describe("Partial defer demo", () => {
     ).toBeGreaterThanOrEqual(1);
   });
 
-  test("<WhenStored>: setting the key activates and value passes via __inputs", async ({
+  test("<WhenStored>: setting the key activates and value passes via ?stored= URL param", async ({
     page,
   }) => {
-    const rscCalls: Array<{ partials: string | null; inputs: string | null }> =
+    const rscCalls: Array<{ partials: string | null; stored: string | null }> =
       [];
     page.on("request", (req) => {
       const url = req.url();
@@ -70,7 +73,7 @@ test.describe("Partial defer demo", () => {
         const u = new URL(url);
         rscCalls.push({
           partials: u.searchParams.get("partials"),
-          inputs: u.searchParams.get("__inputs"),
+          stored: u.searchParams.get("stored"),
         });
       }
     });
@@ -113,9 +116,10 @@ test.describe("Partial defer demo", () => {
       (c) => c.partials != null && c.partials.split(",").includes("stored"),
     );
     expect(hit, "expected an RSC refetch for `stored`").toBeDefined();
-    expect(hit!.inputs, "expected __inputs with the stored value").toContain(
-      "hello-world",
-    );
+    expect(
+      hit!.stored,
+      "expected ?stored= URL param with the stored value",
+    ).toBe("hello-world");
   });
 
   test("<WhenVisible>: scroll-into-view activates the Partial", async ({

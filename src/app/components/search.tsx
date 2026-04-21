@@ -7,34 +7,75 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { usePartial, usePartialParams } from "../../lib/partial-client.tsx";
-import { silentReplace } from "../../framework/silent-replace.ts";
+import { useNavigation } from "../../lib/partial-client.tsx";
+
+/**
+ * Utility: append / set / delete a search param on a relative URL
+ * string (no `window.location` dependency). The base parameter is
+ * only used to parse; `new URL` needs some origin. We throw the
+ * origin away and return pathname+search.
+ */
+function withParam(
+  base: string,
+  key: string,
+  value: string | null,
+): string {
+  const u = new URL(base, "http://_");
+  if (value == null) u.searchParams.delete(key);
+  else u.searchParams.set(key, value);
+  return u.pathname + u.search;
+}
 
 /**
  * Search toggle buttons for the header.
  *
- * Two variants to demonstrate the difference:
- * - "Search (URL)": opens overlay via ?search=url, search term goes in ?q= (bookmarkable)
- * - "Search (Partial)": opens overlay via ?search=partial, term uses usePartial (ephemeral)
+ * Two variants:
+ * - "Search (URL)":   sets `?search=1` on the PAGE URL via
+ *   `useNavigation().navigate(...)`. The page-level SearchArea
+ *   reads the page URL and renders its dialog open.
+ * - "Search (Frame)": navigates the `search` frame to `/?search=1` via
+ *   `frame("search").navigate(...)`. The framed SearchArea reads the
+ *   FRAME URL — no page-URL mutation at all.
+ *
+ * `<SearchArea/>` is the same component in both modes; its scope
+ * (the surrounding frame or the page) decides where `?search=` is
+ * read from.
  */
-export function SearchToggle({ isOpen }: { isOpen: boolean }) {
+export function SearchToggle({ urlOpen }: { urlOpen: boolean }) {
   const [isPending, startTransition] = useTransition();
+  const pageNav = useNavigation();
+  const frameNav = useNavigation("search");
+  // Frame state lives purely client-side (frame URL in `_frameUrls`).
+  // Computed reactively — `useNavigation()` subscribes to `navigate`
+  // events so this re-evaluates when the frame URL changes.
+  const frameOpen = (() => {
+    const cur = frameNav.currentUrl;
+    if (!cur) return false;
+    return new URL(cur, "http://_").searchParams.has("search");
+  })();
 
-  function open(searchMode: "url" | "partial") {
+  function openUrl() {
+    const target = withParam(pageNav.currentUrl ?? "/", "search", "1");
     startTransition(() => {
-      const url = new URL(window.location.href);
-      url.searchParams.set("search", searchMode);
-      history.pushState(null, "", url.toString());
+      void pageNav.navigate(target, { history: "push", ids: ["search-page"] });
     });
   }
 
-  function close() {
+  function closeUrl() {
+    let target = pageNav.currentUrl ?? "/";
+    target = withParam(target, "search", null);
+    target = withParam(target, "q", null);
     startTransition(() => {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("search");
-      url.searchParams.delete("q");
-      history.pushState(null, "", url.toString());
+      void pageNav.navigate(target, { history: "push", ids: ["search-page"] });
     });
+  }
+
+  function openFrame() {
+    void frameNav.navigate("/?search=1");
+  }
+
+  function closeFrame() {
+    void frameNav.navigate("/");
   }
 
   const buttonStyle = (active: boolean) => ({
@@ -64,9 +105,9 @@ export function SearchToggle({ isOpen }: { isOpen: boolean }) {
     />
   );
 
-  if (isOpen) {
+  if (urlOpen) {
     return (
-      <button type="button" onClick={close} style={buttonStyle(true)}>
+      <button type="button" onClick={closeUrl} style={buttonStyle(true)}>
         {isPending ? (
           spinner
         ) : (
@@ -77,13 +118,23 @@ export function SearchToggle({ isOpen }: { isOpen: boolean }) {
     );
   }
 
-  return (
-    <div style={{ display: "flex", gap: "0.5rem" }}>
+  if (frameOpen) {
+    return (
       <button
         type="button"
-        onClick={() => open("url")}
-        style={buttonStyle(false)}
+        onClick={closeFrame}
+        style={buttonStyle(true)}
+        data-testid="search-frame-close"
       >
+        <span style={{ fontSize: "1rem" }}>&#x2715;</span>
+        Close
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", gap: "0.5rem" }}>
+      <button type="button" onClick={openUrl} style={buttonStyle(false)}>
         {isPending ? (
           spinner
         ) : (
@@ -93,24 +144,24 @@ export function SearchToggle({ isOpen }: { isOpen: boolean }) {
       </button>
       <button
         type="button"
-        onClick={() => open("partial")}
+        onClick={openFrame}
         style={buttonStyle(false)}
+        data-testid="search-frame-open"
       >
-        {isPending ? (
-          spinner
-        ) : (
-          <span style={{ fontSize: "1rem" }}>&#x1F50D;</span>
-        )}
-        Search (Partial)
+        <span style={{ fontSize: "1rem" }}>&#x1F50D;</span>
+        Search (Frame)
       </button>
     </div>
   );
 }
 
 /**
- * Dialog wrapper for the search overlay.
- * Uses the native <dialog> element with showModal() for proper
- * focus trapping, backdrop, and Escape to close.
+ * Dialog wrapper for the search overlay. Uses the native <dialog>
+ * element with showModal() for focus trap + backdrop + Escape.
+ *
+ * Close behavior is scope-aware: reads `useNavigation()` and updates
+ * the appropriate URL (page or frame) to drop `?search=` and `?q=`.
+ * No `mode` prop — the ambient navigation handle decides.
  */
 export function SearchDialog({
   open,
@@ -120,7 +171,7 @@ export function SearchDialog({
   children: ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [, startTransition] = useTransition();
+  const nav = useNavigation();
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -133,11 +184,14 @@ export function SearchDialog({
   }, [open]);
 
   function handleClose() {
-    startTransition(() => {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("search");
-      url.searchParams.delete("q");
-      history.pushState(null, "", url.toString());
+    let target = nav.currentUrl ?? "/";
+    target = withParam(target, "search", null);
+    target = withParam(target, "q", null);
+    void nav.navigate(target, {
+      history: "push",
+      // Page scope: refetch the SearchArea holder. Frame scope: ignored
+      // (frame nav refetches its whole subtree).
+      ids: nav.name === null ? ["search-page"] : undefined,
     });
   }
 
@@ -169,25 +223,22 @@ export function SearchDialog({
 }
 
 /**
- * Search input with live partial refetch.
+ * Search input with live partial refetch — scope-agnostic.
  *
- * Both modes use usePartial("search") with serial dispatch.
+ * Reads `useNavigation()` without a name, so it binds to the
+ * enclosing frame when there is one (frame mode) and to the window
+ * otherwise (URL mode). `nav.currentUrl` is the URL it should modify
+ * (page URL in URL mode, frame URL in frame mode). Navigate options
+ * pass `tags: ["search-results"]` — the server resolves the tag
+ * against the route registry to the three stage ids (page scope) and
+ * refetches them; frame handles ignore the tag filter and refetch
+ * the whole frame subtree (same resulting content).
  *
- * Dispatches immediately on first change, then waits for the response
- * before sending the next. If the user typed more while waiting, the
- * latest value is dispatched on completion — no parallel requests,
- * no arbitrary debounce timer.
- *
- * URL mode additionally updates ?q= silently for bookmarkability
- * (same pattern as PageSentinel in load-more.tsx).
+ * Same serial-dispatch guard for both modes: fire on first change,
+ * wait for the response, fire again with the latest typed value.
  */
-export function SearchInput({
-  query,
-  mode,
-}: {
-  query: string;
-  mode: "partial" | "url";
-}) {
+export function SearchInput({ query }: { query: string }) {
+  const nav = useNavigation();
   const [value, setValue] = useState(query);
   // A/B the two commit modes live. Default (`disableTransition: false`)
   // wraps the commit in startTransition, so React holds the old results
@@ -198,11 +249,6 @@ export function SearchInput({
   const [disableTransition, setDisableTransition] = useState(false);
   const disableTransitionRef = useRef(disableTransition);
   disableTransitionRef.current = disableTransition;
-
-  const [dispatchStage1] = usePartial("stage-1");
-  const [dispatchStage2] = usePartial("stage-2");
-  const [dispatchStage3] = usePartial("stage-3");
-  const setTransientParams = usePartialParams();
 
   // Imperative serial queue — refs for synchronous flow control.
   // No useEffect, no reliance on React state timing.
@@ -218,27 +264,21 @@ export function SearchInput({
     inFlightRef.current = true;
     dispatchedRef.current = q;
 
-    if (mode === "url") {
-      const url = new URL(window.location.href);
-      if (q) {
-        url.searchParams.set("q", q);
-      } else {
-        url.searchParams.delete("q");
-      }
-      silentReplace(url);
-    } else {
-      // Partial mode: send ?q= only on the refetch URL, never in history.
-      // The server reads searchQuery from url.searchParams.get("q") just
-      // like URL mode, so the JSX gate for stages 2/3 works without the
-      // query becoming bookmarkable.
-      setTransientParams({ q: q || null });
-    }
+    // `nav.currentUrl` is the scope-appropriate URL: page URL for the
+    // window handle, frame URL for a frame handle. Mutate it and hand
+    // the whole thing back to `nav.navigate`.
+    const target = withParam(nav.currentUrl ?? "/", "q", q || null);
 
-    const opts = { disableTransition: disableTransitionRef.current };
-    // Dispatch all three stages in the same tick — they batch into one request
-    dispatchStage1({ query: q }, opts);
-    dispatchStage2({ query: q }, opts);
-    await dispatchStage3({ query: q }, opts);
+    await nav.navigate(target, {
+      history: "replace",
+      disableTransition: disableTransitionRef.current,
+      // Tag-based refetch: resolves server-side to whichever stage
+      // Partials are registered on this route. Frame handles ignore
+      // the tag filter (the frame refetches its own subtree, which
+      // already contains the tagged stages).
+      tags: ["search-results"],
+    });
+
     inFlightRef.current = false;
     // Re-check: user may have typed more while request was in flight
     sendLatest();
@@ -329,7 +369,7 @@ export function SearchInput({
           </span>
         </label>
         <span style={{ color: "#555" }}>
-          {mode === "partial" ? "usePartial (ephemeral)" : "URL (bookmarkable)"}
+          {nav.name === null ? "page URL scope" : `frame "${nav.name}" scope`}
         </span>
       </div>
     </div>

@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
  * /pokemon/:id is placed below an 80vh spacer and should stay at
  * its fallback until the user scrolls it into view. The trigger
  * (an app-level component) is rendered inside the fallback and
- * calls `usePartial("trivia").refetch()` on intersection.
+ * calls `useNavigation().reload({ids: ["trivia"]})` on intersection.
  *
  * Assertions:
  *  1. On initial load the fallback is visible and the real content

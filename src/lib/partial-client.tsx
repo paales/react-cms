@@ -15,6 +15,13 @@
  * Nested partials are supported: if "cart" is nested inside "header",
  * refreshing "header" re-renders the header layout but keeps cached
  * cart. Refreshing "cart" patches just the cart into cached header.
+ *
+ * Client API surface: `useNavigation()` returns a handle whose
+ * `navigate(url, opts)` / `reload(opts)` methods drive every
+ * refetch on the page. Targeted refetches are expressed through the
+ * `ids` / `tags` options — see {@link NavigateOptions}. There is no
+ * `usePartial` or `__inputs`: state must land in a URL (page URL or
+ * frame URL), and the client never sends prop overrides.
  */
 
 import React, {
@@ -23,14 +30,13 @@ import React, {
   createContext,
   isValidElement,
   Suspense,
-  useCallback,
   useContext,
   useEffect,
   useState,
   useRef,
   type ReactNode,
 } from "react";
-import { markSilentNextNavigate as _markSilentNextNavigate } from "../framework/silent-replace.ts";
+
 /**
  * Return true if the node looks like the outermost wrapper a
  * `<Partial>` renders — a keyed `<Suspense>` (partial with fallback)
@@ -78,39 +84,6 @@ function getPartialId(node: React.ReactElement): string | null {
   }
   return null;
 }
-
-/** Dispatch a single target — batched via microtask in PartialsClient */
-type DispatchFn = (
-  target: {
-    id: string;
-    props?: Record<string, unknown>;
-    disableTransition?: boolean;
-  },
-) => Promise<void>;
-
-/** Options for `usePartial().refetch(props, options)` */
-export interface PartialRefetchOptions {
-  /**
-   * Disable the transition wrapper on commit.
-   *
-   * Default (`false`): the client wraps the response commit in
-   * `startTransition`, so React keeps the current UI visible until
-   * the new content is fully ready. No Suspense fallback flash, no
-   * per-chunk streaming — the whole refetch appears as one atomic
-   * swap. Good for "just swap values" UX (cart badge, prices).
-   *
-   * `true`: commit without a transition. React shows Suspense
-   * fallbacks for pending children and commits Flight chunks as
-   * they arrive, giving per-row progressive streaming. Good for
-   * search / filter results where per-row reveal improves perceived
-   * latency.
-   */
-  disableTransition?: boolean;
-}
-
-const PartialRefetchContext = createContext<DispatchFn>(async () => {
-  throw new Error("usePartial must be used inside a PartialRoot");
-});
 
 export interface PartialDebugEntry {
   id: string;
@@ -327,7 +300,9 @@ function cacheFromStreamingChildren(
 
   if (isPartialWrapper(node)) {
     const id = getPartialId(node);
-    if (id) cache.set(id, node);
+    if (id) {
+      cache.set(id, node);
+    }
     // Descend: nested partial wrappers need their own top-level cache
     // entries so subsequent parent-only refetches with inner
     // placeholders can fill the holes.
@@ -437,13 +412,6 @@ function renderTemplate(
  */
 const _cache = new Map<string, ReactNode>();
 const _fingerprints = new Map<string, string>();
-/**
- * id → Set of tags currently carried by that Partial. Populated by
- * `PartialErrorBoundary` at render time via `registerClientPartial`.
- * Lookups by `usePartial(".tag")` intersect across Sets to resolve
- * a selector to a concrete id list.
- */
-const _partialTags = new Map<string, Set<string>>();
 let _debug: PartialDebugEntry[] = [];
 
 /**
@@ -457,41 +425,18 @@ let _debug: PartialDebugEntry[] = [];
  * cached template; different-URL navigations re-derive.
  */
 let _template: ReactNode = null;
-let _templateRoute: string | null = null;
 
 /**
- * Register a partial's fingerprint (and tags) from the client side.
+ * Register a partial's fingerprint from the client side.
  *
  * Called by `<PartialErrorBoundary>` during its render, which is how
  * each `<Partial>`'s fingerprint gets into `_fingerprints` without a
  * server prop round-trip. Later `getCachedPartialIds()` reads from
- * here to tell the server what's already cached. Tags go into
- * `_partialTags` so `usePartial(".tag")` selectors can resolve.
+ * here to tell the server what's already cached.
  */
-export function registerClientPartial(
-  id: string,
-  fingerprint: string,
-  tags?: readonly string[],
-): void {
+export function registerClientPartial(id: string, fingerprint: string): void {
   _fingerprints.set(id, fingerprint);
-  if (tags && tags.length > 0) {
-    _partialTags.set(id, new Set(tags));
-  } else {
-    _partialTags.delete(id);
-  }
 }
-
-/**
- * Transient search-params for the next partial refetch.
- * Written via `usePartialParams`, consumed (and cleared) by `flush`.
- *
- * Purpose: give Partial-mode callers the same server-side effect as URL
- * mode (server reads `?q=p` from the request URL and evaluates JSX gates
- * against it) without mutating `window.location` or the browser history.
- *
- * A `null` value deletes the param; a string sets it.
- */
-let _transientParams: Record<string, string | null> | null = null;
 
 /**
  * Module-level accessor for cached partial tokens.
@@ -515,137 +460,102 @@ export function getCachedPartialIds(): string[] {
   return out;
 }
 
-/**
- * Hook: set transient search-params for the next partial refetch.
- *
- * Returned setter writes params into a transient store; the next refetch
- * picks them up, merges them into its fetch URL, and clears the store.
- * Never touches `window.location` or `history`.
- */
-export function usePartialParams(): (
-  params: Record<string, string | null>,
-) => void {
-  return useCallback((params: Record<string, string | null>) => {
-    _transientParams = { ...(_transientParams ?? {}), ...params };
-  }, []);
+// ─── Silent-navigate flag (internal) ──────────────────────────────
+//
+// `navigate(url, { silent: true })` and the frame-navigate pathway
+// both need to update the URL without triggering the page-level
+// intercept (they either don't want a refetch, or do their own).
+// The intercept listener in `entry.browser.tsx` reads
+// `_consumeSilentFlag()` at the top of each navigate event and
+// bails out if set. Same time-windowed approach as the old
+// `silent-replace.ts` module, now lives here so the navigation
+// surface owns its own silent behavior.
+
+let _silentUntil = 0;
+
+function markSilentNextNavigate(): void {
+  _silentUntil = performance.now() + 50;
 }
 
-/**
- * Parsed selector. An id selector resolves to a single id; a tag
- * selector resolves to every id carrying ALL listed tags (intersection).
- */
-interface ParsedSelector {
-  /** Set when the selector addressed a single id directly. */
-  id?: string;
-  /** Tags to intersect when resolving. Empty array for id selectors. */
+export function _consumeSilentFlag(): boolean {
+  if (performance.now() <= _silentUntil) {
+    _silentUntil = 0;
+    return true;
+  }
+  return false;
+}
+
+// ─── Microtask-batched targeted-refetch dispatcher ────────────────
+//
+// Multiple `reload` / `navigate({ids, tags})` calls in the same tick
+// coalesce into one refetch request. Keeps tag-fanout and multi-id
+// event handlers cheap: three buttons clicked in the same frame
+// produce one request with `?partials=a,b,c`.
+
+interface RefetchBatchEntry {
+  ids: string[];
   tags: string[];
+  disableTransition: boolean;
 }
 
-/**
- * Parse a selector string:
- *   - `"#header"` / `"header"` → id selector (bare strings stay ids for
- *     back-compat with the pre-selector API).
- *   - `".cart"` → one-tag selector.
- *   - `".cart.product"` → multi-tag selector (AND / intersection).
- *
- * Attribute selectors (`.price[data-sku="ABC"]`) were deferred —
- * dynamic Partial families still use explicit ids (`price-${sku}`) +
- * a shared tag.
- */
-export function parseSelector(sel: string): ParsedSelector {
-  if (sel.length === 0) return { tags: [] };
-  if (sel[0] === "#") return { id: sel.slice(1), tags: [] };
-  if (sel[0] === ".") {
-    const tags = sel
-      .slice(1)
-      .split(".")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    return { tags };
+let _batchRef: RefetchBatchEntry[] = [];
+let _batchPromise: { promise: Promise<void>; resolve: () => void } | null = null;
+
+async function flushRefetchBatch(batch: RefetchBatchEntry[]): Promise<void> {
+  const handler = (window as Window & {
+    __rsc_partial_refetch?: (url: string) => Promise<void>;
+  }).__rsc_partial_refetch;
+  if (!handler) return;
+
+  const ids = new Set<string>();
+  const tags = new Set<string>();
+  let disableTransition = false;
+  for (const entry of batch) {
+    for (const id of entry.ids) ids.add(id);
+    for (const tag of entry.tags) tags.add(tag);
+    if (entry.disableTransition) disableTransition = true;
   }
-  // Bare string: treat as id.
-  return { id: sel, tags: [] };
-}
 
-/**
- * Resolve a parsed selector against the client-side tag index. Returns
- * the list of matching ids.
- *
- * Id selectors pass straight through — the client may legitimately
- * dispatch to an id it doesn't know locally (lazy pagination appending
- * `page-N+1`, deferred Partials activated by external triggers, etc.).
- * The server resolves/registers the id on render.
- *
- * Tag selectors intersect `_partialTags`: an id matches only if its
- * registered tag Set is a superset of `tags` (AND semantics). Tag
- * resolution DOES require client-side knowledge — there's no way to
- * know which ids carry which tags without having seen them render.
- */
-export function resolveSelector(parsed: ParsedSelector): string[] {
-  if (parsed.id) return [parsed.id];
-  if (parsed.tags.length === 0) return [];
-  const out: string[] = [];
-  for (const [id, idTags] of _partialTags) {
-    if (parsed.tags.every((t) => idTags.has(t))) out.push(id);
+  const url = new URL(window.location.href);
+  if (ids.size > 0) url.searchParams.set("partials", [...ids].join(","));
+  if (tags.size > 0) url.searchParams.set("tags", [...tags].join(","));
+  if (disableTransition) url.searchParams.set("disableTransition", "1");
+
+  // Send cached fingerprints for the non-target set so the server can
+  // skip the unchanged ones via fingerprint-match placeholders.
+  if (ids.size > 0) {
+    const targetPrefixes = [...ids].map((id) => `${id}:`);
+    const cached = getCachedPartialIds().filter(
+      (t) => !targetPrefixes.some((p) => t.startsWith(p)),
+    );
+    if (cached.length > 0) url.searchParams.set("cached", cached.join(","));
   }
-  return out;
+
+  await handler(url.toString());
 }
 
 /**
- * Hook to interact with one or more Partials — like `useActionState`
- * for re-renderable sections.
- *
- * The argument is a selector string:
- *
- *   usePartial("search")                 // by id (bare string)
- *   usePartial("#header")                // by id (explicit)
- *   usePartial(".cart")                  // all Partials tagged "cart"
- *   usePartial(".price.featured")        // ids tagged BOTH price AND featured
- *
- * Returns `[refetch, isPending]`. Selectors matching multiple Partials
- * fan out: one microtask-batched RSC request refetches all matches.
- * `isPending` stays true until every match resolves.
- *
- * A selector that resolves to zero matches is a silent no-op —
- * selector queries against empty sets aren't usually bugs (e.g. the
- * tagged Partial was elsewhere on a prior page).
+ * Enqueue a targeted refetch. Multiple calls in the same microtask
+ * coalesce into one request. Returns a Promise that resolves when
+ * the flush completes.
  */
-export function usePartial(
-  selector: string,
-): [
-  (
-    props?: Record<string, unknown>,
-    options?: PartialRefetchOptions,
-  ) => Promise<void>,
-  boolean,
-] {
-  const dispatchFn = useContext(PartialRefetchContext);
-  const [isPending, setIsPending] = useState(false);
-
-  const dispatch = useCallback(
-    (
-      props?: Record<string, unknown>,
-      options?: PartialRefetchOptions,
-    ): Promise<void> => {
-      const ids = resolveSelector(parseSelector(selector));
-      if (ids.length === 0) return Promise.resolve();
-      setIsPending(true);
-      const promises = ids.map((id) =>
-        dispatchFn({
-          id,
-          props,
-          disableTransition: options?.disableTransition,
-        }),
-      );
-      const p = Promise.all(promises)
-        .then(() => undefined)
-        .finally(() => setIsPending(false));
-      return p;
-    },
-    [selector, dispatchFn],
-  );
-
-  return [dispatch, isPending];
+function enqueueRefetch(entry: RefetchBatchEntry): Promise<void> {
+  _batchRef.push(entry);
+  if (!_batchPromise) {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    _batchPromise = { promise, resolve };
+    queueMicrotask(() => {
+      const batch = _batchRef;
+      const done = _batchPromise!.resolve;
+      _batchRef = [];
+      _batchPromise = null;
+      flushRefetchBatch(batch).then(done);
+    });
+  }
+  return _batchPromise.promise;
 }
 
 // ─── Frame navigation ─────────────────────────────────────────────
@@ -736,16 +646,27 @@ export function FrameNameProvider({
 }
 
 /**
- * Options for `navigate()` on a `NavigationHandle`. Superset of the
- * Navigation API's `navigate()` options — see
+ * Options for `navigate()` / `reload()` on a `NavigationHandle`.
+ * Superset of the Navigation API's `navigate()` options — see
  * https://developer.mozilla.org/en-US/docs/Web/API/Navigation/navigate —
- * plus an app-level `disableTransition` flag that maps to our
- * client-side "skip `startTransition` on commit" behavior.
+ * plus app-level flags that drive our targeted-refetch + commit
+ * behavior.
  */
 export interface NavigateOptions {
   /**
-   * Bypass the React transition wrapper on commit. See
-   * `PartialRefetchOptions.disableTransition`.
+   * Bypass the React transition wrapper on commit.
+   *
+   * Default (`false`): the client wraps the response commit in
+   * `startTransition`, so React keeps the current UI visible until
+   * the new content is fully ready. No Suspense fallback flash, no
+   * per-chunk streaming — the whole refetch appears as one atomic
+   * swap. Good for "just swap values" UX (cart badge, prices).
+   *
+   * `true`: commit without a transition. React shows Suspense
+   * fallbacks for pending children and commits Flight chunks as
+   * they arrive, giving per-row progressive streaming. Good for
+   * search / filter results where per-row reveal improves perceived
+   * latency.
    */
   disableTransition?: boolean;
   /**
@@ -766,8 +687,30 @@ export interface NavigateOptions {
    * push uses `history.pushState`, which has no info channel).
    */
   info?: unknown;
+  /**
+   * Explicit partial ids to refetch. When set alongside `navigate(url)`,
+   * the URL is updated but only these partials are re-rendered — the
+   * page-level intercept is skipped. Stacks with `tags`: both lists
+   * land on the refetch URL as `?partials=…&tags=…`, and the server
+   * resolves their union. Ignored on frame handles.
+   */
+  ids?: string[];
+  /**
+   * Tags to refetch. Resolved server-side against the route-scoped
+   * partial registry — matching partials are re-rendered, everything
+   * else is served from the client cache via fingerprint-match
+   * placeholders. Ignored on frame handles.
+   */
+  tags?: string[];
+  /**
+   * Update the URL without triggering ANY refetch. Useful for
+   * bookmarkability-only URL sync (infinite scroll's `?pages=`) where
+   * no server work needs to happen. If `ids` / `tags` are also set,
+   * `silent` wins and the refetch is skipped. Ignored on frame
+   * handles (frame navigation always refetches the frame).
+   */
+  silent?: boolean;
 }
-
 
 /**
  * Handle returned by `useNavigation()`. When bound to a frame
@@ -809,7 +752,9 @@ export interface NavigationHandle {
   forward(): Promise<void>;
   /**
    * Re-dispatch the current URL. For a frame: forces a fresh server
-   * render. For window: `navigation.reload()`.
+   * render of the frame subtree. For window: full-page refetch, or —
+   * when `options.ids` / `options.tags` are set — a targeted refetch
+   * of just the named partials. Page URL does not change.
    */
   reload(options?: NavigateOptions): Promise<void>;
   /**
@@ -930,7 +875,7 @@ async function frameNavigateImpl(
   // `history.pushState` fires its navigate event — we're doing the
   // frame refetch ourselves, a page refetch would be redundant (and
   // would clobber the in-flight commit).
-  _markSilentNextNavigate();
+  markSilentNextNavigate();
   // Carry forward all other frames' URLs from the current entry's
   // snapshot, then overwrite this frame's URL.
   const priorHistoryState =
@@ -1024,6 +969,19 @@ function buildFrameHandle(name: string): NavigationHandle {
 }
 
 /**
+ * True when `options` asks for a filtered refetch (either an id list
+ * or a tag list). Used to decide whether the window-scoped navigate
+ * should bypass the page-level intercept and dispatch a targeted
+ * refetch, vs delegating to `window.navigation.navigate`.
+ */
+function hasRefetchFilter(options: NavigateOptions | undefined): boolean {
+  if (!options) return false;
+  const ids = options.ids ?? [];
+  const tags = options.tags ?? [];
+  return ids.length > 0 || tags.length > 0;
+}
+
+/**
  * Window-scoped handle — used when `useNavigation()` runs outside a
  * framed subtree. Delegates to `window.navigation` directly: the
  * browser handles history, URL, back/forward. No server-side
@@ -1050,6 +1008,30 @@ function buildWindowNavigationHandle(): NavigationHandle {
       return (s as Record<string, unknown> | null) ?? null;
     },
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
+      const filtered = hasRefetchFilter(options);
+      const silent = options?.silent === true;
+      if (filtered || silent) {
+        // Update the URL without letting the page-level intercept
+        // fire a full refetch — we'll do the targeted one ourselves
+        // (or nothing at all, if silent).
+        if (typeof history !== "undefined") {
+          markSilentNextNavigate();
+          const historyMode = options?.history ?? "push";
+          const state = options?.state ?? null;
+          if (historyMode === "replace") {
+            history.replaceState(state, "", url);
+          } else {
+            history.pushState(state, "", url);
+          }
+        }
+        if (silent) return;
+        await enqueueRefetch({
+          ids: options?.ids ?? [],
+          tags: options?.tags ?? [],
+          disableTransition: options?.disableTransition ?? false,
+        });
+        return;
+      }
       if (typeof navigation === "undefined") {
         if (typeof window !== "undefined") window.location.assign(url);
         return;
@@ -1070,6 +1052,14 @@ function buildWindowNavigationHandle(): NavigationHandle {
       await navigation.forward().finished.catch(() => {});
     },
     async reload(options?: NavigateOptions): Promise<void> {
+      if (hasRefetchFilter(options)) {
+        await enqueueRefetch({
+          ids: options?.ids ?? [],
+          tags: options?.tags ?? [],
+          disableTransition: options?.disableTransition ?? false,
+        });
+        return;
+      }
       if (typeof navigation === "undefined") return;
       const result = navigation.reload({
         state: options?.state,
@@ -1147,44 +1137,47 @@ export function useNavigation(name?: string): NavigationHandle {
  *     return () => obs.disconnect();
  *   });
  *
- * `fire(inputs?)` triggers `usePartial(partialId).refetch(inputs)`.
- * Inputs land in `__inputs` and get applied as prop overrides on the
- * Partial's content via `cloneElement`. Calling `fire` more than once
- * is a no-op by default (one-shot activation). Pass `{once: false}` if
- * you need an activator that can fire repeatedly (rare — most state
- * transitions should use `usePartial().refetch()` directly).
+ * `fire()` triggers a targeted reload for `partialId` via
+ * `useNavigation().reload({ ids: [partialId] })`. Calling `fire` more
+ * than once is a no-op by default (one-shot activation). Pass
+ * `{once: false}` if you need an activator that can fire repeatedly.
  *
  * `subscribe` is registered once per mount and is captured via ref, so
  * the latest closure is used when the subscription fires. The effect
  * itself does not re-run when `subscribe` changes — if you need to
  * re-subscribe on prop changes, remount the activator by setting a
  * `key` that changes with those props.
+ *
+ * Note: activators no longer pass prop overrides to the Partial.
+ * If the activated content needs dynamic data, the activator should
+ * write that data to a URL (page URL via `useNavigation().navigate`
+ * or a frame URL via `frame("name").navigate`) so the server reads
+ * it via tracked accessors on re-render.
  */
 export function useActivate(
   partialId: string,
-  subscribe: (
-    fire: (inputs?: Record<string, unknown>) => void,
-  ) => (() => void) | void,
+  subscribe: (fire: () => void) => (() => void) | void,
   opts?: { once?: boolean },
 ): void {
-  const [refetch] = usePartial(partialId);
   const once = opts?.once ?? true;
   const firedRef = useRef(false);
   const subscribeRef = useRef(subscribe);
   subscribeRef.current = subscribe;
 
   useEffect(() => {
-    const cleanup = subscribeRef.current(
-      (inputs?: Record<string, unknown>) => {
-        if (once && firedRef.current) return;
-        firedRef.current = true;
-        void refetch(inputs);
-      },
-    );
+    const cleanup = subscribeRef.current(() => {
+      if (once && firedRef.current) return;
+      firedRef.current = true;
+      void enqueueRefetch({
+        ids: [partialId],
+        tags: [],
+        disableTransition: false,
+      });
+    });
     return () => {
       if (typeof cleanup === "function") cleanup();
     };
-  }, [refetch, once]);
+  }, [partialId, once]);
 }
 
 export function PartialsClient({
@@ -1194,96 +1187,6 @@ export function PartialsClient({
   children,
 }: PartialsClientProps) {
   const cache = _cache;
-
-  // ── Microtask-batched dispatch ────────────────────────────────────
-  const batchRef = useRef<
-    Array<{
-      id: string;
-      props?: Record<string, unknown>;
-      disableTransition?: boolean;
-    }>
-  >([]);
-  const flushRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
-
-  const flush = useCallback(
-    async (
-      targets: Array<{
-        id: string;
-        props?: Record<string, unknown>;
-        disableTransition?: boolean;
-      }>,
-    ) => {
-      const url = new URL(window.location.href);
-
-      if (targets.some((t) => t.disableTransition)) {
-        url.searchParams.set("disableTransition", "1");
-      }
-
-      // Apply (and clear) any transient search-params set via usePartialParams.
-      if (_transientParams) {
-        for (const [k, v] of Object.entries(_transientParams)) {
-          if (v == null) url.searchParams.delete(k);
-          else url.searchParams.set(k, v);
-        }
-        _transientParams = null;
-      }
-
-      const inputs: Record<string, Record<string, unknown>> = {};
-      for (const t of targets) {
-        if (t.props) inputs[t.id] = t.props;
-      }
-      if (Object.keys(inputs).length > 0) {
-        url.searchParams.set("__inputs", JSON.stringify(inputs));
-      }
-
-      const targetIds = targets.map((t) => t.id);
-
-      if (_cache.size === 0) {
-        // First refetch after streaming render: cache is empty.
-        // Request ALL partials to populate the cache.
-        const allIds = [..._fingerprints.keys()];
-        url.searchParams.set("partials", allIds.join(","));
-      } else {
-        url.searchParams.set("partials", targetIds.join(","));
-        const targetPrefixes = targetIds.map((id) => `${id}:`);
-        const cached = getCachedPartialIds().filter(
-          (t) => !targetPrefixes.some((p) => t.startsWith(p)),
-        );
-        if (cached.length > 0) {
-          url.searchParams.set("cached", cached.join(","));
-        }
-      }
-
-      const handler = (window as any).__rsc_partial_refetch as
-        | ((url: string) => Promise<void>)
-        | undefined;
-      if (handler) await handler(url.toString());
-    },
-    [],
-  );
-
-  const dispatchFn: DispatchFn = useCallback(
-    (target) => {
-      batchRef.current.push(target);
-
-      if (!flushRef.current) {
-        let resolve: () => void;
-        const promise = new Promise<void>((r) => { resolve = r; });
-        flushRef.current = { promise, resolve: resolve! };
-
-        queueMicrotask(() => {
-          const targets = batchRef.current;
-          const { resolve: done } = flushRef.current!;
-          batchRef.current = [];
-          flushRef.current = null;
-          flush(targets).then(done);
-        });
-      }
-
-      return flushRef.current.promise;
-    },
-    [flush],
-  );
 
   // ── Streaming mode ──────────────────────────────────────────────────
   //
@@ -1303,9 +1206,6 @@ export function PartialsClient({
     cacheFromStreamingChildren(children, cache);
     const derived = deriveTemplate(children);
     _template = derived;
-    if (typeof window !== "undefined") {
-      _templateRoute = window.location.pathname + window.location.search;
-    }
     _debug = [];
 
     // Drop entries carried over from a prior route. The derived template
@@ -1321,14 +1221,13 @@ export function PartialsClient({
       if (!liveIds.has(id)) _cache.delete(id);
     }
     _fingerprints.clear();
-    _partialTags.clear();
 
     const rendered = renderTemplate(derived, cache);
     return (
-      <PartialRefetchContext value={dispatchFn}>
+      <>
         {rendered}
         <PartialDebugPanel entries={debug} fetchMs={fetchMs} />
-      </PartialRefetchContext>
+      </>
     );
   }
 
@@ -1354,10 +1253,10 @@ export function PartialsClient({
 
   const rendered = renderTemplate(_template, cache);
   return (
-    <PartialRefetchContext value={dispatchFn}>
+    <>
       {rendered}
       <PartialDebugPanel entries={_debug} fetchMs={fetchMs} />
-    </PartialRefetchContext>
+    </>
   );
 }
 

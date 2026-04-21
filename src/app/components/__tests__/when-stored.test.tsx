@@ -17,13 +17,14 @@ describe("<WhenStored>", () => {
 });
 
 describe("makeStoredSubscribe (the `<WhenStored>` subscribe builder)", () => {
-	it("fires immediately when the key is already present on mount", () => {
+	it("fires immediately when the key is already present on mount and writes the value to the URL", () => {
 		localStorage.setItem("greeting", "hi");
+		history.replaceState(null, "", "/defer-demo");
 		const subscribe = makeStoredSubscribe({ storageKey: "greeting" });
 		const fire = vi.fn();
 		subscribe(fire);
 		expect(fire).toHaveBeenCalledTimes(1);
-		expect(fire).toHaveBeenCalledWith({ value: "hi" });
+		expect(new URL(window.location.href).searchParams.get("value")).toBe("hi");
 	});
 
 	it("does not fire when the key is absent on mount", () => {
@@ -33,7 +34,8 @@ describe("makeStoredSubscribe (the `<WhenStored>` subscribe builder)", () => {
 		expect(fire).not.toHaveBeenCalled();
 	});
 
-	it("fires when a matching storage event arrives", () => {
+	it("fires when a matching storage event arrives and writes the value to the URL", () => {
+		history.replaceState(null, "", "/defer-demo");
 		const subscribe = makeStoredSubscribe({ storageKey: "greeting" });
 		const fire = vi.fn();
 		const cleanup = subscribe(fire);
@@ -46,7 +48,10 @@ describe("makeStoredSubscribe (the `<WhenStored>` subscribe builder)", () => {
 				storageArea: localStorage,
 			}),
 		);
-		expect(fire).toHaveBeenCalledWith({ value: "hello" });
+		expect(fire).toHaveBeenCalled();
+		expect(new URL(window.location.href).searchParams.get("value")).toBe(
+			"hello",
+		);
 		if (typeof cleanup === "function") cleanup();
 	});
 
@@ -78,26 +83,32 @@ describe("makeStoredSubscribe (the `<WhenStored>` subscribe builder)", () => {
 		expect(fire).not.toHaveBeenCalled();
 	});
 
-	it("uses the `as` prop as the input key", () => {
+	it("uses the `as` prop as the URL param name", () => {
 		localStorage.setItem("greeting", "hi");
+		history.replaceState(null, "", "/defer-demo");
 		const subscribe = makeStoredSubscribe({
 			storageKey: "greeting",
 			as: "draftId",
 		});
 		const fire = vi.fn();
 		subscribe(fire);
-		expect(fire).toHaveBeenCalledWith({ draftId: "hi" });
+		expect(fire).toHaveBeenCalled();
+		expect(new URL(window.location.href).searchParams.get("draftId")).toBe(
+			"hi",
+		);
 	});
 
 	it("reads sessionStorage when store='session'", () => {
 		sessionStorage.setItem("greeting", "hi");
+		history.replaceState(null, "", "/defer-demo");
 		const subscribe = makeStoredSubscribe({
 			storageKey: "greeting",
 			store: "session",
 		});
 		const fire = vi.fn();
 		subscribe(fire);
-		expect(fire).toHaveBeenCalledWith({ value: "hi" });
+		expect(fire).toHaveBeenCalled();
+		expect(new URL(window.location.href).searchParams.get("value")).toBe("hi");
 	});
 
 	it("cleanup removes the storage listener", () => {

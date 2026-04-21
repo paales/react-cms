@@ -1,15 +1,17 @@
 import { test, expect, request } from "@playwright/test";
 
 /**
- * /selector-demo — verify CSS-selector refetch semantics.
+ * /selector-demo — verify tag-based refetch semantics.
  *
- *   .product             → one id-less Partial
- *   .price               → three ids (price-a, price-b, price-c)
- *   .price.featured      → two ids (price-b, price-c) — AND intersection
- *   #price-a             → single id
+ *   {tags: ["product"]}  → one id-less Partial
+ *   {tags: ["price"]}    → three ids (price-a, price-b, price-c)
+ *   {tags: ["featured"]} → two ids (price-b, price-c)
+ *   {ids: ["price-a"]}   → single id
  *
- * Each Partial renders a server timestamp. After refetch, only the
- * targeted timestamps should change; untargeted ones stay pinned.
+ * Tag → id resolution runs server-side against the route-scoped
+ * partial registry (`partial.tsx:resolveTagsToIds`). Each Partial
+ * renders a server timestamp. After refetch, only the targeted
+ * timestamps should change; untargeted ones stay pinned.
  */
 
 test.beforeEach(async ({ baseURL }) => {

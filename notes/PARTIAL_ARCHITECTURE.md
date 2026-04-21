@@ -1,6 +1,6 @@
 # Partial architecture — the north star
 
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-21 (post `usePartial`/`__inputs` removal; see `NAVIGATE_UNIFIED.md` for the unified client surface)
 
 This is the intended end-state of the `<Partial>` system. It's the
 contract the runtime should uphold; the current implementation is
@@ -22,28 +22,31 @@ route-scoped registry. A full request renders the tree once and
 streams it to the client, which in a single walk populates a per-id
 cache and derives the structural template it will reconcile against
 on subsequent refetches. A targeted refetch — triggered by
-`usePartial().refetch()`, a server-action invalidation directive, or
-a tag — renders only the requested Partials directly from their
-registered snapshots, skipping every ancestor; the client merges the
-fresh entries into its cache and re-renders against its persisted
+`useNavigation().reload({ids|tags})`, `useNavigation().navigate(url,
+{ids|tags})`, or a server-action invalidation directive — renders
+only the requested Partials directly from their registered
+snapshots, skipping every ancestor; the client merges the fresh
+entries into its cache and re-renders against its persisted
 template, so the surrounding layout stays structurally identical
-while targeted content swaps in place. Because every rendered
-Partial contributes a fingerprint back to the client — whether it
-was declared at the root or generated deep inside a loop — each
-refetch tells the server precisely what the client already has, and
-the server skips anything whose shape hasn't changed; the
-skip-on-unchanged optimization applies uniformly to the entire tree,
-not just its static roots.
+while targeted content swaps in place. State that varies between
+refetches flows through URLs (page URL for shareable state, frame
+URL for subtree-scoped state) and is read server-side through
+tracked accessors — there is no `__inputs` / prop-override channel.
+Because every rendered Partial contributes a fingerprint back to
+the client — whether it was declared at the root or generated deep
+inside a loop — each refetch tells the server precisely what the
+client already has, and the server skips anything whose shape
+hasn't changed; the skip-on-unchanged optimization applies uniformly
+to the entire tree, not just its static roots.
 
 ---
 
 ## What follows from the goal
 
 **No static walker on the server.** Every decision — render fresh,
-emit placeholder, apply `__inputs`, register in the registry — is
-made inside the `<Partial>` body when it runs. The old
-`buildTemplate` / `seedRegistry` / `refreshRegistry` pre-walks are
-all gone.
+emit placeholder, register in the registry — is made inside the
+`<Partial>` body when it runs. The old `buildTemplate` /
+`seedRegistry` / `refreshRegistry` pre-walks are all gone.
 
 One narrow, non-decision-making walk remains and is load-bearing:
 
@@ -58,13 +61,16 @@ One narrow, non-decision-making walk remains and is load-bearing:
 The stale-snapshot problem that `refreshRegistry` used to solve
 (snapshots captured in request N have closures from request N, but
 request N+1's cache-mode refetch needs the current request's values)
-is now handled by computing the Partial's structural fingerprint
-AFTER `applyInputs` — so a refetch whose `__inputs` change a prop
-yields a distinct fingerprint, distinct Cache key, and correctly
-misses the stale entry. Combined with the `<Cache>`-fold-into-
-`<Partial cache>` change that eliminated the intermediate wrapper
-`cloneElement` couldn't drill through, this makes the static
-refresh walk unnecessary. See `LESSONS_2026-04-19.md` §1 and §3.
+is now handled by ambient-scope folding: the Partial's fingerprint
+includes its own frame URL (if any) plus the enclosing frame URL
+(if it sits inside a framed subtree), so a refetch against a new
+URL yields a distinct fingerprint, a distinct `<Cache>` key, and a
+clean miss. Request-varying state reaches descendants through URL
+accessors (or scalar props passed down by a parent that reads the
+accessor), not through client-supplied prop overrides. See
+`NAVIGATE_UNIFIED.md` for the client-side dispatcher and
+`/archive/USE_PARTIAL_AND_INPUTS.md` for the predecessor
+`fingerprint-after-applyInputs` design.
 
 **One primitive, one rule.** `<Partial>` behaves the same whether
 it's at the top of a page, nested inside another Partial, or
@@ -112,7 +118,9 @@ consulted on refetch.
 2. **Refetch** (`?partials=…` or `?tags=…`) — server renders just
    the requested Partials from their snapshots, skipping all
    ancestors. Client merges into `_cache` and re-renders against
-   the persisted `_template`.
+   the persisted `_template`. Dispatched client-side by
+   `useNavigation().reload()` / `.navigate(url, {ids|tags})` —
+   see `NAVIGATE_UNIFIED.md`.
 3. **Server action with `{invalidate}`** — server rewrites the URL
    with `?partials=` / `?tags=` and runs the refetch path. If the
    client has no cache, falls back to a full render with
@@ -157,8 +165,10 @@ instead of rendering. The client keeps its existing entry.
 | No "opaque component" invariant; `<AppNav/>` can be declared freely | ✅ shipped |
 | Server-side registry cleared at the start of each streaming render (stale-shape safety) | ✅ shipped |
 | `refreshRegistry` static walker removed; stale-snapshot correctness driven by fingerprint-after-applyInputs | ✅ shipped (2026-04-19) |
+| `usePartial` / `__inputs` / `silentReplace` / `usePartialParams` all removed; single `useNavigation()` surface with `ids`/`tags`/`silent` on `navigate` and `reload` | ✅ shipped (2026-04-21) |
+| Stale-snapshot correctness now driven by ambient-frame-URL fold into fingerprint (applyInputs is gone) | ✅ shipped (2026-04-21) |
 
-The architecture in this doc matches the code as of 2026-04-19.
+The architecture in this doc matches the code as of 2026-04-21.
 Mode-selection inside `PartialsClient` (`mode="streaming"` vs
 `mode="cache"`) is still an internal distinction for merging fresh
 payloads into the persisted template — the public contract and the

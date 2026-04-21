@@ -12,7 +12,12 @@ import { test, expect } from "@playwright/test";
 test("single keystroke in search dispatches exactly one RSC call", async ({
   page,
 }) => {
-  const rscCalls: Array<{ url: string; partials: string | null; time: number }> = [];
+  const rscCalls: Array<{
+    url: string;
+    partials: string | null;
+    tags: string | null;
+    time: number;
+  }> = [];
   const t0 = Date.now();
   page.on("request", (req) => {
     const url = req.url();
@@ -21,6 +26,7 @@ test("single keystroke in search dispatches exactly one RSC call", async ({
       rscCalls.push({
         url,
         partials: u.searchParams.get("partials"),
+        tags: u.searchParams.get("tags"),
         time: Date.now() - t0,
       });
     }
@@ -51,16 +57,14 @@ test("single keystroke in search dispatches exactly one RSC call", async ({
   // Report what we saw (helps diagnose failures).
   console.log(`\n=== RSC calls during keystroke (${rscCalls.length}) ===`);
   for (const c of rscCalls) {
-    console.log(`  [${c.time}ms] partials=${c.partials}  url=${c.url}`);
+    console.log(`  [${c.time}ms] partials=${c.partials} tags=${c.tags} url=${c.url}`);
   }
 
-  // Stages-only refetch is the ONE expected call.
-  const stageCalls = rscCalls.filter(
-    (c) => c.partials != null && c.partials.startsWith("stage-"),
-  );
-  const otherCalls = rscCalls.filter(
-    (c) => c.partials == null || !c.partials.startsWith("stage-"),
-  );
+  // Stages-only refetch is the ONE expected call. Server receives
+  // `?tags=search-results`; the ids resolve server-side against the
+  // route registry.
+  const stageCalls = rscCalls.filter((c) => c.tags === "search-results");
+  const otherCalls = rscCalls.filter((c) => c.tags !== "search-results");
 
   expect(
     stageCalls.length,

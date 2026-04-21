@@ -1,27 +1,48 @@
 "use client";
 
-import { usePartial } from "../../lib/partial-client.tsx";
+import { useState } from "react";
+import { useNavigation } from "../../lib/partial-client.tsx";
 
 /**
- * Client-side button that fires `usePartial(selector).refetch()` on
- * click. Lives in userspace; the framework only ships the selector
- * API itself (`parseSelector` + `resolveSelector` in `partial-client.tsx`).
+ * Button that fires a targeted reload via `useNavigation().reload()`.
+ * Supports three shapes:
+ *   - `{ids: ["hero"]}`   — by id
+ *   - `{tags: ["price"]}` — by tag (any partial carrying the tag)
+ *   - `{tags: ["a","b"]}` — multi-tag union (server-side resolution)
+ *
+ * Tag → id resolution runs server-side against the route-scoped
+ * registry (`partial.tsx:resolveTagsToIds`), so dynamic partials
+ * that only exist after a render (prices inside `.map()`, etc.) are
+ * addressable the same as static ones.
  */
 export function SelectorRefetchButton({
-  selector,
+  ids,
+  tags,
   label,
   testId,
 }: {
-  selector: string;
+  ids?: string[];
+  tags?: string[];
   label: string;
   testId: string;
 }) {
-  const [refetch, isPending] = usePartial(selector);
+  const nav = useNavigation();
+  const [isPending, setIsPending] = useState(false);
+
+  async function fire() {
+    setIsPending(true);
+    try {
+      await nav.reload({ ids, tags });
+    } finally {
+      setIsPending(false);
+    }
+  }
+
   return (
     <button
       type="button"
       data-testid={testId}
-      onClick={() => void refetch()}
+      onClick={fire}
       disabled={isPending}
     >
       {isPending ? "…" : label}

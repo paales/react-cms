@@ -12,6 +12,7 @@ import type { RscPayload } from "./entry.rsc";
 import { GlobalErrorBoundary } from "./error-boundary";
 import { createRscRenderRequest } from "./request";
 import {
+  _consumeSilentFlag,
   _dispatchFrameRefetch,
   _readFramesSnapshot,
   getCachedPartialIds,
@@ -40,8 +41,9 @@ async function main() {
 
   async function fetchRscPayload(overrideUrl?: string) {
     // Tell the server which partials are already cached so it can skip them.
-    // If the caller already set ?cached= (e.g., usePartial excluding the
-    // target partial), respect that instead of overwriting with the full list.
+    // If the caller already set ?cached= (e.g. a targeted refetch built by
+    // `useNavigation().reload({ids})`), respect that instead of overwriting
+    // with the full list.
     const url = new URL(overrideUrl ?? window.location.href);
     if (!url.searchParams.has("cached")) {
       const cachedIds = getCachedPartialIds();
@@ -76,9 +78,11 @@ async function main() {
     }
   }
 
-  // Allow usePartial() to trigger partial-specific refetches.
-  // Uses window directly to avoid module instance duplication between
-  // the browser entry bundle and "use client" component bundles.
+  // Navigation handles (useNavigation / frame) dispatch targeted
+  // refetches by calling this handler with a fully-formed URL.
+  // Exposed on `window` directly to avoid module-instance duplication
+  // between the browser entry bundle and "use client" component
+  // bundles.
   (window as any).__rsc_partial_refetch = (url: string) =>
     fetchRscPayload(url);
 
@@ -127,8 +131,6 @@ async function main() {
     });
   }
 }
-
-import { consumeSilentFlag } from "./silent-replace.ts";
 
 function listenNavigation(onNavigation: (url: string) => Promise<void>) {
   const handler = (event: NavigateEvent) => {
@@ -215,11 +217,14 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
       }
     }
 
-    // Silent URL updates (LoadMore's ?pages=, SearchInput's ?q= in URL
-    // mode) flip a short-lived flag via `silentReplace()`. When set, we
-    // skip the intercept so the URL updates for bookmarkability but no
-    // server round-trip fires.
-    if (consumeSilentFlag()) return;
+    // Silent URL updates (`useNavigation().navigate(url, { silent: true })`
+    // or `{ ids: [...] }` / `{ tags: [...] }`) flip a short-lived
+    // flag in `partial-client`. When set, we skip the intercept so the
+    // URL updates for bookmarkability — any refetch is either skipped
+    // entirely (silent) or dispatched directly by the navigate call.
+    // Same mechanism is used by frame navigation after its
+    // `history.pushState`.
+    if (_consumeSilentFlag()) return;
 
     event.intercept({
       handler: () => onNavigation(event.destination.url),

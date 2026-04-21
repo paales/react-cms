@@ -1,13 +1,15 @@
 # `defer` + activators — design notes
 
 **Added:** 2026-04-18
+**Updated:** 2026-04-21 (post `usePartial` removal — `fire()` now takes no args; activators that need to pass state to the server write it to a URL and let the targeted reload pick it up via tracked accessors).
 **Files:** `src/lib/partial-component.tsx`, `src/lib/partial-client.tsx`. Reference activator implementations live in userspace: `src/app/components/when-visible.tsx`, `src/app/components/when-stored.tsx`.
+**Related:** `NAVIGATE_UNIFIED.md` covers the `useNavigation().reload(...)` surface that activators now fire into.
 
 ---
 
 ## Why
 
-`<WhenVisible>` used to do two jobs: (1) check request state to decide "render content or fallback"; (2) install an IntersectionObserver that fires `usePartial(id).refetch()`. Job #1 duplicated the decision `<Partial>` already makes with `state.explicitIds`. Collapsing it into `<Partial>` gives us:
+`<WhenVisible>` used to do two jobs: (1) check request state to decide "render content or fallback"; (2) install an IntersectionObserver that fires a targeted refetch. Job #1 duplicated the decision `<Partial>` already makes with `state.explicitIds`. Collapsing it into `<Partial>` gives us:
 
 - **One pipe for every client-side state source.** Add an activator, don't re-teach the framework.
 - **`defer={true}` as an escape hatch** for activation that isn't structural — cookie banner, websocket, cross-page signal — so the Partial doesn't need to contain its own trigger.
@@ -29,11 +31,11 @@ Previously rejected in `/archive/PARTIAL_WRAPPER_DESIGN.md` §11 on the argument
 
 Three modes for `defer`:
 
-| Value           | Semantics                                                                                               |
-| --------------- | ------------------------------------------------------------------------------------------------------- |
-| unset / `false` | Eager render (existing behavior).                                                                       |
-| `true`          | Emit fallback; no automatic trigger. App calls `usePartial(id).refetch()` from anywhere.                |
-| `ReactElement`  | Framework clones with `{partialId, children: fallback}`. Activator renders fallback + installs trigger. |
+| Value           | Semantics                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------- |
+| unset / `false` | Eager render (existing behavior).                                                                                     |
+| `true`          | Emit fallback; no automatic trigger. App calls `useNavigation().reload({ids: [id]})` from anywhere.                   |
+| `ReactElement`  | Framework clones with `{partialId, children: fallback}`. Activator renders fallback + installs trigger.               |
 
 Composition across activators is not a framework primitive. If an author wants "fire when visible OR when a key appears in storage," they write a single activator that subscribes to both sources and calls `fire()` from the first one to arrive.
 
@@ -63,7 +65,7 @@ useActivate(partialId, (fire) => {
 });
 ```
 
-`fire(inputs?)` calls `usePartial(partialId).refetch(inputs)`. Inputs land in `__inputs` and apply as prop overrides via `cloneElement` on the Partial's content. Default is one-shot (subsequent `fire` calls are no-ops). Opt into repeat-firing with `{once: false}` — useful for Partials that can become dormant again (§ Re-defer on stale below).
+`fire()` dispatches `useNavigation().reload({ ids: [partialId] })` — a targeted refetch, microtask-batched with any other in-tick reloads. Default is one-shot (subsequent `fire` calls are no-ops). Opt into repeat-firing with `{once: false}` — useful for Partials that can become dormant again (§ Re-defer on stale below).
 
 `subscribe` is captured via ref, so the latest closure is used when the subscription fires. The effect doesn't re-run when `subscribe` changes — if re-subscription on prop change is needed, remount the activator by setting `key`.
 
@@ -71,15 +73,17 @@ useActivate(partialId, (fire) => {
 
 Activators split on what the server can / cannot read:
 
-- **Server-readable** (URL, cookie, header): don't use `defer`. The Partial's content reads `getRequest()` and branches directly.
-- **Client-only** (visibility, idle, storage, matchMedia, events): use `defer` + an activator that listens and fires refetch.
+- **Server-readable** (URL, cookie, header): don't use `defer`. The Partial's content reads `getSearchParam` / `getCookie` / `getHeader` / `getPathname` and branches directly.
+- **Client-only** (visibility, idle, storage, matchMedia, events): use `defer` + an activator that listens and fires a targeted reload.
 
-For activators that need to pass state to the server, two channels:
+**Activators that need to pass state to the server write it to a URL before firing.** The server then reads it through tracked accessors on re-render. Two shapes:
 
-- `refetch({ key: value })` → `__inputs` → applied as prop override on the Partial's content's root child.
-- `setTransientParams({ key: value })` then `refetch()` → ends up in the fetch URL → content reads via `getRequest()`.
+- Page URL: `history.replaceState(history.state, "", urlWithParam)` then `fire()`. Partial body reads `getSearchParam("...")`.
+- Frame URL: `frame("name").navigate(urlWithParam)` without a separate `fire` — the frame-navigate call is itself the refetch.
 
-`<WhenStored>` uses the first. Something like `<WhenMediaQuery>` would typically use the second (param-based feature gating on the server).
+`<WhenStored>` uses the first pattern: reads `localStorage[key]`, writes `?<as>=<value>` to the page URL via `history.replaceState`, then fires. See `src/app/components/when-stored.tsx` for the implementation. A hypothetical `<WhenMediaQuery>` would do the same with a query param.
+
+There is no longer a `__inputs` / prop-override channel — state either lives in a URL (page or frame), in a cookie, in a header, or in client-only React state. See `NAVIGATE_UNIFIED.md` for the rationale.
 
 ## Fallback semantics
 
@@ -99,7 +103,7 @@ Activators are userspace. The demo app provides two reference
 implementations in `src/app/components/`:
 
 - `<WhenVisible>` — IntersectionObserver activator using React 19 Fragment refs.
-- `<WhenStored storageKey as>` — `localStorage`/`sessionStorage` activator; passes the stored value through `__inputs`.
+- `<WhenStored storageKey as>` — `localStorage`/`sessionStorage` activator; writes the stored value to `?<as>=<value>` on the page URL before firing.
 
 New activators (`<WhenIdle>`, `<WhenMediaQuery>`, `<WhenEvent>`) are ~20–30 lines each against the `useActivate(partialId, subscribe)` contract. There is no "framework activator" registry — the framework only owns the `defer` prop + `useActivate` primitive.
 

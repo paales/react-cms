@@ -10,15 +10,12 @@ export type {
 export {
   PartialsClient,
   getCachedPartialIds,
-  usePartial,
-  usePartialParams,
   useActivate,
   frame,
   useNavigation,
   type NavigationHandle,
   type NavigateOptions,
   type PartialDebugEntry,
-  type PartialRefetchOptions,
 } from "./partial-client.tsx";
 export { PartialErrorBoundary } from "./partial-error-boundary.tsx";
 export { invalidateByTags, clearCache, getCacheStats } from "./partial-cache.ts";

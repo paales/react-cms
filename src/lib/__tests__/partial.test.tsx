@@ -59,6 +59,7 @@ vi.mock("../partial-client.tsx", () => ({
 	},
 	getCachedPartialIds: () => [],
 	registerClientPartial: (_id: string, _fp: string) => {},
+	FrameNameProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 vi.mock("../partial-error-boundary.tsx", () => ({
@@ -247,14 +248,21 @@ describe("PartialRoot architecture", () => {
 			</PartialRoot>
 		);
 		// The client always sends `cached=id:fp,…` alongside a partial
-		// refetch (see `fetchRscPayload` in entry.browser.tsx). Here we
-		// spell the cache presence explicitly so the server knows cart
-		// is safe to skip (client has it) — without this, the fix for
-		// "frames introducing new inner partials" would render cart
-		// freshly. Production refetches always include this param.
-		const result = await warmThenRender(
-			{ partials: "header", cached: "cart:x,stats:y" },
-			tree,
+		// refetch (see `fetchRscPayload` in entry.browser.tsx). The
+		// server skips a non-explicit Partial iff its computed fp
+		// matches what the client has — mismatched fps mean the body
+		// changed and must re-render. Warm-render first to capture
+		// the real fingerprints, then feed them back on the refetch
+		// so cart/stats match and get placeholder-skipped.
+		await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree));
+		const cartFp = renderCapture.fingerprints["cart"];
+		const statsFp = renderCapture.fingerprints["stats"];
+		const { result } = await runWithRequestAsync(
+			fakeRequest({
+				partials: "header",
+				cached: `cart:${cartFp},stats:${statsFp}`,
+			}),
+			async () => renderToJSON(tree),
 		);
 		const str = JSON.stringify(result);
 		expect(str).toContain("Timestamp");
@@ -372,77 +380,6 @@ describe("PartialRoot architecture", () => {
 		);
 		expect(renderCapture.freshIds).toContain("hero");
 		expect(renderCapture.freshIds).not.toContain("stats");
-		const str = JSON.stringify(result);
-		expect(str).toContain("Hero");
-	});
-
-	it("applies partial input overrides to content props", async () => {
-		function Greeting({ name }: { name: string }) {
-			return <span>Hello {name}</span>;
-		}
-		const inputs = JSON.stringify({ greeting: { name: "world" } });
-		const { result } = await runWithRequestAsync(
-			fakeRequest({ partials: "greeting", __inputs: inputs }),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<Partial id="greeting"><Greeting name="default" /></Partial>
-					</PartialRoot>,
-				),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("world");
-		expect(str).not.toContain("default");
-	});
-
-	it("partial input overrides only affect targeted partial", async () => {
-		function Label({ text }: { text: string }) {
-			return <span>{text}</span>;
-		}
-		const inputs = JSON.stringify({ a: { text: "overridden" } });
-		const { result } = await runWithRequestAsync(
-			fakeRequest({ partials: "a,b", __inputs: inputs }),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<Partial id="a"><Label text="original-a" /></Partial>
-						<Partial id="b"><Label text="original-b" /></Partial>
-					</PartialRoot>,
-				),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("overridden");
-		expect(str).toContain("original-b");
-		expect(str).not.toContain("original-a");
-	});
-
-	it("__inputs bypass fingerprint cache (refetch with new props)", async () => {
-		await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<PartialRoot>
-					<Partial id="hero"><Hero /></Partial>
-					<Partial id="stats"><Stats /></Partial>
-				</PartialRoot>,
-			),
-		);
-		expect(renderCapture.fingerprints.hero).toBeDefined();
-		const heroFp = renderCapture.fingerprints.hero;
-
-		const inputs = JSON.stringify({ hero: {} });
-		const { result } = await runWithRequestAsync(
-			fakeRequest({
-				partials: "hero",
-				cached: `hero:${heroFp}`,
-				__inputs: inputs,
-			}),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<Partial id="hero"><Hero /></Partial>
-						<Partial id="stats"><Stats /></Partial>
-					</PartialRoot>,
-				),
-		);
 		const str = JSON.stringify(result);
 		expect(str).toContain("Hero");
 	});
@@ -875,45 +812,6 @@ describe("Deep (dynamic) Partial discovery", () => {
 		expect(JSON.stringify(result)).not.toContain("inner-real-content");
 	});
 
-	it("__inputs override applies to deep dynamic Partial", async () => {
-		function SkuPrice({ marker }: { marker: string }) {
-			return <span>{marker}</span>;
-		}
-		function ProductCard() {
-			return (
-				<Partial id="price-abc">
-					<SkuPrice marker="initial-price" />
-				</Partial>
-			);
-		}
-
-		// Prime the registry.
-		await runWithRequestAsync(fakeRequest(), async () =>
-			renderToJSON(
-				<PartialRoot>
-					<div><ProductCard /></div>
-				</PartialRoot>,
-			),
-		);
-
-		// Refetch with __inputs override. The override replaces the
-		// marker prop on the <SkuPrice/> that sits inside the Partial.
-		const inputs = JSON.stringify({
-			"price-abc": { marker: "overridden-price" },
-		});
-		const { result } = await runWithRequestAsync(
-			fakeRequest({ partials: "price-abc", __inputs: inputs }),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<div><ProductCard /></div>
-					</PartialRoot>,
-				),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("overridden-price");
-		expect(str).not.toContain("initial-price");
-	});
 });
 
 describe("Collision detection", () => {
@@ -1448,25 +1346,6 @@ describe("Partial defer prop", () => {
 		expect(str).not.toContain("dormant");
 	});
 
-	it("renders content when deferred id has an __inputs entry", async () => {
-		const { result } = await runWithRequestAsync(
-			fakeRequest({
-				partials: "feed",
-				__inputs: JSON.stringify({ feed: { foo: "bar" } }),
-			}),
-			async () =>
-				renderToJSON(
-					<PartialRoot>
-						<Partial id="feed" defer fallback={<Dormant />}>
-							<Activated />
-						</Partial>
-					</PartialRoot>,
-				),
-		);
-		const str = JSON.stringify(result);
-		expect(str).toContain("activated");
-	});
-
 	it("clones an activator element with partialId + fallback as children", async () => {
 		function Activator({
 			partialId,
@@ -1658,45 +1537,6 @@ describe("Partial id optional + tag synthesis", () => {
 				),
 			),
 		).rejects.toThrow(/Duplicate anonymous/);
-	});
-});
-
-describe("parseSelector + resolveSelector", () => {
-	it("parses #id as id selector", async () => {
-		const { parseSelector } = (await vi.importActual(
-			"../partial-client.tsx",
-		)) as typeof import("../partial-client.tsx");
-		expect(parseSelector("#header")).toEqual({ id: "header", tags: [] });
-	});
-
-	it("parses .tag as one-tag selector", async () => {
-		const { parseSelector } = (await vi.importActual(
-			"../partial-client.tsx",
-		)) as typeof import("../partial-client.tsx");
-		expect(parseSelector(".cart")).toEqual({ tags: ["cart"] });
-	});
-
-	it("parses .tag.tag2 as multi-tag intersection", async () => {
-		const { parseSelector } = (await vi.importActual(
-			"../partial-client.tsx",
-		)) as typeof import("../partial-client.tsx");
-		expect(parseSelector(".price.featured")).toEqual({
-			tags: ["price", "featured"],
-		});
-	});
-
-	it("treats bare strings as ids", async () => {
-		const { parseSelector } = (await vi.importActual(
-			"../partial-client.tsx",
-		)) as typeof import("../partial-client.tsx");
-		expect(parseSelector("search")).toEqual({ id: "search", tags: [] });
-	});
-
-	it("empty selector → empty tags", async () => {
-		const { parseSelector } = (await vi.importActual(
-			"../partial-client.tsx",
-		)) as typeof import("../partial-client.tsx");
-		expect(parseSelector("")).toEqual({ tags: [] });
 	});
 });
 

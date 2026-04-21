@@ -2,7 +2,7 @@
 
 ### Lazy partials — SHIPPED as `<Partial defer>` (2026-04-18)
 
-`defer={true}` emits fallback only; app calls `usePartial(id).refetch()` whenever. `defer={<Activator/>}` wires a client-side trigger automatically. Companion hook `useActivate(partialId, subscribe)` is the primitive every activator is built on. See `DEFER_ACTIVATORS.md`.
+`defer={true}` emits fallback only; app calls `useNavigation().reload({ids: [id]})` whenever. `defer={<Activator/>}` wires a client-side trigger automatically. Companion hook `useActivate(partialId, subscribe)` is the primitive every activator is built on. See `DEFER_ACTIVATORS.md`.
 
 ### Refetch-trigger pattern — SHIPPED as `useActivate`
 
@@ -14,7 +14,7 @@
 
 ### Rich refetch event hooks + per-partial progress
 
-`usePartial` returns `isPending` today. Inertia emits `start / progress / success / error / finish` on every visit. Adding callback options to the refetch call (`refetch(props, { onSuccess, onError, onProgress })`) or an event emitter keyed per-partial would let apps build NProgress-style top bars, per-partial progress affordances, and analytics without forking the framework.
+`useNavigation().reload()` returns a Promise that resolves on commit, and callers track pending state via their own `useState`. Inertia emits `start / progress / success / error / finish` on every visit. Adding an options bag (`reload({ids, tags}, { onSuccess, onError, onProgress })`) or an event emitter keyed per-partial would let apps build NProgress-style top bars, per-partial progress affordances, and analytics without forking the framework.
 
 Deliberately skipped (Inertia has these, we don't need them): Deferred Props (Suspense is better), useForm (RSC actions cover it), stacked modals (too specific), full Visit API surface.
 
@@ -115,16 +115,16 @@ Open tails:
 
 ---
 
-## Stringly-typed ids — selector-based addressing — SHIPPED (2026-04-19)
+## Stringly-typed ids — selector-based addressing — SHIPPED 2026-04-19, SUPERSEDED 2026-04-21
 
-**Resolution.** `<Partial>` now accepts optional `id` and `tags` (as an array OR a whitespace-separated string, like DOM `className`). An id-less Partial synthesizes `__anon:<sorted-tags>` internally — addressable only via a tag selector. `usePartial(selector)` parses one of four shapes:
+**Original resolution.** `<Partial>` accepts optional `id` and `tags` (as an array OR a whitespace-separated string, like DOM `className`). An id-less Partial synthesizes `__anon:<sorted-tags>` internally — addressable only via a tag selector. `usePartial(selector)` parsed one of four shapes:
 
 - `"hero"` — bare string, by id (back-compat).
 - `"#hero"` — by id (explicit).
 - `".price"` — every Partial tagged `price`.
 - `".price.featured"` — every Partial tagged both `price` AND `featured` (AND intersection).
 
-A selector matching N ids fans out into one microtask-batched RSC request. `isPending` stays true until every match resolves. Demo at `/selector-demo`; regression cover in `e2e/selector-demo.spec.ts`.
+**Superseded 2026-04-21.** `usePartial` is gone along with the selector parser. Same addressing, cleaner shape: `useNavigation().reload({ ids: ["hero"] })` and `useNavigation().reload({ tags: ["price"] })`. Multi-tag is UNION now, not intersection — server-side resolution in `resolveTagsToIds` matches any listed tag. For intersection semantics: give the intersection its own tag (`tags="price featured-price"`). See `NAVIGATE_UNIFIED.md` for the full rationale and `/archive/USE_PARTIAL_AND_INPUTS.md` for the historical `usePartial` surface.
 
 **Deferred from the original sketch:**
 
@@ -149,7 +149,7 @@ Two Partials that both call `client.request(ProductsQuery)` today each hit the A
 
 ### Optimistic updates as a Partial primitive
 
-Server-action → invalidate is round-tripping. `<Partial optimistic={(prev, input) => next}>` would render the optimistic state immediately and reconcile on commit. Same plumbing as `__inputs`, different phase of the lifecycle. Pairs naturally with the form primitives below.
+Server-action → invalidate is round-tripping. `<Partial optimistic={(prev, input) => next}>` would render the optimistic state immediately and reconcile on commit. The plumbing shape previously lived in the `__inputs` channel (removed 2026-04-21); reviving it as an OPTIMISTIC channel — scoped to the action-return lifecycle, not exposed for general prop injection — is a live design question. Pairs naturally with the form primitives below.
 
 ### Cache invalidation by manifest value
 
@@ -207,17 +207,19 @@ Reading the architecture end-to-end, the framework is making two layered claims:
 
 The second claim is the one that distinguishes this from Next.js App Router in the long run. Everything that reinstates a static walker (typed partial registries via codegen, explicit route manifests, declarative input schemas resolved at build time) works against it. When evaluating future directions, the test is: *can this self-register at render time instead of requiring a pre-render walk?* The selector addressing scheme above passes that test. Typed-handle codegen fails it. Keep that principle sharp — it's the architectural load-bearing idea and it's easy to erode one convenient walker at a time.
 
-### How `refreshRegistry` was eliminated (2026-04-19)
+### How `refreshRegistry` was eliminated (2026-04-19, revised 2026-04-21)
 
 The old walker refreshed registry snapshots before cache-mode refetches so their captured closures (e.g. `<SearchStage2 query={searchQuery}/>` where `searchQuery` came from the URL) reflected the current request. It existed because:
 
 - `cloneElement(__inputs)` couldn't drill through a `<Cache dep>` wrapper to reach the inner content.
 - The Partial's fingerprint was hashed from pre-override `children`, so even when `__inputs` did apply, the cache key stayed pinned to the stale snapshot's values → cache hit on stale bytes.
 
-Two changes made the walker redundant:
+Two changes made the walker redundant in 2026-04-19:
 
-1. `<Cache>` was folded into `<Partial cache>` (part of the auto-tracked cache-keys work), removing the intermediate wrapper. `cloneElement(__inputs)` now reaches the content component directly.
-2. `<Partial>`'s fingerprint is now computed AFTER `applyInputs` (`partial-component.tsx`). A cache-mode refetch whose inputs change a prop yields a distinct fingerprint, a distinct `<Cache>` key, and correctly misses stale entries.
+1. `<Cache>` was folded into `<Partial cache>` (part of the auto-tracked cache-keys work), removing the intermediate wrapper. `cloneElement(__inputs)` reached the content component directly.
+2. `<Partial>`'s fingerprint was computed AFTER `applyInputs` (`partial-component.tsx`). A cache-mode refetch whose inputs changed a prop yielded a distinct fingerprint, a distinct `<Cache>` key, and correctly missed stale entries.
+
+**2026-04-21 revision.** `__inputs` and `applyInputs` are gone entirely. Stale-snapshot correctness is now driven by **ambient-frame-URL folding into the fingerprint**: the Partial body looks up `getCurrentFrameScope()` and folds the enclosing frame URL into its fp seed. A refetch that changes the frame URL (or the page URL, if the Partial is framed) produces a distinct fingerprint and Cache key without any client-supplied prop override. Request-varying state reaches descendant Partials through URL accessors (or scalar props threaded by a parent that reads the accessor); the `cloneElement(__inputs)` channel no longer exists. See `NAVIGATE_UNIFIED.md` for the replacement surface and `/archive/USE_PARTIAL_AND_INPUTS.md` for a historical summary.
 
 With those in place, deleting `refreshRegistry` kept all unit tests and e2e tests passing. The PartialRoot now has exactly two branches (streaming + cache-mode) with no author-JSX walking in either; `stripPartials`/`reinject` in `cache.tsx` is the only remaining walker and it operates on rendered output, not on author JSX.
 

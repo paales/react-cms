@@ -6,7 +6,7 @@ Research project: a React CMS data layer inspired by Shopify Liquid. Pages are c
 
 ## Project Structure
 
-- `notes/` — current design notes (start at `notes/README.md`). Historical docs live in `notes/archive/`.
+- `notes/` — current design notes (start at `notes/README.md`). Historical docs live in `archive/` (top-level).
 - `src/lib/` — Partials library (`partial.tsx`, `partial-component.tsx`, `partial-client.tsx`, `partial-registry.ts`, `partial-request-state.ts`, `partial-error-boundary.tsx`, `cache.tsx`, `hash.ts`, `multipart.ts`, `partial-cache.ts`). Activator components (`WhenVisible`, `WhenStored`) live in userspace at `src/app/components/`.
 - `proxy-design/` — legacy proxy data layer (see `proxy-design/README.md`).
 - `src/app/` — Example application (PokeAPI + Magento backends)
@@ -55,7 +55,7 @@ const data = await client.request(CartQuery, { cartId });
 
 Pages are composed of independently re-renderable partials (inspired by Shopify's section rendering). The framework exposes one primitive — `<Partial>` — wrapped by a single framework-owned `<PartialRoot>` at the top of the RSC entry. Page authors never see `<PartialRoot>`; they just use `<Partial>` anywhere in the JSX tree.
 
-A Partial is addressable by `id` (unique per page), by `tags` (non-unique labels, like DOM `className`), or both. Filter with `?partials=<id>` or `?tags=<tag>`. Refetch with `usePartial(selector).refetch()` where the selector is one of `"id"` / `"#id"` / `".tag"` / `".tag.tag2"`.
+A Partial is addressable by `id` (unique per page), by `tags` (non-unique labels, like DOM `className`), or both. Filter with `?partials=<id>` or `?tags=<tag>`. Refetch with `useNavigation().reload({ ids })` or `.reload({ tags })` — see the **Client navigation** section below.
 
 ### Partials must be server components
 
@@ -85,9 +85,9 @@ All `<Partial>` content must render in the RSC environment. Client components ar
 
 No namespace. No `<Partials>` wrapper. No `key`.
 
-- **`id`** is optional; when provided, it must be unique per page (duplicates throw). Bare-string and `#id` selectors address it.
-- **`tags`** is optional; accepts an array OR a whitespace-separated string (`"price product"`) mirroring DOM `className`. `.tag` and `.tag.tag2` selectors match.
-- A Partial must have at least one of the two. An id-less Partial synthesizes `__anon:<sorted-tags>` internally.
+- **`id`** is optional; when provided, it must be unique per page (duplicates throw). Addressable via `reload({ ids: ["id"] })`.
+- **`tags`** is optional; accepts an array OR a whitespace-separated string (`"price product"`) mirroring DOM `className`. Addressable via `reload({ tags: ["price"] })`; passing multiple tags matches their UNION server-side.
+- A Partial must have at least one of the two. An id-less Partial synthesizes `__anon:<sorted-tags>` internally and can only be addressed via a tag refetch.
 
 ### Dynamic Partials (inside `.map()`)
 
@@ -97,20 +97,37 @@ A Partial produced inside an async component's return value (e.g. per-row in a p
 
 Each Partial computes a structural fingerprint (hash of component types + scalar props + children shape). The client sends `?cached=id:fp,…` with every refetch. `<Partial>` skips (emits an `<i data-partial hidden>` placeholder) when its fingerprint matches what the client already has, so the browser fills from `_cache` and no bytes are wasted on unchanged subtrees.
 
-### usePartial hook
+### Client navigation — `useNavigation()`
 
-`const [refetch, isPending] = usePartial(selector);`
+The single client-side handle. Returned by `useNavigation()` (or `useNavigation(name)` for an explicit frame); drives page navigation, frame navigation, and targeted partial refetches.
 
-- `refetch()` — re-render the matched Partial(s) with current props.
-- `refetch({ query: "pika" })` — re-render with `__inputs` overrides applied via `cloneElement`. Each matched id gets the same override.
+```tsx
+const nav = useNavigation();          // page-scoped (or ambient frame if inside one)
+const cart = useNavigation("cart");   // explicit: the cart frame
 
-Selector grammar:
+nav.navigate("/products?sort=price", { history: "push" });              // full page nav
+nav.navigate(url,   { history: "replace", tags: ["search-results"] }); // URL update + targeted refetch
+nav.navigate(url,   { history: "replace", silent: true });              // URL update only, no refetch
+nav.reload({ ids: ["cart"] });                                           // targeted refetch, no URL change
+nav.reload({ tags: ["price"] });                                         // tag-resolved refetch, no URL change
+nav.back(); nav.forward(); nav.reload();                                  // unfiltered reload = full page refetch
+```
 
-- `"hero"` or `"#hero"` — by id.
-- `".cart"` — every Partial tagged `cart`.
-- `".price.featured"` — every Partial tagged both `price` AND `featured` (intersection).
+`NavigateOptions`:
 
-A selector matching multiple ids fans out into one microtask-batched refetch. `isPending` stays `true` until every match resolves. Selectors resolving to zero matches are silent no-ops.
+| Field | Meaning |
+|---|---|
+| `history` | `"push"` (default), `"replace"`, or `"auto"`. Mirrors the Navigation API. |
+| `state` | State to write onto the resulting entry. |
+| `info` | Forwarded to navigate events (window handle only). |
+| `ids` | Explicit partial ids to refetch. Page handle only; ignored by frame handles (frames refetch their whole subtree). |
+| `tags` | Tags to refetch. Resolved server-side against the route-scoped registry; union semantics for multiple tags. Page handle only. |
+| `silent` | Update the URL only. No refetch. Useful for bookmarkability-only URL sync (infinite scroll's `?pages=`). |
+| `disableTransition` | Commit without wrapping in `startTransition` — fallbacks flash, chunks stream. Default `false` (atomic swap, no fallback). |
+
+Multiple `navigate` / `reload` calls in the same tick coalesce into one microtask-batched refetch request. Frame `navigate(url)` is unchanged — it refetches the frame Partial, which re-renders its whole subtree. See `notes/NAVIGATE_UNIFIED.md` for the full surface and `notes/FRAMES.md` for frame mechanics.
+
+**No `usePartial`, no `__inputs`, no `silentReplace`, no `usePartialParams`** (removed 2026-04-21; see `archive/USE_PARTIAL_AND_INPUTS.md`). State that drives a refetch must live in a URL — page URL for shareable state, frame URL for subtree-scoped state. The server reads it through tracked accessors (`getSearchParam` / `getPathname` / `getCookie` / `getHeader`). A parent that reads an accessor and passes a scalar prop to a descendant is the idiom when the descendant is cache-wrapped (Cache's inner render doesn't inherit the `React.cache`-backed frame-scope cell — see `notes/NAVIGATE_UNIFIED.md` §Sharp edges).
 
 ### Caching (`<Partial cache={…}>`)
 
@@ -191,13 +208,26 @@ sync catch isn't what drives the RSC response path.
 
 ### Refetch commit behavior
 
-The client wraps refetches in `React.startTransition` by default: preserve UI, atomic swap, no fallback flash. Opt into per-chunk streaming (fallback + per-boundary reveal as each chunk arrives) per refetch:
+The client wraps refetches in `React.startTransition` by default: preserve UI, atomic swap, no fallback flash. Opt into per-chunk streaming (fallback + per-boundary reveal as each chunk arrives) per call:
 
 ```ts
-refetch({ query: "pika" }, { disableTransition: true });
+nav.reload({ ids: ["stage-1", "stage-2", "stage-3"], disableTransition: true });
 ```
 
-`disableTransition` has a second use: concurrent refetches across disjoint ids. Transitions can collapse overlapping refetches — a newer pending transition can supersede an older one whose bytes have arrived but haven't committed yet. For same-id rapid-fire (search-as-you-type), that's the right default (no stale-data flash). For disjoint-id fan-outs (refresh cart + live price + next page from independent event handlers), pass `disableTransition: true` on each so every response commits on arrival. See `e2e/defer-concurrent-refetches.spec.ts` and `notes/archive/BARE_KEY_REFETCH.md`.
+`disableTransition` has a second use: concurrent refetches across disjoint ids. Transitions can collapse overlapping refetches — a newer pending transition can supersede an older one whose bytes have arrived but haven't committed yet. For same-id rapid-fire (search-as-you-type), the transition wrapper is the right default (no stale-data flash). For disjoint-id fan-outs (refresh cart + live price + next page from independent event handlers), pass `disableTransition: true` on each so every response commits on arrival. See `e2e/defer-concurrent-refetches.spec.ts` and `archive/BARE_KEY_REFETCH.md`.
+
+## Future tasks
+
+A running list of design follow-ups that haven't been scheduled yet. Most live with more detail in `notes/IDEAS.md`; this section captures the ones that are load-bearing enough to flag at the top level.
+
+- **Unify `PartialsClient` modes.** `mode="streaming"` vs `mode="cache"` is an internal distinction for merging fresh payloads into the persisted template. With `__inputs` gone, the case for keeping cache-mode is purely "skip ancestor execution on a targeted refetch." Worth a design pass to see if always-streaming + `<Partial cache>` around expensive ancestors is enough. See `notes/IDEAS.md` §Follow-up backlog.
+- **Optimistic UI as a Partial primitive.** `<Partial optimistic={(prev, input) => next}>` for action-return optimism. The `__inputs` channel used to carry this shape; the replacement needs to be scoped to the action-return lifecycle, not a general prop-override back-door. See `notes/IDEAS.md` §Optimistic updates.
+- **Activator `fire` progress events.** Per-partial `start/success/error` lifecycle so apps can build NProgress-style bars or per-partial affordances without forking. See `notes/IDEAS.md` §Rich refetch event hooks.
+- **Tag-based invalidation via manifest values** (e.g. "invalidate every Cache entry that read `cookie:user_id=42`"). Falls out of the existing tracked-accessor manifest; not wired yet. See `notes/IDEAS.md` §Cache invalidation by manifest value.
+- **Session/frame eviction policy.** The in-memory session map in `src/framework/session.ts` grows unbounded; production needs Redis + TTL. Frame-URL staleness after long absences is also undefined. See `notes/FRAMES.md` §Known sharp edges.
+- **Dev-mode warning for stranded `defer={true}`.** If the app forgets to wire a reload, the Partial is dormant forever. See `notes/DEFER_ACTIVATORS.md` §Known sharp edges.
+- **Re-defer on stale.** Once activated, a Partial can't go dormant again. `{once: false}` on `useActivate` is the first step; a `<Partial unmountWhen={<WhenHidden/>}>` activator is the larger story. See `notes/IDEAS.md` §Re-defer / unmount policy.
+- **Deeper scope propagation into `<Cache>`.** Cache's inner render (`renderToReadableStream`) doesn't inherit the `React.cache`-backed frame-scope cell, so a cache-wrapped Partial inside a frame can't read `getSearchParam` to get the frame URL's query. Today's workaround: the parent reads the accessor and passes a scalar prop. A cleaner fix would propagate the frame scope into the inner render. See `notes/NAVIGATE_UNIFIED.md` §Sharp edges.
 
 ## Development
 

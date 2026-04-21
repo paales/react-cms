@@ -1,9 +1,9 @@
 # Dynamic Partial Registry — design notes
 
 **Added:** 2026-04-16
-**Updated:** 2026-04-19 (static refresh walker fully removed; stale-snapshot correctness now driven by fingerprint-after-applyInputs)
+**Updated:** 2026-04-21 (post `__inputs` removal — stale-snapshot correctness is driven by the ambient-frame-URL fold in the Partial fingerprint, not by fingerprint-after-applyInputs).
 **Files:** `src/lib/partial-registry.ts`, `src/lib/partial-component.tsx`, `src/lib/partial.tsx`
-**Related:** `SERVER_CACHE_NOTES.md` (composition with `<Cache>`), `PARTIAL_CACHE_DESIGN.md` (fold Cache into Partial), `/archive/PARTIAL_WRAPPER_DESIGN.md` (historical `<Partial>` API proposal)
+**Related:** `NAVIGATE_UNIFIED.md` (the client-side dispatcher that drives refetches), `SERVER_CACHE_NOTES.md` (composition with `<Cache>`), `PARTIAL_CACHE_DESIGN.md` (fold Cache into Partial), `/archive/PARTIAL_WRAPPER_DESIGN.md` (historical `<Partial>` API proposal), `/archive/USE_PARTIAL_AND_INPUTS.md` (historical `__inputs` model)
 
 ---
 
@@ -108,17 +108,20 @@ emptying the registry so only the current layout's partials
 remain. This is the only registry-maintenance walk — there is no
 longer a static refresh walker.
 
-**Stale snapshot content across cache-mode refetches is handled by
-fingerprint-after-applyInputs, not by a refresh walker.** The
-`<Partial>` body computes its structural fingerprint AFTER applying
-any `__inputs` override (`partial-component.tsx`). A cache-mode
-refetch whose `__inputs` change a prop therefore yields a distinct
-fingerprint and a distinct `<Cache>` key — the stale entry misses
-cleanly. Combined with the `<Cache>`-fold-into-`<Partial cache>`
-change, `cloneElement(__inputs)` reaches the content component
-directly (no intermediate wrapper to drill through), so this fully
-replaces the old `refreshRegistry` walker. See
-`LESSONS_2026-04-19.md` §1 and §3 for the predecessor design.
+**Stale snapshot content across cache-mode refetches is handled via
+the fingerprint-scope fold, not by a refresh walker.** State that
+varies between refetches lives in a URL (page URL or frame URL); the
+`<Partial>` body folds its OWN frame URL (if any) and the AMBIENT
+frame URL (if it sits inside a framed subtree) into its fingerprint.
+A refetch against a new URL therefore yields a distinct fingerprint,
+a distinct `<Cache>` key, and a clean miss. No `__inputs` /
+`cloneElement` overrides; authors who need dynamic values in a
+descendant Partial read them via tracked accessors
+(`getSearchParam` / `getPathname` / `getCookie` / `getHeader`) or
+receive them as scalar props from a parent that reads the accessor.
+See `NAVIGATE_UNIFIED.md` for how refetches are dispatched and
+`/archive/USE_PARTIAL_AND_INPUTS.md` for the predecessor
+`fingerprint-after-applyInputs` design.
 
 ## 5. Who consults it
 
@@ -143,14 +146,13 @@ Tag resolution works the same way — iterate the route's snapshots,
 match `snap.tags` against the requested tag set, collect matching ids.
 
 On cache-mode refetch, each active entry re-runs through `<Partial>`
-(with its content from the snapshot, refreshed by `refreshRegistry`
-immediately above). The Partial body computes its own fingerprint,
-applies any `__inputs` override, decides render-vs-placeholder, and
-wraps the output. The registry is purely a content/metadata lookup;
-all the decision logic lives in the Partial component body. No
-server-side template is sent — the client's persisted `_template`
-(derived from the last streaming render) is what gets filled with
-the refetched entries.
+with its content from the snapshot. The Partial body computes its
+own fingerprint (including ambient frame URL), decides
+render-vs-placeholder, and wraps the output. The registry is purely
+a content/metadata lookup; all the decision logic lives in the
+Partial component body. No server-side template is sent — the
+client's persisted `_template` (derived from the last streaming
+render) is what gets filled with the refetched entries.
 
 ## 6. Client-side: partialId prop survives Flight
 
@@ -246,11 +248,11 @@ descends into the cached subtree, finds each wrapper by its
 ## 10. Trust boundary note
 
 The `content` field of a `PartialSnapshot` is a captured React
-element with bound props — e.g. `<GoldPrice sku="123"/>`. Server
-renders the snapshot with optional `__inputs` overrides supplied by
-the client via `usePartial(id).refetch(props)`. Props that travel
-from client to server are user-controllable; the partial's content
-component must validate its own inputs. This is the same trust
-model as today's `__inputs` mechanism. The _type_ (e.g. `GoldPrice`
-function reference) stays server-side in the registry — only props
-are client-mutable.
+element with bound props — e.g. `<GoldPrice sku="123"/>`. The
+snapshot's props are fixed at capture time (bound from the ancestor
+render's scope). Request-varying state flows through URL / cookie /
+header accessors, not through client-supplied prop overrides — so
+the trust surface is the request itself (URL, cookies, headers),
+which the framework already handles. The _type_ (e.g. `GoldPrice`
+function reference) stays server-side in the registry — nothing
+about the snapshot is client-mutable.

@@ -1,17 +1,22 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { usePartial } from "../../lib/partial-client.tsx";
-import { silentReplace } from "../../framework/silent-replace.ts";
+import { useEffect, useRef, useState } from "react";
+import { useNavigation } from "../../lib/partial-client.tsx";
 
 /**
  * Tracks which page partials are currently visible.
  * When scrolling up and a page leaves the viewport,
  * silently updates ?pages= to the highest visible page.
+ *
+ * The URL update is bookmarkable but does NOT trigger a refetch —
+ * `navigate(url, { silent: true })` replaces the URL without
+ * any server round-trip.
  */
 const visiblePages = new Set<number>();
 
-function silentlyUpdatePages() {
+function silentlyUpdatePages(
+  nav: ReturnType<typeof useNavigation>,
+) {
   if (visiblePages.size === 0) return;
   const maxVisible = Math.max(...visiblePages);
   const url = new URL(window.location.href);
@@ -19,9 +24,9 @@ function silentlyUpdatePages() {
 
   if (maxVisible < current) {
     // Scrolling up — update URL for bookmarking/refresh without
-    // triggering a server fetch via the Navigation API listener.
+    // triggering a refetch.
     url.searchParams.set("pages", String(maxVisible));
-    silentReplace(url);
+    void nav.navigate(url.toString(), { history: "replace", silent: true });
   }
 }
 
@@ -31,6 +36,7 @@ function silentlyUpdatePages() {
  */
 export function PageSentinel({ page }: { page: number }) {
   const ref = useRef<HTMLDivElement>(null);
+  const nav = useNavigation();
 
   useEffect(() => {
     const el = ref.current;
@@ -49,7 +55,7 @@ export function PageSentinel({ page }: { page: number }) {
       // on pageload.
       if (!visiblePages.has(page)) return;
       visiblePages.delete(page);
-      silentlyUpdatePages();
+      silentlyUpdatePages(nav);
     });
 
     observer.observe(el);
@@ -57,7 +63,7 @@ export function PageSentinel({ page }: { page: number }) {
       observer.disconnect();
       visiblePages.delete(page);
     };
-  }, [page]);
+  }, [page, nav]);
 
   return <div ref={ref} style={{ height: 0 }} />;
 }
@@ -66,18 +72,17 @@ export function PageSentinel({ page }: { page: number }) {
  * Sentinel element that triggers loading the next page of results
  * when it enters the viewport via IntersectionObserver.
  *
- * Updates the URL silently (native replaceState, bypassing the patched
- * one in entry.browser so no full navigation fires), then dispatches a
- * partial refetch for the new page partial and the load-more sentinel
- * itself. Previously rendered page partials stay in the client cache —
- * and so does any other unrelated partial (e.g. an open search overlay).
+ * Updates the URL and dispatches a targeted refetch for the new
+ * page partial and the load-more sentinel itself in one call:
+ * `navigate(url, { history: "replace", ids: [...] })`. Previously
+ * rendered page partials stay in the client cache — and so does any
+ * other unrelated partial (e.g. an open search overlay).
  */
 export function LoadMore({ nextPage }: { nextPage: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const triggered = useRef(false);
-  const [dispatchPage, isPendingPage] = usePartial(`page-${nextPage}`);
-  const [dispatchLoadMore, isPendingLoadMore] = usePartial("load-more");
-  const isPending = isPendingPage || isPendingLoadMore;
+  const nav = useNavigation();
+  const [isPending, setIsPending] = useState(false);
 
   useEffect(() => {
     triggered.current = false;
@@ -98,15 +103,15 @@ export function LoadMore({ nextPage }: { nextPage: number }) {
 
         if (entry.isIntersecting && !triggered.current) {
           triggered.current = true;
-          // Silent URL update for bookmarkability — flagged via the
-          // Navigation API's `info.silent` so no full-page refetch fires.
           const url = new URL(window.location.href);
           url.searchParams.set("pages", String(nextPage));
-          silentReplace(url);
-          // Partial refetch: only the new page and the load-more sentinel
-          // are fresh. Everything else is served from the client cache.
-          dispatchPage();
-          dispatchLoadMore();
+          setIsPending(true);
+          nav
+            .navigate(url.toString(), {
+              history: "replace",
+              ids: [`page-${nextPage}`, "load-more"],
+            })
+            .finally(() => setIsPending(false));
         }
       },
       { rootMargin: "200px" },
@@ -114,7 +119,7 @@ export function LoadMore({ nextPage }: { nextPage: number }) {
 
     observer.observe(el);
     return () => observer.disconnect();
-  }, [nextPage, dispatchPage, dispatchLoadMore]);
+  }, [nextPage, nav]);
 
   return (
     <div ref={ref} style={{ padding: "2rem", textAlign: "center" }}>

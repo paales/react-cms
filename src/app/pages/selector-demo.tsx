@@ -5,13 +5,16 @@ import { SelectorRefetchButton } from "../components/selector-demo-controls.tsx"
 /**
  * `/selector-demo` — exercises tag-based refetch.
  *
- *   <Partial tags="product">            // id-less; addressable only via .product
+ *   <Partial tags="product">            // id-less; addressable only via tag
  *   <Partial id="price-a" tags="price"> // price family; each member has an id
  *   <Partial id="price-b" tags="price featured"> // same family, extra "featured" tag
  *
- * Buttons call `usePartial(".product")` / `usePartial(".price")` /
- * `usePartial(".price.featured")`. Every Partial renders a fresh
- * server timestamp so visible refresh maps 1-to-1 with the selector.
+ * Buttons call `useNavigation().reload({tags: [...]})` or
+ * `reload({ids: [...]})`. Tags are resolved server-side against the
+ * route-scoped partial registry, so dynamic partials (produced inside
+ * opaque components, `.map()` loops, etc.) are addressable the same
+ * as static ones. Every Partial renders a fresh server timestamp so
+ * visible refresh maps 1-to-1 with the target set.
  */
 
 function ServerTime({ label }: { label: string }) {
@@ -55,10 +58,11 @@ export function SelectorDemoPage() {
               Selector-based refetch
             </h1>
             <p style={{ color: "#888", marginBottom: "2rem" }}>
-              <code>usePartial(".tag")</code> refetches every Partial
-              carrying that tag. Chained tags (<code>.price.featured</code>)
-              intersect — match only if every tag is present. Bare strings
-              and <code>#id</code> still target a single id.
+              <code>useNavigation().reload({"{tags: ['price']}"})</code>{" "}
+              refetches every Partial carrying that tag. Multiple tags
+              union (<code>{"{tags: ['price', 'featured']}"}</code> hits
+              any partial carrying either tag). Ids target a single
+              partial.
             </p>
 
             <section className="card" style={{ marginBottom: "1.5rem" }}>
@@ -98,22 +102,22 @@ export function SelectorDemoPage() {
               <h2>Refetch controls</h2>
               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                 <SelectorRefetchButton
-                  selector=".product"
+                  tags={["product"]}
                   label="refetch .product"
                   testId="refresh-product"
                 />
                 <SelectorRefetchButton
-                  selector=".price"
+                  tags={["price"]}
                   label="refetch .price (3 partials)"
                   testId="refresh-price"
                 />
                 <SelectorRefetchButton
-                  selector=".price.featured"
-                  label="refetch .price.featured (2 partials)"
+                  tags={["featured"]}
+                  label="refetch .featured (2 partials)"
                   testId="refresh-price-featured"
                 />
                 <SelectorRefetchButton
-                  selector="#price-a"
+                  ids={["price-a"]}
                   label="refetch #price-a"
                   testId="refresh-price-a"
                 />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { usePartial } from "../../lib/partial-client.tsx";
+import { useNavigation } from "../../lib/partial-client.tsx";
 
 /**
  * Client-side buttons to trigger refetches against the cache-demo
@@ -10,11 +10,8 @@ import { usePartial } from "../../lib/partial-client.tsx";
  * data-testid="server-render-count" before/after).
  */
 export function CacheControls() {
-  const [dispatchSlow, pendingSlow] = usePartial("slow");
-  const [dispatchClock, pendingClock] = usePartial("clock");
+  const nav = useNavigation();
   const [isPending, startTransition] = useTransition();
-
-  const pending = pendingSlow || pendingClock || isPending;
 
   return (
     <div
@@ -27,14 +24,22 @@ export function CacheControls() {
     >
       <button
         type="button"
-        onClick={() => startTransition(() => { void dispatchSlow(); })}
+        onClick={() =>
+          startTransition(() => {
+            void nav.reload({ ids: ["slow"] });
+          })
+        }
         data-testid="refetch-slow"
       >
         Refetch slow
       </button>
       <button
         type="button"
-        onClick={() => startTransition(() => { void dispatchClock(); })}
+        onClick={() =>
+          startTransition(() => {
+            void nav.reload({ ids: ["clock"] });
+          })
+        }
         data-testid="refetch-clock"
       >
         Refetch clock
@@ -46,14 +51,18 @@ export function CacheControls() {
           const current = url.searchParams.get("flavor") ?? "vanilla";
           const next = current === "vanilla" ? "chocolate" : "vanilla";
           url.searchParams.set("flavor", next);
-          window.history.pushState(null, "", url.toString());
-          startTransition(() => { void dispatchSlow(); });
+          startTransition(() => {
+            void nav.navigate(url.toString(), {
+              history: "push",
+              ids: ["slow"],
+            });
+          });
         }}
         data-testid="toggle-flavor"
       >
         Toggle flavor
       </button>
-      {pending && <span style={{ color: "#888" }}>…</span>}
+      {isPending && <span style={{ color: "#888" }}>…</span>}
     </div>
   );
 }

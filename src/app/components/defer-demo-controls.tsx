@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { usePartial } from "../../lib/partial-client.tsx";
+import { useNavigation } from "../../lib/partial-client.tsx";
 
 /**
- * Manual activator: a plain button that calls `usePartial(id).refetch()`.
- * Demonstrates `defer={true}` — the framework isn't wired to any trigger;
- * the app decides when to activate.
+ * Manual activator: a plain button that calls
+ * `useNavigation().reload({ids: [id]})`. Demonstrates `defer={true}`
+ * — the framework isn't wired to any trigger; the app decides when
+ * to activate.
  */
 export function ActivateButton({
   partialId,
@@ -25,12 +26,21 @@ export function ActivateButton({
    */
   disableTransition?: boolean;
 }) {
-  const [refetch, isPending] = usePartial(partialId);
+  const nav = useNavigation();
+  const [isPending, setIsPending] = useState(false);
+  const activate = async () => {
+    setIsPending(true);
+    try {
+      await nav.reload({ ids: [partialId], disableTransition });
+    } finally {
+      setIsPending(false);
+    }
+  };
   return (
     <button
       type="button"
       data-testid={testId ?? `activate-${partialId}`}
-      onClick={() => refetch(undefined, { disableTransition })}
+      onClick={activate}
       disabled={isPending}
       style={{
         background: "#2d3748",
