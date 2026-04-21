@@ -46,7 +46,14 @@ describe("Flight client streaming", () => {
 		expect(result.value).toBe("delayed-root");
 	});
 
-	it("dev server RSC stream resolves three search partials progressively", { timeout: 15000 }, () => {
+	it("dev server RSC stream resolves three search partials progressively", { timeout: 15000 }, async () => {
+		// The stage partials opt into `<Partial cache>`. If a previous
+		// test (or an e2e run) has already populated the server-side
+		// `<Cache>` store for this request shape, the stage bodies
+		// return instantly and the progressive-streaming assertions
+		// below collapse to a few hundred ms. Flush the cache up front
+		// so the 0/1000/2000ms delays actually run.
+		await fetch("http://localhost:5173/__test/clear-caches").catch(() => {});
 		const result = run("dev-server-rsc-streams-progressively");
 		console.log("Dev server streaming result:", JSON.stringify(result, null, 2));
 		// Root should resolve almost immediately (template + lazy refs for partials)

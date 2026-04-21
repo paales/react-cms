@@ -89,16 +89,32 @@ test("search input keeps focus across live refetches", async ({ page }) => {
 
   const input = page.locator("dialog input[type=text]");
   await input.focus();
-  await input.pressSequentially("pika", { delay: 80 });
 
-  // After the typing + ensuing tag-refetch, the dialog's <input> is
-  // still the document's active element. If PartialsClient was
-  // reconciling the search-page subtree incorrectly (missing keys on
-  // cache-mode snapshot elements), the input would have been remounted
-  // and focus would have fallen back to <body>.
-  const isFocused = await input.evaluate((el) => el === document.activeElement);
+  // Stamp the DOM node and watch for remount.
+  await input.evaluate((el) => {
+    (el as HTMLInputElement & { __stamp?: number }).__stamp = 42;
+  });
+
+  await input.pressSequentially("pika", { delay: 200 });
+  // Wait for at least one refetch round-trip to finish.
+  await expect(page.getByTestId("stage-3-content")).toBeVisible({
+    timeout: 8000,
+  });
+
+  const stillStamped = await page
+    .locator("dialog input[type=text]")
+    .evaluate(
+      (el) => (el as HTMLInputElement & { __stamp?: number }).__stamp === 42,
+    );
+  expect(stillStamped, "input DOM node was remounted by reconciliation").toBe(
+    true,
+  );
+
+  const isFocused = await page
+    .locator("dialog input[type=text]")
+    .evaluate((el) => el === document.activeElement);
   expect(isFocused).toBe(true);
-  await expect(input).toHaveValue("pika");
+  await expect(page.locator("dialog input[type=text]")).toHaveValue("pika");
 });
 
 test("frame search refetch uses ?__frame=search, not ?q= on the page", async ({

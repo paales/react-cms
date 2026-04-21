@@ -122,10 +122,19 @@ function resolveTagsToIds(
  * re-executing any ancestor component.
  */
 function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNode {
+  // NOTE: no explicit `key` on the Partial element even though it's
+  // placed in an array. Flight composites the outer element's `key`
+  // with inner element keys — if this element had `key="slow"` and
+  // its rendered output is `<Suspense key="slow">`, the wire format
+  // emits a composite `"slow,slow"` which React reconciles as a
+  // different key than the `"slow"` rendered during streaming mode,
+  // forcing a remount that resets client state inside the partial
+  // (see cache-demo click counter). Relying on position-based
+  // reconciliation is safe here: `activeIds` is stable per refetch
+  // and each id resolves its own internally-keyed Suspense wrapper.
   return React.createElement(
     Partial,
     {
-      key: id,
       id,
       fallback: snap.fallback ?? undefined,
       errorWith: snap.errorWith,
@@ -258,10 +267,22 @@ export async function PartialRoot({ children }: PartialRootProps) {
     query: null,
   }));
 
-  return (
-    <PartialsClient mode="cache" debug={debug} fetchMs={0}>
-      {wrappedChildren}
-    </PartialsClient>
+  // Pass wrappedChildren as positional args via `createElement` rather
+  // than `{wrappedChildren}` in JSX. Passing an array as a child prop
+  // triggers React's "each child in a list needs a key" warning.
+  // Adding a `key` on each snapshot element is not an option: Flight
+  // composites an outer element's key with its rendered output's key
+  // into `"outerKey,innerKey"`. Since `<Partial>` renders `<Suspense
+  // key={id}>` internally, a `key={id}` on the outer Partial would
+  // emit `"id,id"` on the wire — which React reconciles as a
+  // different identity than the plain `"id"` emitted in streaming
+  // mode, forcing a remount that wipes client state inside the
+  // partial (e.g. the /cache-demo click counter). Positional children
+  // sidestep both: no warning, no composite.
+  return React.createElement(
+    PartialsClient,
+    { mode: "cache", debug, fetchMs: 0 },
+    ...wrappedChildren,
   );
 }
 

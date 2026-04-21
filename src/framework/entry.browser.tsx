@@ -158,8 +158,14 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
     //     subtree refetch runs in `frameNavigateImpl` after commit.
     // In both cases we call `event.intercept()` with no handler to
     // declare the navigation as same-document and avoid a page load.
+    //
+    // `focusReset: "manual"` opts out of the Navigation API's default
+    // post-commit focus reset to <body>. Without it, any input driving
+    // a live refetch (the search input typing into `tags: [...]`, a
+    // filter that updates a frame URL, etc.) loses focus on every
+    // keystroke.
     if (isFrameworkSilentInfo(event.info)) {
-      event.intercept();
+      event.intercept({ focusReset: "manual" });
       return;
     }
 

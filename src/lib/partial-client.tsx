@@ -1343,12 +1343,7 @@ export function PartialsClient({
     _fingerprints.clear();
 
     const rendered = renderTemplate(derived, cache);
-    return (
-      <>
-        {rendered}
-        <PartialDebugPanel entries={debug} fetchMs={fetchMs} />
-      </>
-    );
+    return renderWithDebugPanel(rendered, debug, fetchMs);
   }
 
   // ── Cache mode ──────────────────────────────────────────────────────
@@ -1372,11 +1367,32 @@ export function PartialsClient({
   ];
 
   const rendered = renderTemplate(_template, cache);
-  return (
-    <>
-      {rendered}
-      <PartialDebugPanel entries={_debug} fetchMs={fetchMs} />
-    </>
+  return renderWithDebugPanel(rendered, _debug, fetchMs);
+}
+
+/**
+ * Return `<>{...rendered}<PartialDebugPanel/></>`, but built via
+ * `React.createElement` so the array is spread as positional children.
+ * `<>{rendered}</>` passes the array as a single children prop, which
+ * makes React enforce the unique-key rule on every item — and the
+ * cached partial elements carry intentional non-keys (adding one would
+ * trigger Flight's outer/inner key composite, remounting client state
+ * on refetch; see `partialFromSnapshot`).
+ */
+function renderWithDebugPanel(
+  rendered: ReactNode[],
+  debug: PartialDebugEntry[],
+  fetchMs: number,
+): ReactNode {
+  return React.createElement(
+    React.Fragment,
+    null,
+    ...rendered,
+    React.createElement(PartialDebugPanel, {
+      entries: debug,
+      fetchMs,
+      key: "__partial-debug-panel",
+    }),
   );
 }
 

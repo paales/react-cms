@@ -190,7 +190,11 @@ describe("PartialRoot architecture", () => {
 			</PartialRoot>
 		);
 		const result = await warmThenRender({ partials: "stats" }, tree);
-		const rendered = result.filter(Boolean);
+		// Cache mode passes wrappedChildren as positional args to
+		// `React.createElement(PartialsClient, ..., ...wrappedChildren)`
+		// to avoid the "missing key" warning, so a single filtered
+		// partial arrives as one child (not an array of one).
+		const rendered = (Array.isArray(result) ? result : [result]).filter(Boolean);
 		expect(rendered).toHaveLength(1);
 	});
 

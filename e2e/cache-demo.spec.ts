@@ -120,6 +120,40 @@ test("client component inside cached subtree hydrates and retains state", async 
   await expect(button).toHaveText(/clicked 2/);
 });
 
+test("ClickCounter state survives refetch of its cached Partial", async ({
+  page,
+  request,
+}) => {
+  await request.get("/__test/clear-caches");
+  await page.goto(`/cache-demo?flavor=retain-${Date.now()}`);
+  const button = page.locator('[data-testid="click-counter"]');
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="click-counter"]');
+    return el != null && Object.keys(el).some((k) => k.startsWith("__reactFiber"));
+  });
+
+  await button.click();
+  await button.click();
+  await expect(button).toHaveText(/clicked 2/);
+
+  // Stamp the DOM node — survives reconciliation only if React keeps
+  // the same fiber instance.
+  await button.evaluate((el) => {
+    (el as HTMLElement & { __stamp?: number }).__stamp = 42;
+  });
+
+  await page.getByTestId("refetch-slow").click();
+  await page.waitForTimeout(500);
+
+  const stamped = await page
+    .locator('[data-testid="click-counter"]')
+    .evaluate((el) => (el as HTMLElement & { __stamp?: number }).__stamp);
+  expect(stamped, "button DOM node was remounted (client state lost)").toBe(
+    42,
+  );
+  await expect(button).toHaveText(/clicked 2/);
+});
+
 test("client component inside cached subtree remains clickable after cache hit", async ({
   page,
   request,
