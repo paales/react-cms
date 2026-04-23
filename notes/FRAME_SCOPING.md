@@ -124,15 +124,40 @@ clean and the fingerprint differs. Result: `<Partial cache>` inside
 a leak-affected subtree thrashes — full and refetch renders produce
 different `baseKey` strings, never share a cache entry.
 
-Fix: `src/lib/partial-component.tsx` now computes two hashes.
-`structuralFp = hash(fingerprintElement(content) + ownFrameKey)` —
-feeds `<Cache id= fingerprint=>` so the cache key is stable across
-render modes. `fp = hash(… + ambientFrameKey)` — still used for the
-client fingerprint-match skip so stage Partials inside a frame
-still invalidate on frame-URL changes. The two can diverge only in
-the exact leak-induced case; for legitimate nested frames they are
-equal by construction (own and ambient frame URLs match).
+Fix (first pass): `src/lib/partial-component.tsx` now computes two
+hashes. `structuralFp = hash(fingerprintElement(content) +
+ownFrameKey)` — feeds `<Cache id= fingerprint=>` so the cache key is
+stable across render modes. `fp = hash(… + ambientFrameKey)` — still
+used for the client fingerprint-match skip so stage Partials inside
+a frame still invalidate on frame-URL changes. The two can diverge
+only in the exact leak-induced case; for legitimate nested frames
+they are equal by construction (own and ambient frame URLs match).
 
-Repro that drove the fix: `e2e/cache-demo.spec.ts:48` (RSC refetch
-of the `#slow` Partial on `/cache-demo?flavor=…`) hit the slow
-render path on every refetch before the split, passed after.
+Repro that drove the first pass: `e2e/cache-demo.spec.ts:48` (RSC
+refetch of the `#slow` Partial on `/cache-demo?flavor=…`) hit the
+slow render path on every refetch before the split, passed after.
+
+**Fix (second pass, 2026-04-23 — sibling leak into self-framing fp).**
+The split above kept the `<Cache>` key stable but `fp` still carried
+the sibling leak. Symptom: open the `<ChatOverlay>` on `/` (which
+follows pokemon's `<Partial frame="search">` in render order), let
+it stream, then navigate to `/magento` (no sibling frame). The
+cached fp from `/` contained `inFrame=search:…`; the server's fresh
+fp on `/magento` did not; cross-page fingerprint-skip missed, the
+overlay re-rendered and the streamed chat briefly vanished.
+
+Resolution: `ambientFrameKey` is now skipped entirely when the
+Partial opens its own frame (`frame != null`). A self-framing
+Partial's content runs under its own scope (via `FrameWrapper`), so
+a sibling's leaked mutation has no semantic meaning for it. For
+nested (non-framed) Partials inside a framed ancestor the ambient
+fold is retained — that's the legitimate use it was added for, and
+the regression test
+`src/lib/__tests__/partial-frame-scope.rsc.test.tsx` pins both
+halves. E2E cover in `e2e/chat-overlay-cross-page-nav.spec.ts`.
+
+After the second pass `fp` and `structuralFp` are equal for every
+self-framing Partial (the only difference between them was the
+`ambientFrameKey` term, which now evaluates to `""` in that case).
+The split remains load-bearing for nested non-framed Partials, where
+`ambientFrameKey` carries the enclosing frame URL.

@@ -355,13 +355,21 @@ function resolveFrameRequest(
  * caller) overwrites it. React 19 renders sibling async server
  * components concurrently, so a sibling subtree that runs after
  * this mutation may observe this frame's scope even though it's not
- * actually nested inside. Effect on cache keys: the FP-side
- * `ambientFrameKey` uses this read and can be "wrong" for a sibling.
- * Downstream, `<Partial cache>` still keys by manifest values so the
- * effect is limited to the structural fingerprint. Full fix is a
- * Flight-round-trip FrameWrapper (save scope → render children
- * inside the await → restore scope) but that has its own regressions
- * in the current RSC bundle — punted.
+ * actually nested inside.
+ *
+ * The fingerprint consequence of that leak is addressed in two
+ * layers (see `notes/FRAME_SCOPING.md` §Sharp edge): `<Partial
+ * cache>`'s cache key uses `structuralFp` which excludes ambient,
+ * and a Partial that opens its own frame skips `ambientFrameKey`
+ * entirely — the sibling leak can't corrupt its own fp.
+ *
+ * What remains: descendant server components that read tracked
+ * accessors AFTER an `await` may observe a sibling-mutated scope.
+ * The "read before await" discipline (same rule as cache manifest
+ * hoisting) handles it. Full containment via a Flight-round-trip
+ * FrameWrapper (save scope → render children inside the await →
+ * restore scope) has its own regressions in the current RSC bundle
+ * — punted.
  */
 function FrameWrapper({
   name,
@@ -497,9 +505,21 @@ export function Partial({
     frame != null && frameRequest != null
       ? `|frame=${frame}:${frameRequest.url}`
       : "";
+  // Only fold the ambient frame into the fp when this Partial does NOT
+  // open its own frame. A framed Partial's content runs under its own
+  // scope (via FrameWrapper); a sibling that mutated the per-request
+  // frame-scope cell earlier in the render would otherwise leak into
+  // our fingerprint even though it's semantically irrelevant —
+  // breaking cross-page fingerprint-skip when the set of sibling
+  // frames differs between routes (e.g. `<ChatOverlay>` on `/`, which
+  // follows pokemon's `<Partial frame="search">`, vs on `/magento`
+  // where there is no sibling frame). Ambient fold remains load-
+  // bearing for NESTED Partials inside a framed ancestor — those DO
+  // inherit the ambient frame and need its URL in their fp so a
+  // frame-URL change invalidates them.
   const ambientScope = getCurrentFrameScope();
   const ambientFrameKey =
-    ambientScope && ambientScope.name !== frame
+    frame == null && ambientScope
       ? `|inFrame=${ambientScope.name}:${ambientScope.request.url}`
       : "";
   // Structural fingerprint — stable across "am I inside a frame?"

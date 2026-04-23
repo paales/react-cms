@@ -6,11 +6,15 @@ Research project: a React CMS data layer inspired by Shopify Liquid. Pages are c
 
 ## Project Structure
 
-- `notes/` — current design notes (start at `notes/README.md`). Historical docs live in `archive/` (top-level).
+**Reading this repo:** the load-bearing code lives in `src/test/`, `src/lib/`, `src/framework/`, and `src/app/` — treat everything else as ignorable for understanding. For design decisions, read `notes/` **fully** (not just the README).
+
+- `notes/` — current design notes. Read fully. Historical docs live in `archive/` (top-level).
 - `src/lib/` — Partials library (`partial.tsx`, `partial-component.tsx`, `partial-client.tsx`, `partial-registry.ts`, `partial-request-state.ts`, `partial-error-boundary.tsx`, `cache.tsx`, `hash.ts`, `multipart.ts`, `partial-cache.ts`). Activator components (`WhenVisible`, `WhenStored`) live in userspace at `src/app/components/`.
-- `proxy-design/` — legacy proxy data layer (see `proxy-design/README.md`).
-- `src/app/` — Example application (PokeAPI + Magento backends)
 - `src/framework/` — RSC plumbing (vite-plugin-rsc, Vite 8, React 19)
+- `src/app/` — Example application (PokeAPI + Magento backends)
+- `src/test/` — In-process RSC test harness (`rsc-server.ts`) and cross-tier fixtures.
+- `proxy-design/` — legacy proxy data layer (see `proxy-design/README.md`).
+- `user-ideas.md` — Ideas by the user.
 
 ## Data Layer
 
@@ -125,14 +129,14 @@ await nav.navigate(...).finished;                                          // wa
 
 `FrameworkNavigateOptions` extends the browser's `NavigationNavigateOptions`:
 
-| Field | Meaning |
-|---|---|
-| `history` | `"push"` (default), `"replace"`, or `"auto"`. From `NavigationNavigateOptions`. |
-| `state` | State to write onto the resulting entry. From `NavigationNavigateOptions`. |
-| `info` | Forwarded to navigate events. From `NavigationNavigateOptions`. Window handle only — frame handles stamp their own framework-internal `info` to suppress the page-level intercept. |
-| `selector` | CSS-style selector string (or array). `#foo` tokens target single Partials; `.foo` tokens union across every Partial with the label. Resolved server-side against the route-scoped registry. Page handle only; ignored by frame handles (frames refetch their whole subtree). |
-| `silent` | Update the URL only. No refetch. Useful for bookmarkability-only URL sync (infinite scroll's `?pages=`). |
-| `disableTransition` | Commit without wrapping in `startTransition` — fallbacks flash, chunks stream. Default `false` (atomic swap, no fallback). |
+| Field               | Meaning                                                                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `history`           | `"push"` (default), `"replace"`, or `"auto"`. From `NavigationNavigateOptions`.                                                                                                                                                                                               |
+| `state`             | State to write onto the resulting entry. From `NavigationNavigateOptions`.                                                                                                                                                                                                    |
+| `info`              | Forwarded to navigate events. From `NavigationNavigateOptions`. Window handle only — frame handles stamp their own framework-internal `info` to suppress the page-level intercept.                                                                                            |
+| `selector`          | CSS-style selector string (or array). `#foo` tokens target single Partials; `.foo` tokens union across every Partial with the label. Resolved server-side against the route-scoped registry. Page handle only; ignored by frame handles (frames refetch their whole subtree). |
+| `silent`            | Update the URL only. No refetch. Useful for bookmarkability-only URL sync (infinite scroll's `?pages=`).                                                                                                                                                                      |
+| `disableTransition` | Commit without wrapping in `startTransition` — fallbacks flash, chunks stream. Default `false` (atomic swap, no fallback).                                                                                                                                                    |
 
 `nav.name` (framework-only, not on `Navigation`) is `null` for the window handle, the frame name for a frame handle. Lets a component render identically whether it's bound to the page or a frame. Read scope-aware state via `nav.currentEntry?.url` (absolute) and `nav.currentEntry?.getState()` (frame handles project to the frame's `__frameState[name]` bucket).
 
@@ -150,12 +154,12 @@ Multiple `navigate` / `reload` calls in the same tick coalesce into one microtas
 </Partial>
 ```
 
-| Field | Meaning |
-|---|---|
-| `maxAge` | Fresh window (seconds). |
-| `staleWhileRevalidate` | Additional window where stale bytes are served while a background refresh runs. |
-| `vary` | Scalar values that identify *which snapshot* this is — for inputs the auto-tracker can't see (route params like `sku`, pre-computed values). Typed scalar-only. |
-| `bypass` | Skip caching this render (dev/preview escape hatch). |
+| Field                  | Meaning                                                                                                                                                         |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxAge`               | Fresh window (seconds).                                                                                                                                         |
+| `staleWhileRevalidate` | Additional window where stale bytes are served while a background refresh runs.                                                                                 |
+| `vary`                 | Scalar values that identify _which snapshot_ this is — for inputs the auto-tracker can't see (route params like `sku`, pre-computed values). Typed scalar-only. |
+| `bypass`               | Skip caching this render (dev/preview escape hatch).                                                                                                            |
 
 The cache key derives automatically from the Partial body's tracked accessor reads (`getCookie`, `getHeader`, `getSearchParam`, `getPathname` from `src/framework/context.ts`) plus any `vary` scalars. Authors don't restate dependencies — the runtime tracks them.
 
@@ -172,9 +176,9 @@ Dynamic Partials inside a cached region stay live via strip-on-store / reinject-
 Server actions return invalidation instructions:
 
 ```ts
-return { invalidate: { selector: ".cart" } };        // shared-token: everything with .cart
-return { invalidate: { selector: "#cart" } };        // unique token: just #cart
-return { invalidate: { selector: "#nav .cart" } };   // mix: #nav plus every .cart
+return { invalidate: { selector: ".cart" } }; // shared-token: everything with .cart
+return { invalidate: { selector: "#cart" } }; // unique token: just #cart
+return { invalidate: { selector: "#nav .cart" } }; // mix: #nav plus every .cart
 ```
 
 Tokens follow the `<Partial selector>` grammar. `#foo` matches a Partial whose selector contains that `#`-token; `.foo` matches every Partial whose selector contains that `.`-token (union).
@@ -198,7 +202,7 @@ async function ProductPage() {
 Mechanics:
 
 - `notFound()` / `redirect()` mutate the request's framework-control
-  channel *and* throw. Sync throws are caught by `Root`'s try/catch
+  channel _and_ throw. Sync throws are caught by `Root`'s try/catch
   and mapped to `<NotFoundPage/>` / `<Redirect url=…/>` directly.
   Deep async throws bubble past `PartialErrorBoundary` (which
   re-throws framework sentinels via the `__framework` brand) and
@@ -262,12 +266,12 @@ Tests hit real GraphQL APIs (PokeAPI, GraphCommerce Magento). Timeout is 15-30s 
 
 **Four tiers, picked by glob:**
 
-| Tier | Glob | What it's for | Speed |
-|---|---|---|---|
-| `node` | `src/**/*.{test,spec}.?(c\|m)[jt]s?(x)` | Unit tests, client hooks | ~2s |
-| `rsc` | `src/**/*.rsc.test.?(c\|m)[jt]s?(x)` | Server-component trees → Flight in-process | ~1s |
-| `browser` | `src/**/*.browser.test.?(c\|m)[jt]s?(x)` | Real DOM primitives jsdom can't fake | ~500ms |
-| e2e | `e2e/**/*.spec.ts` | Full-stack browser assertions against `yarn dev` | ~30s parallel |
+| Tier      | Glob                                     | What it's for                                    | Speed         |
+| --------- | ---------------------------------------- | ------------------------------------------------ | ------------- |
+| `node`    | `src/**/*.{test,spec}.?(c\|m)[jt]s?(x)`  | Unit tests, client hooks                         | ~2s           |
+| `rsc`     | `src/**/*.rsc.test.?(c\|m)[jt]s?(x)`     | Server-component trees → Flight in-process       | ~1s           |
+| `browser` | `src/**/*.browser.test.?(c\|m)[jt]s?(x)` | Real DOM primitives jsdom can't fake             | ~500ms        |
+| e2e       | `e2e/**/*.spec.ts`                       | Full-stack browser assertions against `yarn dev` | ~30s parallel |
 
 The RSC project needs `NODE_OPTIONS='--conditions=react-server'` to put `react` on the hook-less subset; the yarn scripts handle that. In-process RSC rendering uses the vendored Flight runtime directly via `src/test/rsc-server.ts` — `renderServerToFlight`, `consumePayload`, `renderWithRequest`. No dev server or subprocess required.
 
@@ -276,6 +280,17 @@ The RSC project needs `NODE_OPTIONS='--conditions=react-server'` to put `react` 
 **Dev-only `/__test/clear-caches` endpoint** (in `src/framework/entry.rsc.tsx`) clears state. By default it clears just the requesting worker's scope (via `x-test-scope`); `?all=1` wipes every scope — what the debug toolbar flush button does (`src/app/components/debug-toolbar.tsx`). Used by `test.beforeEach` in specs that need a cold starting state — particularly anything asserting Suspense fallback behavior.
 
 **Vitest's route-keyed fixtures need a registry reset.** `partial.test.tsx` has a top-level `beforeEach(clearRegistry)` because dynamic partials registered under the fake URL (`http://localhost/test`) otherwise leak across tests and contaminate tag resolution.
+
+## Workflow — after a task is done
+
+When a non-trivial task reaches a clean end state (feature landed, bug fixed, refactor finished) AND `yarn test` + `yarn test:e2e` are both green, close the loop before moving on:
+
+1. **Update the notes.** Find every doc that references the old behavior or lists the problem as open — `notes/*.md`, `CLAUDE.md` (this file — §Future tasks, architecture sections), `user-ideas.md`, `notes/IDEAS.md` — and amend them to match the new reality. Mark resolved items with a `— RESOLVED YYYY-MM-DD` banner pointing to where the work landed (the existing `notes/IDEAS.md` entries model this). Don't delete the history; the resolution trail is how future readers understand why a thing is the way it is.
+2. **Move stale docs to `archive/`.** A doc earns archival when its design is no longer wired in OR has been fully superseded by a newer doc. Add an index line in `archive/README.md` pointing to the replacement. Do not archive anything whose insights still live in current code.
+3. **Confirm the test suites are actually green.** `yarn test` and `yarn test:e2e` — both, from a clean working tree (known parallel-load flakes excepted; check against isolation). Don't commit red.
+4. **Commit.** One commit per logical change, focused on the WHY, not the WHAT (the diff tells the what). Include docs + tests alongside the code. Prefer a short imperative subject (under 70 chars) and a body that captures the motivation + any non-obvious tradeoff. Do not amend; do not `--no-verify`.
+
+The two tests tiers and the notes surface are load-bearing for this project — a fix without the corresponding doc/test update is incomplete work, not a finished task.
 
 ## APIs
 
