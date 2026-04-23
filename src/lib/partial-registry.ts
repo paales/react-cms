@@ -66,6 +66,13 @@ export interface PartialSnapshot {
   /** The author-provided `frameUrl` fallback. Session overrides it
    *  when present; kept here as the cold-session default. */
   frameUrl?: string;
+  /** Outer-first chain of ancestor partial ids, captured from the
+   *  Partial's `parent` prop. `[]` for top-level Partials. Lets
+   *  server-side logic reason about the full hierarchy (nested
+   *  frames, selector scoping, invalidation cascades) without the
+   *  client-side tree reconstruction that was necessary while the
+   *  hierarchy could only be inferred post-render. */
+  parentPath: readonly string[];
 }
 
 type RouteMap = Map<string, Map<string, PartialSnapshot>>;

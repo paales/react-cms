@@ -15,6 +15,7 @@
  */
 
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT } from "../../lib/partial-context.ts";
 import { NextObserver } from "../components/next-observer.tsx";
 import { ScrollRestore } from "../components/scroll-restore.tsx";
 import { getSearchParam } from "../../framework/context.ts";
@@ -48,7 +49,7 @@ export function BarePage() {
   const pages = Array.from({ length: end }, (_, i) => {
     const page = i + 1;
     return (
-      <Partial key={`page-${page}`} selector={`#page-${page}`}>
+      <Partial key={`page-${page}`} parent={ROOT} selector={`#page-${page}`}>
         <PageBlock page={page} />
       </Partial>
     );
@@ -62,14 +63,18 @@ export function BarePage() {
         Infinite Scroll (renderOn-style singleton slot)
       </h1>
       <p className="mb-4 text-muted-foreground">
-        <a href="/" data-testid="link-home" className="text-primary hover:underline">
+        <a
+          href="/"
+          data-testid="link-home"
+          className="text-primary hover:underline"
+        >
           ← Home
         </a>
         {" · "}
         <span data-testid="end-readout">end={end}</span>
       </p>
       {pages}
-      <Partial selector="#next">
+      <Partial parent={ROOT} selector="#next">
         <NextObserver currentEnd={end} />
       </Partial>
     </>

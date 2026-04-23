@@ -12,6 +12,7 @@
  */
 
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT } from "../../lib/partial-context.ts";
 import { _cacheStats } from "../../lib/cache.tsx";
 import { CacheControls } from "../components/cache-controls.tsx";
 import { ClickCounter } from "../components/click-counter.tsx";
@@ -86,6 +87,7 @@ export async function CacheDemoPage() {
       <CacheControls />
 
       <Partial
+        parent={ROOT}
         selector="#slow"
         cache={{ maxAge: 60 }}
         fallback={<div data-testid="slow-fallback">Loading slow…</div>}
@@ -93,7 +95,7 @@ export async function CacheDemoPage() {
         <SlowContent />
       </Partial>
 
-      <Partial selector="#clock" fallback={<div>Loading clock…</div>}>
+      <Partial parent={ROOT} selector="#clock" fallback={<div>Loading clock…</div>}>
         <Clock />
       </Partial>
 

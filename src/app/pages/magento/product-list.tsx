@@ -7,6 +7,11 @@ import { CartBadge } from "./cart-badge.tsx";
 import { LivePrice, LivePriceFallback } from "./live-price.tsx";
 import { RefreshAllPricesButton } from "./refresh-all-prices-button.tsx";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  ROOT,
+  capturePartialContext,
+  type PartialCtx,
+} from "@/lib/partial-context.ts";
 
 const CartQuery = graphql(`
   query Cart($cartId: String!) {
@@ -51,12 +56,13 @@ export function MagentoPage() {
 
   return (
     <>
-      <Partial selector="#header">
+      <Partial parent={ROOT} selector="#header">
         <header className="mb-4 flex items-center justify-between gap-4">
           <span className="text-sm text-muted-foreground">
             {new Date().toLocaleString()}
           </span>
           <Partial
+            parent={ROOT}
             selector="#cart .cart .header"
             fallback={<CartBadge quantity={"?"} />}
           >
@@ -66,7 +72,7 @@ export function MagentoPage() {
       </Partial>
       <main>
         <RefreshAllPricesButton />
-        <Partial selector="#products" cache={{ maxAge: 12 }}>
+        <Partial parent={ROOT} selector="#products" cache={{ maxAge: 12 }}>
           <ProductGrid search={search} />
         </Partial>
       </main>
@@ -87,6 +93,12 @@ async function CartPartial() {
 }
 
 async function ProductGrid({ search }: { search?: string }) {
+  // Capture BEFORE the await — after it, the shared cell may have
+  // drifted to a sibling's context (RSC sibling interleaving). The
+  // per-row ProductCards receive this as a prop instead of reading
+  // the cell, so their `<Partial>`s register under `#products` no
+  // matter what React scheduled in the meantime.
+  const parent = capturePartialContext();
   const data = await client.request(ProductsQuery, { pageSize: 12 });
   const items = (data.products?.items ?? []).filter(
     (item): item is ProductItem => item != null,
@@ -107,14 +119,24 @@ async function ProductGrid({ search }: { search?: string }) {
         className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4"
       >
         {items.map((product) => (
-          <ProductCard key={product.sku ?? product.id} product={product} />
+          <ProductCard
+            key={product.sku ?? product.id}
+            product={product}
+            parent={parent}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function ProductCard({ product }: { product: ProductItem }) {
+function ProductCard({
+  product,
+  parent,
+}: {
+  product: ProductItem;
+  parent: PartialCtx;
+}) {
   const { name, sku, id } = product;
   const imageUrl = product.small_image?.url;
   const imageLabel = product.small_image?.label;
@@ -145,6 +167,7 @@ function ProductCard({ product }: { product: ProductItem }) {
         {sku && (
           // Dynamic Partial — see previous comment pool.
           <Partial
+            parent={parent}
             selector={[`#price-${sku}`, ".price"]}
             fallback={
               <LivePriceFallback

@@ -39,10 +39,7 @@
  */
 
 import React, { type ReactNode } from "react";
-import {
-  PartialsClient,
-  type PartialDebugEntry,
-} from "./partial-client.tsx";
+import { PartialsClient, type PartialDebugEntry } from "./partial-client.tsx";
 import {
   Partial,
   PartialBoundary,
@@ -70,7 +67,9 @@ interface PartialRootProps {
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-function parseCachedFingerprints(raw: string | null): Map<string, string | null> {
+function parseCachedFingerprints(
+  raw: string | null,
+): Map<string, string | null> {
   const out = new Map<string, string | null>();
   if (!raw) return out;
   for (const token of raw.split(",").map((s) => s.trim())) {
@@ -87,7 +86,10 @@ function parseCachedFingerprints(raw: string | null): Map<string, string | null>
 
 function parseCsvTokens(raw: string | null): string[] {
   if (!raw) return [];
-  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /**
@@ -161,7 +163,6 @@ function resolveSelectorToIds(
   return ids.size > 0 ? ids : null;
 }
 
-
 /**
  * Reconstruct a `<Partial>` element from a registry snapshot. Used in
  * cache mode to render each explicitly-requested partial without
@@ -182,13 +183,17 @@ function partialFromSnapshot(_id: string, snap: PartialSnapshot): ReactNode {
   // Reconstruct the selector in array form — the parser treats each
   // element as one token (so `#`-tokens containing spaces, e.g. SKUs
   // with whitespace, survive the round-trip intact).
-  const selector: string[] = [
-    ...snap.uniqueTokens.map((t) => `#${t}`),
-    ...snap.sharedTokens.map((t) => `.${t}`),
+  const selector = [
+    ...snap.uniqueTokens.map((t): `#${string}` => `#${t}`),
+    ...snap.sharedTokens.map((t): `.${string}` => `.${t}`),
   ];
+  // Reconstruct the parent context from the stored path. The cell
+  // can't be trusted for this call — we're rendering snapshots as
+  // flat siblings in cache-mode, not through their original tree.
   return React.createElement(
     Partial,
     {
+      parent: { path: snap.parentPath },
       selector,
       fallback: snap.fallback ?? undefined,
       errorWith: snap.errorWith,
@@ -278,8 +283,13 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // a selector that only resolves to a subset of known snapshots is
   // valid (that's how unions work).
   const requestedUniqueNames = parseCsvTokens(partialsParam);
-  let registryMiss = state.isPartialRefetch && hasGlobalFilter && !combinedRequestedIds;
-  if (state.isPartialRefetch && !registryMiss && requestedUniqueNames.length > 0) {
+  let registryMiss =
+    state.isPartialRefetch && hasGlobalFilter && !combinedRequestedIds;
+  if (
+    state.isPartialRefetch &&
+    !registryMiss &&
+    requestedUniqueNames.length > 0
+  ) {
     const snapshots = getRouteSnapshots(route);
     for (const name of requestedUniqueNames) {
       // Direct lookup (effective id). If it's not a direct id match,

@@ -489,13 +489,18 @@ function reinjectDynamic(
         // single token that the parser won't split on whitespace. A
         // `#`-token like `#Province Flag Socks (Dropdown Test)` (Magento
         // SKU with spaces) survives the round-trip intact.
-        const selector: string[] = [
-          ...snap.uniqueTokens.map((t) => `#${t}`),
-          ...snap.sharedTokens.map((t) => `.${t}`),
+        const selector = [
+          ...snap.uniqueTokens.map((t): `#${string}` => `#${t}`),
+          ...snap.sharedTokens.map((t): `.${string}` => `.${t}`),
         ];
+        // Reconstruct parent from the snapshot's stored path — the
+        // render-time cell is long gone by the time cached bytes are
+        // reinjected, so we rely on the path we recorded during the
+        // original render.
         return createElement(
           Partial,
           {
+            parent: { path: snap.parentPath },
             selector,
             fallback: snap.fallback ?? undefined,
             errorWith: snap.errorWith,

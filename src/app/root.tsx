@@ -11,6 +11,7 @@ import { FramesDemoPage } from "./pages/frames-demo.tsx";
 import { ChatNotesPage, chatOverlayFrameUrl } from "./pages/chat-notes.tsx";
 import { NotFoundPage } from "./pages/not-found.tsx";
 import { PartialRoot, Partial } from "../lib/partial.tsx";
+import { ROOT } from "../lib/partial-context.ts";
 import { matchPath, pickRoute } from "../framework/router.ts";
 import {
   NotFoundError,
@@ -30,7 +31,7 @@ export function Root() {
     return (
       <PartialRoot>
         <html lang="en" className="dark">
-          <Partial selector="#head">
+          <Partial parent={ROOT} selector="#head">
             <head>
               <meta charSet="UTF-8" />
               <meta
@@ -40,7 +41,7 @@ export function Root() {
               <title>React Partials</title>
             </head>
           </Partial>
-          <body className="mx-auto min-h-screen max-w-[900px] bg-background p-8 text-foreground antialiased">
+          <body className="mx-auto min-h-screen max-w-225 bg-background p-8 text-foreground antialiased">
             <AppNav />
             {pickRoute([
               ["/bare", () => <BarePage />],

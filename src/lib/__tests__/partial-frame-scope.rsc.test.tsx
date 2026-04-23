@@ -38,6 +38,7 @@ vi.mock("../cache.tsx", () => ({
 
 import { renderWithRequest } from "../../test/rsc-server.ts";
 import { PartialRoot, Partial } from "../partial.tsx";
+import { ROOT } from "../partial-context.ts";
 import { clearRegistry } from "../partial-registry.ts";
 
 beforeEach(() => {
@@ -76,17 +77,17 @@ describe("Partial fingerprint — frame scope isolation", () => {
   it("sibling frame does not pollute a later frame's fingerprint", async () => {
     const withSibling = (
       <PartialRoot>
-        <Partial selector="#search" frame="search">
+        <Partial parent={ROOT} selector="#search" frame="search">
           <span>search body</span>
         </Partial>
-        <Partial selector="#chat" frame="chat">
+        <Partial parent={ROOT} selector="#chat" frame="chat">
           <span>chat body</span>
         </Partial>
       </PartialRoot>
     );
     const withoutSibling = (
       <PartialRoot>
-        <Partial selector="#chat" frame="chat">
+        <Partial parent={ROOT} selector="#chat" frame="chat">
           <span>chat body</span>
         </Partial>
       </PartialRoot>
@@ -115,8 +116,8 @@ describe("Partial fingerprint — frame scope isolation", () => {
     // intended use of `ambientFrameKey` and should keep working.
     const withFrameA = (
       <PartialRoot>
-        <Partial selector="#outer" frame="outer" frameUrl="/a">
-          <Partial selector="#inner">
+        <Partial parent={ROOT} selector="#outer" frame="outer" frameUrl="/a">
+          <Partial parent={ROOT} selector="#inner">
             <span>inner body</span>
           </Partial>
         </Partial>
@@ -124,8 +125,8 @@ describe("Partial fingerprint — frame scope isolation", () => {
     );
     const withFrameB = (
       <PartialRoot>
-        <Partial selector="#outer" frame="outer" frameUrl="/b">
-          <Partial selector="#inner">
+        <Partial parent={ROOT} selector="#outer" frame="outer" frameUrl="/b">
+          <Partial parent={ROOT} selector="#inner">
             <span>inner body</span>
           </Partial>
         </Partial>

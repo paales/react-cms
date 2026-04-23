@@ -1,4 +1,5 @@
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT } from "../../lib/partial-context.ts";
 import { WhenVisible } from "../components/when-visible.tsx";
 import { WhenStored } from "../components/when-stored.tsx";
 import { WhenMounted } from "../components/when-mounted.tsx";
@@ -10,7 +11,7 @@ import { getSearchParam } from "../../framework/context.ts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
- * `/defer-demo` — exercises the three shapes of `<Partial defer>`:
+ * `/defer-demo` — exercises the three shapes of `<Partial parent={ROOT} defer>`:
  *
  *   1. `defer={true}` — bare defer. No framework-installed trigger; an
  *      app-level button calls `useNavigation().reload({selector: "#" + id})` to
@@ -136,7 +137,7 @@ export function DeferDemoPage() {
             No automatic trigger. Click the button to call{" "}
             <InlineCode>useNavigation().reload({'{selector: "#manual"}'})</InlineCode>.
           </p>
-          <Partial
+          <Partial parent={ROOT}
             selector="#manual"
             defer
             fallback={
@@ -173,7 +174,7 @@ export function DeferDemoPage() {
             The content reads the value back via{" "}
             <InlineCode>getSearchParam("stored")</InlineCode>.
           </p>
-          <Partial
+          <Partial parent={ROOT}
             selector="#stored"
             defer={<WhenStored storageKey="demo-stored" as="stored" />}
             fallback={
@@ -204,7 +205,7 @@ export function DeferDemoPage() {
             SINGLE RSC request listing both ids in{" "}
             <InlineCode>?partials=</InlineCode>.
           </p>
-          <Partial
+          <Partial parent={ROOT}
             selector="#batch-a"
             defer={<WhenStored storageKey="batch-a-key" as="batch-a" />}
             fallback={
@@ -216,7 +217,7 @@ export function DeferDemoPage() {
           >
             <StoredContent paramName="batch-a" />
           </Partial>
-          <Partial
+          <Partial parent={ROOT}
             selector="#batch-b"
             defer={<WhenStored storageKey="batch-b-key" as="batch-b" />}
             fallback={
@@ -256,7 +257,7 @@ export function DeferDemoPage() {
             the slow partial resolves — proving the two flows don't
             serialize.
           </p>
-          <Partial
+          <Partial parent={ROOT}
             selector="#slow-stream"
             fallback={
               <DormantFallback testId="slow-fallback">
@@ -266,7 +267,7 @@ export function DeferDemoPage() {
           >
             <SlowContent />
           </Partial>
-          <Partial
+          <Partial parent={ROOT}
             selector="#race-defer"
             defer={<WhenMounted />}
             fallback={
@@ -308,7 +309,7 @@ export function DeferDemoPage() {
             use <InlineCode>disableTransition</InlineCode> for disjoint-id
             parallelism like this.
           </p>
-          <Partial
+          <Partial parent={ROOT}
             selector="#concurrent-a .concurrent"
             fallback={
               <div
@@ -321,7 +322,7 @@ export function DeferDemoPage() {
           >
             <DelayedClock delayMs={400} label="a" />
           </Partial>
-          <Partial
+          <Partial parent={ROOT}
             selector="#concurrent-b .concurrent"
             fallback={
               <div
@@ -334,7 +335,7 @@ export function DeferDemoPage() {
           >
             <DelayedClock delayMs={800} label="b" />
           </Partial>
-          <Partial
+          <Partial parent={ROOT}
             selector="#concurrent-c .concurrent"
             fallback={
               <div
@@ -389,7 +390,7 @@ export function DeferDemoPage() {
             className="h-[90vh]"
             aria-hidden="true"
           />
-          <Partial
+          <Partial parent={ROOT}
             selector="#any"
             defer={<WhenVisible />}
             fallback={

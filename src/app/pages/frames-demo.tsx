@@ -1,4 +1,5 @@
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT, capturePartialContext } from "../../lib/partial-context.ts";
 import { getPathname, getSearchParam } from "../../framework/context.ts";
 import {
   FrameNavigateButton,
@@ -235,6 +236,7 @@ async function SlowInsideFrame() {
 }
 
 function MenuSlowView() {
+  const parent = capturePartialContext();
   return (
     <div
       data-testid="menu-slow"
@@ -244,6 +246,7 @@ function MenuSlowView() {
         Slow menu view (streaming)
       </h3>
       <Partial
+        parent={parent}
         selector="#menu-slow-inner"
         fallback={
           <div data-testid="menu-slow-fallback" className="text-muted-foreground">
@@ -298,7 +301,12 @@ export function FramesDemoPage() {
           <CardTitle className="text-base">Cart frame</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
-          <Partial selector="#cart" frame="cart" frameUrl="/cart/closed">
+          <Partial
+            parent={ROOT}
+            selector="#cart"
+            frame="cart"
+            frameUrl="/cart/closed"
+          >
             <FrameNavigationBar />
             <CartFrameContent />
           </Partial>
@@ -310,7 +318,12 @@ export function FramesDemoPage() {
           <CardTitle className="text-base">Menu frame</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
-          <Partial selector="#menu" frame="menu" frameUrl="/menu/closed">
+          <Partial
+            parent={ROOT}
+            selector="#menu"
+            frame="menu"
+            frameUrl="/menu/closed"
+          >
             <FrameNavigationBar />
             <MenuFrameContent />
           </Partial>

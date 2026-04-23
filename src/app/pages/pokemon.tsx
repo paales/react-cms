@@ -1,4 +1,5 @@
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT, capturePartialContext } from "../../lib/partial-context.ts";
 import { WhenVisible } from "../components/when-visible.tsx";
 import { PartialControls } from "../components/partial-controls.tsx";
 import {
@@ -188,7 +189,7 @@ export function PokemonPage() {
   const pagePartials =
     pokemonId == null
       ? Array.from({ length: pages }, (_, i) => (
-          <Partial key={`page-${i + 1}`} selector={`#page-${i + 1}`}>
+          <Partial key={`page-${i + 1}`} parent={ROOT} selector={`#page-${i + 1}`}>
             <PokemonListPage offset={i * PAGE_SIZE} isFirst={i === 0} />
           </Partial>
         ))
@@ -196,7 +197,7 @@ export function PokemonPage() {
 
   return (
     <>
-      <Partial selector="#header">
+      <Partial parent={ROOT} selector="#header">
         <header className="mb-4">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">
@@ -225,10 +226,11 @@ export function PokemonPage() {
         The inner `<SearchArea/>` is identical in both places — the
         scope around it decides which URL it sees.
       */}
-      <Partial selector="#search-page .search-results">
+      <Partial parent={ROOT} selector="#search-page .search-results">
         <SearchArea scope="page" />
       </Partial>
       <Partial
+        parent={ROOT}
         selector="#search .search-results"
         frame="search"
         frameUrl="/"
@@ -238,17 +240,18 @@ export function PokemonPage() {
 
       {pokemonId != null ? (
         <>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <HeroPartial pokemonId={pokemonId} />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <StatsPartial pokemonId={pokemonId} />
           </Partial>
-          <Partial selector="#species">
+          <Partial parent={ROOT} selector="#species">
             <SpeciesPartial pokemonId={pokemonId} />
           </Partial>
           <div className="h-[80vh]" data-testid="lazy-spacer" />
           <Partial
+            parent={ROOT}
             selector="#trivia"
             defer={<WhenVisible />}
             fallback={
@@ -265,7 +268,7 @@ export function PokemonPage() {
       ) : (
         <>
           {pagePartials}
-          <Partial selector="#load-more">
+          <Partial parent={ROOT} selector="#load-more">
             <LoadMore nextPage={pages + 1} />
           </Partial>
         </>
@@ -279,16 +282,18 @@ export function PokemonPage() {
  * AMBIENT request (page URL or frame URL depending on what wraps us).
  */
 function SearchArea({ scope }: { scope: "page" | "frame" }) {
+  const parent = capturePartialContext();
   const isOpen = getSearchParam("search") != null;
   if (!isOpen) return null;
   const q = getSearchParam("q") ?? "";
   return (
     <SearchDialog open>
       <SearchInput query={q} />
-      <Partial selector={`#${scope}-stage-1`} cache={{}}>
+      <Partial parent={parent} selector={`#${scope}-stage-1`} cache={{}}>
         <SearchStage1 query={q} />
       </Partial>
       <Partial
+        parent={parent}
         selector={`#${scope}-stage-2`}
         cache={{}}
         fallback={
@@ -303,6 +308,7 @@ function SearchArea({ scope }: { scope: "page" | "frame" }) {
         <SearchStage2 query={q} />
       </Partial>
       <Partial
+        parent={parent}
         selector={`#${scope}-stage-3`}
         cache={{}}
         fallback={

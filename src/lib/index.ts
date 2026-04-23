@@ -3,6 +3,11 @@ export {
   Partial,
   type PartialProps,
 } from "./partial.tsx";
+export {
+  ROOT,
+  capturePartialContext,
+  type PartialCtx,
+} from "./partial-context.ts";
 export type {
   ActivatorProps,
   DeferSpec,

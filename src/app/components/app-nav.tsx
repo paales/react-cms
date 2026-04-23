@@ -1,4 +1,4 @@
-import { Partial } from "../../lib";
+import { Partial, capturePartialContext } from "../../lib";
 import { buttonVariants } from "@/components/ui/button";
 
 const LINKS: Array<[href: string, label: string]> = [
@@ -19,8 +19,9 @@ const LINKS: Array<[href: string, label: string]> = [
  * nav just by rendering `<AppNav/>`.
  */
 export function AppNav() {
+  const parent = capturePartialContext();
   return (
-    <Partial selector="#nav">
+    <Partial parent={parent} selector="#nav">
       <nav className="mb-6 flex flex-wrap gap-1 border-b pb-3">
         {LINKS.map(([href, label]) => (
           <a

@@ -1,4 +1,5 @@
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT, capturePartialContext } from "../../lib/partial-context.ts";
 import { getSearchParam } from "../../framework/context.ts";
 import { ChatMessage } from "./piece.tsx";
 import {
@@ -71,13 +72,19 @@ export function ChatOverlay({
   frameUrl?: string;
 }) {
   return (
-    <Partial selector="#chat-overlay" frame="chat-overlay" frameUrl={frameUrl}>
+    <Partial
+      parent={ROOT}
+      selector="#chat-overlay"
+      frame="chat-overlay"
+      frameUrl={frameUrl}
+    >
       <ChatOverlayBody defaultOpen={defaultOpen} />
     </Partial>
   );
 }
 
 function ChatOverlayBody({ defaultOpen }: { defaultOpen: boolean }) {
+  const parent = capturePartialContext();
   const chatParam = getSearchParam("chat");
   const open = chatParam != null ? chatParam === "open" : defaultOpen;
 
@@ -100,7 +107,7 @@ function ChatOverlayBody({ defaultOpen }: { defaultOpen: boolean }) {
         </div>
       </header>
       <AutoScrollToBottom containerTestId="chat-list" />
-      <Partial selector="#chat-list">
+      <Partial parent={parent} selector="#chat-list">
         <div
           data-testid="chat-list"
           className="min-h-30 flex-1 overflow-y-auto px-3 py-2"
@@ -115,6 +122,7 @@ function ChatOverlayBody({ defaultOpen }: { defaultOpen: boolean }) {
           ) : (
             msgIds.map((fileId) => (
               <Partial
+                parent={parent}
                 key={`chat-msg-${fileId}`}
                 selector={`#chat-msg-${fileId}`}
               >

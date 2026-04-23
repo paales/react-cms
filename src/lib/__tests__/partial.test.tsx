@@ -97,6 +97,7 @@ vi.mock("../cache.tsx", () => ({
 }));
 
 import { PartialRoot, Partial } from "../partial.tsx";
+import { ROOT } from "../partial-context.ts";
 import { runWithRequestAsync } from "../../framework/context.ts";
 
 function Hero() {
@@ -169,13 +170,13 @@ describe("PartialRoot architecture", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
-          <Partial selector="#species">
+          <Partial parent={ROOT} selector="#species">
             <Species />
           </Partial>
         </PartialRoot>,
@@ -187,13 +188,13 @@ describe("PartialRoot architecture", () => {
   it("filters to requested partials", async () => {
     const tree = (
       <PartialRoot>
-        <Partial selector="#hero">
+        <Partial parent={ROOT} selector="#hero">
           <Hero />
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
-        <Partial selector="#species">
+        <Partial parent={ROOT} selector="#species">
           <Species />
         </Partial>
       </PartialRoot>
@@ -206,13 +207,13 @@ describe("PartialRoot architecture", () => {
   it("filters to single partial", async () => {
     const tree = (
       <PartialRoot>
-        <Partial selector="#hero">
+        <Partial parent={ROOT} selector="#hero">
           <Hero />
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
-        <Partial selector="#species">
+        <Partial parent={ROOT} selector="#species">
           <Species />
         </Partial>
       </PartialRoot>
@@ -235,7 +236,7 @@ describe("PartialRoot architecture", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#greeting">
+          <Partial parent={ROOT} selector="#greeting">
             <Greeting name="world" />
           </Partial>
         </PartialRoot>,
@@ -254,15 +255,15 @@ describe("PartialRoot architecture", () => {
     }
     const tree = (
       <PartialRoot>
-        <Partial selector="#header">
+        <Partial parent={ROOT} selector="#header">
           <div>
             Timestamp
-            <Partial selector="#cart">
+            <Partial parent={ROOT} selector="#cart">
               <Cart />
             </Partial>
           </div>
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
       </PartialRoot>
@@ -280,15 +281,15 @@ describe("PartialRoot architecture", () => {
     }
     const tree = (
       <PartialRoot>
-        <Partial selector="#header">
+        <Partial parent={ROOT} selector="#header">
           <div>
             Timestamp
-            <Partial selector="#cart">
+            <Partial parent={ROOT} selector="#cart">
               <Cart />
             </Partial>
           </div>
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
       </PartialRoot>
@@ -320,7 +321,7 @@ describe("PartialRoot architecture", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
         </PartialRoot>,
@@ -334,16 +335,16 @@ describe("PartialRoot architecture", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
           <main>
-            <Partial selector="#stats">
+            <Partial parent={ROOT} selector="#stats">
               <Stats />
             </Partial>
           </main>
           <footer>
-            <Partial selector="#species">
+            <Partial parent={ROOT} selector="#species">
               <Species />
             </Partial>
           </footer>
@@ -360,10 +361,10 @@ describe("PartialRoot architecture", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -382,10 +383,10 @@ describe("PartialRoot architecture", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#hero">
+            <Partial parent={ROOT} selector="#hero">
               <Hero />
             </Partial>
-            <Partial selector="#stats">
+            <Partial parent={ROOT} selector="#stats">
               <Stats />
             </Partial>
           </PartialRoot>,
@@ -400,7 +401,7 @@ describe("PartialRoot architecture", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
         </PartialRoot>,
@@ -411,7 +412,7 @@ describe("PartialRoot architecture", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
         </PartialRoot>,
@@ -427,10 +428,10 @@ describe("PartialRoot architecture", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -443,10 +444,10 @@ describe("PartialRoot architecture", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#hero">
+            <Partial parent={ROOT} selector="#hero">
               <Hero />
             </Partial>
-            <Partial selector="#stats">
+            <Partial parent={ROOT} selector="#stats">
               <Stats />
             </Partial>
           </PartialRoot>,
@@ -461,10 +462,10 @@ describe("PartialRoot architecture", () => {
   it("refetch without props still renders when not in cached", async () => {
     const tree = (
       <PartialRoot>
-        <Partial selector="#hero">
+        <Partial parent={ROOT} selector="#hero">
           <Hero />
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
       </PartialRoot>
@@ -482,10 +483,10 @@ describe("PartialRoot architecture", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -506,13 +507,13 @@ describe("PartialRoot architecture", () => {
     }
     const tree = (
       <PartialRoot>
-        <Partial selector="#badge .cart .header">
+        <Partial parent={ROOT} selector="#badge .cart .header">
           <CartBadge />
         </Partial>
-        <Partial selector="#drawer .cart">
+        <Partial parent={ROOT} selector="#drawer .cart">
           <CartDrawer />
         </Partial>
-        <Partial selector="#products .catalog">
+        <Partial parent={ROOT} selector="#products .catalog">
           <ProductGrid />
         </Partial>
       </PartialRoot>
@@ -536,13 +537,13 @@ describe("PartialRoot architecture", () => {
     }
     const tree = (
       <PartialRoot>
-        <Partial selector="#a">
+        <Partial parent={ROOT} selector="#a">
           <A />
         </Partial>
-        <Partial selector="#b .group">
+        <Partial parent={ROOT} selector="#b .group">
           <B />
         </Partial>
-        <Partial selector="#c">
+        <Partial parent={ROOT} selector="#c">
           <C />
         </Partial>
       </PartialRoot>
@@ -561,7 +562,7 @@ describe("PartialRoot architecture", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#test .cart" cache={{ maxAge: 60 }}>
+          <Partial parent={ROOT} selector="#test .cart" cache={{ maxAge: 60 }}>
             <MyComponent name="hello" />
           </Partial>
         </PartialRoot>,
@@ -576,11 +577,11 @@ describe("PartialRoot architecture", () => {
   it("filters nested partial inside keyless wrapper", async () => {
     const tree = (
       <PartialRoot>
-        <Partial selector="#hero">
+        <Partial parent={ROOT} selector="#hero">
           <Hero />
         </Partial>
         <main>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </main>
@@ -602,10 +603,10 @@ describe("PartialRoot architecture", () => {
 
     const tree = (
       <PartialRoot>
-        <Partial selector="#cart .cart">
+        <Partial parent={ROOT} selector="#cart .cart">
           <Cart />
         </Partial>
-        <Partial selector="#products">
+        <Partial parent={ROOT} selector="#products">
           <Products />
         </Partial>
       </PartialRoot>
@@ -637,7 +638,7 @@ describe("Partial discovery", () => {
       renderToJSON(
         <PartialRoot>
           <Wrapper>
-            <Partial selector="#forwarded">
+            <Partial parent={ROOT} selector="#forwarded">
               <Inner />
             </Partial>
           </Wrapper>
@@ -650,7 +651,7 @@ describe("Partial discovery", () => {
   it("discovers a Partial created inside a child component's return value", async () => {
     function ProductCard() {
       return (
-        <Partial selector="#inside-card">
+        <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
       );
@@ -673,7 +674,7 @@ describe("Partial discovery", () => {
       return (
         <>
           <div>cards</div>
-          <Partial selector="#nested-inside-body">
+          <Partial parent={ROOT} selector="#nested-inside-body">
             <Inner />
           </Partial>
         </>
@@ -683,7 +684,7 @@ describe("Partial discovery", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#page">
+          <Partial parent={ROOT} selector="#page">
             <Body />
           </Partial>
         </PartialRoot>,
@@ -698,7 +699,7 @@ describe("Partial discovery", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#list">
+          <Partial parent={ROOT} selector="#list">
             <Inner />
           </Partial>
         </PartialRoot>,
@@ -712,10 +713,10 @@ describe("Partial discovery", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Inner />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Inner />
           </Partial>
         </PartialRoot>,
@@ -730,10 +731,10 @@ describe("Partial discovery", () => {
     function PokemonPage() {
       return (
         <>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Inner />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Inner />
           </Partial>
         </>
@@ -754,10 +755,10 @@ describe("Partial discovery", () => {
     function PokemonPage() {
       return (
         <>
-          <Partial selector="#hero-cmp">
+          <Partial parent={ROOT} selector="#hero-cmp">
             <Inner />
           </Partial>
-          <Partial selector="#stats-cmp">
+          <Partial parent={ROOT} selector="#stats-cmp">
             <Inner />
           </Partial>
         </>
@@ -778,7 +779,7 @@ describe("Partial discovery", () => {
 
 describe("Deep (dynamic) Partial discovery", () => {
   // A Partial produced inside a child component's return value —
-  // the canonical `.map(p => <Partial id={"price-" + p.sku}/>)`
+  // the canonical `.map(p => <Partial parent={ROOT} id={"price-" + p.sku}/>)`
   // pattern. The old static walker could not see these; the
   // runtime path via the Partial component body registers them
   // during render. These tests pin the *functional* invariants
@@ -790,7 +791,7 @@ describe("Deep (dynamic) Partial discovery", () => {
   it("registers a Partial produced inside a component body during first render", async () => {
     function ProductCard() {
       return (
-        <Partial selector="#inside-card">
+        <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
       );
@@ -814,7 +815,7 @@ describe("Deep (dynamic) Partial discovery", () => {
       return (
         <ul>
           {skus.map((sku) => (
-            <Partial key={sku} selector={`#price-${sku} .price`}>
+            <Partial parent={ROOT} key={sku} selector={`#price-${sku} .price`}>
               <Inner />
             </Partial>
           ))}
@@ -837,7 +838,7 @@ describe("Deep (dynamic) Partial discovery", () => {
   it("deep dynamic Partial is refetchable by id (registry supplement)", async () => {
     function ProductCard() {
       return (
-        <Partial selector="#price-abc">
+        <Partial parent={ROOT} selector="#price-abc">
           <Inner />
         </Partial>
       );
@@ -873,10 +874,10 @@ describe("Deep (dynamic) Partial discovery", () => {
     function ProductList() {
       return (
         <ul>
-          <Partial selector="#price-abc .price">
+          <Partial parent={ROOT} selector="#price-abc .price">
             <Inner />
           </Partial>
-          <Partial selector="#price-def .price">
+          <Partial parent={ROOT} selector="#price-def .price">
             <Inner />
           </Partial>
         </ul>
@@ -910,7 +911,7 @@ describe("Deep (dynamic) Partial discovery", () => {
   it("deep dynamic Partial is included in freshIds on first render", async () => {
     function ProductCard() {
       return (
-        <Partial selector="#inside-card">
+        <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
       );
@@ -931,7 +932,7 @@ describe("Deep (dynamic) Partial discovery", () => {
   it("fingerprint is computed for deep dynamic Partial on first render", async () => {
     function ProductCard() {
       return (
-        <Partial selector="#inside-card">
+        <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
       );
@@ -952,7 +953,7 @@ describe("Deep (dynamic) Partial discovery", () => {
   it("fingerprint skip applies to deep dynamic Partial on nav", async () => {
     function ProductCard() {
       return (
-        <Partial selector="#inside-card">
+        <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
       );
@@ -994,10 +995,10 @@ describe("Collision detection", () => {
       runWithRequestAsync(fakeRequest(), async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#cart">
+            <Partial parent={ROOT} selector="#cart">
               <Hero />
             </Partial>
-            <Partial selector="#cart">
+            <Partial parent={ROOT} selector="#cart">
               <Stats />
             </Partial>
           </PartialRoot>,
@@ -1011,14 +1012,14 @@ describe("Collision detection", () => {
       runWithRequestAsync(fakeRequest(), async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#header">
+            <Partial parent={ROOT} selector="#header">
               <div>
-                <Partial selector="#cart">
+                <Partial parent={ROOT} selector="#cart">
                   <Hero />
                 </Partial>
               </div>
             </Partial>
-            <Partial selector="#cart">
+            <Partial parent={ROOT} selector="#cart">
               <Stats />
             </Partial>
           </PartialRoot>,
@@ -1031,14 +1032,14 @@ describe("Collision detection", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#header">
+          <Partial parent={ROOT} selector="#header">
             <div>
-              <Partial selector="#cart">
+              <Partial parent={ROOT} selector="#cart">
                 <Hero />
               </Partial>
             </div>
           </Partial>
-          <Partial selector="#products">
+          <Partial parent={ROOT} selector="#products">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -1053,10 +1054,10 @@ describe("Streaming mode", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -1068,10 +1069,10 @@ describe("Streaming mode", () => {
   it("partial refetch uses cache mode", async () => {
     const tree = (
       <PartialRoot>
-        <Partial selector="#hero">
+        <Partial parent={ROOT} selector="#hero">
           <Hero />
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
       </PartialRoot>
@@ -1093,10 +1094,10 @@ describe("Streaming mode", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#cart" fallback={fallback}>
+          <Partial parent={ROOT} selector="#cart" fallback={fallback}>
             <SlowCart />
           </Partial>
         </PartialRoot>,
@@ -1104,7 +1105,7 @@ describe("Streaming mode", () => {
     );
 
     // Walk the rendered tree for any Suspense element — it's there
-    // because <Partial selector="#cart" fallback={...}> wrapped its content.
+    // because <Partial parent={ROOT} selector="#cart" fallback={...}> wrapped its content.
     function findSuspense(node: any): boolean {
       if (Array.isArray(node)) return node.some(findSuspense);
       if (!node || typeof node !== "object") return false;
@@ -1124,10 +1125,10 @@ describe("Streaming mode", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero" fallback={<div>loading hero</div>}>
+          <Partial parent={ROOT} selector="#hero" fallback={<div>loading hero</div>}>
             <Hero />
           </Partial>
-          <Partial selector="#stats" fallback={<div>loading stats</div>}>
+          <Partial parent={ROOT} selector="#stats" fallback={<div>loading stats</div>}>
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -1148,10 +1149,10 @@ describe("Streaming mode", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -1172,10 +1173,10 @@ describe("Streaming mode", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#hero">
+          <Partial parent={ROOT} selector="#hero">
             <Hero />
           </Partial>
-          <Partial selector="#stats">
+          <Partial parent={ROOT} selector="#stats">
             <Stats />
           </Partial>
         </PartialRoot>,
@@ -1189,10 +1190,10 @@ describe("Streaming mode", () => {
   it("cache mode renders only the requested partial as children", async () => {
     const tree = (
       <PartialRoot>
-        <Partial selector="#hero">
+        <Partial parent={ROOT} selector="#hero">
           <Hero />
         </Partial>
-        <Partial selector="#stats">
+        <Partial parent={ROOT} selector="#stats">
           <Stats />
         </Partial>
       </PartialRoot>
@@ -1221,10 +1222,10 @@ describe("Streaming mode", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#cart .cart">
+            <Partial parent={ROOT} selector="#cart .cart">
               <CartBadge />
             </Partial>
-            <Partial selector="#products">
+            <Partial parent={ROOT} selector="#products">
               <Products />
             </Partial>
           </PartialRoot>,
@@ -1249,10 +1250,10 @@ describe("Streaming mode", () => {
 
     const tree = (
       <PartialRoot>
-        <Partial selector="#cart .cart">
+        <Partial parent={ROOT} selector="#cart .cart">
           <CartBadge />
         </Partial>
-        <Partial selector="#products">
+        <Partial parent={ROOT} selector="#products">
           <Products />
         </Partial>
       </PartialRoot>
@@ -1271,15 +1272,15 @@ describe("Streaming mode", () => {
 describe("Cart invalidation: header must not re-render", () => {
   // Mirrors the actual MagentoPage layout:
   //   <PartialRoot>
-  //     <Partial selector="#header">
+  //     <Partial parent={ROOT} selector="#header">
   //       <header>
   //         Timestamp: {date}
-  //         <Partial selector="#cart .cart" fallback={...}>
+  //         <Partial parent={ROOT} selector="#cart .cart" fallback={...}>
   //           <CartBadge />
   //         </Partial>
   //       </header>
   //     </Partial>
-  //     <Partial selector="#products">
+  //     <Partial parent={ROOT} selector="#products">
   //       <ProductGrid />
   //     </Partial>
   //   </PartialRoot>
@@ -1298,16 +1299,16 @@ describe("Cart invalidation: header must not re-render", () => {
 
   const cartTree = (
     <PartialRoot>
-      <Partial selector="#header">
+      <Partial parent={ROOT} selector="#header">
         <header>
           Timestamp: 2024-01-01
-          <Partial selector="#cart .cart" fallback={<span>?</span>}>
+          <Partial parent={ROOT} selector="#cart .cart" fallback={<span>?</span>}>
             <CartBadge quantity={5} />
           </Partial>
         </header>
       </Partial>
       <main>
-        <Partial selector="#products">
+        <Partial parent={ROOT} selector="#products">
           <ProductGrid />
         </Partial>
       </main>
@@ -1343,16 +1344,16 @@ describe("Cart invalidation: header must not re-render", () => {
   it("__populateCache renders all partials (first action), subsequent only renders cart", async () => {
     const makeTree = () => (
       <PartialRoot>
-        <Partial selector="#header">
+        <Partial parent={ROOT} selector="#header">
           <header>
             Timestamp: {Date.now()}
-            <Partial selector="#cart .cart" fallback={<span>?</span>}>
+            <Partial parent={ROOT} selector="#cart .cart" fallback={<span>?</span>}>
               <CartBadge quantity={1} />
             </Partial>
           </header>
         </Partial>
         <main>
-          <Partial selector="#products">
+          <Partial parent={ROOT} selector="#products">
             <ProductGrid />
           </Partial>
         </main>
@@ -1385,7 +1386,7 @@ describe("Cart invalidation: header must not re-render", () => {
 // The bootstrap JSX walk in `PartialRoot` (`seedRegistry`) follows
 // `.children` chains; it can't see through opaque function components.
 // A `<Partial>` produced inside `ProductList.map(p => <ProductItem
-// price={<Partial id={`price-${p.sku}`}>…</Partial>}/>)` — the canonical
+// price={<Partial parent={ROOT} id={`price-${p.sku}`}>…</Partial>}/>)` — the canonical
 // GoldPrice-style pattern — is invisible to that bootstrap walk. But
 // every `<Partial>` self-registers in the route-scoped
 // `partial-registry` on render, so later refetches can resolve by id
@@ -1409,10 +1410,10 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#hero">
+            <Partial parent={ROOT} selector="#hero">
               <Hero />
             </Partial>
-            <Partial selector="#price-ABC">
+            <Partial parent={ROOT} selector="#price-ABC">
               <GoldPrice sku="ABC" />
             </Partial>
           </PartialRoot>,
@@ -1441,7 +1442,7 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
       return (
         <>
           {["A", "B", "C"].map((sku) => (
-            <Partial key={sku} selector={`#price-${sku}`}>
+            <Partial parent={ROOT} key={sku} selector={`#price-${sku}`}>
               <GoldPrice sku={sku} />
             </Partial>
           ))}
@@ -1495,7 +1496,7 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#hero">
+            <Partial parent={ROOT} selector="#hero">
               <Hero />
             </Partial>
           </PartialRoot>,
@@ -1520,7 +1521,7 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
       return (
         <>
           {["X", "Y"].map((sku) => (
-            <Partial key={sku} selector={`#price-${sku}`}>
+            <Partial parent={ROOT} key={sku} selector={`#price-${sku}`}>
               <GoldPrice sku={sku} />
             </Partial>
           ))}
@@ -1560,7 +1561,7 @@ describe("Partial defer prop", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#feed" defer fallback={<Dormant />}>
+          <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
             <Activated />
           </Partial>
         </PartialRoot>,
@@ -1577,7 +1578,7 @@ describe("Partial defer prop", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#feed" defer fallback={<Dormant />}>
+            <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
               <Activated />
             </Partial>
           </PartialRoot>,
@@ -1605,7 +1606,7 @@ describe("Partial defer prop", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial
+          <Partial parent={ROOT}
             selector="#feed"
             defer={<Activator />}
             fallback={<Dormant />}
@@ -1640,7 +1641,7 @@ describe("Partial defer prop", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial
+          <Partial parent={ROOT}
             selector="#feed"
             defer={<Activator label="hello" />}
             fallback={<Dormant />}
@@ -1662,7 +1663,7 @@ describe("Partial defer prop", () => {
       async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="#feed" defer fallback={<Dormant />}>
+            <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
               <Activated />
             </Partial>
           </PartialRoot>,
@@ -1681,7 +1682,7 @@ describe("Partial defer prop", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#feed" defer fallback={<Dormant />}>
+          <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
             <Activated />
           </Partial>
         </PartialRoot>,
@@ -1744,7 +1745,7 @@ describe("Selector parsing + effective-id synthesis", () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector="#thing .price .product">
+          <Partial parent={ROOT} selector="#thing .price .product">
             <span>hello</span>
           </Partial>
         </PartialRoot>,
@@ -1761,7 +1762,7 @@ describe("Selector parsing + effective-id synthesis", () => {
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial selector=".cart">
+          <Partial parent={ROOT} selector=".cart">
             <span>anon</span>
           </Partial>
         </PartialRoot>,
@@ -1780,7 +1781,7 @@ describe("Selector parsing + effective-id synthesis", () => {
         renderToJSON(
           <PartialRoot>
             {/* @ts-expect-error intentionally missing required prop */}
-            <Partial>
+            <Partial parent={ROOT}>
               <span>nope</span>
             </Partial>
           </PartialRoot>,
@@ -1789,16 +1790,31 @@ describe("Selector parsing + effective-id synthesis", () => {
     ).rejects.toThrow(/selector/);
   });
 
+  it("throws when parent is missing", async () => {
+    await expect(
+      runWithRequestAsync(fakeRequest(), async () =>
+        renderToJSON(
+          <PartialRoot>
+            {/* @ts-expect-error intentionally missing required prop */}
+            <Partial selector="#no-parent">
+              <span>nope</span>
+            </Partial>
+          </PartialRoot>,
+        ),
+      ),
+    ).rejects.toThrow(/parent/);
+  });
+
   it("throws on duplicate anonymous Partials (same sorted `.`-tokens)", async () => {
     await expect(
       runWithRequestAsync(fakeRequest(), async () =>
         renderToJSON(
           <PartialRoot>
             <>
-              <Partial selector=".cart">
+              <Partial parent={ROOT} selector=".cart">
                 <span>a</span>
               </Partial>
-              <Partial selector=".cart">
+              <Partial parent={ROOT} selector=".cart">
                 <span>b</span>
               </Partial>
             </>
@@ -1813,7 +1829,7 @@ describe("Selector parsing + effective-id synthesis", () => {
       runWithRequestAsync(fakeRequest(), async () =>
         renderToJSON(
           <PartialRoot>
-            <Partial selector="cart">
+            <Partial parent={ROOT} selector="cart">
               <span>bare</span>
             </Partial>
           </PartialRoot>,

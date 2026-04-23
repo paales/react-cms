@@ -22,6 +22,11 @@ import { requirePartialState } from "./partial-request-state.ts";
 import { djb2 as hashFingerprint } from "./hash.ts";
 import { Cache } from "./cache.tsx";
 import type { CacheOptions } from "./cache-options.ts";
+import {
+  _childContext,
+  _setCurrentPartialContext,
+  type PartialCtx,
+} from "./partial-context.ts";
 
 /**
  * Recognizable wrapper around a rendered Partial.
@@ -36,6 +41,7 @@ import type { CacheOptions } from "./cache-options.ts";
  */
 export function PartialBoundary({
   id,
+  parentPath,
   content,
   fallback,
   errorWith,
@@ -47,6 +53,11 @@ export function PartialBoundary({
   children,
 }: {
   id: string;
+  /** Outer-first chain of ancestor partial ids, from the `parent`
+   *  prop. Recorded in the registry so the server knows the full
+   *  hierarchy — see `notes/PARENT_CONTEXT.md` and
+   *  `src/lib/partial-context.ts`. */
+  parentPath: readonly string[];
   /** Original children of the `<Partial>` — stored in the registry so
    *  a refetch can render it directly. */
   content: ReactNode;
@@ -69,6 +80,7 @@ export function PartialBoundary({
     cache,
     frame,
     frameUrl,
+    parentPath,
   });
   return children;
 }
@@ -106,6 +118,27 @@ export interface ActivatorProps {
 export type SelectorToken = `${"#" | "."}${string}`;
 
 export interface PartialProps {
+  /**
+   * Parent context token identifying where this Partial sits in the
+   * server-side render tree. **Required.**
+   *
+   * Top-level Partials (not nested inside any other Partial) pass
+   * `ROOT`. Nested Partials pass either the `parent` threaded down as
+   * a prop from an ancestor component, or the result of
+   * `capturePartialContext()` called in a synchronous code path.
+   *
+   * Why required: RSC renders async components in a different
+   * traversal order than the JSX tree suggests (React moves to
+   * siblings when a parent awaits), so a single React.cache-backed
+   * "current parent" cell drifts unpredictably. Explicit threading is
+   * the only way to track the full hierarchy server-side today;
+   * `AsyncContext` (TC39 proposal) will eventually eliminate this
+   * requirement.
+   *
+   * See `src/lib/partial-context.ts` for the full pattern and the
+   * async-hoisting discipline.
+   */
+  parent: PartialCtx;
   /**
    * CSS-style selector identifying this Partial. A space-separated list
    * (or array) of tokens, each prefixed:
@@ -411,6 +444,7 @@ function placeholderFor(id: string): ReactElement {
  * miss them.
  */
 export function Partial({
+  parent,
   selector,
   children,
   fallback,
@@ -420,6 +454,14 @@ export function Partial({
   frame,
   frameUrl,
 }: PartialProps): ReactNode {
+  if (parent == null || !Array.isArray(parent.path)) {
+    throw new Error(
+      `<Partial> requires a \`parent\` prop. Pass \`ROOT\` at the top of ` +
+        `the tree or \`capturePartialContext()\` (in a sync code path) / ` +
+        `the \`parent\` received from an ancestor (across any \`await\`). ` +
+        `See src/lib/partial-context.ts.`,
+    );
+  }
   const state = requirePartialState();
 
   const parsed = parseSelector(selector);
@@ -453,6 +495,13 @@ export function Partial({
     );
   }
   state.seenIds.add(id);
+
+  // Push our own context onto the per-request cell BEFORE rendering
+  // children. Descendants in sync code paths can read it via
+  // `capturePartialContext()`; descendants across an await must have
+  // captured earlier and threaded `parent` explicitly (the cell is
+  // unreliable post-await due to RSC sibling interleaving).
+  _setCurrentPartialContext(_childContext(parent, id));
 
   const isExplicit = state.explicitIds.has(id);
   const effectiveFallback = fallback ?? null;
@@ -578,6 +627,7 @@ export function Partial({
       cache,
       frame,
       frameUrl,
+      parentPath: parent.path,
     });
     return placeholderFor(id);
   }
@@ -598,6 +648,7 @@ export function Partial({
     return (
       <PartialBoundary
         id={id}
+        parentPath={parent.path}
         content={rawContent}
         fallback={effectiveFallback}
         errorWith={errorWith}
@@ -677,6 +728,7 @@ export function Partial({
   return (
     <PartialBoundary
       id={id}
+      parentPath={parent.path}
       content={rawContent}
       fallback={effectiveFallback}
       errorWith={errorWith}

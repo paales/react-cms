@@ -1,13 +1,14 @@
 import { Partial } from "../../lib/partial.tsx";
+import { ROOT } from "../../lib/partial-context.ts";
 import { SelectorRefetchButton } from "../components/selector-demo-controls.tsx";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
  * `/selector-demo` — exercises selector-based refetch.
  *
- *   <Partial selector=".product">                    // anonymous; addressable only via .product
- *   <Partial selector="#price-a .price">             // price family; each member has a `#`-token
- *   <Partial selector="#price-b .price .featured">   // same family, extra `.featured` label
+ *   <Partial parent={ROOT} parent={parent} selector=".product">                    // anonymous; addressable only via .product
+ *   <Partial parent={ROOT} parent={parent} selector="#price-a .price">             // price family; each member has a `#`-token
+ *   <Partial parent={ROOT} parent={parent} selector="#price-b .price .featured">   // same family, extra `.featured` label
  *
  * Buttons call `useNavigation().reload({selector: "..."})`. The selector
  * string uses CSS grammar: `#foo` (unique) and `.foo` (shared), space
@@ -40,11 +41,13 @@ export function SelectorDemoPage() {
       <title>Selector Demo</title>
       <h1 className="mb-4 text-2xl font-semibold">Selector-based refetch</h1>
       <p className="mb-8 text-muted-foreground">
-        <InlineCode>useNavigation().reload({'{selector: ".price"}'})</InlineCode>{" "}
+        <InlineCode>
+          useNavigation().reload({'{selector: ".price"}'})
+        </InlineCode>{" "}
         refetches every Partial carrying that class token. Multiple tokens
-        union: <InlineCode>{'{selector: ".price .featured"}'}</InlineCode>{" "}
-        hits any Partial with either label. <InlineCode>#foo</InlineCode>{" "}
-        targets a single Partial.
+        union: <InlineCode>{'{selector: ".price .featured"}'}</InlineCode> hits
+        any Partial with either label. <InlineCode>#foo</InlineCode> targets a
+        single Partial.
       </p>
 
       <Card className="mb-6 p-5">
@@ -60,7 +63,7 @@ export function SelectorDemoPage() {
             <InlineCode>__anon:.product</InlineCode> internally. Only
             addressable via <InlineCode>.product</InlineCode>.
           </p>
-          <Partial selector=".product">
+          <Partial parent={ROOT} selector=".product">
             <ServerTime label="product" />
           </Partial>
         </CardContent>
@@ -75,16 +78,16 @@ export function SelectorDemoPage() {
         <CardContent className="flex flex-col gap-2 px-0">
           <p className="text-sm text-muted-foreground">
             Three siblings sharing <InlineCode>.price</InlineCode>; two also
-            carry <InlineCode>.featured</InlineCode>. Selector unions let
-            you refresh a subset without plumbing ids through props.
+            carry <InlineCode>.featured</InlineCode>. Selector unions let you
+            refresh a subset without plumbing ids through props.
           </p>
-          <Partial selector="#price-a .price">
+          <Partial parent={ROOT} selector="#price-a .price">
             <ServerTime label="price-a" />
           </Partial>
-          <Partial selector="#price-b .price .featured">
+          <Partial parent={ROOT} selector="#price-b .price .featured">
             <ServerTime label="price-b" />
           </Partial>
-          <Partial selector="#price-c .price .featured">
+          <Partial parent={ROOT} selector="#price-c .price .featured">
             <ServerTime label="price-c" />
           </Partial>
         </CardContent>
