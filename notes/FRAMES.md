@@ -41,7 +41,7 @@ scoped handles have the same shape:
 
 | Method / Prop | Frame-scoped | Window-scoped |
 |---|---|---|
-| `name` | Frame name | `null` |
+| `name` | Dotted frame path (e.g. `"cart"` or `"products.list"`) | `null` |
 | `currentUrl` | Frame's URL (client cache) | `location.pathname + search` |
 | `canGoBack` / `canGoForward` | An earlier/later entry's `__frames[name].url` differs | `navigation.canGoBack` / `canGoForward` |
 | `navigate(url, opts?)` | `navigation.navigate(sameUrl, { state, info })` + session update + frame refetch | `navigation.navigate` |
@@ -56,12 +56,65 @@ plus one extra:
 
 ```ts
 navigate(url, {
-  history: "push" | "replace" | "auto",   // default: "push"
+  history: "push" | "replace" | "auto",   // default: "auto" (in-state, no browser entry)
   state: { scrollY: 100 },                // user state on the entry
   info: { reason: "auto-save" },          // navigate event info (window only)
   disableTransition: true,                // bypass startTransition on commit
 })
 ```
+
+## Nesting — frames inside frames
+
+Frames compose by nesting. A `<Partial frame="list">` rendered inside
+a `<Partial frame="products">` ancestor is a child frame of
+`products`: its canonical identity is the dotted path of every
+enclosing frame ancestor joined with its own local name —
+`"products.list"`. This is what lets two separate `list` frames
+coexist under different parents without colliding:
+
+```tsx
+<Partial parent={ROOT} selector="#products" frame="products">
+  <Partial parent={capturePartialContext()} selector="#list" frame="list">
+    <ProductList />  {/* frame URL = session["products.list"] */}
+  </Partial>
+</Partial>
+
+<Partial parent={ROOT} selector="#blog" frame="blog">
+  <Partial parent={capturePartialContext()} selector="#list" frame="list">
+    <BlogList />    {/* frame URL = session["blog.list"], distinct! */}
+  </Partial>
+</Partial>
+```
+
+The server tracks the full chain via `PartialCtx.frameChain` threaded
+through `<Partial parent={…}>` — an opaque token built from either
+`ROOT` at the top or `capturePartialContext()` in a sync code path,
+and threaded as an explicit prop across any `await` (same discipline
+as tracked accessors; see `src/lib/partial-context.ts`). On the wire,
+`?__frame=products.list&__frameUrl=/list?page=3` carries the full
+path; session storage keys off the dotted path; client navigation
+state nests by tree:
+
+```ts
+state.__frames = {
+  products: {
+    url: "/p/alpha",
+    __frameHistory: { past, future },  // products' own back-stack
+    __frames: {
+      list: {
+        url: "/list?page=3",
+        __frameHistory: { past, future },  // list's own back-stack
+      }
+    }
+  }
+}
+```
+
+A parent frame's `__frameHistory` and a child's are independent — the
+two nav axes don't interfere. `useNavigation("products.list")`
+returns a handle bound to the nested node; no-argument
+`useNavigation()` inside a nested subtree binds to the innermost
+ambient frame via `FrameNameContext` (which stacks the full path).
 
 ## Mental model
 
