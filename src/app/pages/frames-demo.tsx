@@ -94,6 +94,7 @@ function CartClosedView() {
 }
 
 function CartOpenView() {
+  const parent = capturePartialContext();
   return (
     <div
       data-testid="cart-open"
@@ -103,7 +104,7 @@ function CartOpenView() {
       <p className="mb-3 text-muted-foreground">
         0 items · rendered at {new Date().toLocaleTimeString()}
       </p>
-      <div className="flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         <FrameNavigateButton
           url="/cart/checkout"
           label="Go to checkout"
@@ -120,6 +121,100 @@ function CartOpenView() {
           testId="cart-mark-ready"
         />
       </div>
+
+      {/*
+        NESTED FRAME — path `cart.tab`. Identical local name `tab`
+        exists in `menu.tab` (inside MenuAboutView) but they don't
+        collide: session, navigation state, and `?__frame=` all key
+        off the full dotted path. Each nested frame has its own
+        back/forward stack, independent of its parent's.
+      */}
+      <Partial
+        parent={parent}
+        selector="#cart-tab"
+        frame="tab"
+        frameUrl="/items"
+      >
+        <NestedFrameShell label="cart.tab">
+          <CartTabContent />
+        </NestedFrameShell>
+      </Partial>
+    </div>
+  );
+}
+
+/** Routes the nested `cart.tab` frame by its own URL. */
+function CartTabContent() {
+  return (
+    <div data-testid="cart-tab">
+      <div className="mb-2 flex flex-wrap gap-2">
+        <FrameNavigateButton url="/items" label="Items" testId="cart-tab-items" />
+        <FrameNavigateButton
+          url="/coupons"
+          label="Coupons"
+          testId="cart-tab-coupons"
+        />
+        <FrameNavigateButton
+          url="/summary"
+          label="Summary"
+          testId="cart-tab-summary"
+        />
+      </div>
+      <TabBody
+        path="/items"
+        testId="cart-tab-items-body"
+        body="3 items in your cart. Fresh render @"
+      />
+      <TabBody
+        path="/coupons"
+        testId="cart-tab-coupons-body"
+        body="Apply coupon — none active. Fresh render @"
+      />
+      <TabBody
+        path="/summary"
+        testId="cart-tab-summary-body"
+        body="Subtotal $0.00 · tax $0.00. Fresh render @"
+      />
+    </div>
+  );
+}
+
+/** Renders only when the ambient frame URL matches `path`. */
+function TabBody({
+  path,
+  testId,
+  body,
+}: {
+  path: string;
+  testId: string;
+  body: string;
+}) {
+  if (getPathname(path) == null) return null;
+  return (
+    <div
+      data-testid={testId}
+      className="rounded-md border border-dashed bg-muted/20 p-3 text-sm text-muted-foreground"
+    >
+      {body} {new Date().toLocaleTimeString()}
+    </div>
+  );
+}
+
+/** Shell around any nested frame — label + its own nav bar. */
+function NestedFrameShell({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border-l-2 border-sky-500/50 bg-muted/20 p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-sky-400">
+        nested frame · {label}
+      </div>
+      <FrameNavigationBar />
+      {children}
     </div>
   );
 }
@@ -177,6 +272,7 @@ function MenuClosedView() {
 }
 
 function MenuAboutView() {
+  const parent = capturePartialContext();
   return (
     <div
       data-testid="menu-about"
@@ -186,10 +282,59 @@ function MenuAboutView() {
       <p className="mb-3">
         Demo of the Frame primitive — two server-iframes on a normal page.
       </p>
-      <FrameNavigateButton
-        url="/menu/closed"
-        label="Close"
-        testId="menu-close-btn"
+      <div className="mb-4">
+        <FrameNavigateButton
+          url="/menu/closed"
+          label="Close"
+          testId="menu-close-btn"
+        />
+      </div>
+
+      {/*
+        NESTED FRAME — path `menu.tab`. Same LOCAL name `tab` as the
+        one inside CartOpenView (path `cart.tab`) — they coexist
+        because the framework keys every frame by its full dotted
+        path, not its local name. Each has its own independent
+        back/forward stack.
+      */}
+      <Partial
+        parent={parent}
+        selector="#menu-tab"
+        frame="tab"
+        frameUrl="/general"
+      >
+        <NestedFrameShell label="menu.tab">
+          <MenuTabContent />
+        </NestedFrameShell>
+      </Partial>
+    </div>
+  );
+}
+
+function MenuTabContent() {
+  return (
+    <div data-testid="menu-tab">
+      <div className="mb-2 flex flex-wrap gap-2">
+        <FrameNavigateButton
+          url="/general"
+          label="General"
+          testId="menu-tab-general"
+        />
+        <FrameNavigateButton
+          url="/advanced"
+          label="Advanced"
+          testId="menu-tab-advanced"
+        />
+      </div>
+      <TabBody
+        path="/general"
+        testId="menu-tab-general-body"
+        body="General preferences. Fresh render @"
+      />
+      <TabBody
+        path="/advanced"
+        testId="menu-tab-advanced-body"
+        body="Advanced knobs. Fresh render @"
       />
     </div>
   );
@@ -282,7 +427,12 @@ export function FramesDemoPage() {
         </code>
         , and the browser back/forward buttons handle navigation
         natively. Two frames (cart and menu) live alongside with their
-        own URL scopes and inline nav bars.
+        own URL scopes and inline nav bars. <strong>Open</strong> the
+        cart or menu to see the <strong>nested</strong> frame inside —
+        both use the local frame name <code>tab</code>, but resolve
+        to the distinct paths <code>cart.tab</code> and{" "}
+        <code>menu.tab</code> and keep independent back/forward
+        stacks.
       </p>
 
       <Card className="mb-4 p-5">

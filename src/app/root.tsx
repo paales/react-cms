@@ -44,18 +44,18 @@ export function Root() {
           <body className="mx-auto min-h-screen max-w-225 bg-background p-8 text-foreground antialiased">
             <AppNav />
             {pickRoute([
-              ["/bare", () => <BarePage />],
+              ["/bare", BarePage],
               ["/cache-demo", () => <CacheDemoPage />],
-              ["/defer-demo", () => <DeferDemoPage />],
-              ["/selector-demo", () => <SelectorDemoPage />],
-              ["/sentinels-demo", () => <SentinelsDemoPage />],
-              ["/frames-demo", () => <FramesDemoPage />],
-              ["/chat-notes", () => <ChatNotesPage />],
+              ["/defer-demo", DeferDemoPage],
+              ["/selector-demo", SelectorDemoPage],
+              ["/sentinels-demo", SentinelsDemoPage],
+              ["/frames-demo", FramesDemoPage],
+              ["/chat-notes", ChatNotesPage],
               ["/not-found-demo", () => notFound()],
               ["/redirect-demo", () => redirect("/cache-demo")],
-              ["/magento", () => <MagentoPage />],
-              ["/magento/*", () => <MagentoPage />],
-              ["/*", () => <PokemonPage />],
+              ["/magento", MagentoPage],
+              ["/magento/*", MagentoPage],
+              ["/*", PokemonPage],
             ])}
             <ChatOverlay
               defaultOpen={matchPath("/chat-notes") != null}

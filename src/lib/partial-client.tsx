@@ -895,17 +895,28 @@ export async function _dispatchFrameRefetch(
   const refetchUrl = new URL(window.location.href);
   refetchUrl.searchParams.set("__frame", key);
   refetchUrl.searchParams.set("__frameUrl", url);
-  // Convention: the frame's LOCAL name matches the root Partial's
-  // `#`-token inside its subtree. For a nested frame (path length > 1),
-  // we send only the leaf name as the partials filter because the
-  // effective id is still the selector's `#`-token — path-qualification
-  // is only for session/state keying, not for the partial-id lookup.
+  // Narrow to the TOP-LEVEL frame of the path as the partials filter.
+  // For a top-level frame (path `["cart"]`), that's `partials=cart` —
+  // same as pre-nesting behavior. For a nested frame (path
+  // `["cart", "tab"]`), that's still `partials=cart` — we need the
+  // root-of-the-subtree rendered FRESH so its descendants (the
+  // nested frame included) re-run their bodies with the updated
+  // session URL. Narrowing to the nested leaf's selector would be
+  // more precise but requires a server-side registry lookup on
+  // `framePath` to bridge local name → effective id; the ancestor
+  // hint correctly widens the render until that's built.
+  //
+  // Without this hint, the parent frame's fingerprint (which hasn't
+  // changed — only the nested child's frame URL did) would match
+  // `?cached=`, the server would emit a placeholder, and the client
+  // would keep showing stale nested content.
+  //
   // Frame refetches invoked from the urlChanged path in
-  // `entry.browser.tsx` deliberately DO NOT set `partials=` — they want
-  // a full render so URL-dependent content (e.g. main listing switching
-  // on `?product=`) rerenders while `__frame` still updates the session.
-  const leaf = path[path.length - 1];
-  refetchUrl.searchParams.set("partials", leaf);
+  // `entry.browser.tsx` deliberately DO NOT set `partials=` — they
+  // want a full render so URL-dependent content (e.g. main listing
+  // switching on `?product=`) rerenders while `__frame` still
+  // updates the session.
+  refetchUrl.searchParams.set("partials", path[0]);
   if (options?.disableTransition) {
     refetchUrl.searchParams.set("disableTransition", "1");
   }
