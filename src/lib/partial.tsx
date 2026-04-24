@@ -212,6 +212,7 @@ function partialFromSnapshot(_id: string, snap: PartialSnapshot): ReactNode {
       cache: snap.cache,
       frame: frameLocalName,
       frameUrl: snap.frameUrl,
+      cmsId: snap.cmsId,
     },
     snap.content,
   );

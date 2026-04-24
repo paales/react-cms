@@ -10,10 +10,15 @@ import {
 // itself never clones content with prop overrides — there is no
 // `__inputs` mechanism on the client.
 import {
+  _setCurrentCmsScope,
   getCurrentFrameScope,
   getRequest,
   setCurrentFrameScope,
 } from "../framework/context.ts";
+import {
+  cmsFingerprintContribution,
+  createCmsScope,
+} from "../framework/cms-runtime.ts";
 import { getSessionFrameUrl } from "../framework/session.ts";
 import { registerPartial } from "./partial-registry.ts";
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
@@ -52,6 +57,7 @@ export function PartialBoundary({
   cache,
   framePath,
   frameUrl,
+  cmsId,
   children,
 }: {
   id: string;
@@ -72,6 +78,10 @@ export function PartialBoundary({
    *  this Partial doesn't open a frame. */
   framePath: readonly string[];
   frameUrl?: string;
+  /** Stable CMS storage key, preserved so cache-mode refetches
+   *  reconstruct the Partial with the same `cmsId` and descendant
+   *  content accessors resolve against the same node. */
+  cmsId?: string;
   children: ReactNode;
 }): ReactNode {
   const route = new URL(getRequest().url).pathname;
@@ -85,6 +95,7 @@ export function PartialBoundary({
     framePath,
     frameUrl,
     parentPath,
+    cmsId,
   });
   return children;
 }
@@ -227,6 +238,26 @@ export interface PartialProps {
    * against the page's origin.
    */
   frameUrl?: string;
+  /**
+   * Stable storage key for this Partial's CMS-authored content. When
+   * set, opens a **CMS scope** for descendant server components so
+   * calls to `getText` / `getEnum` / `getNumber` / … resolve against
+   * this Partial's entry in the content store.
+   *
+   * Independent of `selector`: the selector is a mutable presentation
+   * token authors can rename at any time; the `cmsId` is the
+   * permanent storage anchor — rename-safe by construction. See
+   * `notes/CMS_MANIFEST.md` § cmsId.
+   *
+   * When absent (the common case for today's Partials), the Partial
+   * is NOT CMS-aware: any content accessor called inside returns its
+   * empty / default value, and no scope is opened.
+   *
+   * A Partial without `cmsId` explicitly clears any ancestor CMS
+   * scope — content accessors inside an inner non-CMS Partial never
+   * leak to its cmsId-bearing ancestor's node.
+   */
+  cmsId?: string;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -457,6 +488,7 @@ export function Partial({
   cache,
   frame,
   frameUrl,
+  cmsId,
 }: PartialProps): ReactNode {
   if (parent == null || !Array.isArray(parent.path)) {
     throw new Error(
@@ -506,6 +538,15 @@ export function Partial({
   // captured earlier and threaded `parent` explicitly (the cell is
   // unreliable post-await due to RSC sibling interleaving).
   _setCurrentPartialContext(_childContext(parent, id, frame));
+
+  // CMS scope: mutate the per-request cell so descendant server
+  // components' content accessors (`getText` et al.) resolve against
+  // this Partial's store entry. If `cmsId` is absent, explicitly
+  // clear the cell — otherwise a CMS-aware ancestor's scope would
+  // leak into this Partial's non-CMS descendants. Same
+  // sibling-interleaving caveat as the partial-context and
+  // frame-scope cells: descendants must read before any `await`.
+  _setCurrentCmsScope(cmsId != null ? createCmsScope(cmsId, id) : null);
 
   const isExplicit = state.explicitIds.has(id);
   const effectiveFallback = fallback ?? null;
@@ -580,6 +621,18 @@ export function Partial({
     frame == null && ambientScope
       ? `|inFrame=${ambientScope.path.join(".")}:${ambientScope.request.url}`
       : "";
+  // CMS fingerprint contribution — if this Partial is CMS-aware
+  // (`cmsId` set), fold the resolved content fields into the fp so a
+  // content change (config match flipping, author edit) produces a
+  // distinct fingerprint. Without this fold, two different CMS
+  // configs that share structural JSX would hash identically and the
+  // fingerprint-skip protocol would serve stale cached bytes across
+  // nav between them. Also folded into `structuralFp` so `<Cache>`
+  // baseKey differentiates per-config — otherwise a cached Partial
+  // whose content came from CMS would return stale bytes on a config
+  // flip.
+  const cmsKey =
+    cmsId != null ? cmsFingerprintContribution(cmsId, getRequest()) : "";
   // Structural fingerprint — stable across "am I inside a frame?"
   // readings, which can differ between full renders and cache-mode
   // refetches because `getCurrentFrameScope` reads a per-request
@@ -588,13 +641,13 @@ export function Partial({
   // baseKey so a Partial inside a Cache wrapping keeps the same
   // cache key between full and refetch modes.
   const structuralFp = hashFingerprint(
-    fingerprintElement(rawContent) + ownFrameKey,
+    fingerprintElement(rawContent) + ownFrameKey + cmsKey,
   );
   // Full fingerprint — includes ambient frame URL so descendants of
   // a frame whose URL changed get a different fp on the next render
   // and skip the fingerprint-match path (see notes/FRAMES.md).
   const fp = hashFingerprint(
-    fingerprintElement(rawContent) + ownFrameKey + ambientFrameKey,
+    fingerprintElement(rawContent) + ownFrameKey + ambientFrameKey + cmsKey,
   );
 
   // ── Skip decisions ─────────────────────────────────────────────────
@@ -637,6 +690,7 @@ export function Partial({
       framePath,
       frameUrl,
       parentPath: parent.path,
+      cmsId,
     });
     return placeholderFor(id);
   }
@@ -666,6 +720,7 @@ export function Partial({
         cache={cache}
         framePath={framePath}
         frameUrl={frameUrl}
+        cmsId={cmsId}
       >
         <PartialErrorBoundary
           key={id}
@@ -757,6 +812,7 @@ export function Partial({
       cache={cache}
       framePath={framePath}
       frameUrl={frameUrl}
+      cmsId={cmsId}
     >
       {rendered}
     </PartialBoundary>

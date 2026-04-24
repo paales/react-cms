@@ -35,6 +35,12 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { cache } from "react";
+import {
+  createCmsScope,
+  resolveCmsScope,
+  type CmsScope,
+  type ContentFieldKind,
+} from "./cms-runtime.ts";
 
 interface FrameworkControl {
   notFound?: boolean;
@@ -139,6 +145,44 @@ export function getCurrentFrameScope(): FrameScope | null {
 
 function frameRequest(): Request | null {
   return frameScopeCell().current?.request ?? null;
+}
+
+// ─── CMS scope (React.cache mutation cell) ────────────────────────
+
+/**
+ * Per-Partial CMS scope seen by descendant server components rendered
+ * inside a `<Partial cmsId="…">`. Content-field accessors (`getText`,
+ * `getEnum`, etc.) read the cell; `<Partial>` mutates it before
+ * rendering children. Same React.cache pattern as the frame scope —
+ * a mutable per-request cell that survives the synchronous render
+ * walk without a Flight round-trip.
+ *
+ * Discipline: content accessors, like frame / cache-manifest
+ * accessors, must be called BEFORE any `await` in a server component
+ * body. After an await the cell may have been mutated by a sibling
+ * Partial's render. See `notes/CMS_MANIFEST.md`.
+ *
+ * The `<Partial>` component is responsible for pushing a null scope
+ * when it runs WITHOUT `cmsId` — otherwise a CMS-aware ancestor's
+ * scope would leak into a non-CMS descendant Partial and its
+ * `getText` calls would resolve against the wrong node.
+ */
+const cmsScopeCell = cache((): { current: CmsScope | null } => ({
+  current: null,
+}));
+
+/**
+ * Called by `<Partial cmsId>` before rendering children. Passing
+ * `null` clears the scope (a descendant Partial without its own
+ * `cmsId` should not inherit from an ancestor's CMS scope).
+ */
+export function _setCurrentCmsScope(scope: CmsScope | null): void {
+  cmsScopeCell().current = scope;
+}
+
+/** Current CMS scope, or `null` if this render isn't inside a `<Partial cmsId>`. */
+export function getCurrentCmsScope(): CmsScope | null {
+  return cmsScopeCell().current;
 }
 
 /**
@@ -455,6 +499,105 @@ export function getPathname(
     new URL(currentRequest().url).pathname,
     pattern,
   );
+}
+
+// ─── Content-field accessors ───────────────────────────────────────────
+//
+// Read CMS-authored fields for the enclosing `<Partial cmsId=…>`.
+// Outside a CMS scope every accessor returns its empty / default
+// value without touching the resolver — the accessors are safe to
+// call from any server component, but only meaningful inside a
+// CMS-aware Partial.
+//
+// Hoisting discipline: call these at the top of the component body,
+// before any `await`, for the same reason tracked accessors and
+// frame-scope reads do. See `notes/CMS_MANIFEST.md`.
+//
+// First-render rule: every accessor resolves to SOMETHING even when
+// the store has no matching config — empty string, 0, false,
+// `values[0]` for enums, `{src:"",alt:""}` for images. Authors can
+// always render; the editor populates real values later.
+
+/**
+ * Record this accessor's declaration into the current CMS scope's
+ * field manifest. The editor reads this manifest to know which form
+ * inputs to render for this Partial.
+ */
+function trackContentField(name: string, kind: ContentFieldKind): CmsScope | null {
+  const scope = cmsScopeCell().current;
+  if (!scope) return null;
+  if (!scope.contentFields.has(name)) {
+    scope.contentFields.set(name, kind);
+  }
+  return scope;
+}
+
+function resolvedFields(scope: CmsScope): Record<string, unknown> | null {
+  return resolveCmsScope(scope, currentRequest());
+}
+
+export function getText(name: string): string {
+  const scope = trackContentField(name, "text");
+  if (!scope) return "";
+  const v = resolvedFields(scope)?.[name];
+  return typeof v === "string" ? v : "";
+}
+
+export function getRichText(name: string): string {
+  // V1: rich text is a plain string. Future versions can return a
+  // structured value (portable-text-ish) without changing the accessor
+  // surface — the editor decides whether to show a plain textarea or
+  // a rich-text widget by inspecting `contentFields.get(name)`.
+  const scope = trackContentField(name, "richText");
+  if (!scope) return "";
+  const v = resolvedFields(scope)?.[name];
+  return typeof v === "string" ? v : "";
+}
+
+export function getNumber(name: string): number {
+  const scope = trackContentField(name, "number");
+  if (!scope) return 0;
+  const v = resolvedFields(scope)?.[name];
+  return typeof v === "number" ? v : 0;
+}
+
+export function getBoolean(name: string): boolean {
+  const scope = trackContentField(name, "boolean");
+  if (!scope) return false;
+  const v = resolvedFields(scope)?.[name];
+  return typeof v === "boolean" ? v : false;
+}
+
+export function getEnum<T extends string>(
+  name: string,
+  values: readonly T[],
+): T {
+  const scope = trackContentField(name, "enum");
+  if (!scope) return values[0];
+  const v = resolvedFields(scope)?.[name];
+  if (typeof v === "string" && (values as readonly string[]).includes(v)) {
+    return v as T;
+  }
+  return values[0];
+}
+
+export interface ImageValue {
+  readonly src: string;
+  readonly alt: string;
+}
+
+const EMPTY_IMAGE: ImageValue = Object.freeze({ src: "", alt: "" });
+
+export function getImage(name: string): ImageValue {
+  const scope = trackContentField(name, "image");
+  if (!scope) return EMPTY_IMAGE;
+  const v = resolvedFields(scope)?.[name];
+  if (typeof v !== "object" || v === null) return EMPTY_IMAGE;
+  const obj = v as { src?: unknown; alt?: unknown };
+  return {
+    src: typeof obj.src === "string" ? obj.src : "",
+    alt: typeof obj.alt === "string" ? obj.alt : "",
+  };
 }
 
 export function setFrameworkControl(patch: FrameworkControl): void {

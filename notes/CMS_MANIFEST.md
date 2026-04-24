@@ -1,7 +1,7 @@
 # CMS via accessor-tracked manifest — data model
 
 **Added:** 2026-04-25
-**Status:** design sketch, not shipped. Companion: `CMS_VISION.md` (why), `CMS_EDITOR.md` (authoring UX).
+**Status:** content-field accessors + resolver + `cmsId` + storage shape shipped 2026-04-25 (chunk 1 — see `CMS_VISION.md § First milestone § Chunk 1`). Slots (`<Children>` / `<Child>`), `provides` / `getClosest`, and `getReference` + entity loaders are still design-sketch. Companion: `CMS_VISION.md` (why), `CMS_EDITOR.md` (authoring UX).
 
 ---
 

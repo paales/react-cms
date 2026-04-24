@@ -1,7 +1,7 @@
 # CMS editor — the debug panel, expanded
 
 **Added:** 2026-04-25
-**Status:** design sketch, not shipped. Companion: `CMS_VISION.md` (why), `CMS_MANIFEST.md` (data model).
+**Status:** design sketch, not shipped. The runtime underneath (chunk 1: content accessors + resolver + `cmsId`) shipped 2026-04-25 — this doc's editor UX depends on that runtime but adds no runtime of its own. Companion: `CMS_VISION.md` (why), `CMS_MANIFEST.md` (data model).
 
 ---
 

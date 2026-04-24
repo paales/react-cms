@@ -1,0 +1,51 @@
+{
+  "partials": {
+    "cms-demo-hero": {
+      "id": "cms-demo-hero",
+      "displayName": "#hero",
+      "configs": [
+        {
+          "match": {},
+          "fields": {
+            "headline": "Welcome to the CMS demo",
+            "subhead": "Every field on this page is read through accessor-tracked calls. Edit src/cms/content.json and reload to see changes.",
+            "tone": "calm"
+          }
+        }
+      ]
+    },
+    "cms-demo-greeting": {
+      "id": "cms-demo-greeting",
+      "displayName": "#greeting",
+      "configs": [
+        {
+          "match": { "pathname:/cms-demo/:slug": { "slug": "alpha" } },
+          "fields": {
+            "headline": "Hello, Alpha!",
+            "body": "This config matches only when the URL slug is 'alpha'.",
+            "tone": "loud",
+            "accent": 3
+          }
+        },
+        {
+          "match": {
+            "pathname:/cms-demo/:slug": { "slug": { "in": ["beta", "gamma"] } }
+          },
+          "fields": {
+            "headline": "Beta/Gamma view",
+            "body": "This config matches for 'beta' OR 'gamma' via the {in: [...]} clause."
+          }
+        },
+        {
+          "match": {},
+          "fields": {
+            "headline": "Default greeting",
+            "body": "Visit /cms-demo/alpha, /cms-demo/beta, or /cms-demo/zulu to see cascade resolution in action.",
+            "tone": "calm",
+            "accent": 1
+          }
+        }
+      ]
+    }
+  }
+}

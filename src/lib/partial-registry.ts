@@ -76,6 +76,11 @@ export interface PartialSnapshot {
    *  client-side tree reconstruction that was necessary while the
    *  hierarchy could only be inferred post-render. */
   parentPath: readonly string[];
+  /** Stable storage key for CMS-authored content, from the Partial's
+   *  `cmsId` prop. Preserved in the snapshot so cache-mode refetches
+   *  re-open the same CMS scope when rendering from this snapshot.
+   *  Absent on Partials that aren't CMS-aware. */
+  cmsId?: string;
 }
 
 type RouteMap = Map<string, Map<string, PartialSnapshot>>;

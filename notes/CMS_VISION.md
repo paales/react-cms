@@ -1,7 +1,7 @@
 # CMS vision — where this framework is going
 
 **Added:** 2026-04-25
-**Status:** design direction, not shipped. Companion docs: `CMS_MANIFEST.md` (technical data model), `CMS_EDITOR.md` (authoring UX).
+**Status:** direction landed; **chunk 1 shipped 2026-04-25** (content accessors + resolver + `cmsId` + demo page — see §First milestone below). Editor + composition primitives still design-sketch. Companion docs: `CMS_MANIFEST.md` (technical data model), `CMS_EDITOR.md` (authoring UX).
 
 ---
 
@@ -110,6 +110,27 @@ The framework is complete-enough-to-ship-demos when a dev can:
 7. Scope a field by URL dimension (e.g. "this headline for slug ∈ [bulbasaur, ivysaur]") via manifest-derived specificity.
 
 Nothing requires a new runtime — every mechanic reuses an existing primitive. The work (fully enumerated in `CMS_EDITOR.md §Implementation sketch`) is: extend the manifest with field/slot/reference sections; add content accessors + `<Children>`/`<Child>` + `provides`; build a block catalog; build the editor route on top of the existing debug panel.
+
+### Chunk 1 — shipped 2026-04-25
+
+Items 2 and 7 from the list above, plus the underlying runtime:
+
+- `src/framework/cms-runtime.ts` — mtime-cached JSON store loader, `resolveCmsNode` / `resolveCmsScope` cascade resolver, `cmsFingerprintContribution` for fp folding, shared `MatchClause` / `CmsConfig` / `CmsNode` types. Dep-free by construction (takes `Request` as an explicit arg), unit-testable in isolation.
+- `src/framework/context.ts` — React.cache-backed `cmsScopeCell`, `_setCurrentCmsScope` / `getCurrentCmsScope`, and content-field accessors: `getText` / `getRichText` / `getNumber` / `getBoolean` / `getEnum` / `getImage`. Each accessor records the field into the CMS scope's `contentFields` map (future-editor introspection) and resolves lazily via the shared scope memo.
+- `src/lib/partial-component.tsx` — new `cmsId` prop on `<Partial>`, cell mutation at the top of the body, fp folding via `cmsFingerprintContribution` so fingerprint-skip and `<Partial cache>` baseKeys both invalidate correctly on config-match changes.
+- `src/lib/partial-registry.ts` — `PartialSnapshot.cmsId` so cache-mode refetches reconstruct the same CMS scope from snapshots.
+- `src/cms/content.json` — v1 store committed at the top level; two demo entries exercising cascade (`cms-demo-hero` global config, `cms-demo-greeting` with `{in: [...]}` and exact-slug matches against `pathname:/cms-demo/:slug`).
+- `src/app/pages/cms-demo.tsx` + routes `/cms-demo` + `/cms-demo/:slug` + nav link.
+- Tests: 13 resolver unit tests in `src/framework/__tests__/cms-runtime.test.ts`; 6 in-process RSC tests in `src/lib/__tests__/cms-accessors.rsc.test.tsx`; 6 Playwright specs in `e2e/cms-demo.spec.ts` (including cascade resolution across client-side nav).
+
+What chunk 1 does NOT yet include (deferred to subsequent chunks):
+
+- `<Children>` / `<Child>` slot primitives — composition stays on code-declared children for now.
+- `provides` / `getClosest` — no ancestor context inheritance.
+- `getReference` + entity loaders — no product pickers.
+- The editor — authoring is "hand-edit `content.json` and reload."
+- Draft / published split — the cookie-driven fork is designed but not wired; today every read hits the committed file.
+- Block catalog / prerender — no palette.
 
 ## Principles — the non-negotiables
 
