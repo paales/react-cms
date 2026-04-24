@@ -46,12 +46,14 @@ async function handler(request: Request): Promise<Response> {
         { clearRegistry },
         { _clearAllSessions },
         { _clearLogs },
+        { _clearCmsDraft },
       ] = await Promise.all([
         import("../lib/cache.tsx"),
         import("../lib/partial-cache.ts"),
         import("../lib/partial-registry.ts"),
         import("./session.ts"),
         import("../app/chat/log.ts"),
+        import("./cms-runtime.ts"),
       ]);
       const all = url.searchParams.get("all") === "1";
       if (all) {
@@ -68,6 +70,10 @@ async function handler(request: Request): Promise<Response> {
         _clearAllSessions(scope);
         _clearLogs(scope);
       }
+      // Draft file is not scope-bucketed (it's on-disk, not in-memory);
+      // always clear on both `all` and scoped calls. Tests writing to
+      // the draft need a clean state per run.
+      _clearCmsDraft();
       return new Response("ok", { status: 200 });
     }
   }

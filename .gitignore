@@ -17,3 +17,7 @@ dist
 test-results/
 playwright-report/
 .last-run.json
+
+# CMS — author-local draft overrides; created on-demand by the editor.
+# Published content lives in `src/cms/content.json` (committed).
+src/cms/draft.json

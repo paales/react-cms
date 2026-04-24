@@ -1,7 +1,7 @@
 # CMS editor — the debug panel, expanded
 
 **Added:** 2026-04-25
-**Status:** design sketch, not shipped. The runtime underneath (chunk 1: content accessors + resolver + `cmsId`) shipped 2026-04-25 — this doc's editor UX depends on that runtime but adds no runtime of its own. Companion: `CMS_VISION.md` (why), `CMS_MANIFEST.md` (data model).
+**Status:** MVE shipped 2026-04-25 (chunk 3) — tree + preview + field form + save + publish. Per-config tabs, block palette, drag-drop, entity pickers, draft isolation still deferred. Runtime underneath (chunk 1 content accessors + resolver, chunk 2a slots, chunk 2b provides/getReference, chunk 3 draft/published + catalog prerender) shipped 2026-04-25. Companion: `CMS_VISION.md` (why), `CMS_MANIFEST.md` (data model).
 
 ---
 

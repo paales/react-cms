@@ -111,6 +111,32 @@ The framework is complete-enough-to-ship-demos when a dev can:
 
 Nothing requires a new runtime — every mechanic reuses an existing primitive. The work (fully enumerated in `CMS_EDITOR.md §Implementation sketch`) is: extend the manifest with field/slot/reference sections; add content accessors + `<Children>`/`<Child>` + `provides`; build a block catalog; build the editor route on top of the existing debug panel.
 
+### Chunk 3 — shipped 2026-04-25
+
+MVE editor + its prerequisites. The authoring surface is real now: the /cms-edit route opens a Shopify-style three-pane editor (tree / preview / fields), with save-to-draft and publish-to-live server actions running through the existing invalidation graph.
+
+**Part 1 — draft/published cookie fork.** `src/framework/cms-runtime.ts` split its store loader into published + draft slots, each mtime-cached + indexed separately. `lookupCmsNode(id, request?)` checks `cms-draft=1` on the request (query param OR cookie) and prefers the draft entry on a hit, falling back to published. `writeDraftNode` merges a full node into the draft file; `publishDraft` copies draft entries into published and clears the draft. A singleton `EMPTY_STORE` bug was fixed along the way — the fallback path used to return the shared constant, so a `writeDraftNode` on a missing draft mutated it and leaked to later tests (fresh empty store per call now). `src/lib/slot.tsx` threads `getRequest()` into `lookupCmsNode` so slot renders honour the cookie. `.gitignore` adds `src/cms/draft.json` — it's author-local. `/__test/clear-caches` clears the draft file alongside the rest.
+
+**Part 2 — block catalog prerender.** `src/framework/cms-prerender.ts` runs each registered block component in a stub CMS scope + fake request and captures the accessor manifest (content fields, references, slot declarations). Cached at module level with HMR invalidation so the editor's palette + form generation sees fresh shapes after edits. The key wire: React.cache (used by `cmsScopeCell`) only works inside a React render, so the prerender adds an ALS-backed override (`_runWithPrerenderCmsScope`) that content accessors check first — `currentCmsScope()` reads ALS or cell, whichever's set.
+
+**Part 3 — MVE editor at `/cms-edit`.**
+- `src/app/pages/cms-edit.tsx` — three-pane layout. Tree sidebar lists `listAllCmsNodes()` output (published ∪ draft, hierarchical with depth/slot metadata, "draft-only" badge for ids not yet published). Preview is a `<Partial frame="preview" frameUrl="/cms-demo?cms-draft=1">` wrapping `<CmsDemoPage/>`. Field sidebar generates a form from the catalog manifest for block-typed entries, unioned with currently-stored fields so code-declared Partials that have a draft become editable too. Form inputs branch per-kind (text/number/boolean/richText/enum/image). A hidden `__kind:<name>` sidecar tells the save action how to coerce each value; a `__boolean-fields` list lets the action see which checkboxes were unchecked (HTML omits them from FormData otherwise).
+- `src/app/actions/cms.ts` — `saveCmsFields(cmsId, formData)` merges form entries into the default config, writes to draft, returns `{invalidate: {selector: "#${cmsId}"}}`. `publishCmsDraft()` copies draft → published, clears draft, invalidates the tree Partial.
+- `listAllCmsNodes` in cms-runtime produces the tree shape the sidebar reads. Walks published + draft, merges, records depth + slot-name + parent-id per entry.
+- `/cms-edit` is reachable from app nav.
+- Belt-and-suspenders draft mode: the editor page calls `setCookie("cms-draft", "1")`, AND the preview frame URL carries `?cms-draft=1`. Cookie covers cache-mode refetches (snapshots don't restore ancestor frame scope, so a cache-mode Partial inside the preview frame falls back to the page request — which now has the cookie). Frame URL covers the initial page render (cookie hasn't round-tripped yet).
+- 6 Playwright smoke tests covering tree listing, selection, field form generation, preview content, block-type badges, and the save-round-trip (edit headline → save → preview updates in place).
+
+Known issue carried forward — the SSR-truncation hydration warning on `/cms-demo`'s slug nav still fires on `/cms-edit` (which preview-renders cms-demo). Visible on the editor's preview pane too. Not a regression; tests pass.
+
+What chunk 3 does NOT yet include:
+- Per-configuration match tabs — v1 edits only the default config. Varying a field by slug/locale/A-B requires a deeper form.
+- Block palette / add-block UI — authors can't add slot entries from the editor yet.
+- Drag-drop reordering of slot children.
+- Per-type entity picker widgets. `getReference` renders as a plain text input today.
+- Draft isolation per author/session. v1 has one global draft store.
+- Hydration-warning fix for the nav truncation.
+
 ### Chunk 2b — shipped 2026-04-25
 
 Ancestor context inheritance + typed references — completes the composition primitives (items 2, 5 finished).

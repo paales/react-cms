@@ -12,6 +12,7 @@ import { SelectorDemoPage } from "./pages/selector-demo.tsx";
 import { SentinelsDemoPage } from "./pages/sentinels-demo.tsx";
 import { FramesDemoPage } from "./pages/frames-demo.tsx";
 import { CmsDemoPage } from "./pages/cms-demo.tsx";
+import { CmsEditPage } from "./pages/cms-edit.tsx";
 import { NotFoundPage } from "./pages/not-found.tsx";
 import { PartialRoot, Partial } from "../lib/partial.tsx";
 import { ROOT } from "../lib/partial-context.ts";
@@ -55,6 +56,7 @@ export function Root() {
               ["/frames-demo", FramesDemoPage],
               ["/cms-demo", CmsDemoPage],
               ["/cms-demo/:slug", CmsDemoPage],
+              ["/cms-edit", CmsEditPage],
               ["/not-found-demo", () => notFound()],
               ["/redirect-demo", () => redirect("/cache-demo")],
               ["/magento", MagentoPage],

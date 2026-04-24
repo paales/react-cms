@@ -182,9 +182,35 @@ export function _setCurrentCmsScope(scope: CmsScope | null): void {
   cmsScopeCell().current = scope;
 }
 
+/**
+ * Dev-time prerender scope — used by the block-catalog prerender to
+ * introspect accessor reads without rendering through React.
+ * `React.cache` (the backing for `cmsScopeCell`) only works inside a
+ * React render pass; calling a block component directly as a
+ * function needs a different transport.
+ *
+ * Resolution priority: prerender ALS wins over the cell so the
+ * prerender can override even when the cell happens to be populated
+ * (it shouldn't be during a direct call, but the precedence is
+ * explicit).
+ */
+const cmsPrerenderContext = new AsyncLocalStorage<CmsScope>();
+
+/** @internal Used by `src/framework/cms-prerender.ts`. */
+export function _runWithPrerenderCmsScope<T>(
+  scope: CmsScope,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  return cmsPrerenderContext.run(scope, async () => fn());
+}
+
+function currentCmsScope(): CmsScope | null {
+  return cmsPrerenderContext.getStore() ?? cmsScopeCell().current;
+}
+
 /** Current CMS scope, or `null` if this render isn't inside a `<Partial cmsId>`. */
 export function getCurrentCmsScope(): CmsScope | null {
-  return cmsScopeCell().current;
+  return currentCmsScope();
 }
 
 /**
@@ -526,7 +552,7 @@ export function getPathname(
  * inputs to render for this Partial.
  */
 function trackContentField(name: string, kind: ContentFieldKind): CmsScope | null {
-  const scope = cmsScopeCell().current;
+  const scope = currentCmsScope();
   if (!scope) return null;
   if (!scope.contentFields.has(name)) {
     scope.contentFields.set(name, kind);
@@ -625,7 +651,7 @@ export function getReference<T extends string>(
   name: string,
   type: T,
 ): Reference<T> {
-  const scope = cmsScopeCell().current;
+  const scope = currentCmsScope();
   if (!scope) {
     return { type, value: null, fallback: "closest" };
   }
@@ -657,7 +683,7 @@ export function getReference<T extends string>(
  * in the same way tracked-accessor and frame-scope cells do.
  */
 export function getClosest<T>(key: string): T | null {
-  const scope = cmsScopeCell().current;
+  const scope = currentCmsScope();
   if (scope) {
     scope.contextConsumes.add(key);
   }

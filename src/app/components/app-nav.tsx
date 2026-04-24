@@ -11,6 +11,7 @@ const LINKS: Array<[href: string, label: string]> = [
   ["/sentinels-demo", "Sentinels Demo"],
   ["/frames-demo", "Frames Demo"],
   ["/cms-demo", "CMS Demo"],
+  ["/cms-edit", "CMS Edit"],
 ];
 
 /**

@@ -30,7 +30,14 @@
  */
 
 import type { ReactNode } from "react";
-import { readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -164,8 +171,21 @@ export interface CmsStore {
 // ─── Store loader ──────────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const STORE_PATH = join(__dirname, "..", "cms", "content.json");
-const EMPTY_STORE: CmsStore = { partials: {} };
+const CMS_DIR = join(__dirname, "..", "cms");
+const PUBLISHED_PATH = join(CMS_DIR, "content.json");
+const DRAFT_PATH = join(CMS_DIR, "draft.json");
+
+function emptyStore(): CmsStore {
+  return { partials: {} };
+}
+
+/**
+ * Name of the cookie that flips the runtime into draft mode. When
+ * set to `"1"` on a request, `lookupCmsNode(id, request)` checks the
+ * draft store first and falls back to published. The editor sets
+ * this cookie on its preview frame; real visitors never see it.
+ */
+export const CMS_DRAFT_COOKIE = "cms-draft";
 
 interface CacheSlot {
   store: CmsStore;
@@ -174,7 +194,8 @@ interface CacheSlot {
   index: Map<string, CmsNode>;
   mtime: number;
 }
-let cacheSlot: CacheSlot | null = null;
+let publishedSlot: CacheSlot | null = null;
+let draftSlot: CacheSlot | null = null;
 
 function buildIndex(store: CmsStore): Map<string, CmsNode> {
   const index = new Map<string, CmsNode>();
@@ -190,19 +211,107 @@ function buildIndex(store: CmsStore): Map<string, CmsNode> {
   return index;
 }
 
-function loadStore(): { store: CmsStore; index: Map<string, CmsNode> } {
+function loadSlot(
+  path: string,
+  current: CacheSlot | null,
+): { slot: CacheSlot | null; fallback: { store: CmsStore; index: Map<string, CmsNode> } } {
   try {
-    const mtime = statSync(STORE_PATH).mtimeMs;
-    if (cacheSlot && cacheSlot.mtime === mtime) return cacheSlot;
-    const text = readFileSync(STORE_PATH, "utf8");
+    const mtime = statSync(path).mtimeMs;
+    if (current && current.mtime === mtime) {
+      return { slot: current, fallback: current };
+    }
+    const text = readFileSync(path, "utf8");
     const store = JSON.parse(text) as CmsStore;
     const index = buildIndex(store);
-    cacheSlot = { store, index, mtime };
-    return cacheSlot;
+    const slot: CacheSlot = { store, index, mtime };
+    return { slot, fallback: slot };
   } catch {
-    if (cacheSlot) return cacheSlot;
-    return { store: EMPTY_STORE, index: new Map() };
+    if (current) return { slot: current, fallback: current };
+    // Fresh empty store on every fallback — writing callers
+    // (`writeDraftNode`) would otherwise mutate a shared singleton
+    // and leak entries between unrelated writes when the draft file
+    // doesn't yet exist.
+    return { slot: null, fallback: { store: emptyStore(), index: new Map() } };
   }
+}
+
+function loadPublishedStore(): { store: CmsStore; index: Map<string, CmsNode> } {
+  const { slot, fallback } = loadSlot(PUBLISHED_PATH, publishedSlot);
+  if (slot) publishedSlot = slot;
+  return fallback;
+}
+
+function loadDraftStore(): { store: CmsStore; index: Map<string, CmsNode> } {
+  const { slot, fallback } = loadSlot(DRAFT_PATH, draftSlot);
+  if (slot) draftSlot = slot;
+  return fallback;
+}
+
+function readCookieFromRequest(request: Request, name: string): string | null {
+  const header = request.headers.get("cookie") ?? "";
+  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match?.[1] ?? null;
+}
+
+function isDraftRequest(request: Request | undefined): boolean {
+  if (!request) return false;
+  // Query-param form wins over cookie so the editor's preview frame
+  // can opt in via `?cms-draft=1` on the frame URL (survives frame
+  // navigation inherited from the page's cookies without needing to
+  // mutate Set-Cookie inside the request).
+  const url = new URL(request.url);
+  if (url.searchParams.get("cms-draft") === "1") return true;
+  return readCookieFromRequest(request, CMS_DRAFT_COOKIE) === "1";
+}
+
+/**
+ * Flat list of every entry in draft + published, with hierarchy
+ * info for the tree sidebar. Draft overrides published on id
+ * collision.
+ */
+export interface CmsTreeEntry {
+  id: string;
+  type?: string;
+  displayName?: string;
+  depth: number;
+  slotName?: string;
+  parentId?: string;
+  /** `true` when this id only exists in draft (no published
+   *  counterpart yet). */
+  draftOnly: boolean;
+}
+
+export function listAllCmsNodes(): CmsTreeEntry[] {
+  const published = loadPublishedStore().store.partials;
+  const draft = loadDraftStore().store.partials;
+  const merged: Record<string, CmsNode> = { ...published };
+  for (const [id, node] of Object.entries(draft)) {
+    merged[id] = node;
+  }
+  const entries: CmsTreeEntry[] = [];
+  const walk = (
+    node: CmsNode,
+    depth: number,
+    slotName: string | undefined,
+    parentId: string | undefined,
+  ): void => {
+    entries.push({
+      id: node.id,
+      type: node.type,
+      displayName: node.displayName,
+      depth,
+      slotName,
+      parentId,
+      draftOnly: draft[node.id] != null && published[node.id] == null,
+    });
+    if (node.slots) {
+      for (const [name, children] of Object.entries(node.slots)) {
+        for (const child of children) walk(child, depth + 1, name, node.id);
+      }
+    }
+  };
+  for (const node of Object.values(merged)) walk(node, 0, undefined, undefined);
+  return entries;
 }
 
 /**
@@ -210,9 +319,67 @@ function loadStore(): { store: CmsStore; index: Map<string, CmsNode> } {
  * recursive forest (`slots` contain more `CmsNode`s); lookup walks a
  * flat `cmsId → node` index built eagerly on load. Slot children are
  * therefore addressable by `cmsId` the same way root entries are.
+ *
+ * Draft fork: when `request` is passed and carries `cms-draft=1`
+ * cookie, the draft store is checked first and a hit is returned
+ * directly. A miss falls through to published — an author who
+ * hasn't touched a node sees the published value by default. The
+ * cookie also participates in any downstream fingerprint / cache
+ * derivation via `cmsFingerprintContribution` returning a
+ * different string for the same id (different node in draft ⇒
+ * different stringified fields ⇒ different fp), so cached bytes
+ * never leak across modes.
  */
-export function lookupCmsNode(cmsId: string): CmsNode | null {
-  return loadStore().index.get(cmsId) ?? null;
+export function lookupCmsNode(
+  cmsId: string,
+  request?: Request,
+): CmsNode | null {
+  if (isDraftRequest(request)) {
+    const draftHit = loadDraftStore().index.get(cmsId);
+    if (draftHit) return draftHit;
+  }
+  return loadPublishedStore().index.get(cmsId) ?? null;
+}
+
+/**
+ * Write a Partial node into the draft store. Overwrites the existing
+ * top-level entry for `cmsId` wholesale — drafts are full-node
+ * overrides in v1, so the editor serializes the complete post-edit
+ * node shape (configs + slots) rather than diffing field-level
+ * changes.
+ *
+ * Synchronously invalidates both in-memory store slots so the next
+ * read sees the write — dev-only flow; a production writer would
+ * go through a queue + store backend.
+ */
+export function writeDraftNode(cmsId: string, node: CmsNode): void {
+  const { store } = loadDraftStore();
+  store.partials[cmsId] = { ...node, id: cmsId };
+  writeStoreFile(DRAFT_PATH, store);
+  _invalidateCmsStoreCache();
+}
+
+/**
+ * Copy draft → published, then clear the draft. Intended as the
+ * editor's "publish" action. Writes both files atomically from the
+ * editor's perspective (invalidates both cache slots on return so a
+ * reader following the publish immediately sees the new published
+ * state and an empty draft).
+ */
+export function publishDraft(): void {
+  const draft = loadDraftStore().store;
+  const published = loadPublishedStore().store;
+  for (const [id, node] of Object.entries(draft.partials)) {
+    published.partials[id] = node;
+  }
+  writeStoreFile(PUBLISHED_PATH, published);
+  writeStoreFile(DRAFT_PATH, { partials: {} });
+  _invalidateCmsStoreCache();
+}
+
+function writeStoreFile(path: string, store: CmsStore): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(store, null, 2) + "\n", "utf8");
 }
 
 /**
@@ -222,7 +389,18 @@ export function lookupCmsNode(cmsId: string): CmsNode | null {
  * swap the file contents within one process.
  */
 export function _invalidateCmsStoreCache(): void {
-  cacheSlot = null;
+  publishedSlot = null;
+  draftSlot = null;
+}
+
+/**
+ * Delete the draft file + drop its cache. Dev / test helper — wired
+ * into `/__test/clear-caches` so e2e tests see a clean draft state
+ * on `beforeEach`, and usable from a debug button.
+ */
+export function _clearCmsDraft(): void {
+  if (existsSync(DRAFT_PATH)) unlinkSync(DRAFT_PATH);
+  _invalidateCmsStoreCache();
 }
 
 // ─── Block registry ────────────────────────────────────────────────────
@@ -301,7 +479,7 @@ export function resolveCmsScope(
   request: Request,
 ): Record<string, unknown> | null {
   if (scope.resolvedConfig !== undefined) return scope.resolvedConfig;
-  const node = lookupCmsNode(scope.cmsId);
+  const node = lookupCmsNode(scope.cmsId, request);
   if (!node) {
     scope.resolvedConfig = null;
     return null;
@@ -357,7 +535,7 @@ export function cmsFingerprintContribution(
   cmsId: string,
   request: Request,
 ): string {
-  const node = lookupCmsNode(cmsId);
+  const node = lookupCmsNode(cmsId, request);
   if (!node) return `|cms=${cmsId}:miss`;
   return `|cms=${cmsId}:${contributionForNode(node, request)}`;
 }

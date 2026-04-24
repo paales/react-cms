@@ -19,7 +19,11 @@
       "displayName": "#greeting",
       "configs": [
         {
-          "match": { "pathname:/cms-demo/:slug": { "slug": "alpha" } },
+          "match": {
+            "pathname:/cms-demo/:slug": {
+              "slug": "alpha"
+            }
+          },
           "fields": {
             "headline": "Hello, Alpha!",
             "body": "This config matches only when the URL slug is 'alpha'.",
@@ -29,7 +33,14 @@
         },
         {
           "match": {
-            "pathname:/cms-demo/:slug": { "slug": { "in": ["beta", "gamma"] } }
+            "pathname:/cms-demo/:slug": {
+              "slug": {
+                "in": [
+                  "beta",
+                  "gamma"
+                ]
+              }
+            }
           },
           "fields": {
             "headline": "Beta/Gamma view",
@@ -50,7 +61,12 @@
     "cms-demo-composed": {
       "id": "cms-demo-composed",
       "displayName": "#composed",
-      "configs": [{ "match": {}, "fields": {} }],
+      "configs": [
+        {
+          "match": {},
+          "fields": {}
+        }
+      ],
       "slots": {
         "body": [
           {
@@ -84,7 +100,11 @@
             "type": "hero",
             "configs": [
               {
-                "match": { "pathname:/cms-demo/:slug": { "slug": "alpha" } },
+                "match": {
+                  "pathname:/cms-demo/:slug": {
+                    "slug": "alpha"
+                  }
+                },
                 "fields": {
                   "headline": "Alpha-only third block",
                   "subhead": "Per-slug cascade works on slot children too.",

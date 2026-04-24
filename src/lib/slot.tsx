@@ -36,7 +36,7 @@
 import React, { type ReactNode } from "react";
 import { Partial } from "./partial-component.tsx";
 import { capturePartialContext } from "./partial-context.ts";
-import { getCurrentCmsScope } from "../framework/context.ts";
+import { getCurrentCmsScope, getRequest } from "../framework/context.ts";
 import {
   getBlockSpec,
   lookupCmsNode,
@@ -70,7 +70,7 @@ export function Children({ name, allow }: ChildrenProps): ReactNode {
   if (!scope) return null;
   scope.childSlots.set(name, { multi: true, allow });
 
-  const node = lookupCmsNode(scope.cmsId);
+  const node = lookupCmsNode(scope.cmsId, getRequest());
   const entries = node?.slots?.[name] ?? [];
   if (entries.length === 0) return null;
 
@@ -87,7 +87,7 @@ export function Child({ name, allow }: ChildProps): ReactNode {
   if (!scope) return null;
   scope.childSlots.set(name, { multi: false, allow });
 
-  const node = lookupCmsNode(scope.cmsId);
+  const node = lookupCmsNode(scope.cmsId, getRequest());
   const entries = node?.slots?.[name] ?? [];
   const entry = entries[0];
   if (!entry) return null;
