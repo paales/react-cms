@@ -46,6 +46,63 @@
           }
         }
       ]
+    },
+    "cms-demo-composed": {
+      "id": "cms-demo-composed",
+      "displayName": "#composed",
+      "configs": [{ "match": {}, "fields": {} }],
+      "slots": {
+        "body": [
+          {
+            "id": "composed-hero-1",
+            "type": "hero",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "headline": "First hero in the body slot",
+                  "subhead": "Composed from a <Children> slot via the block registry.",
+                  "tone": "calm"
+                }
+              }
+            ]
+          },
+          {
+            "id": "composed-text-1",
+            "type": "rich-text",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "body": "This rich-text block is the second entry in the body slot. Ordering comes from content.json; each entry resolves its own fields through the CMS scope opened by <Partial cmsId>."
+                }
+              }
+            ]
+          },
+          {
+            "id": "composed-hero-2",
+            "type": "hero",
+            "configs": [
+              {
+                "match": { "pathname:/cms-demo/:slug": { "slug": "alpha" } },
+                "fields": {
+                  "headline": "Alpha-only third block",
+                  "subhead": "Per-slug cascade works on slot children too.",
+                  "tone": "loud"
+                }
+              },
+              {
+                "match": {},
+                "fields": {
+                  "headline": "Third block (default)",
+                  "subhead": "Falls through when the slug doesn't match.",
+                  "tone": "calm"
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   }
 }

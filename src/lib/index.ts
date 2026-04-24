@@ -4,6 +4,12 @@ export {
   type PartialProps,
 } from "./partial.tsx";
 export {
+  Children,
+  Child,
+  type ChildrenProps,
+  type ChildProps,
+} from "./slot.tsx";
+export {
   ROOT,
   capturePartialContext,
   type PartialCtx,

@@ -111,6 +111,29 @@ The framework is complete-enough-to-ship-demos when a dev can:
 
 Nothing requires a new runtime — every mechanic reuses an existing primitive. The work (fully enumerated in `CMS_EDITOR.md §Implementation sketch`) is: extend the manifest with field/slot/reference sections; add content accessors + `<Children>`/`<Child>` + `provides`; build a block catalog; build the editor route on top of the existing debug panel.
 
+### Chunk 2a — shipped 2026-04-25
+
+Composition primitives + block registry. Items 1 (partly) and 5 (partly) from the list above.
+
+- `src/framework/cms-runtime.ts` — block registry (`registerBlock` / `getBlockSpec` / `listBlockTypes` + `_clearBlockRegistry`), `BlockSpec` type, flat-index-backed `lookupCmsNode` so slot descendants resolve by `cmsId` the same way root nodes do.
+- `src/lib/slot.tsx` — `<Children>` and `<Child>` slot primitives. Record the slot into the CMS scope's `childSlots` for future-editor introspection; look up each entry's type in the block registry; render as `<Partial cmsId={entry.id}>` wrapped in a keyed `<Fragment>` so the array key doesn't composite with Flight's inner Suspense key.
+- `cmsFingerprintContribution` now recurses through `node.slots` — a host Partial whose own config is stable but whose slot children's configs vary per request gets a distinct fp so fp-skip doesn't serve stale slot bytes on nav.
+- `src/app/blocks/{hero,rich-text,catalog}.tsx` — example block components + catalog. `HeroBlock` reads `headline` / `subhead` / `tone` via accessors; `RichTextBlock` reads `body`. Catalog wires the type tags.
+- `src/app/root.tsx` imports the catalog for its side effect so the registry is populated before the first render.
+- `src/cms/content.json` extended with `cms-demo-composed` — three heterogeneous entries in its `body` slot including a nested per-slug config on the third entry (demonstrates recursive cascade).
+- Demo page extended with the composed section at `/cms-demo` and `/cms-demo/:slug`.
+- Tests: 5 block-registry unit tests, 5 `<Children>` RSC tests (render order, nested cascade, per-entry `partialId` markers, unknown-type fallback, scope-gated), 3 Playwright specs covering composed rendering + per-slug cascade + client-side nav between slugs.
+
+Known issue (pre-dates chunk 2a, observable on chunk 1 specs too): SSR of the `/cms-demo` page truncates the static slug-nav mid-render, producing a hydration warning on the client. The client re-renders the subtree correctly; tests pass. Tracking as follow-up; likely related to Flight chunk boundaries around the CMS-aware Partials that sit before/after the nav. Not a chunk-2a regression.
+
+What chunk 2a does NOT yet include:
+
+- `provides` / `getClosest` — no ancestor context inheritance (chunk 2b).
+- `getReference` + entity loaders — no product pickers (chunk 2b).
+- Block preset support — palette still empty.
+- Dev-time prerender of block field manifests for the palette.
+- The editor itself.
+
 ### Chunk 1 — shipped 2026-04-25
 
 Items 2 and 7 from the list above, plus the underlying runtime:

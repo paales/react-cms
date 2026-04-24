@@ -1,4 +1,7 @@
 import "./styles.css";
+// Side-effect import — binds block types to components so slots
+// (`<Children>` / `<Child>`) can resolve entries in the CMS store.
+import "./blocks/catalog.ts";
 import type { ReactNode } from "react";
 import { PokemonPage } from "./pages/pokemon.tsx";
 import { MagentoPage } from "./pages/magento/product-list.tsx";

@@ -27,7 +27,7 @@ import {
   getNumber,
   getText,
 } from "../../framework/context.ts";
-import { Partial } from "../../lib";
+import { Children, Partial } from "../../lib";
 import { ROOT } from "../../lib/partial-context.ts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +39,7 @@ const SLUG_LINKS: ReadonlyArray<[href: string, label: string]> = [
   ["/cms-demo/alpha", "alpha"],
   ["/cms-demo/beta", "beta"],
   ["/cms-demo/gamma", "gamma"],
-  ["/cms-demo/zulu", "zulu (unmatched → default)"],
+  ["/cms-demo/zulu", "zulu (unmatched)"],
 ];
 
 export function CmsDemoPage() {
@@ -70,6 +70,19 @@ export function CmsDemoPage() {
         cmsId="cms-demo-greeting"
       >
         <GreetingBlock />
+      </Partial>
+
+      <h2 className="mt-8 mb-3 text-lg font-semibold">
+        Composed from a slot
+      </h2>
+      <Partial
+        parent={ROOT}
+        selector="#cms-demo-composed"
+        cmsId="cms-demo-composed"
+      >
+        <div data-testid="cms-demo-composed-slot">
+          <Children name="body" allow=".demo-block" />
+        </div>
       </Partial>
 
       <Card className="mt-8 p-5">

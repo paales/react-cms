@@ -29,6 +29,7 @@
  * See `notes/CMS_MANIFEST.md` for the full design context.
  */
 
+import type { ReactNode } from "react";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -147,27 +148,50 @@ const EMPTY_STORE: CmsStore = { partials: {} };
 
 interface CacheSlot {
   store: CmsStore;
+  /** Flat `cmsId → node` index covering root entries AND recursive
+   *  slot children. Built once per reload; lookups are O(1). */
+  index: Map<string, CmsNode>;
   mtime: number;
 }
 let cacheSlot: CacheSlot | null = null;
 
-function loadStore(): CmsStore {
+function buildIndex(store: CmsStore): Map<string, CmsNode> {
+  const index = new Map<string, CmsNode>();
+  const walk = (node: CmsNode): void => {
+    index.set(node.id, node);
+    if (node.slots) {
+      for (const entries of Object.values(node.slots)) {
+        for (const child of entries) walk(child);
+      }
+    }
+  };
+  for (const node of Object.values(store.partials)) walk(node);
+  return index;
+}
+
+function loadStore(): { store: CmsStore; index: Map<string, CmsNode> } {
   try {
     const mtime = statSync(STORE_PATH).mtimeMs;
-    if (cacheSlot && cacheSlot.mtime === mtime) return cacheSlot.store;
+    if (cacheSlot && cacheSlot.mtime === mtime) return cacheSlot;
     const text = readFileSync(STORE_PATH, "utf8");
     const store = JSON.parse(text) as CmsStore;
-    cacheSlot = { store, mtime };
-    return store;
+    const index = buildIndex(store);
+    cacheSlot = { store, index, mtime };
+    return cacheSlot;
   } catch {
-    return cacheSlot?.store ?? EMPTY_STORE;
+    if (cacheSlot) return cacheSlot;
+    return { store: EMPTY_STORE, index: new Map() };
   }
 }
 
-/** Look up a Partial node by its stable storage id. */
+/**
+ * Look up a Partial node by its stable storage id. The store is a
+ * recursive forest (`slots` contain more `CmsNode`s); lookup walks a
+ * flat `cmsId → node` index built eagerly on load. Slot children are
+ * therefore addressable by `cmsId` the same way root entries are.
+ */
 export function lookupCmsNode(cmsId: string): CmsNode | null {
-  const store = loadStore();
-  return store.partials[cmsId] ?? null;
+  return loadStore().index.get(cmsId) ?? null;
 }
 
 /**
@@ -178,6 +202,70 @@ export function lookupCmsNode(cmsId: string): CmsNode | null {
  */
 export function _invalidateCmsStoreCache(): void {
   cacheSlot = null;
+}
+
+// ─── Block registry ────────────────────────────────────────────────────
+//
+// `<Children>` / `<Child>` slots read a CmsNode's `slots[name]` entries
+// and render each one as a `<Partial>`. The `type` field on each entry
+// names the block component; this registry maps those type tags to
+// concrete components + their shared-token tags. Populated at app
+// init via `registerBlock("hero", …)` calls in the app's catalog
+// module.
+//
+// Module-level side-effect registration is used here (vs a manifest
+// file) because the catalog in userspace owns the full list, and
+// importing the catalog once in the app entry is enough. Future-
+// editor introspection (palette building, field prerender) will
+// layer on top of this registry.
+
+export interface BlockSpec {
+  /**
+   * Shared-token selectors carried by every instance of this block.
+   * Prefix is significant: each string must start with `.`. The
+   * runtime concatenates these with a per-instance `#<cmsId>` so
+   * every block Partial has a unique unique-token for addressing,
+   * plus the registered class-tokens for selector-based refetch.
+   */
+  readonly tags: ReadonlyArray<`.${string}`>;
+  /** The block's server component — renders inside a CMS scope keyed
+   *  to the block's `cmsId`. The component reads its fields via
+   *  `getText` / `getEnum` / … accessors. */
+  readonly component: () => ReactNode | Promise<ReactNode>;
+}
+
+const blockRegistry = new Map<string, BlockSpec>();
+
+/**
+ * Register a block component under its type tag. Call in a module
+ * imported once by the app entry (see `src/app/blocks/catalog.ts` in
+ * the example app).
+ *
+ * Subsequent registrations overwrite — HMR-friendly; the latest
+ * module wins.
+ */
+export function registerBlock(type: string, spec: BlockSpec): void {
+  blockRegistry.set(type, spec);
+}
+
+/**
+ * Look up a block spec by its type tag. Returns `undefined` when the
+ * type isn't registered — `<Children>` logs and skips missing types
+ * rather than throwing, so an unknown entry in the store is visible
+ * but not fatal.
+ */
+export function getBlockSpec(type: string): BlockSpec | undefined {
+  return blockRegistry.get(type);
+}
+
+/** Dev / test reset — drops every registered block. */
+export function _clearBlockRegistry(): void {
+  blockRegistry.clear();
+}
+
+/** All registered block type tags — used by the future editor's palette. */
+export function listBlockTypes(): string[] {
+  return [...blockRegistry.keys()];
 }
 
 // ─── Resolver ──────────────────────────────────────────────────────────
@@ -216,7 +304,8 @@ export function resolveCmsNode(
 /**
  * Contribution a CMS-aware Partial makes to the structural fingerprint
  * — the stable-stringified resolved field map for `cmsId` under the
- * current request.
+ * current request, recursively including every slot descendant's
+ * resolved fields.
  *
  * Why fold content into the fp: the fingerprint-skip protocol
  * (`?cached=id:fp`) tells the server "I already have this id at this
@@ -224,6 +313,16 @@ export function resolveCmsNode(
  * different CMS configs that share JSX but differ in fields would
  * hash identically — on nav between them the server would emit a
  * skip placeholder and the client would paint stale cached bytes.
+ *
+ * Why recurse into slots: a host Partial whose own config is empty
+ * but whose `slots[].configs` vary per request would fp-skip on the
+ * host even though the slot children's content changed. The client's
+ * cache for the host serves old slot-content bytes inline. Folding
+ * every slot descendant's resolved fields into the host's fp makes
+ * the fp differ whenever the rendered subtree would differ — fp-skip
+ * stays correct without the server needing to walk into the skipped
+ * Partial's body.
+ *
  * Same concern for `<Partial cache>`: its `baseKey` derives from
  * `structuralFp`, so a cache key that ignored CMS fields would hit
  * stale bytes across different matching configs. Folding the
@@ -239,8 +338,22 @@ export function cmsFingerprintContribution(
 ): string {
   const node = lookupCmsNode(cmsId);
   if (!node) return `|cms=${cmsId}:miss`;
+  return `|cms=${cmsId}:${contributionForNode(node, request)}`;
+}
+
+function contributionForNode(node: CmsNode, request: Request): string {
   const fields = mergeMatchingConfigs(node.configs, request);
-  return `|cms=${cmsId}:${stableStringify(fields)}`;
+  const base = stableStringify(fields);
+  if (!node.slots) return base;
+  const slotParts: string[] = [];
+  for (const name of Object.keys(node.slots).sort()) {
+    const children = node.slots[name];
+    const childParts = children.map(
+      (child) => `${child.id}=${contributionForNode(child, request)}`,
+    );
+    slotParts.push(`${name}:[${childParts.join(",")}]`);
+  }
+  return `${base}|slots={${slotParts.join(";")}}`;
 }
 
 function stableStringify(value: unknown): string {
