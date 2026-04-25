@@ -8,8 +8,10 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  buildCmsTreeEntries,
   lookupCmsNode,
   resolveCmsNode,
+  slotEntryId,
   type CmsConfig,
   type CmsNode,
 } from "../cms-runtime.ts";
@@ -232,5 +234,138 @@ describe("lookupCmsNode — file-backed store", () => {
 
   it("returns null for unknown ids", () => {
     expect(lookupCmsNode("does-not-exist")).toBeNull();
+  });
+});
+
+describe("buildCmsTreeEntries — slot intermediaries + dedupe", () => {
+  it("emits a slot intermediary for every slot a parent declares (single-slot)", () => {
+    const published: Record<string, CmsNode> = {
+      parent: {
+        id: "parent",
+        configs: [{ match: {}, fields: {} }],
+        slots: {
+          body: [
+            {
+              id: "child-1",
+              type: "hero",
+              configs: [{ match: {}, fields: {} }],
+            },
+          ],
+        },
+      },
+    };
+    const entries = buildCmsTreeEntries(published, {});
+    // Slot intermediary always inserted — that's where the editor
+    // hangs the +add-block palette inline in the tree.
+    expect(entries.map((e) => ({ id: e.id, kind: e.kind, depth: e.depth })))
+      .toEqual([
+        { id: "parent", kind: "node", depth: 0 },
+        { id: slotEntryId("parent", "body"), kind: "slot", depth: 1 },
+        { id: "child-1", kind: "node", depth: 2 },
+      ]);
+  });
+
+  it("emits a slot intermediary per slot when a parent has 2+ slots", () => {
+    const published: Record<string, CmsNode> = {
+      multi: {
+        id: "multi",
+        configs: [{ match: {}, fields: {} }],
+        slots: {
+          body: [
+            {
+              id: "body-child",
+              type: "hero",
+              configs: [{ match: {}, fields: {} }],
+            },
+          ],
+          sidebar: [
+            {
+              id: "sidebar-child",
+              type: "rich-text",
+              configs: [{ match: {}, fields: {} }],
+            },
+          ],
+        },
+      },
+    };
+    const entries = buildCmsTreeEntries(published, {});
+    expect(entries.map((e) => ({ id: e.id, kind: e.kind, depth: e.depth })))
+      .toEqual([
+        { id: "multi", kind: "node", depth: 0 },
+        { id: slotEntryId("multi", "body"), kind: "slot", depth: 1 },
+        { id: "body-child", kind: "node", depth: 2 },
+        { id: slotEntryId("multi", "sidebar"), kind: "slot", depth: 1 },
+        { id: "sidebar-child", kind: "node", depth: 2 },
+      ]);
+  });
+
+  it("emits a slot intermediary for an empty slot (so the +add palette is reachable)", () => {
+    const published: Record<string, CmsNode> = {
+      parent: {
+        id: "parent",
+        configs: [{ match: {}, fields: {} }],
+        slots: { body: [] },
+      },
+    };
+    const entries = buildCmsTreeEntries(published, {});
+    expect(entries.map((e) => ({ id: e.id, kind: e.kind, depth: e.depth })))
+      .toEqual([
+        { id: "parent", kind: "node", depth: 0 },
+        { id: slotEntryId("parent", "body"), kind: "slot", depth: 1 },
+      ]);
+  });
+
+  it("dedupes a slot child that also has a top-level draft entry", () => {
+    const published: Record<string, CmsNode> = {
+      parent: {
+        id: "parent",
+        configs: [{ match: {}, fields: {} }],
+        slots: {
+          body: [
+            {
+              id: "child-1",
+              type: "hero",
+              configs: [{ match: {}, fields: { headline: "STALE" } }],
+            },
+          ],
+        },
+      },
+    };
+    const draft: Record<string, CmsNode> = {
+      // The editor wrote a top-level draft for the slot child.
+      "child-1": {
+        id: "child-1",
+        type: "hero",
+        configs: [{ match: {}, fields: { headline: "FRESH" } }],
+      },
+    };
+    const entries = buildCmsTreeEntries(published, draft);
+    const childOccurrences = entries.filter((e) => e.id === "child-1");
+    expect(childOccurrences).toHaveLength(1);
+    // depth=2 because the slot intermediary now sits between
+    // parent (depth 0) and the child (depth 2).
+    expect(childOccurrences[0].depth).toBe(2);
+    expect(childOccurrences[0].parentId).toBe("parent");
+    expect(childOccurrences[0].slotName).toBe("body");
+    expect(childOccurrences[0].hasDraft).toBe(true);
+  });
+
+  it("emits a draft-only top-level node as a root when no parent claims it", () => {
+    const draft: Record<string, CmsNode> = {
+      "brand-new": {
+        id: "brand-new",
+        type: "hero",
+        configs: [{ match: {}, fields: {} }],
+      },
+    };
+    const entries = buildCmsTreeEntries({}, draft);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "brand-new",
+      kind: "node",
+      depth: 0,
+      draftOnly: true,
+      hasDraft: true,
+    });
   });
 });

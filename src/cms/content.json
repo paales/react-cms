@@ -123,6 +123,47 @@
           }
         ]
       }
+    },
+    "cms-demo-multi-slot": {
+      "id": "cms-demo-multi-slot",
+      "displayName": "#multi-slot",
+      "configs": [
+        {
+          "match": {},
+          "fields": {}
+        }
+      ],
+      "slots": {
+        "body": [
+          {
+            "id": "multi-body-1",
+            "type": "rich-text",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "body": "Body slot — primary content."
+                }
+              }
+            ]
+          }
+        ],
+        "sidebar": [
+          {
+            "id": "multi-sidebar-1",
+            "type": "hero",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "headline": "Sidebar slot",
+                  "subhead": "Secondary content lane."
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   }
 }

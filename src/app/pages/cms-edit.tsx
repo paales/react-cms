@@ -36,8 +36,8 @@ import {
   listAllCmsNodes,
   listBlockTypes,
   lookupDraftNode,
+  parseSlotEntryId,
   type CmsConfig,
-  type CmsNode,
   type ContentFieldKind,
   type MatchClause,
 } from "../../framework/cms-runtime.ts";
@@ -180,6 +180,7 @@ function TreeContents() {
   // <Partial cache>, so cache-key tracking isn't needed here.
   const selected = pageSearchParam("select");
   const entries = listAllCmsNodes();
+  const blockTypes = listBlockTypes();
   if (entries.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -188,20 +189,68 @@ function TreeContents() {
       </p>
     );
   }
+
+  // Pre-compute per-slot child index lists so each slot-child row knows
+  // its position (for ↑ / ↓ disable state).
+  const slotPositions = new Map<string, { index: number; count: number }>();
+  for (const entry of entries) {
+    if (entry.kind === "node" && entry.parentId && entry.slotName) {
+      const slotKey = `${entry.parentId}:${entry.slotName}`;
+      const seen = slotPositions.get(slotKey);
+      if (seen) {
+        slotPositions.set(slotKey, { index: seen.count, count: seen.count + 1 });
+      } else {
+        slotPositions.set(slotKey, { index: 0, count: 1 });
+      }
+    }
+  }
+  // Reset and re-walk to assign per-row positions correctly (the count
+  // pass above produced totals, but each row's `index` overwrote the
+  // previous). Compute per-row indexes by scanning entries in order.
+  const rowIndex = new Map<string, number>();
+  const slotCounts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.kind === "node" && entry.parentId && entry.slotName) {
+      const slotKey = `${entry.parentId}:${entry.slotName}`;
+      const next = (slotCounts.get(slotKey) ?? 0);
+      rowIndex.set(entry.id, next);
+      slotCounts.set(slotKey, next + 1);
+    }
+  }
+
   return (
     <ul className="space-y-1">
       {entries.map((entry) => {
+        if (entry.kind === "slot") {
+          return (
+            <SlotTreeRow
+              key={entry.id}
+              parentCmsId={entry.parentId!}
+              slotName={entry.slotName!}
+              depth={entry.depth}
+              blockTypes={blockTypes}
+            />
+          );
+        }
         const isSelected = entry.id === selected;
         const label = entry.displayName ?? `#${entry.id}`;
+        const slotKey =
+          entry.parentId && entry.slotName
+            ? `${entry.parentId}:${entry.slotName}`
+            : null;
+        const idx = slotKey != null ? (rowIndex.get(entry.id) ?? 0) : 0;
+        const total = slotKey != null ? (slotCounts.get(slotKey) ?? 1) : 1;
+        const inSlot = entry.parentId && entry.slotName;
         return (
           <li
             key={entry.id}
             style={{ paddingLeft: `${entry.depth * 12}px` }}
+            className="flex items-center gap-1"
           >
             <CmsEditTreeLink
               href={`/cms-edit?select=${encodeURIComponent(entry.id)}`}
               className={cn(
-                "flex items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors",
+                "flex flex-1 items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors min-w-0",
                 isSelected
                   ? "bg-primary/10 text-primary"
                   : "hover:bg-muted",
@@ -236,10 +285,138 @@ function TreeContents() {
                 </Badge>
               ) : null}
             </CmsEditTreeLink>
+            {inSlot && (
+              <SlotChildControls
+                parentCmsId={entry.parentId!}
+                slotName={entry.slotName!}
+                childCmsId={entry.id}
+                index={idx}
+                total={total}
+              />
+            )}
           </li>
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Slot intermediary tree row — non-clickable label + the +add-block
+ * palette inline. Hosting the palette here is what makes slot
+ * intermediaries functional (not just organizational), so they exist
+ * for every slot regardless of how many slots a parent has.
+ */
+function SlotTreeRow({
+  parentCmsId,
+  slotName,
+  depth,
+  blockTypes,
+}: {
+  parentCmsId: string;
+  slotName: string;
+  depth: number;
+  blockTypes: string[];
+}) {
+  const id = `slot:${parentCmsId}:${slotName}`;
+  return (
+    <li
+      style={{ paddingLeft: `${depth * 12}px` }}
+      className="flex items-center gap-1"
+      data-testid={`cms-edit-tree-entry-${id}`}
+    >
+      <span
+        className="flex flex-1 items-center gap-2 rounded-md px-2 py-1 text-xs italic text-muted-foreground min-w-0"
+        data-testid={`cms-edit-tree-slot-label-${parentCmsId}-${slotName}`}
+      >
+        <span aria-hidden className="text-muted-foreground/70">
+          ▸
+        </span>
+        <span className="flex-1 truncate">{slotName}</span>
+      </span>
+      {blockTypes.map((type) => (
+        <form
+          key={type}
+          action={addBlockToSlot.bind(null, parentCmsId, slotName, type)}
+          className="contents"
+        >
+          <button
+            type="submit"
+            className="rounded px-1 text-[0.7rem] text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={`Add ${type} block`}
+            data-testid={`cms-edit-slot-add-${parentCmsId}-${slotName}-${type}`}
+          >
+            + {type}
+          </button>
+        </form>
+      ))}
+    </li>
+  );
+}
+
+/**
+ * Per-slot-child inline action buttons in the tree — ↑ / ↓ / ×.
+ * Replaces the standalone SlotPanel rows that used to live in the
+ * right-pane field panel.
+ */
+function SlotChildControls({
+  parentCmsId,
+  slotName,
+  childCmsId,
+  index,
+  total,
+}: {
+  parentCmsId: string;
+  slotName: string;
+  childCmsId: string;
+  index: number;
+  total: number;
+}) {
+  return (
+    <span className="flex shrink-0 items-center">
+      <form
+        action={moveBlockInSlot.bind(null, parentCmsId, slotName, childCmsId, "up")}
+        className="contents"
+      >
+        <button
+          type="submit"
+          className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+          disabled={index === 0}
+          title="Move up"
+          aria-label={`Move ${childCmsId} up`}
+        >
+          ↑
+        </button>
+      </form>
+      <form
+        action={moveBlockInSlot.bind(null, parentCmsId, slotName, childCmsId, "down")}
+        className="contents"
+      >
+        <button
+          type="submit"
+          className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+          disabled={index >= total - 1}
+          title="Move down"
+          aria-label={`Move ${childCmsId} down`}
+        >
+          ↓
+        </button>
+      </form>
+      <form
+        action={removeBlockFromSlot.bind(null, parentCmsId, slotName, childCmsId)}
+        className="contents"
+      >
+        <button
+          type="submit"
+          className="rounded px-1 text-red-600/80 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40"
+          title="Remove"
+          aria-label={`Remove ${childCmsId}`}
+          data-testid={`cms-edit-slot-remove-${childCmsId}`}
+        >
+          ×
+        </button>
+      </form>
+    </span>
   );
 }
 
@@ -261,6 +438,24 @@ async function FieldPanel() {
       </div>
     );
   }
+
+  // Slot intermediaries are non-selectable in the tree (rendered as
+  // a plain span, not a CmsEditTreeLink), so `selected` should never
+  // be a `slot:*` id. Belt-and-braces: if a `slot:*` id arrives via a
+  // direct URL, we just prompt the author to pick a node — slot
+  // management lives entirely in the tree now (inline +add /
+  // ↑↓× buttons), so there's nothing to render in the field panel
+  // for a slot selection.
+  if (parseSlotEntryId(selected)) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        Slots aren't selectable. Use the inline buttons in the tree to
+        add, reorder, or remove blocks; click a block to edit its
+        fields here.
+      </div>
+    );
+  }
+
   const node = lookupDraftNode(selected);
   const catalog = await getCatalogManifest();
   const manifest = node?.type ? catalog[node.type] : undefined;
@@ -351,164 +546,6 @@ async function FieldPanel() {
             </a>
           </div>
         </form>
-      )}
-
-      {node?.slots &&
-        Object.entries(node.slots).map(([slotName, children]) => (
-          <SlotPanel
-            key={slotName}
-            parentCmsId={selected}
-            slotName={slotName}
-            children={children}
-          />
-        ))}
-    </div>
-  );
-}
-
-// ─── Slot palette ──────────────────────────────────────────────────────
-
-function SlotPanel({
-  parentCmsId,
-  slotName,
-  children,
-}: {
-  parentCmsId: string;
-  slotName: string;
-  children: readonly CmsNode[];
-}) {
-  const types = listBlockTypes();
-  return (
-    <div
-      className="space-y-2 rounded-lg border bg-background/60 p-3"
-      data-testid={`cms-edit-slot-panel-${slotName}`}
-    >
-      <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">
-          Slot: {slotName}
-        </p>
-        <span className="text-[0.65rem] text-muted-foreground">
-          {children.length}{" "}
-          {children.length === 1 ? "block" : "blocks"}
-        </span>
-      </div>
-
-      {children.length === 0 ? (
-        <p className="text-xs italic text-muted-foreground">Empty.</p>
-      ) : (
-        <ul className="space-y-1">
-          {children.map((child, idx) => (
-            <li
-              key={child.id}
-              className="flex items-center gap-1 rounded-md bg-muted/40 px-2 py-1 text-xs"
-              data-testid={`cms-edit-slot-child-${child.id}`}
-            >
-              <a
-                href={cmsEditHref(child.id, -1)}
-                className="flex-1 truncate hover:underline"
-              >
-                <span className="font-medium">{child.id}</span>
-                {child.type && (
-                  <span className="ml-2 text-[0.65rem] text-muted-foreground">
-                    {child.type}
-                  </span>
-                )}
-              </a>
-              <form
-                action={moveBlockInSlot.bind(
-                  null,
-                  parentCmsId,
-                  slotName,
-                  child.id,
-                  "up",
-                )}
-                className="contents"
-              >
-                <button
-                  type="submit"
-                  className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
-                  disabled={idx === 0}
-                  title="Move up"
-                  aria-label={`Move ${child.id} up`}
-                >
-                  ↑
-                </button>
-              </form>
-              <form
-                action={moveBlockInSlot.bind(
-                  null,
-                  parentCmsId,
-                  slotName,
-                  child.id,
-                  "down",
-                )}
-                className="contents"
-              >
-                <button
-                  type="submit"
-                  className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
-                  disabled={idx === children.length - 1}
-                  title="Move down"
-                  aria-label={`Move ${child.id} down`}
-                >
-                  ↓
-                </button>
-              </form>
-              <form
-                action={removeBlockFromSlot.bind(
-                  null,
-                  parentCmsId,
-                  slotName,
-                  child.id,
-                )}
-                className="contents"
-              >
-                <button
-                  type="submit"
-                  className="rounded px-1 text-red-600/80 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40"
-                  title="Remove"
-                  aria-label={`Remove ${child.id}`}
-                  data-testid={`cms-edit-slot-remove-${child.id}`}
-                >
-                  ×
-                </button>
-              </form>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {types.length > 0 && (
-        <div>
-          <p className="mb-1 text-[0.65rem] uppercase tracking-wide text-muted-foreground">
-            Add block
-          </p>
-          <div className="flex flex-wrap gap-1">
-            {types.map((type) => (
-              <form
-                key={type}
-                action={addBlockToSlot.bind(
-                  null,
-                  parentCmsId,
-                  slotName,
-                  type,
-                )}
-                className="contents"
-              >
-                <button
-                  type="submit"
-                  className={buttonVariants({
-                    size: "sm",
-                    variant: "outline",
-                  })}
-                  data-testid={`cms-edit-slot-add-${slotName}-${type}`}
-                >
-                  + {type}
-                </button>
-              </form>
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );

@@ -170,31 +170,43 @@ test.describe("CMS editor — smoke", () => {
     ).toHaveText("Default greeting");
   });
 
-  test.describe("slot palette", () => {
-    test("renders the slot's children with remove + reorder controls + an add-block palette", async ({
+  test.describe("slot palette (in tree)", () => {
+    // The slot palette + reorder/remove buttons live INLINE in the
+    // tree now (not in the right field pane). The slot intermediary
+    // hosts +add-block buttons; each slot child row hosts ↑/↓/×
+    // controls. These tests pin that wiring.
+
+    test("the slot intermediary tree row exposes +add-<type> for every registered block type", async ({
       page,
     }) => {
-      await page.goto("/cms-edit?select=cms-demo-composed");
-      const panel = page.getByTestId("cms-edit-slot-panel-body");
-      await expect(panel).toBeVisible();
-      // Three published children + remove/reorder + add-block buttons.
+      await page.goto("/cms-edit");
       await expect(
-        page.getByTestId("cms-edit-slot-child-composed-hero-1"),
+        page.getByTestId(
+          "cms-edit-tree-entry-slot:cms-demo-composed:body",
+        ),
       ).toBeVisible();
       await expect(
-        page.getByTestId("cms-edit-slot-child-composed-text-1"),
+        page.getByTestId("cms-edit-slot-add-cms-demo-composed-body-hero"),
       ).toBeVisible();
       await expect(
-        page.getByTestId("cms-edit-slot-child-composed-hero-2"),
+        page.getByTestId(
+          "cms-edit-slot-add-cms-demo-composed-body-rich-text",
+        ),
+      ).toBeVisible();
+    });
+
+    test("each slot-child tree row exposes inline ↑ / ↓ / × buttons", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit");
+      await expect(
+        page.locator('[aria-label="Move composed-hero-1 up"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[aria-label="Move composed-hero-1 down"]'),
       ).toBeVisible();
       await expect(
         page.getByTestId("cms-edit-slot-remove-composed-hero-1"),
-      ).toBeVisible();
-      await expect(
-        page.getByTestId("cms-edit-slot-add-body-hero"),
-      ).toBeVisible();
-      await expect(
-        page.getByTestId("cms-edit-slot-add-body-rich-text"),
       ).toBeVisible();
     });
 
@@ -213,36 +225,40 @@ test.describe("CMS editor — smoke", () => {
     test("adding a block appends it to the slot and shows in the preview", async ({
       page,
     }) => {
-      await page.goto("/cms-edit?select=cms-demo-composed");
+      await page.goto("/cms-edit");
       // Make sure the page is fully hydrated before we try to click
       // an action button — otherwise the click event can race the
       // hydration boundary and end up double-submitting (React
       // reconciles the form during commit and the second click
       // surface inherits the same handler).
       await page.waitForLoadState("networkidle");
-      const beforeCount = await page
-        .locator('[data-testid^="cms-edit-slot-child-"]')
-        .count();
-      expect(beforeCount).toBe(3);
+      // Count the published children of the body slot via tree entries.
+      const composedChildren = page.locator(
+        '[data-testid="cms-edit-tree-entry-composed-hero-1"], ' +
+          '[data-testid="cms-edit-tree-entry-composed-text-1"], ' +
+          '[data-testid="cms-edit-tree-entry-composed-hero-2"]',
+      );
+      await expect(composedChildren).toHaveCount(3);
 
       const responseP = waitForActionResponse(page);
-      await page.getByTestId("cms-edit-slot-add-body-rich-text").click();
+      await page
+        .getByTestId("cms-edit-slot-add-cms-demo-composed-body-rich-text")
+        .click();
       await responseP;
       await page.reload();
 
-      await expect(
-        page.locator('[data-testid^="cms-edit-slot-child-"]'),
-      ).toHaveCount(4);
+      // Two rich-text children rendered in the preview now (the
+      // committed `composed-text-1` + the freshly-added one).
       const preview = page.getByTestId("cms-edit-preview-pane");
       await expect(
         preview.getByTestId("composed-rich-text"),
       ).toHaveCount(2);
     });
 
-    test("removing a block drops it from the slot and the preview", async ({
+    test("removing a block drops it from the tree and the preview", async ({
       page,
     }) => {
-      await page.goto("/cms-edit?select=cms-demo-composed");
+      await page.goto("/cms-edit");
       const responseP = waitForActionResponse(page);
       await page
         .getByTestId("cms-edit-slot-remove-composed-text-1")
@@ -250,7 +266,7 @@ test.describe("CMS editor — smoke", () => {
       await responseP;
       await page.reload();
       await expect(
-        page.getByTestId("cms-edit-slot-child-composed-text-1"),
+        page.getByTestId("cms-edit-tree-entry-composed-text-1"),
       ).toHaveCount(0);
       const preview = page.getByTestId("cms-edit-preview-pane");
       await expect(
@@ -258,8 +274,8 @@ test.describe("CMS editor — smoke", () => {
       ).toHaveCount(0);
     });
 
-    test("moving a block reorders it in the slot", async ({ page }) => {
-      await page.goto("/cms-edit?select=cms-demo-composed");
+    test("moving a block reorders it in the tree", async ({ page }) => {
+      await page.goto("/cms-edit");
       const responseP = waitForActionResponse(page);
       await page
         .locator('[aria-label="Move composed-text-1 up"]')
@@ -267,13 +283,19 @@ test.describe("CMS editor — smoke", () => {
       await responseP;
       await page.reload();
 
-      const items = await page
-        .locator('[data-testid^="cms-edit-slot-child-"]')
+      // The three slot children appear in tree order; assert the new
+      // ordering puts composed-text-1 first.
+      const orderedChildren = await page
+        .locator(
+          '[data-testid="cms-edit-tree-entry-composed-text-1"], ' +
+            '[data-testid="cms-edit-tree-entry-composed-hero-1"], ' +
+            '[data-testid="cms-edit-tree-entry-composed-hero-2"]',
+        )
         .all();
       const ids = await Promise.all(
-        items.map(async (el) =>
+        orderedChildren.map(async (el) =>
           (await el.getAttribute("data-testid"))!.replace(
-            "cms-edit-slot-child-",
+            "cms-edit-tree-entry-",
             "",
           ),
         ),
@@ -468,5 +490,83 @@ test.describe("CMS editor — smoke", () => {
     await page.getByRole("button", { name: "Save to draft" }).click();
 
     await expect(preview).toContainText("Saved rich text body via editor");
+  });
+
+  test.describe("slot intermediary in tree", () => {
+    // Every slot a parent declares gets a `slot:<parent>:<name>`
+    // intermediary tree row — single-slot AND multi-slot parents
+    // alike. The intermediary is non-clickable; it hosts the
+    // +add-block palette inline. Slot children appear as regular
+    // tree entries beneath the intermediary, with inline ↑/↓/×
+    // controls. Slot management entirely lives in the tree now —
+    // the right field pane is just for editing block fields.
+
+    test("a single-slot parent emits a slot intermediary too", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit");
+      // `cms-demo-composed` has one slot; intermediary still appears
+      // because it hosts the +add-block buttons inline.
+      await expect(
+        page.getByTestId(
+          "cms-edit-tree-entry-slot:cms-demo-composed:body",
+        ),
+      ).toBeVisible();
+    });
+
+    test("a multi-slot parent emits one slot intermediary per slot", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit");
+      await expect(
+        page.getByTestId(
+          "cms-edit-tree-entry-slot:cms-demo-multi-slot:body",
+        ),
+      ).toBeVisible();
+      await expect(
+        page.getByTestId(
+          "cms-edit-tree-entry-slot:cms-demo-multi-slot:sidebar",
+        ),
+      ).toBeVisible();
+      // The slot's children are still in the tree, beneath their
+      // respective intermediaries.
+      await expect(
+        page.getByTestId("cms-edit-tree-entry-multi-body-1"),
+      ).toBeVisible();
+      await expect(
+        page.getByTestId("cms-edit-tree-entry-multi-sidebar-1"),
+      ).toBeVisible();
+    });
+
+    test("the slot intermediary itself is not a selectable link", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit");
+      const slotEntry = page.getByTestId(
+        "cms-edit-tree-entry-slot:cms-demo-multi-slot:sidebar",
+      );
+      // The intermediary <li> exists, but the inner element is a
+      // <span>, not an <a>. The label has no href, no onClick.
+      await expect(slotEntry.locator("a")).toHaveCount(0);
+      await expect(
+        page.getByTestId(
+          "cms-edit-tree-slot-label-cms-demo-multi-slot-sidebar",
+        ),
+      ).toBeVisible();
+    });
+
+    test("a multi-slot parent's field pane shows its own fields, not slot panels", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit?select=cms-demo-multi-slot");
+      // Slot management isn't in the field pane anymore —
+      // `cms-edit-slot-panel-*` testids no longer render.
+      await expect(
+        page.getByTestId("cms-edit-slot-panel-body"),
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId("cms-edit-slot-panel-sidebar"),
+      ).toHaveCount(0);
+    });
   });
 });

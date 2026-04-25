@@ -282,13 +282,32 @@ function isDraftRequest(request: Request | undefined): boolean {
  * Flat list of every entry in draft + published, with hierarchy
  * info for the tree sidebar. Draft overrides published on id
  * collision.
+ *
+ * Two `kind`s of entry:
+ *   - `"node"` — a real CmsNode (page, block, etc.). `id` is the
+ *     node's `cmsId`; selecting it loads the field form.
+ *   - `"slot"` — a synthetic intermediary inserted between a parent
+ *     and its slot children when the parent declares 2+ slots, so
+ *     authors can see which slot a child belongs to (a single-slot
+ *     parent stays flat — the slot name is unambiguous). `id` is
+ *     `slot:<parentId>:<slotName>`; selecting it loads the slot
+ *     palette (add/reorder/remove). `slotName` and `parentId` are
+ *     filled in.
  */
+export type CmsTreeEntryKind = "node" | "slot";
+
 export interface CmsTreeEntry {
   id: string;
+  kind: CmsTreeEntryKind;
   type?: string;
   displayName?: string;
   depth: number;
+  /** For `"node"` entries: the slot of the parent this node hangs in
+   *  (undefined for top-level nodes). For `"slot"` entries: the slot
+   *  name. */
   slotName?: string;
+  /** For `"node"` entries: the `cmsId` of the parent node (undefined
+   *  at top level). For `"slot"` entries: the parent node's `cmsId`. */
   parentId?: string;
   /** `true` when this id only exists in draft (no published
    *  counterpart yet) — added by the editor, never published. */
@@ -301,19 +320,45 @@ export interface CmsTreeEntry {
   hasDraft: boolean;
 }
 
-export function listAllCmsNodes(): CmsTreeEntry[] {
-  const published = loadPublishedStore().store.partials;
-  const draft = loadDraftStore().store.partials;
+/** Synthetic id for a slot tree entry. */
+export function slotEntryId(parentId: string, slotName: string): string {
+  return `slot:${parentId}:${slotName}`;
+}
+
+/** Parse a slot entry id back into its `{parentId, slotName}` parts,
+ *  or `null` if the id isn't a slot entry. */
+export function parseSlotEntryId(
+  id: string,
+): { parentId: string; slotName: string } | null {
+  if (!id.startsWith("slot:")) return null;
+  const rest = id.slice("slot:".length);
+  const colon = rest.lastIndexOf(":");
+  if (colon < 0) return null;
+  return { parentId: rest.slice(0, colon), slotName: rest.slice(colon + 1) };
+}
+
+/**
+ * Pure tree-building helper — takes the published / draft node maps
+ * and returns the flat tree-entry list. Split out from
+ * `listAllCmsNodes` so it's unit-testable without touching the
+ * shared on-disk `draft.json` (which races across parallel vitest
+ * file workers).
+ */
+export function buildCmsTreeEntries(
+  published: Record<string, CmsNode>,
+  draft: Record<string, CmsNode>,
+): CmsTreeEntry[] {
   const merged: Record<string, CmsNode> = { ...published };
   for (const [id, node] of Object.entries(draft)) {
     merged[id] = node;
   }
   // Pre-pass: every id that lives as a slot child somewhere in the
-  // merged forest. `saveCmsFields` writes top-level draft entries for
-  // edited slot children (the runtime's flat-index lookup top-level-
-  // wins design — see `buildIndex`); without this dedupe step, those
-  // edited children would surface in the tree twice — once nested
-  // under their parent's slot walk, and once as a fake root entry.
+  // merged forest. `saveCmsFields` writes top-level draft entries
+  // for edited slot children (the runtime's flat-index lookup top-
+  // level-wins design — see `buildIndex`); without this dedupe step,
+  // those edited children would surface in the tree twice — once
+  // nested under their parent's slot walk, and once as a fake root
+  // entry.
   const slotChildIds = new Set<string>();
   const collectSlotChildren = (node: CmsNode): void => {
     if (!node.slots) return;
@@ -336,6 +381,7 @@ export function listAllCmsNodes(): CmsTreeEntry[] {
     const hasDraft = draft[node.id] != null;
     entries.push({
       id: node.id,
+      kind: "node",
       type: node.type,
       displayName: node.displayName,
       depth,
@@ -344,26 +390,49 @@ export function listAllCmsNodes(): CmsTreeEntry[] {
       draftOnly: hasDraft && published[node.id] == null,
       hasDraft,
     });
-    // Prefer the merged top-level version of each slot child when
-    // available — that's the post-edit state. Fall back to the inline
-    // copy for ids the author hasn't edited yet (or that never had a
-    // top-level entry, i.e. published slot children).
-    if (node.slots) {
-      for (const [name, children] of Object.entries(node.slots)) {
-        for (const child of children) {
-          const effective = merged[child.id] ?? child;
-          walk(effective, depth + 1, name, node.id);
-        }
+    if (!node.slots) return;
+    // Every slot a parent declares gets its own
+    // `slot:<parent>:<name>` intermediary entry. The intermediary
+    // hosts the slot management UI (+add-block palette and the
+    // boundary marker for slot membership) inline in the tree, so
+    // the field panel doesn't need to render an inline SlotPanel
+    // anymore. The intermediary itself is non-selectable (the
+    // editor renders it as plain text, not a link) — clicking it is
+    // a no-op; only its embedded action buttons fire.
+    for (const [name, children] of Object.entries(node.slots)) {
+      entries.push({
+        id: slotEntryId(node.id, name),
+        kind: "slot",
+        depth: depth + 1,
+        slotName: name,
+        parentId: node.id,
+        draftOnly: false,
+        hasDraft: false,
+      });
+      // Prefer the merged top-level version of each slot child when
+      // available — that's the post-edit state. Fall back to the
+      // inline copy for ids the author hasn't edited yet (or that
+      // never had a top-level entry, i.e. published slot children).
+      for (const child of children) {
+        const effective = merged[child.id] ?? child;
+        walk(effective, depth + 2, name, node.id);
       }
     }
   };
   for (const node of Object.values(merged)) {
-    // Skip ids that show up as a slot child of some other node — they
-    // are emitted by the parent's slot walk above.
+    // Skip ids that show up as a slot child of some other node —
+    // they are emitted by the parent's slot walk above.
     if (slotChildIds.has(node.id)) continue;
     walk(node, 0, undefined, undefined);
   }
   return entries;
+}
+
+export function listAllCmsNodes(): CmsTreeEntry[] {
+  return buildCmsTreeEntries(
+    loadPublishedStore().store.partials,
+    loadDraftStore().store.partials,
+  );
 }
 
 /**
