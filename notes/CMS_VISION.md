@@ -111,6 +111,27 @@ The framework is complete-enough-to-ship-demos when a dev can:
 
 Nothing requires a new runtime — every mechanic reuses an existing primitive. The work (fully enumerated in `CMS_EDITOR.md §Implementation sketch`) is: extend the manifest with field/slot/reference sections; add content accessors + `<Children>`/`<Child>` + `provides`; build a block catalog; build the editor route on top of the existing debug panel.
 
+### Editor follow-ups — shipped 2026-04-25 (after chunk 3)
+
+A second 2026-04-25 batch landed everything that turns the chunk-3 MVE into a usable authoring surface:
+
+- **Per-configuration tabs** in the field form. The manifest-driven "varies by" axis is now author-editable: each Partial's tabs list the existing `CmsConfig`s with human-readable match labels (`Default`, `slug=alpha`, `variant∈A,B`, multi-key joins as `k=v · k=v`). `?config=<index>` URL state, `saveCmsFields(cmsId, configIndex, formData)` writes only to the targeted config — edits never bleed across the cascade.
+- **Block palette + add/remove/reorder.** A node with slots now shows each slot inline in the field panel: every child gets ↑ / ↓ / × controls and there's an add-block picker per registered type. New server actions: `addBlockToSlot`, `removeBlockFromSlot`, `moveBlockInSlot`. New helpers: `cloneNode` for safe deep-clone-before-mutate; `generateBlockId(type)` for `<type>-<8charRandom>` ids.
+- **Modified badge** on tree entries that have a top-level draft override (separate from "draft-only" which marks ids that only exist in draft). The `CmsTreeEntry` interface grew a `hasDraft` flag; the tree renders amber "draft" or blue "modified" depending on which axis applies. Authors see at a glance which entries have unpublished changes.
+- **Reset-to-published** action + button. `revertDraftNode(cmsId)` removes a single id's draft override (and unlinks the draft file when it goes empty). `resetCmsDraft(cmsId)` server action wraps it. The field panel shows a "Reset draft → published" button when the selected id has a draft override.
+- **Draft-aware lookup helper.** `lookupDraftNode(cmsId)` always checks draft first / falls back to published — used by the editor server actions and the editor page itself, where the request might not yet carry the draft cookie (first page load hasn't round-tripped Set-Cookie). Without this, mutation actions read from published every call and overwrote the prior write.
+- **`buildIndex` top-level-wins.** Two-pass index build so a top-level draft entry shadows a stale slot-nested copy of the same id. Editing a slot child via `saveCmsFields` (which writes a top-level entry for the child) was getting masked by the parent's still-stale slot array; this fix makes the fresh edit visible.
+- **Atomic store writes.** `writeStoreFile` writes to a temp file in the same directory and `renameSync`s onto the target path. POSIX rename is atomic, so a mid-write crash leaves the prior file intact instead of half a truncated JSON.
+- **Hydration warning fix on /cms-demo.** Wrapping the static slug nav in a `<Partial>` gave it a stable streaming boundary; React's SSR was committing initial HTML mid-render and the rest came as Flight chunks the client reconciled into a mismatch. Zero hydration warnings on /cms-demo + /cms-edit's preview now.
+- **Tests + docs.** 18 new server-action unit tests (`saveCmsFields` configIndex routing, kind coercion, boolean sidecar; `addBlockToSlot` append/extend/throw cases; `removeBlockFromSlot` idempotency; `moveBlockInSlot` boundaries; `resetCmsDraft` precision; `publishCmsDraft` via snapshot+restore). Updated e2e specs cover per-config tabs, slot-palette add/remove/reorder, the modified badge transition, and the save-doesn't-bleed-across-configs invariant. New `notes/CMS_AUTHORING.md` covers the dev-side workflow (how to add a block, storage layout, match clause syntax, draft mechanics, debugging tips, file map).
+
+What's still deferred (filed for a follow-up session):
+
+- **On-canvas drag-drop.** Reorder works via ↑ / ↓ buttons today; click-and-drag in the preview frame is a polish pass.
+- **Per-author draft isolation.** The single global `draft.json` is fine for one editor session; a real multi-author setup needs scoped drafts (per cookie / session / branch).
+- **Entity picker widgets** per `Reference.type`. `getReference` shows up as a plain text input today.
+- **Add / delete config from the UI.** Authors can edit existing configs; creating a new override requires editing JSON for now.
+
 ### Chunk 3 — shipped 2026-04-25
 
 MVE editor + its prerequisites. The authoring surface is real now: the /cms-edit route opens a Shopify-style three-pane editor (tree / preview / fields), with save-to-draft and publish-to-live server actions running through the existing invalidation graph.
