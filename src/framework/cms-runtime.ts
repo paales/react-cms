@@ -41,6 +41,13 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+// Bundled snapshot of the published store. In dev, the disk read in
+// `loadPublishedStore` always wins (mtime-cached, live-reloads on
+// edits); the import is just a static reference. In production the
+// file isn't shipped to `dist/`, so the disk read throws and the
+// loader falls back to this bundled value. Vite inlines the JSON at
+// build time.
+import bundledPublishedStore from "../cms/content.json" with { type: "json" };
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -250,9 +257,25 @@ function loadSlot(
 }
 
 function loadPublishedStore(): { store: CmsStore; index: Map<string, CmsNode> } {
-  const { slot, fallback } = loadSlot(PUBLISHED_PATH, publishedSlot);
-  if (slot) publishedSlot = slot;
-  return fallback;
+  const { slot } = loadSlot(PUBLISHED_PATH, publishedSlot);
+  if (slot) {
+    publishedSlot = slot;
+    return slot;
+  }
+  // `loadSlot` couldn't statSync the file. In dev that's a real
+  // missing file (deleted, never created); in prod it just means
+  // the file isn't bundled into `dist/`. Either way, fall back to
+  // the static import — Vite inlines the JSON at build time, so
+  // the bundled snapshot is the ground truth in production.
+  if (publishedSlot) return publishedSlot;
+  const store = bundledPublishedStore as CmsStore;
+  const slotFromBundle: CacheSlot = {
+    store,
+    index: buildIndex(store),
+    mtime: 0,
+  };
+  publishedSlot = slotFromBundle;
+  return slotFromBundle;
 }
 
 function loadDraftStore(): { store: CmsStore; index: Map<string, CmsNode> } {

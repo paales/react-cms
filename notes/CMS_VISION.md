@@ -131,6 +131,7 @@ What's still deferred (filed for a follow-up session):
 - **Per-author draft isolation.** The single global `draft.json` is fine for one editor session; a real multi-author setup needs scoped drafts (per cookie / session / branch).
 - **Entity picker widgets** per `Reference.type`. `getReference` shows up as a plain text input today.
 - **Add / delete config from the UI.** Authors can edit existing configs; creating a new override requires editing JSON for now.
+- ~~Production build (`yarn build && yarn preview`).~~ — RESOLVED 2026-04-25: `loadPublishedStore` (`src/framework/cms-runtime.ts`) now imports `src/cms/content.json` as a static JSON module and falls back to the bundled snapshot when the file-system read fails. Dev still reads from disk (mtime-cached, live-reloads on edits); prod uses the bundled snapshot. Drafts (`draft.json`) stay dev-only — production has no writable store, by design (a real deployment would point this at a database/KV layer). `yarn build && yarn preview` produces a working editor with full tree + preview content.
 
 ### Chunk 3 — shipped 2026-04-25
 
