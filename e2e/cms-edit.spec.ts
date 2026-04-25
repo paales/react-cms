@@ -431,11 +431,16 @@ test.describe("CMS editor — smoke", () => {
     const reqUrl = new URL(seen[0]);
     const partials = reqUrl.searchParams.get("partials");
     expect(partials).not.toBeNull();
-    // Preview is NOT in the requested set — it stays put.
-    expect(partials).not.toContain("cms-edit-preview");
-    // Tree + fields ARE in the requested set.
-    expect(partials).toContain("cms-edit-tree");
-    expect(partials).toContain("cms-edit-fields");
+    // Tree + fields ARE in the requested set, preview is not — the
+    // selector-targeted refetch carries `partials=cms-edit-tree,
+    // cms-edit-fields`. Each token is exact-matched (no substring
+    // collision: `preview` is the standalone Partial token for the
+    // preview frame, distinct from `cms-edit-preview-pane` which is a
+    // data-testid on the wrapping `<main>`).
+    const requested = partials!.split(",");
+    expect(requested).not.toContain("preview");
+    expect(requested).toContain("cms-edit-tree");
+    expect(requested).toContain("cms-edit-fields");
 
     // And the field panel ends up resolved to the clicked id.
     await expect(
@@ -567,6 +572,67 @@ test.describe("CMS editor — smoke", () => {
       await expect(
         page.getByTestId("cms-edit-slot-panel-sidebar"),
       ).toHaveCount(0);
+    });
+  });
+
+  test.describe("preview frame navigation", () => {
+    // The editor's preview is a `<Partial frame="preview">` — a
+    // server-side iframe. The frame URL bar (`<CmsEditPreviewNav>`)
+    // calls `useNavigation("preview").navigate(href)` which only
+    // refetches the preview subtree; the editor's own URL stays at
+    // /cms-edit and the tree + field panels stay put.
+
+    test("preview URL bar shows the current frame URL", async ({ page }) => {
+      await page.goto("/cms-edit");
+      await expect(
+        page.getByTestId("cms-edit-preview-url"),
+      ).toContainText("/cms-demo");
+      // The fallback initial URL is the same query-param-form
+      // (`?cms-draft=1`) — verify it's there before any nav.
+      await expect(
+        page.getByTestId("cms-edit-preview-url"),
+      ).toContainText("cms-draft=1");
+    });
+
+    test("clicking a preset preview-nav button navigates the frame in place", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit");
+      await page.waitForLoadState("networkidle");
+
+      const preview = page.getByTestId("cms-edit-preview-pane");
+      // Default config — the greeting Partial shows "Default greeting".
+      await expect(preview).toContainText("Default greeting");
+
+      // Navigate to /cms-demo/alpha — the per-slug greeting config
+      // takes effect inside the preview.
+      await page
+        .getByTestId("cms-edit-preview-nav-/cms-demo/alpha?cms-draft=1")
+        .click();
+      await expect(preview).toContainText("Hello, Alpha!");
+      // URL bar reflects the new frame URL.
+      await expect(
+        page.getByTestId("cms-edit-preview-url"),
+      ).toContainText("/cms-demo/alpha");
+      // The editor's own URL stays at /cms-edit (no `?select=`, no
+      // path change). page.url() returns the page-scope URL.
+      expect(new URL(page.url()).pathname).toBe("/cms-edit");
+    });
+
+    test("typing a custom path into the URL bar navigates the preview", async ({
+      page,
+    }) => {
+      await page.goto("/cms-edit");
+      await page.waitForLoadState("networkidle");
+
+      await page
+        .getByTestId("cms-edit-preview-nav-input")
+        .fill("/cms-demo/beta?cms-draft=1");
+      await page.getByRole("button", { name: "Go" }).click();
+
+      const preview = page.getByTestId("cms-edit-preview-pane");
+      await expect(preview).toContainText("Beta/Gamma view");
+      expect(new URL(page.url()).pathname).toBe("/cms-edit");
     });
   });
 });

@@ -54,6 +54,10 @@ import { cn } from "@/lib/utils";
 import { CmsDemoPage } from "./cms-demo.tsx";
 import { CmsEditTreeLink } from "../components/cms-edit-tree-link.tsx";
 import {
+  CmsEditPreviewNav,
+  type PreviewNavLink,
+} from "../components/cms-edit-preview-nav.tsx";
+import {
   addBlockToSlot,
   moveBlockInSlot,
   publishCmsDraft,
@@ -63,6 +67,17 @@ import {
 } from "../actions/cms.ts";
 
 const PREVIEW_FRAME_URL = "/cms-demo?cms-draft=1";
+
+/** Quick-nav targets in the preview pane's URL bar — mirrors the
+ *  demo page's slug nav so authors have obvious entry points without
+ *  typing paths by hand. */
+const PREVIEW_NAV_LINKS: ReadonlyArray<PreviewNavLink> = [
+  { href: "/cms-demo?cms-draft=1", label: "Default" },
+  { href: "/cms-demo/alpha?cms-draft=1", label: "alpha" },
+  { href: "/cms-demo/beta?cms-draft=1", label: "beta" },
+  { href: "/cms-demo/gamma?cms-draft=1", label: "gamma" },
+  { href: "/cms-demo/zulu?cms-draft=1", label: "zulu" },
+];
 
 export function CmsEditPage() {
   // Draft mode is authoritative here. Belt-and-suspenders:
@@ -120,12 +135,19 @@ export function CmsEditPage() {
 function PreviewPanel() {
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">
             Preview
           </p>
-          <p className="text-sm font-medium">{PREVIEW_FRAME_URL}</p>
+          {/* Frame-scoped URL bar lets the author navigate the
+              previewed page in place — the editor's own URL stays at
+              /cms-edit. The bar reads/writes the preview frame's
+              session URL via `useNavigation("preview")`. */}
+          <CmsEditPreviewNav
+            initialUrl={PREVIEW_FRAME_URL}
+            links={PREVIEW_NAV_LINKS}
+          />
         </div>
         <form action={publishCmsDraft}>
           <Button type="submit" size="sm" variant="outline">
@@ -134,9 +156,18 @@ function PreviewPanel() {
         </form>
       </div>
       <div className="rounded-xl border bg-background p-4">
+        {/* Selector token MUST match the `frame` name (`#preview` /
+            `frame="preview"`). The framework's frame-nav refetch
+            (`_dispatchFrameRefetch`) targets `partials=<frameLocalName>`
+            so the parent's fp-skip doesn't shadow the actual refetch
+            — the dispatched id has to resolve to this Partial's
+            effective id (the `#`-token name). Mismatched names cause
+            the page-root Partial to fp-match the cached fingerprint
+            and skip, leaving the preview frame untouched on
+            navigation. */}
         <Partial
           parent={ROOT}
-          selector="#cms-edit-preview"
+          selector="#preview"
           frame="preview"
           frameUrl={PREVIEW_FRAME_URL}
         >

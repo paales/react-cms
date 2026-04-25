@@ -652,8 +652,18 @@ export function Partial({
   // baseKey differentiates per-config — otherwise a cached Partial
   // whose content came from CMS would return stale bytes on a config
   // flip.
+  //
+  // Frame awareness: a Partial inside a `<Partial frame=…>` ancestor
+  // resolves its CMS configs against the FRAME's request (the slug
+  // pattern matchers use the frame URL — that's the whole point of
+  // the editor's preview-frame setup, where /cms-demo/alpha vs
+  // /cms-demo picks different per-slug configs). The fingerprint
+  // contribution must use the same request — otherwise frame-URL
+  // changes don't invalidate the fingerprint and the fp-skip protocol
+  // serves stale cached bytes across preview navigations.
+  const cmsRequest = ambientScope?.request ?? getRequest();
   const cmsKey =
-    cmsId != null ? cmsFingerprintContribution(cmsId, getRequest()) : "";
+    cmsId != null ? cmsFingerprintContribution(cmsId, cmsRequest) : "";
   // Structural fingerprint — stable across "am I inside a frame?"
   // readings, which can differ between full renders and cache-mode
   // refetches because `getCurrentFrameScope` reads a per-request
