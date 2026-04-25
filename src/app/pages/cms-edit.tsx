@@ -57,6 +57,7 @@ import {
   moveBlockInSlot,
   publishCmsDraft,
   removeBlockFromSlot,
+  resetCmsDraft,
   saveCmsFields,
 } from "../actions/cms.ts";
 
@@ -242,6 +243,11 @@ async function FieldPanel({
   const node = lookupDraftNode(selected);
   const catalog = await getCatalogManifest();
   const manifest = node?.type ? catalog[node.type] : undefined;
+  // Detect "this id has unpublished changes" — the same condition
+  // that drives the tree's modified badge.
+  const hasDraft = listAllCmsNodes().some(
+    (e) => e.id === selected && e.hasDraft,
+  );
   // Default tab: the `match: {}` config if present (most permissive);
   // else the first config. For a node without any configs yet, we
   // render a prompt + implicit "new default" on save.
@@ -261,6 +267,20 @@ async function FieldPanel({
         </p>
         <p className="text-xs text-muted-foreground">id: {selected}</p>
       </div>
+
+      {hasDraft && (
+        <form action={resetCmsDraft.bind(null, selected)}>
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            className="border-blue-400/60 text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+            data-testid="cms-edit-reset-draft"
+          >
+            Reset draft → published
+          </Button>
+        </form>
+      )}
 
       {configs.length > 0 && (
         <ConfigTabs

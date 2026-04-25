@@ -16,6 +16,7 @@ import {
   getBlockSpec,
   lookupDraftNode,
   publishDraft,
+  revertDraftNode,
   writeDraftNode,
   type CmsConfig,
   type CmsNode,
@@ -121,6 +122,19 @@ export async function publishCmsDraft(): Promise<{
   // updated stores. A future iteration could target only the
   // previously-drafted ids.
   return { invalidate: { selector: "#cms-edit-tree" } };
+}
+
+/**
+ * Drop the selected node's draft override. After this runs, the
+ * editor (and any draft-cookie reader) sees the published value
+ * for `cmsId` instead of whatever was being drafted. No-op if the
+ * id has no draft entry to begin with.
+ */
+export async function resetCmsDraft(
+  cmsId: string,
+): Promise<{ invalidate: { selector: string } }> {
+  revertDraftNode(cmsId);
+  return invalidateEditorAround(cmsId);
 }
 
 /**

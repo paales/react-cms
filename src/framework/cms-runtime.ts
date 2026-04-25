@@ -34,6 +34,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -416,8 +417,39 @@ export function publishDraft(): void {
 }
 
 function writeStoreFile(path: string, store: CmsStore): void {
+  // Atomic write: serialize to a temp file in the same directory,
+  // then rename onto the target path. POSIX rename is atomic, so a
+  // mid-write crash leaves the prior file intact instead of half a
+  // truncated JSON document. The editor saves frequently and a
+  // corrupt store would brick the runtime, so the cost (one extra
+  // syscall) is well worth it.
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(store, null, 2) + "\n", "utf8");
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tmpPath, JSON.stringify(store, null, 2) + "\n", "utf8");
+  renameSync(tmpPath, path);
+}
+
+/**
+ * Drop a single id's draft override. If the id has a top-level
+ * draft entry, the entry is removed; if it doesn't, this is a
+ * no-op. Used by the editor's "Reset to published" button to undo
+ * unpublished changes without touching other drafts.
+ *
+ * Edge case: if removing the entry empties the draft store entirely,
+ * the file is unlinked rather than left as `{partials: {}}` — a
+ * missing file is the canonical "no draft" state and avoids
+ * confusing churn in git for would-be committers.
+ */
+export function revertDraftNode(cmsId: string): void {
+  const { store } = loadDraftStore();
+  if (!(cmsId in store.partials)) return;
+  delete store.partials[cmsId];
+  if (Object.keys(store.partials).length === 0) {
+    if (existsSync(DRAFT_PATH)) unlinkSync(DRAFT_PATH);
+  } else {
+    writeStoreFile(DRAFT_PATH, store);
+  }
+  _invalidateCmsStoreCache();
 }
 
 /**

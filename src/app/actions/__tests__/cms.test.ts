@@ -31,6 +31,7 @@ import {
   moveBlockInSlot,
   publishCmsDraft,
   removeBlockFromSlot,
+  resetCmsDraft,
   saveCmsFields,
 } from "../cms.ts";
 
@@ -291,6 +292,42 @@ describe("moveBlockInSlot", () => {
     await moveBlockInSlot("parent-move", "body", "ghost", "up");
     const parent = lookupDraftNode("parent-move")!;
     expect(parent.slots?.body.map((c) => c.id)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("resetCmsDraft", () => {
+  it("removes the id's draft entry while leaving others intact", async () => {
+    writeDraftNode("keep-me", {
+      id: "keep-me",
+      configs: [{ match: {}, fields: { a: 1 } }],
+    });
+    writeDraftNode("drop-me", {
+      id: "drop-me",
+      configs: [{ match: {}, fields: { b: 2 } }],
+    });
+    await resetCmsDraft("drop-me");
+    expect(lookupDraftNode("keep-me")?.configs[0].fields.a).toBe(1);
+    expect(lookupDraftNode("drop-me")).toBeNull();
+  });
+
+  it("removes the draft file entirely when the last id is dropped", async () => {
+    writeDraftNode("only-one", {
+      id: "only-one",
+      configs: [{ match: {}, fields: {} }],
+    });
+    expect(existsSync(DRAFT_PATH)).toBe(true);
+    await resetCmsDraft("only-one");
+    expect(existsSync(DRAFT_PATH)).toBe(false);
+  });
+
+  it("is a no-op for an id without a draft entry", async () => {
+    writeDraftNode("present", {
+      id: "present",
+      configs: [{ match: {}, fields: {} }],
+    });
+    // No draft for "absent". Should not throw or remove "present".
+    await resetCmsDraft("absent");
+    expect(lookupDraftNode("present")).not.toBeNull();
   });
 });
 
