@@ -11,6 +11,15 @@
 - "Selecting page-greeting then clicking the alpha frame nav loses the field form" (same cache-substitution miss surfacing on the editor's right pane)
 The fix: on every substitution (placeholder → wrapper, OR wrapper → fresh wrapper), recurse into the result with the substituted id as the new `skipId` so a self-pointing reference can't loop.
 
+**Update 2026-04-25d:** streaming-mode prune fix + single-slot header collapse.
+
+1. **Cache prune now keeps nested partials.** Streaming-mode pruning in `PartialsClient` derived its "live ids" from `collectTemplateIds(deriveTemplate(...))`, but `deriveTemplate` stops at any partial wrapper — nested partial ids were never visited and got deleted from `_cache` on every full render. Same hole for `_fingerprints.clear()`: the up-front clear plus a walk that only re-sets fresh wrappers wiped fingerprints for fp-skipped partials. Three reported regressions trace back to this:
+    - "Click `alpha` on /cms-demo and most blocks (nav, hero, multi-slot, product cards) disappear; back button doesn't recover them" — nested partials' cache entries were pruned away before `substituteNested` ran.
+    - "Selecting `#greeting` in /cms-edit then clicking `slug=alpha` blanks the field form and the tree" — the editor's `cms-edit-fields` and `cms-edit-tree` partials are nested inside `cms-edit-root`, so their cache also got wiped.
+    - "alpha → beta → gamma blanks the slug nav" — the second regression: when the OUTER partial fp-skipped (cms-demo-root unchanged across beta → gamma since both match `{in:[beta,gamma]}`), the new streamed tree carried only the outer's placeholder, so the prune set saw only top-level ids; every nested partial inside the cached `cms-demo-root` wrapper got deleted out from under the next render.
+   The fix has three parts: (a) `cacheFromStreamingChildren` threads a `seen` set that tracks fresh wrappers AND placeholders from the new tree, (b) after the walk, a frontier-style BFS expands `seen` by walking INTO each cached wrapper for ids in `seen` and harvesting nested partial ids transitively (so a top-level placeholder for `cms-demo-root` still keeps every partial reachable inside its cached wrapper), and (c) `_fingerprints.clear()` is gone — the prune handles staleness without losing skip-confirmed entries. The combined logic is exhaustive: any partial id reachable through the rendered tree (whether via a fresh wrapper, a placeholder over a cached wrapper, or transitively through a wrapper's children) survives the prune. Pinned by `e2e/cms-nav-stress.spec.ts`.
+2. **Single-slot tree header collapsed.** `buildCmsTreeEntries` skips the `▸ <slot>` intermediary when a parent declares exactly one slot — the label adds no information when there's nothing to disambiguate it from. Children render at `depth + 1` directly under the parent; the +Block footer stays at `depth + 1` so authors can still append. Multi-slot parents (`cms-demo-multi-slot`) keep the header per slot.
+
 ---
 
 ## One-liner

@@ -450,11 +450,24 @@ export function buildCmsTreeEntries(
       hasDraft,
     });
     if (!node.slots) return;
+    const slotEntries = Object.entries(node.slots);
+    // When a node declares ONE slot, the slot label (`▸ body`) adds
+    // no information — there's no other slot to disambiguate it from
+    // — and just costs a row of vertical space + an indent level for
+    // every child. Skip the header in that case; render children
+    // directly under the parent and keep the +add row at the same
+    // depth as the children.
+    //
+    // 2+ slots still emit the header so authors can tell which slot
+    // a given child belongs to (e.g. the multi-slot demo with `body`
+    // + `sidebar`).
+    const collapseHeader = slotEntries.length === 1;
     // Every slot a parent declares gets two synthetic entries:
     //
     //   1. `slot:<parent>:<name>` — header at the top of the slot's
     //      children. Just a label (▸ <slotName>); non-selectable
-    //      (rendered as plain text, not a link).
+    //      (rendered as plain text, not a link). Skipped for
+    //      single-slot parents — see `collapseHeader` above.
     //   2. `slot-add:<parent>:<name>` — footer at the bottom of the
     //      slot's children. Hosts the +add-block palette so authors
     //      naturally append blocks at the end of the list (matches
@@ -466,28 +479,31 @@ export function buildCmsTreeEntries(
     // buttons that wraps to multiple lines and squeezes the slot
     // name. See the issue report (2026-04-25) for the visual breakage
     // before this split.
-    for (const [name, children] of Object.entries(node.slots)) {
-      entries.push({
-        id: slotEntryId(node.id, name),
-        kind: "slot",
-        depth: depth + 1,
-        slotName: name,
-        parentId: node.id,
-        draftOnly: false,
-        hasDraft: false,
-      });
+    for (const [name, children] of slotEntries) {
+      const childDepth = collapseHeader ? depth + 1 : depth + 2;
+      if (!collapseHeader) {
+        entries.push({
+          id: slotEntryId(node.id, name),
+          kind: "slot",
+          depth: depth + 1,
+          slotName: name,
+          parentId: node.id,
+          draftOnly: false,
+          hasDraft: false,
+        });
+      }
       // Prefer the merged top-level version of each slot child when
       // available — that's the post-edit state. Fall back to the
       // inline copy for ids the author hasn't edited yet (or that
       // never had a top-level entry, i.e. published slot children).
       for (const child of children) {
         const effective = merged[child.id] ?? child;
-        walk(effective, depth + 2, name, node.id);
+        walk(effective, childDepth, name, node.id);
       }
       entries.push({
         id: slotAddEntryId(node.id, name),
         kind: "slot-add",
-        depth: depth + 2,
+        depth: childDepth,
         slotName: name,
         parentId: node.id,
         draftOnly: false,

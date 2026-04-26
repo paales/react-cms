@@ -170,27 +170,47 @@ function getPlaceholderId(node: React.ReactElement): string | null {
 }
 
 /**
- * Collect the ids of all `<i data-partial>` placeholders in a derived
- * template. `deriveTemplate` replaces every live Partial wrapper (fresh
- * OR previously-skipped) with a placeholder keyed by id, so this set is
- * exactly the top-level Partial ids present on the current page. Used
- * to prune `_cache` entries left over from prior routes.
+ * Collect every partial id reachable inside a node — wrapper OR
+ * placeholder. Read-only walk: doesn't mutate `_cache` or
+ * `_fingerprints`. Used by the streaming-mode prune to expand `seen`
+ * with nested ids that live inside cached wrappers — when the server
+ * fp-skips an outer partial, the new tree carries only its top-level
+ * placeholder, so the nested ids backing the rendered region (via
+ * `substituteNested` walking the cached wrapper) need to be
+ * harvested from the cache itself or the prune deletes them out from
+ * under the next render.
  */
-function collectTemplateIds(node: ReactNode, out: Set<string>): void {
+function harvestPartialIds(node: ReactNode, out: Set<string>): void {
   if (node == null || typeof node === "boolean") return;
   if (typeof node === "string" || typeof node === "number") return;
   if (Array.isArray(node)) {
-    for (const child of node) collectTemplateIds(child as ReactNode, out);
+    for (let i = 0; i < node.length; i++) {
+      harvestPartialIds(node[i] as ReactNode, out);
+    }
+    return;
+  }
+  const unwrapped = unwrapLazy(node);
+  if (unwrapped !== node) {
+    if (unwrapped == null) return;
+    harvestPartialIds(unwrapped as ReactNode, out);
     return;
   }
   if (!isValidElement(node)) return;
+
+  if (isPartialWrapper(node)) {
+    const id = getPartialId(node);
+    if (id) out.add(id);
+    const inner = (node.props as { children?: ReactNode })?.children;
+    if (inner != null) harvestPartialIds(inner, out);
+    return;
+  }
   if (isPlaceholder(node)) {
     const id = getPlaceholderId(node);
     if (id) out.add(id);
     return;
   }
-  const inner = (node.props as any)?.children;
-  if (inner != null) collectTemplateIds(inner, out);
+  const inner = (node.props as { children?: ReactNode })?.children;
+  if (inner != null) harvestPartialIds(inner, out);
 }
 
 /**
@@ -350,19 +370,20 @@ function unwrapLazy(node: unknown): unknown {
 function cacheFromStreamingChildren(
   node: ReactNode,
   cache: Map<string, ReactNode>,
+  seen?: Set<string>,
 ): void {
   if (node == null || typeof node === "boolean") return;
   if (typeof node === "string" || typeof node === "number") return;
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      cacheFromStreamingChildren(node[i] as ReactNode, cache);
+      cacheFromStreamingChildren(node[i] as ReactNode, cache, seen);
     }
     return;
   }
   const unwrapped = unwrapLazy(node);
   if (unwrapped !== node) {
     if (unwrapped == null) return;
-    cacheFromStreamingChildren(unwrapped as ReactNode, cache);
+    cacheFromStreamingChildren(unwrapped as ReactNode, cache, seen);
     return;
   }
   if (!isValidElement(node)) return;
@@ -370,6 +391,7 @@ function cacheFromStreamingChildren(
   if (isPartialWrapper(node)) {
     const id = getPartialId(node);
     if (id) {
+      seen?.add(id);
       cache.set(id, node);
       // Populate `_fingerprints` synchronously from the tree walk
       // rather than waiting for each `<PartialErrorBoundary>` to
@@ -386,18 +408,26 @@ function cacheFromStreamingChildren(
     // entries so subsequent parent-only refetches with inner
     // placeholders can fill the holes.
     const inner = (node.props as any)?.children;
-    if (inner != null) cacheFromStreamingChildren(inner, cache);
+    if (inner != null) cacheFromStreamingChildren(inner, cache, seen);
     return;
   }
   if (isPlaceholder(node)) {
     // Placeholder means "server skipped this partial; client keeps
-    // its existing cache entry." Don't overwrite.
+    // its existing cache entry." Don't overwrite — but DO mark the id
+    // as seen so the streaming-mode prune step keeps the cache /
+    // fingerprint entries that back this placeholder. Without this,
+    // a nested partial whose server confirmed an fp match would be
+    // pruned out of `_cache` and the next render's `substituteNested`
+    // call would leave the `<i hidden>` placeholder in the DOM —
+    // blanking the partial's region until a hard reload.
+    const id = getPlaceholderId(node);
+    if (id) seen?.add(id);
     return;
   }
 
   const inner = (node.props as any)?.children;
   if (inner != null) {
-    cacheFromStreamingChildren(inner, cache);
+    cacheFromStreamingChildren(inner, cache, seen);
   }
 }
 
@@ -1674,24 +1704,69 @@ export function PartialsClient({
   // `<PartialErrorBoundary>` to commit). Each boundary's render still
   // re-registers as a fallback — harmless, same value.
   if (mode === "streaming") {
-    // Drop entries carried over from a prior route BEFORE walking the
-    // new tree. The walk inside `cacheFromStreamingChildren` then
-    // re-populates `_fingerprints` for every Partial on the new
-    // route; anything not visited (i.e. stale) is gone. Clearing
-    // AFTER the walk would wipe the fresh entries too.
-    _fingerprints.clear();
-    cacheFromStreamingChildren(children, cache);
+    // Walk the streamed tree and track every Partial id encountered,
+    // whether emitted as a fresh wrapper or as an fp-skip placeholder.
+    // Both kinds of id are still live on this route — the placeholder
+    // means "the server confirmed your cache entry is current", so its
+    // cache + fingerprint MUST survive the prune below.
+    //
+    // Clearing `_fingerprints` up-front (the previous design) wiped
+    // skipped partials' fingerprints because the walk only re-sets
+    // them for fresh wrappers. Likewise pruning `_cache` against just
+    // the top-level placeholders from `deriveTemplate` (which stops
+    // at any wrapper, so nested ids are never visited) deleted the
+    // cache entries for nested partials whose ancestor was re-rendered
+    // fresh but whose own region was fp-skipped — leaving
+    // `substituteNested` no entry to fill the placeholder with on the
+    // next render.
+    const seen = new Set<string>();
+    cacheFromStreamingChildren(children, cache, seen);
     const derived = deriveTemplate(children);
     _template = derived;
 
-    // Drop `_cache` entries whose id isn't on the new page. The
-    // derived template lists exactly the Partial ids present on the
-    // current page; anything still in `_cache` but not in that set
-    // is a leak from a previous navigation.
-    const liveIds = new Set<string>();
-    collectTemplateIds(derived, liveIds);
+    // Expand `seen` with nested partial ids reachable through cached
+    // wrappers. When the server fp-skips an OUTER partial (e.g.
+    // `cms-demo-root` unchanged across `/cms-demo/beta` →
+    // `/cms-demo/gamma`), the new streamed tree carries only the
+    // outer's placeholder. Without this expansion, the prune below
+    // would drop every nested partial's cache entry — and the next
+    // render's `substituteNested` walk over the cached outer wrapper
+    // would find empty placeholders for slug-nav, hero, multi-slot,
+    // product-grid, …, blanking those regions.
+    //
+    // Frontier-style BFS: each newly-discovered id can itself be a
+    // wrapper containing more nested partials, so harvest until no
+    // new ids appear.
+    let frontier: string[] = [...seen];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        const wrapper = cache.get(id);
+        if (!wrapper) continue;
+        const inner = (wrapper as { props?: { children?: ReactNode } })
+          .props?.children;
+        if (inner == null) continue;
+        const nested = new Set<string>();
+        harvestPartialIds(inner, nested);
+        for (const nid of nested) {
+          if (!seen.has(nid)) {
+            seen.add(nid);
+            next.push(nid);
+          }
+        }
+      }
+      frontier = next;
+    }
+
+    // Drop entries from prior routes that don't appear on the new
+    // page. `seen` covers fresh wrappers, placeholders from the new
+    // tree, AND nested ids harvested from cached wrappers, so any
+    // partial still backing the rendered tree survives.
     for (const id of [..._cache.keys()]) {
-      if (!liveIds.has(id)) _cache.delete(id);
+      if (!seen.has(id)) _cache.delete(id);
+    }
+    for (const id of [..._fingerprints.keys()]) {
+      if (!seen.has(id)) _fingerprints.delete(id);
     }
 
     const rendered = renderTemplate(derived, cache);

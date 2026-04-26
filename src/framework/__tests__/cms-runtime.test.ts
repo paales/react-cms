@@ -239,7 +239,7 @@ describe("lookupCmsNode — file-backed store", () => {
 });
 
 describe("buildCmsTreeEntries — slot intermediaries + dedupe", () => {
-  it("emits a slot intermediary for every slot a parent declares (single-slot)", () => {
+  it("collapses the slot header for a single-slot parent (children render directly under the parent)", () => {
     const published: Record<string, CmsNode> = {
       parent: {
         id: "parent",
@@ -256,17 +256,15 @@ describe("buildCmsTreeEntries — slot intermediaries + dedupe", () => {
       },
     };
     const entries = buildCmsTreeEntries(published, {});
-    // Slot intermediary always inserted (header at the top, +add
-    // palette footer at the bottom). The tree wraps each slot's
-    // children with both so authors can see what slot a child
-    // belongs to AND append new blocks at the natural "end of list"
-    // position.
+    // Single-slot parents skip the `▸ body` header — there's nothing
+    // to disambiguate when only one slot exists, so the label just
+    // adds noise and a wasted indent. Children render at depth+1;
+    // the +add palette stays at the same depth as the children.
     expect(entries.map((e) => ({ id: e.id, kind: e.kind, depth: e.depth })))
       .toEqual([
         { id: "parent", kind: "node", depth: 0 },
-        { id: slotEntryId("parent", "body"), kind: "slot", depth: 1 },
-        { id: "child-1", kind: "node", depth: 2 },
-        { id: slotAddEntryId("parent", "body"), kind: "slot-add", depth: 2 },
+        { id: "child-1", kind: "node", depth: 1 },
+        { id: slotAddEntryId("parent", "body"), kind: "slot-add", depth: 1 },
       ]);
   });
 
@@ -310,7 +308,7 @@ describe("buildCmsTreeEntries — slot intermediaries + dedupe", () => {
       ]);
   });
 
-  it("emits a slot intermediary for an empty slot (so the +add palette is reachable)", () => {
+  it("emits the +add row for a single empty slot (collapsed header, palette still reachable)", () => {
     const published: Record<string, CmsNode> = {
       parent: {
         id: "parent",
@@ -322,10 +320,9 @@ describe("buildCmsTreeEntries — slot intermediaries + dedupe", () => {
     expect(entries.map((e) => ({ id: e.id, kind: e.kind, depth: e.depth })))
       .toEqual([
         { id: "parent", kind: "node", depth: 0 },
-        { id: slotEntryId("parent", "body"), kind: "slot", depth: 1 },
-        // Empty slot still emits the +add row so authors can drop
-        // the first block in.
-        { id: slotAddEntryId("parent", "body"), kind: "slot-add", depth: 2 },
+        // Single-slot, header collapsed — but the +add row is still
+        // emitted at depth+1 so authors can drop the first block in.
+        { id: slotAddEntryId("parent", "body"), kind: "slot-add", depth: 1 },
       ]);
   });
 
@@ -356,9 +353,10 @@ describe("buildCmsTreeEntries — slot intermediaries + dedupe", () => {
     const entries = buildCmsTreeEntries(published, draft);
     const childOccurrences = entries.filter((e) => e.id === "child-1");
     expect(childOccurrences).toHaveLength(1);
-    // depth=2 because the slot intermediary now sits between
-    // parent (depth 0) and the child (depth 2).
-    expect(childOccurrences[0].depth).toBe(2);
+    // depth=1 because the parent has a single slot (`body`), so the
+    // slot header is collapsed and children render directly under
+    // the parent.
+    expect(childOccurrences[0].depth).toBe(1);
     expect(childOccurrences[0].parentId).toBe("parent");
     expect(childOccurrences[0].slotName).toBe("body");
     expect(childOccurrences[0].hasDraft).toBe(true);

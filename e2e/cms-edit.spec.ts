@@ -193,11 +193,10 @@ test.describe("CMS editor — smoke", () => {
       page,
     }) => {
       await page.goto("/cms-edit");
-      await expect(
-        page.getByTestId(
-          "cms-edit-tree-entry-slot:cms-demo-composed:body",
-        ),
-      ).toBeVisible();
+      // cms-demo-composed declares a single slot (`body`) so the
+      // tree collapses the `▸ body` header — children render directly
+      // under the parent. The +Block dropdown row is still present
+      // at the bottom of the slot's children.
       await page
         .getByTestId(
           "cms-edit-slot-add-trigger-cms-demo-composed-body",
@@ -538,15 +537,23 @@ test.describe("CMS editor — smoke", () => {
     // controls. Slot management entirely lives in the tree now —
     // the right field pane is just for editing block fields.
 
-    test("a single-slot parent emits a slot intermediary too", async ({
+    test("a single-slot parent collapses the slot header (children render directly)", async ({
       page,
     }) => {
       await page.goto("/cms-edit");
-      // `cms-demo-composed` has one slot; intermediary still appears
-      // because it hosts the +add-block buttons inline.
+      // `cms-demo-composed` has one slot. With only one slot the
+      // `▸ body` label adds no information (nothing to disambiguate
+      // it from), so the tree skips the header. The slot footer
+      // +Block row stays — it's the affordance for adding to the
+      // empty list.
       await expect(
         page.getByTestId(
           "cms-edit-tree-entry-slot:cms-demo-composed:body",
+        ),
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId(
+          "cms-edit-tree-entry-slot-add:cms-demo-composed:body",
         ),
       ).toBeVisible();
     });
@@ -684,12 +691,14 @@ test.describe("CMS editor — smoke", () => {
       await expect(
         page.getByTestId("cms-edit-tree-entry-cms-demo-product-grid"),
       ).toBeVisible();
-      // It declares one slot, `items`, → one slot intermediary.
+      // It declares one slot, `items`. Single-slot parents collapse
+      // the slot header — the cards render directly under the
+      // group; no `▸ items` intermediary in the tree.
       await expect(
         page.getByTestId(
           "cms-edit-tree-entry-slot:cms-demo-product-grid:items",
         ),
-      ).toBeVisible();
+      ).toHaveCount(0);
       for (const id of [
         "product-card-1",
         "product-card-2",
@@ -791,19 +800,21 @@ test.describe("CMS editor — smoke", () => {
     // and the +add palette listing every registered `page-*` block
     // type.
 
-    test("the page root + its slot intermediary appear at the top of the tree", async ({
+    test("the page root + its slot children appear at the top of the tree", async ({
       page,
     }) => {
       await page.goto("/cms-edit");
       await expect(
         page.getByTestId("cms-edit-tree-entry-cms-demo-root"),
       ).toBeVisible();
+      // The page root declares a single `body` slot, so the
+      // `▸ body` header is collapsed — children render directly
+      // under cms-demo-root.
       await expect(
         page.getByTestId("cms-edit-tree-entry-slot:cms-demo-root:body"),
-      ).toBeVisible();
-      // Every existing top-level partial is now a slot child of the
-      // root — they hang under the slot:cms-demo-root:body
-      // intermediary.
+      ).toHaveCount(0);
+      // Every existing top-level partial is a slot child of the
+      // root and shows up directly beneath cms-demo-root.
       for (const id of [
         "cms-demo-hero",
         "cms-demo-slug-nav",
