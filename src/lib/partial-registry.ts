@@ -81,6 +81,18 @@ export interface PartialSnapshot {
    *  re-open the same CMS scope when rendering from this snapshot.
    *  Absent on Partials that aren't CMS-aware. */
   cmsId?: string;
+  /** Declared request-state dependencies (URL params, cookies,
+   *  headers, pathname patterns) the Partial's content depends on.
+   *  Each entry is a tracked-accessor spec like `"url:config"`,
+   *  `"cookie:session"`, `"header:x-foo"`, `"pathname:/p/:slug"`.
+   *  Resolved against the Partial's effective request (own frame /
+   *  ambient frame / page) to fold into the structural fingerprint —
+   *  so a same-route nav that changes any declared key produces a
+   *  distinct fp and the fp-skip handshake doesn't serve stale bytes.
+   *  Preserved on the snapshot so cache-mode replay re-resolves
+   *  with the current request. Absent / empty when the Partial
+   *  doesn't declare deps. */
+  varyOn?: readonly string[];
 }
 
 type RouteMap = Map<string, Map<string, PartialSnapshot>>;
@@ -92,11 +104,38 @@ type RouteMap = Map<string, Map<string, PartialSnapshot>>;
 // clearRoute(route).
 const scopes = new Map<string, RouteMap>();
 
+// Parallel "previous render" snapshot store. `clearRoute(route)` moves
+// the current entries here before wiping `scopes` so the NEW render
+// can look up the LAST render's tree shape — used by the structural-
+// fingerprint pass to fold in each Partial's transitively-reachable
+// descendant `varyOn` declarations. Without this, an ancestor's fp
+// captures only its own JSX structure, doesn't reflect descendant
+// URL/cookie deps, and an ancestor fp-skip serves a stale subtree
+// when only the descendant's input changed.
+//
+// Approximation: "previous" reflects the most recent COMPLETED render
+// of this route (potentially with different URL params); stale Partial
+// shapes that no longer appear in the current render still contribute
+// to ancestor fp until the current render completes and swaps in.
+// That's safe — over-folding produces over-invalidation (more re-
+// renders than strictly needed), never under-invalidation. Empty on
+// first-render-of-a-route and after process restarts.
+const previousScopes = new Map<string, RouteMap>();
+
 function scopeMap(scope: string = getScope()): RouteMap {
   let m = scopes.get(scope);
   if (!m) {
     m = new Map();
     scopes.set(scope, m);
+  }
+  return m;
+}
+
+function previousScopeMap(scope: string = getScope()): RouteMap {
+  let m = previousScopes.get(scope);
+  if (!m) {
+    m = new Map();
+    previousScopes.set(scope, m);
   }
   return m;
 }
@@ -138,15 +177,51 @@ export function getRouteSnapshots(
 }
 
 /**
- * Drop all snapshots for a route within the current scope. Called at
- * the start of every streaming render so the registry reflects ONLY
- * the partials the current layout produced — stale entries from
- * prior renders (e.g. `page-2` registered when `?end=2` was visited
- * earlier) do not linger and cause future refetches to take the
- * cache-mode path when they should fall back to streaming.
+ * Move all current snapshots for a route into the "previous" slot,
+ * then clear the current slot. Called at the start of every streaming
+ * render: the new render starts with an empty current map (so stale
+ * entries from prior renders — e.g. `page-2` registered when `?end=2`
+ * was visited earlier — don't linger and cause future refetches to
+ * take the cache-mode path when they should fall back to streaming),
+ * but the previous map remains queryable for the duration of the
+ * render. Structural-fingerprint computation reads it via
+ * `getPreviousRouteSnapshots` to fold descendant `varyOn`
+ * declarations into ancestor fps.
  */
 export function clearRoute(route: string): void {
-  scopeMap().delete(route);
+  const sm = scopeMap();
+  const current = sm.get(route);
+  const psm = previousScopeMap();
+  if (current && current.size > 0) {
+    psm.set(route, current);
+  } else {
+    psm.delete(route);
+  }
+  sm.delete(route);
+}
+
+/**
+ * Snapshots from the most recent completed render of this route.
+ * Empty until at least one full render has finished. Used by the
+ * Partial body's fingerprint pass to look up descendant Partials and
+ * fold their `varyOn` declarations into the ancestor's fp — so an
+ * ancestor that fp-skips can't serve a stale subtree when a
+ * descendant's URL dependency changes.
+ *
+ * This is intentionally NOT the same map as `getRouteSnapshots`: that
+ * one reflects what the CURRENT render has registered so far, which
+ * is incomplete because descendants haven't run yet at the moment
+ * their ancestor computes its fp. Using the previous-render snapshot
+ * gives the ancestor a complete (if slightly-stale) view of its
+ * subtree — accurate enough to fold transitive deps, with the
+ * over-folding bias (any Partial that USED to live under this
+ * ancestor still contributes its varyOn) producing over-invalidation
+ * rather than under.
+ */
+export function getPreviousRouteSnapshots(
+  route: string,
+): Map<string, PartialSnapshot> | undefined {
+  return previousScopeMap().get(route);
 }
 
 /**
@@ -157,9 +232,11 @@ export function clearRoute(route: string): void {
 export function clearRegistry(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {
     scopes.clear();
+    previousScopes.clear();
     return;
   }
   scopes.delete(scope);
+  previousScopes.delete(scope);
 }
 
 export function _registryStats(): {

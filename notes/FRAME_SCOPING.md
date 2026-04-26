@@ -161,3 +161,25 @@ self-framing Partial (the only difference between them was the
 `ambientFrameKey` term, which now evaluates to `""` in that case).
 The split remains load-bearing for nested non-framed Partials, where
 `ambientFrameKey` carries the enclosing frame URL.
+
+## Workaround: `<Partial varyOn>` for descendants of a frame-bearing parent (2026-04-26)
+
+The cell leak surfaces in another way for sibling subtrees that
+deliberately read the PAGE request instead of any leaked frame URL.
+The CMS editor's field panel is the canonical case: it sits next to a
+`<Partial frame="preview">` and reads `?select=` / `?config=` from the
+page URL. It can't use `getSearchParam` (would resolve against the
+preview frame's URL whenever the leak fires) so it reads via
+`getRequest()` instead. The cost: those reads don't contribute to the
+structural fingerprint, so the fp-skip handshake serves stale bytes
+across same-route navs.
+
+`<Partial varyOn>` (added 2026-04-26) is the safety hatch — declare
+the URL deps explicitly and the framework folds them into the fp,
+resolved against the page request directly (sidesteps the cell). See
+`notes/VARY_ON.md`.
+
+A "real" fix for the leak — Flight-round-trip containment of
+FrameWrapper — remains punted because it kills progressive streaming
+inside framed subtrees. As long as that constraint stands, declarative
+`varyOn` is the contract for descendants that need the page URL.

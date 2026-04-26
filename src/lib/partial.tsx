@@ -219,6 +219,12 @@ function partialFromSnapshot(_id: string, snap: PartialSnapshot): ReactNode {
       frame: frameLocalName,
       frameUrl: snap.frameUrl,
       cmsId: snap.cmsId,
+      // Re-thread varyOn so the replayed Partial recomputes its
+      // fingerprint against the CURRENT request — same vary spec,
+      // fresh resolution. Without this, cache-mode refetches would
+      // miss declared dependencies and the fp-skip protocol on the
+      // next render could serve stale bytes.
+      varyOn: snap.varyOn,
     },
     snap.content,
   );

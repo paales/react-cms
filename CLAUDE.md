@@ -175,6 +175,22 @@ Tracked accessors must be called **unconditionally at the top of the body**, lik
 
 Dynamic Partials inside a cached region stay live via strip-on-store / reinject-on-return. Inner Partial ids are folded into the key so adding/removing one invalidates automatically.
 
+### `<Partial varyOn>` — declarative request-state dependencies
+
+When a Partial's content depends on URL/cookie/header state but its body reads via `getRequest()` (typically because the tracked accessors would hit the frame-scope-leak sharp edge — see `notes/FRAME_SCOPING.md`), or when descendants drive variability the framework can't statically see, declare the deps so the structural fingerprint can capture them:
+
+```tsx
+<Partial selector="#cms-edit-fields" varyOn={["url:select", "url:config"]}>
+  <FieldPanel />
+</Partial>
+```
+
+`varyOn` accepts the same accessor-spec syntax tracked accessors use (`url:<name>`, `cookie:<name>`, `header:<name>`, `pathname:/p/:slug`). The framework resolves each spec against the Partial's effective request — own frame, ambient frame (looked up via `parent.frameChain` so it's leak-immune), or page request — and folds the values into both the structural and full fingerprints. A same-route nav that changes any declared key produces a distinct fp, so the fp-skip handshake renders fresh instead of serving stale cached bytes.
+
+Ancestor Partials automatically inherit descendant varyOn contributions: every Partial body walks its `rawContent` JSX (catches statically-visible descendants) AND the previous render's snapshot registry (catches descendants whose `parent` was threaded explicitly), folding each descendant's resolved varyOn into its own fp. So an ancestor whose own JSX is unchanged still invalidates correctly when a descendant's URL dependency changes. Dedupe by descendant effective id; over-folding (stale snapshots from removed descendants) is safe — extra re-renders, never stale subtrees.
+
+Limitation: a Partial wrapped in an opaque function component that's never threaded `parent={capturePartialContext()}` is invisible to the static walk and unlinkable via the registry walk. Either declare `varyOn` at the wrapping ancestor or thread the parent so the registry can track the relationship. See `notes/VARY_ON.md`.
+
 ### Server action invalidation
 
 Server actions return invalidation instructions:
@@ -247,6 +263,7 @@ A running list of design follow-ups that haven't been scheduled yet. Most live w
 - **Dev-mode warning for stranded `defer={true}`.** If the app forgets to wire a reload, the Partial is dormant forever. See `notes/DEFER_ACTIVATORS.md` §Known sharp edges.
 - **Re-defer on stale.** Once activated, a Partial can't go dormant again. `{once: false}` on `useActivate` is the first step; a `<Partial unmountWhen={<WhenHidden/>}>` activator is the larger story. See `notes/IDEAS.md` §Re-defer / unmount policy.
 - **Deeper scope propagation into `<Cache>`.** Cache's inner render (`renderToReadableStream`) doesn't inherit the `React.cache`-backed frame-scope cell, so a cache-wrapped Partial inside a frame can't read `getSearchParam` to get the frame URL's query. Today's workaround: the parent reads the accessor and passes a scalar prop. A cleaner fix would propagate the frame scope into the inner render. See `notes/NAVIGATE_UNIFIED.md` §Sharp edges.
+- **Auto-tracked `varyOn`.** Today `varyOn` is declarative: the author lists `["url:select", "url:config"]` etc. and the framework folds the resolved values into the structural fingerprint. Auto-tracking via the existing manifest scope (`getSearchParam` → `trackAccess`) would be ideal but requires the manifest scope to extend to descendants' renders — which currently means a Flight round-trip (kills progressive streaming). The tractable next step is folding `<Cache>`'s already-tracked manifest into the structural fp too, closing one half of the gap. See `notes/VARY_ON.md` §"On auto-tracking".
 
 ## Tooling — `mcp-refactor-typescript`
 

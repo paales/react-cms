@@ -53,7 +53,6 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { CmsDemoPage } from "./cms-demo.tsx";
 import { CmsEditTreeLink } from "../components/cms-edit-tree-link.tsx";
-import { CmsEditConfigTab } from "../components/cms-edit-config-tab.tsx";
 import { CmsEditAddBlock } from "../components/cms-edit-add-block.tsx";
 import {
   CmsEditPreviewNav,
@@ -123,7 +122,23 @@ export function CmsEditPage() {
           className="overflow-y-auto border-l bg-muted/30 p-4"
           data-testid="cms-edit-field-pane"
         >
-          <Partial parent={ROOT} selector="#cms-edit-fields">
+          {/* `varyOn` declares the URL deps the field panel reads
+              via `getRequest()` (FieldPanel uses `pageSearchParam`
+              for both `select` and `config` to dodge the preview
+              frame's scope-cell leak — see the comment at the top
+              of `TreeContents` for why). Folding these into the
+              structural fingerprint means a plain-anchor nav that
+              changes either param produces a distinct fp; the
+              fp-skip handshake refuses to skip and the field panel
+              re-renders with the new config's fields. Without
+              this, a `<a href="?select=…&config=N">` click would
+              flip the URL but the cached wrapper would survive the
+              skip protocol untouched. */}
+          <Partial
+            parent={ROOT}
+            selector="#cms-edit-fields"
+            varyOn={["url:select", "url:config"]}
+          >
             <FieldPanel />
           </Partial>
         </aside>
@@ -183,8 +198,21 @@ function PreviewPanel() {
 // ─── Tree ──────────────────────────────────────────────────────────────
 
 function TreePanel() {
+  // `varyOn={["url:select"]}` makes `?select=` part of the
+  // structural fingerprint — a plain-anchor nav that changes the
+  // selection invalidates the fp-skip protocol and the tree
+  // re-renders with the new highlight. (The selector-targeted
+  // refetch fired by `<CmsEditTreeLink>` is still the preferred
+  // path for tree clicks because it skips ancestor execution
+  // entirely; varyOn is the safety net for any other nav that
+  // changes the URL — e.g. a config tab click that lands on a
+  // different `?select=` somehow, or the browser URL bar.)
   return (
-    <Partial parent={ROOT} selector="#cms-edit-tree">
+    <Partial
+      parent={ROOT}
+      selector="#cms-edit-tree"
+      varyOn={["url:select"]}
+    >
       <div>
         <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
           Content tree
@@ -704,8 +732,15 @@ function ConfigTabs({
         {configs.map((cfg, idx) => {
           const isActive = idx === activeIndex;
           const label = formatMatchLabel(cfg.match);
+          // Plain anchor — relies on the `cms-edit-fields` Partial's
+          // `varyOn={["url:select", "url:config"]}` to invalidate the
+          // structural fingerprint when the active config changes.
+          // The full streaming render fp-skips everything else
+          // (preview, tree, page chrome) so the network payload is
+          // small even though the request goes through the page-nav
+          // path. See `notes/VARY_ON.md`.
           return (
-            <CmsEditConfigTab
+            <a
               key={idx}
               href={cmsEditHref(selected, idx)}
               className={cn(
@@ -714,11 +749,11 @@ function ConfigTabs({
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-transparent hover:bg-muted",
               )}
-              testId={`cms-edit-config-tab-${idx}`}
-              active={isActive}
+              data-testid={`cms-edit-config-tab-${idx}`}
+              data-active={isActive}
             >
               {label}
-            </CmsEditConfigTab>
+            </a>
           );
         })}
       </div>
