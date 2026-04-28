@@ -10,8 +10,14 @@ import type { ReactFormState } from "react-dom/client"
 import { Root } from "../app/root.tsx"
 import { NotFoundPage } from "../app/pages/not-found.tsx"
 import { parseRenderRequest } from "./request.tsx"
-import { getFrameworkControl, runWithRequestAsync, setRequest } from "./context.ts"
+import {
+  _captureCommitHandle,
+  getFrameworkControl,
+  runWithRequestAsync,
+  setRequest,
+} from "./context.ts"
 import { warmCmsCache } from "./cms-runtime.ts"
+import { deferRequestRegistryCommit } from "../lib/partial-registry.ts"
 
 export type RscPayload = {
   root: React.ReactNode
@@ -243,7 +249,7 @@ async function handleRequest(
     //     its useEffect calls `navigation.navigate(url)`.
     // Status stays 200. Refetches don't observe status codes — the
     // client reads the rendered output — so the miss is cosmetic.
-    return new Response(rscStream, {
+    return new Response(wrapStreamWithRegistryCommit(rscStream), {
       status: actionStatus,
       headers: { "content-type": "text/x-component;charset=utf-8" },
     })
@@ -287,16 +293,50 @@ async function handleRequest(
       formState,
       debugNojs: renderRequest.url.searchParams.has("__nojs"),
     })
-    return new Response(notFoundSsr.stream, {
+    return new Response(wrapStreamWithRegistryCommit(notFoundSsr.stream), {
       status: 404,
       headers: { "Content-type": "text/html" },
     })
   }
 
-  return new Response(ssrResult.stream, {
+  return new Response(wrapStreamWithRegistryCommit(ssrResult.stream), {
     status: ssrResult.status,
     headers: { "Content-type": "text/html" },
   })
+}
+
+/**
+ * Wrap a response stream so the partial-registry commit fires after
+ * its last chunk flows. Production rendering is lazy — async server
+ * components (and therefore their `<PartialBoundary>` registrations)
+ * resolve as the stream is consumed downstream, AFTER `handleRequest`
+ * returns. Without this hook the commit would either fire too early
+ * (via `runWithRequestAsync`'s exit) and miss late registrations, or
+ * never fire and leave snapshots stranded in the per-request
+ * pendingWrites buffer.
+ *
+ * `deferRequestRegistryCommit()` flips a flag the request store
+ * reads on `runWithRequestAsync` exit, so the auto-commit there
+ * stays out of our way. `_captureCommitHandle()` snapshots the
+ * request store reference so the flush hook can fire the commit
+ * even when its async context didn't inherit the request ALS
+ * (Node's stream machinery doesn't always propagate it).
+ */
+function wrapStreamWithRegistryCommit(
+  stream: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const commit = _captureCommitHandle()
+  deferRequestRegistryCommit()
+  return stream.pipeThrough(
+    new TransformStream({
+      transform(chunk, controller) {
+        controller.enqueue(chunk)
+      },
+      flush() {
+        commit()
+      },
+    }),
+  )
 }
 
 // Swallow the synthesized "The render was aborted by the server without a

@@ -55,7 +55,7 @@ import {
   type MatchClause,
 } from "../framework/cms-runtime.ts"
 import { getCatalogManifest, type BlockManifest } from "../framework/cms-prerender.ts"
-import { getPreviousRouteSnapshots, getRouteSnapshots } from "../lib/partial-registry.ts"
+import { getRouteSnapshots } from "../lib/partial-registry.ts"
 import { setSessionFrameUrl } from "../framework/session.ts"
 import { Partial } from "../lib/index.ts"
 import { ROOT } from "../lib/partial-context.ts"
@@ -94,29 +94,19 @@ const EDITOR_RESERVED_PARAMS = ["editor", "select", "config"] as const
  * fact the framework tracks. The editor reads it. Chrome that
  * renders on every page (e.g. `<AppNav>`'s `app-nav`) appears in
  * every route's snapshot bucket; per-page roots (`cms-demo-root`)
- * appear only where they render. CMS_VISION.md Principle #1 —
- * runtime discovery over static analysis — applies directly.
+ * appear only where they render.
  *
- * Union of current + previous render buckets:
- *   - PREVIOUS = the last completed render of this route — the
- *     steady-state source of truth.
- *   - CURRENT = whatever has self-registered so far in the
- *     in-progress render. Cold-start fallback: previous is empty
- *     before the first completed render, but sibling Partials
- *     under EditorShell self-register before TreeContents resumes
- *     from its `await getCatalogManifest()`, so the current bucket
- *     covers most cases.
- *
- * Cold start truly empty (process boot OR a route never rendered
- * before): an empty list returns and the tree shows the empty-state
- * hint. The next render of this route warms previous and the tree
- * fills in.
+ * `getRouteSnapshots` returns the union of pending writes (this
+ * render's registrations so far) AND the previousView (the prior
+ * render's committed snapshots). Cold start (process boot OR a
+ * route never rendered before): an empty list returns and the tree
+ * shows the empty-state hint; the next render fills it in.
  */
 function rootCmsIdsForPreviewedPage(): readonly string[] {
   const route = new URL(getRequest().url).pathname
   const ids = new Set<string>()
-  for (const bucket of [getRouteSnapshots(route), getPreviousRouteSnapshots(route)]) {
-    if (!bucket) continue
+  const bucket = getRouteSnapshots(route)
+  if (bucket) {
     for (const snap of bucket.values()) {
       if (snap.cmsId != null) ids.add(snap.cmsId)
     }

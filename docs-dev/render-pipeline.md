@@ -19,13 +19,58 @@ that the Vite plugin wires as the RSC handler. For every request:
    cache.
 4. `runWithRequestAsync(request, () => handleRequest(...))` — opens
    the per-request ALS store. Set-Cookie accumulates inside the
-   store; cookies are appended to the response after.
+   store; cookies are appended to the response after. On exit,
+   auto-commits the partial registry unless a stream wrapper has
+   deferred commit ownership (see below).
 
 `handleRequest` runs server actions when present, then renders
 `<Root />` to a Flight stream. The HTML path tees the stream and
 hands one branch to `entry.ssr.tsx::renderHTML` for SSR + RSC-payload
 injection; the RSC path returns the stream directly with content-type
-`text/x-component`.
+`text/x-component`. Both paths wrap the response stream in a
+`TransformStream` whose flush hook commits the registry — so the
+commit fires AFTER every `<PartialBoundary>` registration (including
+those that happen during lazy stream consumption).
+
+## Registry isolation
+
+The route-scoped Partial snapshot store is split into two layers
+(`partial-registry.ts`):
+
+- **Canonical** (module-global, mutated only by atomic commits):
+  - `live` — current state, including all committed cache overlays.
+    `lookupPartial` / `getRouteSnapshots` / cache-mode reads resolve
+    through here.
+  - `baseline` — snapshot of `live` taken AT the start of the last
+    streaming render. Both modes' bodies see this as
+    `manifestScope.stored` and `getPreviousRouteSnapshots`.
+- **Per-request context** (ALS-bound, opened by `<PartialRoot>`):
+  - `previousView` — frozen copy of `baseline` at request entry.
+    Reads stay stable for the duration of this request.
+  - `pendingWrites` — registrations buffered in this render. Cache-
+    mode commits overlay onto `live`; streaming-mode commits replace
+    `live` wholesale.
+  - `invalidations` — ids dropped via the `<Partial>` body's
+    manifest-scope `onViolation` hook. Excluded from `live` on
+    commit.
+
+Why per-request: the previous design mutated one shared map for both
+"current" and "previous" reads, so concurrent requests on the same
+route observed each other's in-flight writes — a sibling render's
+mid-mutation manifest set could land in another request's `stored`,
+producing spurious `HoistingViolationError`s on fast nav. Per-request
+isolation gives every request a stable point-in-time view, regardless
+of what other requests are doing.
+
+Why `baseline` doesn't update on cache-mode commits: master's
+`previousScopes` was only updated by `clearRoute` at the start of
+streaming renders. Cache-mode bodies never saw subsequent cache-
+mode-committed manifests as `stored`. The example app relies on this
+permissiveness — `<SearchArea>` reads `url:q` only when `?search=` is
+set, an after-conditional read that would throw if cache-mode bodies
+saw the latest manifest. Mirroring master's "baseline updates only at
+streaming start" preserves the latent-tolerance until each Partial is
+audited and the strictness can be turned on incrementally.
 
 ## Action handling
 
@@ -101,17 +146,23 @@ Order of operations inside the handler:
 
 ```ts
 if (!state.isPartialRefetch || registryMiss) {
-  clearRoute(route);
+  enterRequestRegistry(route, "streaming");
   enterPartialState({...state, requestedIds: null, isPartialRefetch: false});
   return <PartialsClient mode="streaming">{children}</PartialsClient>;
 }
 ```
 
-- **`clearRoute(route)`** moves the route's current snapshots into
-  the previous-render slot, then empties the current slot. Stale
-  ids that no longer appear on this request can't leak into future
-  tag/id lookups; the previous-render map remains queryable for the
-  duration of the render (descendant-manifest fold reads it).
+- **`enterRequestRegistry(route, "streaming")`** opens a per-request
+  registry context (ALS-bound) and rotates `canonical[route].baseline
+  := canonical[route].live` so this render's `previousView` captures
+  whatever the last streaming + intervening cache overlays committed.
+  Registrations during the render write to `pendingWrites`, isolated
+  from any concurrent request on the same route. The streaming
+  commit (driven by the response stream's flush hook) replaces
+  `live` wholesale with `pendingWrites` — ids that didn't re-register
+  disappear, which is what the old `clearRoute(route)` did in-band.
+  See `partial-registry.ts` for the canonical/baseline/live model
+  and `commitRequestRegistry` for commit semantics.
 - The full tree runs. Every `<Partial>` body executes:
   - Validates `parent`. Throws if missing.
   - Parses selector, resolves effective id, enforces `#`-token
@@ -135,6 +186,7 @@ if (!state.isPartialRefetch || registryMiss) {
 ## Cache mode
 
 ```ts
+enterRequestRegistry(route, "cache");
 enterPartialState(state);
 const wrappedChildren = activeIds
   .map(id => partialFromSnapshot(id, lookupPartial(route, id)))
@@ -142,6 +194,16 @@ const wrappedChildren = activeIds
 return createElement(PartialsClient, {mode: "cache"}, ...wrappedChildren);
 ```
 
+- **`enterRequestRegistry(route, "cache")`** opens the per-request
+  registry context WITHOUT rotating the baseline. `previousView` =
+  current `canonical[route].baseline` — i.e. whatever the last
+  streaming render committed. Cache-mode commits overlay
+  `pendingWrites` onto `canonical[route].live`, leaving baseline
+  alone. Successive cache renders of the same id therefore see a
+  stable `manifestScope.stored` (the streaming-baseline manifest)
+  instead of a moving target — so the conditional-read-after-early-
+  return idiom (e.g. `<SearchArea>` reading `url:q` only when
+  `?search=` is set) keeps working across cache-mode refetches.
 - **`partialFromSnapshot`** reconstructs a `<Partial>` element from
   the registry entry: selector tokens become a string array (so
   whitespace-bearing names survive), `parent` is rebuilt from the
@@ -175,10 +237,11 @@ re-execute when only one row's price refreshes — the snapshot for
 ## Registry-miss bailout
 
 A `#`-token in the filter that doesn't resolve flips back to
-streaming. `clearRoute(route)`, full tree, snapshots repopulate.
-Cosmetic cost only — the response body is the rendered tree, not a
-narrowed payload. Fingerprint-match skips still apply per-Partial,
-so unchanged subtrees still emit placeholders.
+streaming. The registry context opens in streaming mode, the full
+tree runs, snapshots repopulate. Cosmetic cost only — the response
+body is the rendered tree, not a narrowed payload. Fingerprint-match
+skips still apply per-Partial, so unchanged subtrees still emit
+placeholders.
 
 `.class` tokens never trigger the bailout — a tag union resolving to
 a subset of known snapshots is by definition a valid union.

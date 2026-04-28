@@ -67,6 +67,21 @@ interface RequestStore {
    * `Location` header / payload marker.
    */
   control?: FrameworkControl
+  /**
+   * Hook the partial-registry layer registers when `<PartialRoot>`
+   * opens its per-request context. `runWithRequestAsync` calls this
+   * on exit (after `fn` resolves), unless `deferRegistryCommit` was
+   * also set. Lets context.ts auto-commit the registry without
+   * importing the partial layer (avoids a circular dep).
+   *
+   * Entry-rsc and the test stream wrapper set `deferRegistryCommit`
+   * when they take ownership of commit timing — they wrap the
+   * response stream in a TransformStream whose flush hook calls the
+   * commit, so it fires AFTER all `<PartialBoundary>` registrations
+   * (including those that happen during lazy stream consumption).
+   */
+  commitRegistry?: () => void
+  deferRegistryCommit?: boolean
 }
 
 const requestContext = new AsyncLocalStorage<RequestStore>()
@@ -330,7 +345,58 @@ export async function runWithRequestAsync<T>(
     scope: deriveScope(request),
   }
   const result = await requestContext.run(store, fn)
+  // Auto-commit the partial registry if `fn` opened one and didn't
+  // mark its commit as deferred. Synchronous renders (test fixtures)
+  // finish all `<PartialBoundary>` registrations before `fn`
+  // resolves, so commit-on-exit catches everything. Production paths
+  // that return a stream defer commit to a stream-flush hook so it
+  // fires AFTER lazy chunks render their Partials.
+  if (store.commitRegistry && !store.deferRegistryCommit) {
+    store.commitRegistry()
+  }
   return { result, cookies: store.cookies }
+}
+
+/**
+ * Called by `partial-registry.ts` when `<PartialRoot>` opens a
+ * per-request registry context. The callback handles the actual
+ * commit; context.ts just stores it on the request store and fires
+ * it on exit (unless deferred). Keeps context.ts free of any direct
+ * dependency on the partial layer.
+ */
+export function _setRegistryCommit(commit: () => void): void {
+  getStore().commitRegistry = commit
+}
+
+/**
+ * Called by callers (the RSC entry's stream wrapper, the test
+ * stream helper) that take ownership of commit timing. After this
+ * fires, `runWithRequestAsync`'s exit hook skips the commit; the
+ * caller's stream-flush hook is responsible for calling
+ * `commitRequestRegistry` directly.
+ */
+export function _deferRegistryCommit(): void {
+  const store = requestContext.getStore()
+  if (store) store.deferRegistryCommit = true
+}
+
+/**
+ * Capture a stable commit handle off the current request store. The
+ * returned function, when called, fires whatever `commitRegistry`
+ * callback the partial layer eventually attaches — even if the
+ * callsite is in a different async context (e.g. a TransformStream
+ * `flush` hook fired by Node's stream machinery, where the request
+ * ALS may not have propagated).
+ *
+ * Safe to call from any place that runs inside `runWithRequestAsync`.
+ * Returns a no-op handle when no request context is active.
+ */
+export function _captureCommitHandle(): () => void {
+  const store = requestContext.getStore()
+  if (!store) return () => {}
+  return () => {
+    if (store.commitRegistry) store.commitRegistry()
+  }
 }
 
 function getStore(): RequestStore {

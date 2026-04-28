@@ -147,11 +147,32 @@ const manifestScope: ManifestScope = {
 };
 ```
 
-`invalidateSnapshot(route, partialId)` drops the offending Partial's
-snapshot from BOTH the current-render and previous-render registry
-maps. Next render starts with `stored = null` for this Partial; the
-hoisting check has nothing to compare against, so the same comparison
-won't loop. Browser refresh recovers.
+`invalidateSnapshot(route, partialId)` records an invalidation in
+the per-request registry context (commit excludes the id from
+canonical) AND removes the snapshot from the request's pendingWrites.
+Outside a request context, drops directly from `canonical.live` and
+`canonical.baseline`. Next render starts with `stored = null` for
+this Partial; the hoisting check has nothing to compare against, so
+the same comparison won't loop. Browser refresh recovers.
+
+## Empty-manifest fp-skip avoidance
+
+A Partial that fp-skips on its FIRST encounter (typically because the
+client cached its fingerprint on a different route — the client
+cache is id-keyed, not route-keyed) used to register a snapshot with
+`manifest: stored ?? current` — and `current` is an empty Set when
+the body never ran. The next render seeded `stored = empty Set`,
+then the body's first tracked-accessor read tripped the hoisting
+check ("new key not in `[]`"). The editor's `cms-edit-fields`
+exhibited this on cross-route nav into a `?select=` URL.
+
+Fix: the fp-skip register path uses `manifest: stored ?? undefined`.
+When there's no prior render to carry forward, the snapshot stores
+`undefined` instead of an empty Set; the next render seeds
+`stored = null` (no comparison) and the body discovers its real
+dependency surface freely. The fp-skip optimization itself still
+fires when the structural fp matches — only the poison-empty-Set
+side effect is gone.
 
 The Cache ALS scope deliberately does NOT set `onViolation`. Cache's
 Flight roundtrip + reliable ALS propagation means a hoisting

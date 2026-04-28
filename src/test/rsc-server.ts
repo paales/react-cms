@@ -124,11 +124,32 @@ export async function renderWithRequest(
 ): Promise<{ stream: FlightBytes; cookies: string[] }> {
   const request = new Request(url, { headers: options.headers })
   // `runWithRequestAsync` expects an async fn; wrap the sync render
-  // call so the ALS scope persists across the stream lifetime. The
-  // stream itself is sync-returned, but rendering into it happens
-  // lazily as consumers pull — so we tee it here to capture.
+  // call so the ALS scope persists across the stream lifetime.
+  //
+  // Registry commit timing: the vendored
+  // `react-server-dom/server.edge` we drive in tests renders fully
+  // lazily — `renderToReadableStream` returns immediately and queues
+  // every server component (including `<PartialRoot>`) onto
+  // microtasks that fire as the stream is pulled. If we returned the
+  // raw stream from `fn`, `runWithRequestAsync`'s exit auto-commit
+  // would fire BEFORE those microtasks have run any `<Partial>`
+  // bodies — committing an empty pendingWrites buffer and stranding
+  // every later registration.
+  //
+  // Force rendering to complete inside `fn` by tee-ing the stream
+  // and draining one side. The drain pulls every chunk, which forces
+  // every microtask to run. When the await resolves, every
+  // `<PartialBoundary>` has registered into pendingWrites.
+  // `runWithRequestAsync`'s exit hook then commits a fully-populated
+  // buffer.
+  //
+  // The other tee side stays buffered for the caller to consume —
+  // it's effectively a frozen recording at that point.
   const { result, cookies } = await runWithRequestAsync(request, async () => {
-    return renderServerToFlight(node)
+    const stream = renderServerToFlight(node)
+    const [forCaller, forDrain] = stream.tee()
+    await new Response(forDrain).arrayBuffer()
+    return forCaller
   })
   return { stream: result, cookies }
 }

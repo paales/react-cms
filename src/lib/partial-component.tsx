@@ -820,6 +820,7 @@ export function Partial({
   // goes from `<SearchStage1 query="">` (A) to `<SearchStage1
   // query="pika">` (B) — fingerprint changes, content must not skip.
   // Skip only on an actual fingerprint match.
+  //
   const cachedFp = state.cachedFingerprints.get(id)
   const fingerprintMatches = cachedFp != null && cachedFp === fp
 
@@ -832,13 +833,21 @@ export function Partial({
     // refetch the wrapper re-renders fresh with the current frame
     // URL from session.
     //
-    // Manifest preservation: the body didn't run, so `manifestScope
-    // .current` is an empty set. If we registered that, the NEXT
-    // render that DOES run the body would see stored=[] and capture
-    // (e.g.) `url:select` — `recordAccess` would treat it as a new
-    // key and throw `HoistingViolationError`. Carry the previous
-    // render's manifest forward instead so the hoisting check stays
-    // a comparison between renders that actually ran.
+    // Manifest preservation (Bug 1 fix): the body didn't run, so
+    // `manifestScope.current` is an empty Set. Carrying that forward
+    // would poison the next render — `recordAccess` would compare
+    // the body's first read against `stored = empty Set` and throw
+    // a `HoistingViolationError` for what's actually the FIRST key
+    // ever observed. Carry the prior render's manifest if we have
+    // one (`stored`), else leave manifest UNDEFINED so the next
+    // render starts with `stored = null` (no comparison fires).
+    //
+    // The pre-fix behavior (`stored ?? current`) caused the editor's
+    // `cms-edit-fields` to throw on cross-route nav: a structural-fp
+    // match across `/editor/A` and `/editor/B` triggered fp-skip on
+    // route B's first encounter (stored=null), registered manifest=
+    // empty Set, and the next render's `getSearchParam("select")`
+    // tripped the bogus hoisting check.
     registerPartial(route, id, {
       content: rawContent,
       fallback: effectiveFallback,
@@ -850,7 +859,7 @@ export function Partial({
       frameUrl,
       parentPath: parent.path,
       cmsId,
-      manifest: manifestScope.stored ?? manifestScope.current,
+      manifest: manifestScope.stored ?? undefined,
     })
     return placeholderFor(id)
   }

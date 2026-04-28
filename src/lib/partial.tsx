@@ -44,7 +44,7 @@ import { Partial, PartialBoundary, type PartialProps } from "./partial-component
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx"
 import { getRequest } from "../framework/context.ts"
 import {
-  clearRoute,
+  enterRequestRegistry,
   getRouteSnapshots,
   lookupPartial,
   type PartialSnapshot,
@@ -313,12 +313,19 @@ export async function PartialRoot({ children }: PartialRootProps) {
   //
   // Every Partial runs; its body handles fingerprint-skip vs render.
   // Ancestors re-execute, so snapshots registered during this render
-  // carry fresh closures — no refreshing walk required. Clear any
-  // stale snapshots up-front so ids that no longer appear on this
-  // request (e.g. `page-2` after the URL dropped to `?end=1`) don't
-  // leak into future tag/id lookups.
+  // carry fresh closures — no refreshing walk required.
+  //
+  // Open the request registry context BEFORE `enterPartialState` so
+  // descendants' `<Partial>` registrations land in pendingWrites
+  // (not canonical). The context's previousView captures the prior
+  // render's tree at this moment; concurrent requests on the same
+  // route get their own independent views and can't observe each
+  // other's in-flight writes. On commit (driven by the response
+  // stream's flush hook in entry.rsc.tsx), pendingWrites *replace*
+  // canonical[route] — ids that didn't re-register are dropped,
+  // which is what `clearRoute(route)` used to do in-band.
   if (!state.isPartialRefetch || registryMiss) {
-    clearRoute(route)
+    enterRequestRegistry(route, "streaming")
     const streamState: PartialRequestState = {
       ...state,
       requestedIds: null,
@@ -344,6 +351,10 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // new inputs because inputs don't live on the JSX at all. Closures
   // that would have been stale (sku from a `.map()` iteration, etc.)
   // stay stable-by-construction.
+  //
+  // Cache-mode commit overlays pendingWrites onto canonical[route]
+  // (no replace) — ids that didn't re-render keep their snapshots.
+  enterRequestRegistry(route, "cache")
   enterPartialState(state)
 
   const activeIds = [...(state.requestedIds ?? [])]

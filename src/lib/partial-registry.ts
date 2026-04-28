@@ -1,43 +1,49 @@
 /**
- * Route-scoped partial snapshot registry.
+ * Route-scoped Partial snapshot registry.
  *
- * Captures each `<Partial>`'s *content descriptor* (the JSX inside it,
- * as a React element) the first time it actually renders. Keyed by
- * `(scope, route path, partial id)`.
+ * Two-layer model:
  *
- * Why: the only "static walk" of the JSX children chain is `seedRegistry`
- * in `PartialRoot` — it bootstraps the registry from statically-visible
- * Partials so a first-request cache-mode refetch can resolve. A Partial
- * produced inside an opaque function component (the canonical example
- * is `ProductList.map(p => <ProductItem price={<Partial><GoldPrice
- * sku={p.sku}/></Partial>}/>)`) is invisible to that bootstrap walk.
+ *   - **Canonical tree** (module-global, mutated only by atomic
+ *     `commitRequestRegistry` calls). Source of truth for what
+ *     Partials have ever rendered on a given route. Cache-mode
+ *     refetches and the editor tree pane read from it.
+ *   - **Per-request view** (ALS-isolated, opened by `<PartialRoot>`).
+ *     Holds a frozen `previousView` snapshot of the canonical tree
+ *     taken at request entry, plus a `pendingWrites` buffer for
+ *     this render's registrations. On commit, pendingWrites merge
+ *     into canonical based on the request's mode.
  *
- * Every `<Partial>` self-registers on every render via `<PartialBoundary>`.
- * That means dynamic Partials land in the registry on their first render
- * pass. A subsequent refetch for that id can render its snapshot directly,
- * skipping ancestor execution entirely (no `ProductList`, no 49 sibling
- * items). The partial's props are already bound in the captured element,
- * so the registered snapshot is complete on its own.
+ * Why per-request: with two concurrent requests on the same route,
+ * mutating one shared map made "previous" reads observe in-flight
+ * writes from the other request. The shared manifest sets aliased
+ * across requests, which races against accessor mutations and
+ * fingerprint compares against an empty (or wrong) stored manifest.
+ * Per-request isolation gives each request a point-in-time view to
+ * compare against, regardless of what other requests are doing.
  *
- * Lifetime: module-level. Cleared on HMR so stale module references
- * in snapshotted elements don't leak across edits.
+ * Two commit modes:
  *
- * Stale-shape safety: the snapshot is the content as it appeared on
- * the *last* full render of that route. If a subsequent full render
- * changes the shape (different props, different component), the
- * snapshot is overwritten on that render. If no full render happens
- * between code change and refetch, the snapshot is stale — but HMR
- * clears the registry, and in production a deploy spins a new
- * process. Either way: new code path → empty registry → first
- * request repopulates.
+ *   - **streaming** — pendingWrites *replace* canonical[route]. The
+ *     full tree was just rendered; ids that didn't re-register are
+ *     stale and should disappear. Subsumes the old `clearRoute`.
+ *   - **cache** — pendingWrites *overlay* canonical[route]. Only some
+ *     ids re-rendered (the explicitly-requested ones); preserve the
+ *     rest.
+ *
+ * Commit timing: `entry.rsc.tsx` wraps the response stream so the
+ * commit fires when the stream is fully consumed (i.e. after every
+ * `<PartialBoundary>` registration has fired). `runWithRequestAsync`
+ * provides a fallback auto-commit for callers that finish synchronous
+ * rendering without producing a stream (test fixtures).
  *
  * ── Scoping ─────────────────────────────────────────────────────────
- * Keyed by `getScope()` first — Playwright workers > 1 get isolated
- * route maps so snapshots registered by worker A don't resolve for
- * worker B. Production uses the default scope for every request.
+ * Keyed by `getScope()` — Playwright workers > 1 get isolated route
+ * maps so snapshots registered by worker A don't resolve for worker
+ * B. Production uses the default scope for every request.
  */
+import { AsyncLocalStorage } from "node:async_hooks"
 import type { ReactNode } from "react"
-import { getScope } from "../framework/context.ts"
+import { _deferRegistryCommit, _setRegistryCommit, getScope } from "../framework/context.ts"
 import type { CacheOptions } from "./cache-options.ts"
 
 export interface PartialSnapshot {
@@ -89,166 +95,362 @@ export interface PartialSnapshot {
    *  same shape `<Cache>` uses for its key, lifted up so non-cached
    *  Partials get the same auto-invalidation contract.
    *
-   *  Empty / absent on first-render-of-a-Partial; populated as
-   *  descendants render and call `getSearchParam` / `getCookie` /
-   *  `getPathname` / `getHeader`. The `current` set lives on the
-   *  ManifestScope object the Partial body created and stored here
-   *  by reference — accessors mutate it in place during the render,
-   *  so by the time the next render reads this snapshot, the set
-   *  reflects the prior render's complete read pattern. */
+   *  In `pendingWrites` (the request-scoped buffer) the field may
+   *  alias the rendering Partial's live `manifestScope.current` Set
+   *  — that's safe because pendingWrites is only ever read by the
+   *  request that wrote it, and only AFTER the registering body's
+   *  descendants have completed. At commit time, manifests are
+   *  copied by value into canonical so other requests' subsequent
+   *  `previousView` snapshots see immutable Sets. */
   manifest?: ReadonlySet<string>
 }
 
-type RouteMap = Map<string, Map<string, PartialSnapshot>>
+type RouteMap = Map<string, PartialSnapshot>
 
-// CATEGORY C (docs-dev/server-isolation.md) — route-scoped snapshot store,
-// outer key is the per-request `scope` (test-worker isolation; always
-// "default" in prod). Inner: route → partial id → snapshot. Rebuilt on
-// HMR / process restart; cleared on full streaming renders via
-// clearRoute(route).
-const scopes = new Map<string, RouteMap>()
-
-// Parallel "previous render" snapshot store. `clearRoute(route)` moves
-// the current entries here before wiping `scopes` so the NEW render
-// can look up the LAST render's tree shape — used by the structural-
-// fingerprint pass to fold in each Partial's transitively-reachable
-// descendant `varyOn` declarations. Without this, an ancestor's fp
-// captures only its own JSX structure, doesn't reflect descendant
-// URL/cookie deps, and an ancestor fp-skip serves a stale subtree
-// when only the descendant's input changed.
+// ─── Canonical tree (module-global) ────────────────────────────────────
 //
-// Approximation: "previous" reflects the most recent COMPLETED render
-// of this route (potentially with different URL params); stale Partial
-// shapes that no longer appear in the current render still contribute
-// to ancestor fp until the current render completes and swaps in.
-// That's safe — over-folding produces over-invalidation (more re-
-// renders than strictly needed), never under-invalidation. Empty on
-// first-render-of-a-route and after process restarts.
-const previousScopes = new Map<string, RouteMap>()
+// CATEGORY C (docs-dev/server-isolation.md). Outer key is the per-request
+// `scope`. Two parallel inner maps:
+//
+//   - `live`: state including this scope/route's most recent commit
+//     (streaming or cache). What `lookupPartial` /
+//     `getRouteSnapshots` resolve through. Cache-mode commits overlay
+//     here without disturbing the baseline.
+//   - `baseline`: snapshot of `live` taken AT a streaming commit,
+//     before the new streaming render replaces it. What request
+//     bodies see as `manifestScope.stored` and what
+//     `getPreviousRouteSnapshots` returns.
+//
+// Why two: cache-mode bodies' hoisting check needs to compare against
+// a manifest that "doesn't move" mid-flight as concurrent cache
+// renders accumulate keys. Master's `previousScopes` (only updated by
+// streaming-render `clearRoute`) had this property by accident; we
+// preserve it deliberately so a Partial whose `<SearchArea>`-style
+// dependency-after-conditional pattern stayed accidentally-correct
+// on master keeps working on the per-request-isolated registry.
+//
+// The strictness improvement (cache-mode also enforces the full
+// manifest discovered by prior cache renders) is left for a follow-
+// up — turning it on requires auditing every `<Partial>` body for
+// the conditional-read-after-early-return idiom.
+//
+// Mutated ONLY by `commitRequestRegistry` — every other path either
+// reads via the per-request view or registers into pendingWrites.
+interface RouteState {
+  live: RouteMap
+  baseline: RouteMap
+}
+const canonical = new Map<string, Map<string, RouteState>>()
 
-function scopeMap(scope: string = getScope()): RouteMap {
-  let m = scopes.get(scope)
-  if (!m) {
-    m = new Map()
-    scopes.set(scope, m)
+const EMPTY_VIEW: ReadonlyMap<string, PartialSnapshot> = new Map()
+
+function canonicalRouteState(scope: string, route: string): RouteState {
+  let routes = canonical.get(scope)
+  if (!routes) {
+    routes = new Map()
+    canonical.set(scope, routes)
   }
-  return m
+  let state = routes.get(route)
+  if (!state) {
+    state = { live: new Map(), baseline: new Map() }
+    routes.set(route, state)
+  }
+  return state
 }
 
-function previousScopeMap(scope: string = getScope()): RouteMap {
-  let m = previousScopes.get(scope)
-  if (!m) {
-    m = new Map()
-    previousScopes.set(scope, m)
-  }
-  return m
+function snapshotBaseline(scope: string, route: string): ReadonlyMap<string, PartialSnapshot> {
+  const state = canonical.get(scope)?.get(route)
+  if (!state || state.baseline.size === 0) return EMPTY_VIEW
+  // Shallow-copy so subsequent commits (concurrent requests) don't
+  // disturb this view. Snapshot manifests are immutable post-commit
+  // via `freezeManifest`, so reference-sharing the inner snapshots
+  // is safe.
+  return new Map(state.baseline)
 }
 
-function routeBucket(route: string): Map<string, PartialSnapshot> {
-  const m = scopeMap()
-  let bucket = m.get(route)
-  if (!bucket) {
-    bucket = new Map()
-    m.set(route, bucket)
+// ─── Per-request registry context (ALS) ─────────────────────────────────
+
+export type RegistryMode = "streaming" | "cache"
+
+export interface RequestRegistry {
+  scope: string
+  /** Pathname this context is bound to. Set by `<PartialRoot>` when
+   *  it opens the context. */
+  route: string
+  /** Streaming or cache mode. Decides commit semantics. */
+  mode: RegistryMode
+  /** Frozen view of `canonical[scope][route]` at context entry.
+   *  Reads are stable for the duration of this request even if other
+   *  requests commit in the meantime. */
+  previousView: ReadonlyMap<string, PartialSnapshot>
+  /** Snapshots written during this render. Each may alias a live
+   *  `manifestScope.current` Set; the commit step copies them by
+   *  value before transferring to canonical. */
+  pendingWrites: Map<string, PartialSnapshot>
+  /** Ids that this request invalidated (typically via the manifest
+   *  scope's `onViolation` self-recovery hook). Excluded from
+   *  canonical at commit. */
+  invalidations: Set<string>
+  /** Set true once `commitRequestRegistry` has run. Subsequent calls
+   *  no-op. */
+  committed: boolean
+  /** Set by callers (entry.rsc.tsx's stream wrapper) that take
+   *  ownership of when to commit — `runWithRequestAsync`'s fallback
+   *  auto-commit honors this flag and stays out of the way. */
+  deferred: boolean
+}
+
+const registryAls = new AsyncLocalStorage<RequestRegistry>()
+
+/**
+ * Open a request-scoped registry context bound to `route` in `mode`.
+ * Called by `<PartialRoot>` once it has resolved the request.
+ *
+ * Uses `enterWith` (not `run`) so React's rendering of the returned
+ * tree — happening in the caller's continuation, outside any single
+ * `run`'s scope — inherits the context.
+ *
+ * Returns the context object so the caller can pass it to
+ * `commitRequestRegistry` later (e.g. from a stream-flush hook).
+ */
+export function enterRequestRegistry(route: string, mode: RegistryMode): RequestRegistry {
+  const scope = getScope()
+  if (mode === "streaming") {
+    // Rotate baseline := snapshot of current live AT this entry —
+    // the equivalent of master's `clearRoute(route)` moving current
+    // into previous before a new streaming render begins. Cache-mode
+    // entries skip this; their bodies should still see the older
+    // streaming baseline (the one that survived the conditional-
+    // read-after-early-return idiom on master).
+    const state = canonicalRouteState(scope, route)
+    state.baseline = new Map(state.live)
   }
-  return bucket
+  const ctx: RequestRegistry = {
+    scope,
+    route,
+    mode,
+    previousView: snapshotBaseline(scope, route),
+    pendingWrites: new Map(),
+    invalidations: new Set(),
+    committed: false,
+    deferred: false,
+  }
+  registryAls.enterWith(ctx)
+  // Register the commit callback on the request store so
+  // `runWithRequestAsync` fires it on exit. Stream-based callers
+  // call `deferRequestRegistryCommit()` to take ownership.
+  _setRegistryCommit(() => commitRequestRegistry(ctx))
+  return ctx
+}
+
+/** Read the active request registry, if one has been opened. */
+export function getActiveRegistry(): RequestRegistry | null {
+  return registryAls.getStore() ?? null
+}
+
+/**
+ * Mark the active context as deferring its commit to a downstream
+ * trigger (typically a stream-flush hook). `runWithRequestAsync`'s
+ * fallback auto-commit checks this flag and skips the commit.
+ *
+ * Idempotent. No-op when no context is active.
+ */
+export function deferRequestRegistryCommit(): void {
+  const ctx = registryAls.getStore()
+  if (ctx) ctx.deferred = true
+  _deferRegistryCommit()
+}
+
+// ─── Public registry API ────────────────────────────────────────────────
+//
+// All operations check the ALS context first and fall back to direct
+// canonical access. The fallback exists for code paths that run outside
+// a request context (test fixtures that registerPartial directly,
+// module-init code, HMR hooks).
+
+function freezeManifest(snap: PartialSnapshot): PartialSnapshot {
+  if (snap.manifest === undefined) return snap
+  return { ...snap, manifest: new Set(snap.manifest) }
 }
 
 export function registerPartial(route: string, id: string, snapshot: PartialSnapshot): void {
-  routeBucket(route).set(id, snapshot)
+  const ctx = registryAls.getStore()
+  if (ctx && ctx.route === route) {
+    ctx.invalidations.delete(id)
+    // Store the snapshot AS-IS in pendingWrites (manifest may alias
+    // the body's still-mutating manifestScope.current). Per-request
+    // isolation makes the alias safe here; commit copies by value.
+    ctx.pendingWrites.set(id, snapshot)
+    return
+  }
+  // Outside a request context (or wrong route): write directly to
+  // canonical with a frozen manifest. Test fixtures hit this path.
+  const scope = ctx?.scope ?? getScope()
+  canonicalRouteState(scope, route).live.set(id, freezeManifest(snapshot))
 }
 
 export function lookupPartial(route: string, id: string): PartialSnapshot | undefined {
-  return scopeMap().get(route)?.get(id)
+  const ctx = registryAls.getStore()
+  if (ctx && ctx.route === route) {
+    if (ctx.invalidations.has(id)) return undefined
+    // In-request: pendingWrites overrides everything; otherwise fall
+    // through to the canonical live map (which holds prior streaming
+    // + cache-mode overlays this request might want to see). Note
+    // this is DIFFERENT from `previousView` — `previousView` is the
+    // older streaming-baseline; `live` is everything-so-far including
+    // the latest cache overlays.
+    if (ctx.pendingWrites.has(id)) return ctx.pendingWrites.get(id)
+    const live = canonical.get(ctx.scope)?.get(route)?.live
+    return live?.get(id)
+  }
+  const scope = ctx?.scope ?? getScope()
+  return canonical.get(scope)?.get(route)?.live.get(id)
 }
 
 /**
- * Return all partial snapshots registered on a given route. Used by
- * `PartialRoot` to augment its tag index with dynamic partials when
- * resolving `?tags=` refetches.
+ * Union view of pending + previous snapshots for the given route.
+ * Used by selector resolution and the editor tree pane to enumerate
+ * "what Partials live on this page."
+ *
+ * pendingWrites override previousView on key collision; entries in
+ * `invalidations` are excluded.
+ *
+ * Returns `undefined` when the union is empty (preserves callers
+ * that distinguish "no entries yet" from "empty Map").
  */
 export function getRouteSnapshots(route: string): Map<string, PartialSnapshot> | undefined {
-  return scopeMap().get(route)
-}
-
-/**
- * Move all current snapshots for a route into the "previous" slot,
- * then clear the current slot. Called at the start of every streaming
- * render: the new render starts with an empty current map (so stale
- * entries from prior renders — e.g. `page-2` registered when `?end=2`
- * was visited earlier — don't linger and cause future refetches to
- * take the cache-mode path when they should fall back to streaming),
- * but the previous map remains queryable for the duration of the
- * render. Structural-fingerprint computation reads it via
- * `getPreviousRouteSnapshots` to fold descendant `varyOn`
- * declarations into ancestor fps.
- */
-export function clearRoute(route: string): void {
-  const sm = scopeMap()
-  const current = sm.get(route)
-  const psm = previousScopeMap()
-  if (current && current.size > 0) {
-    psm.set(route, current)
-  } else {
-    psm.delete(route)
+  const ctx = registryAls.getStore()
+  if (ctx && ctx.route === route) {
+    // Live view = canonical.live + this request's pendingWrites,
+    // minus invalidations. Mirrors master's `getRouteSnapshots`
+    // which read the single shared current map (current = prior
+    // streaming + cache overlays).
+    const live = canonical.get(ctx.scope)?.get(route)?.live
+    if ((!live || live.size === 0) && ctx.pendingWrites.size === 0) return undefined
+    const merged: Map<string, PartialSnapshot> = live ? new Map(live) : new Map()
+    for (const id of ctx.invalidations) merged.delete(id)
+    for (const [id, snap] of ctx.pendingWrites) merged.set(id, snap)
+    return merged.size > 0 ? merged : undefined
   }
-  sm.delete(route)
+  const scope = ctx?.scope ?? getScope()
+  const live = canonical.get(scope)?.get(route)?.live
+  if (!live || live.size === 0) return undefined
+  return new Map(live)
 }
 
 /**
- * Snapshots from the most recent completed render of this route.
- * Empty until at least one full render has finished. Used by the
- * Partial body's fingerprint pass to look up descendant Partials and
- * fold their `varyOn` declarations into the ancestor's fp — so an
- * ancestor that fp-skips can't serve a stale subtree when a
- * descendant's URL dependency changes.
+ * Snapshots from before this request's render started — the
+ * structural-fingerprint pass folds these in to capture descendant
+ * URL/cookie deps inside an ancestor's fp.
  *
- * This is intentionally NOT the same map as `getRouteSnapshots`: that
- * one reflects what the CURRENT render has registered so far, which
- * is incomplete because descendants haven't run yet at the moment
- * their ancestor computes its fp. Using the previous-render snapshot
- * gives the ancestor a complete (if slightly-stale) view of its
- * subtree — accurate enough to fold transitive deps, with the
- * over-folding bias (any Partial that USED to live under this
- * ancestor still contributes its varyOn) producing over-invalidation
- * rather than under.
+ * Inside a request context: returns the frozen `previousView`.
+ * Outside: returns the canonical state (no in-flight render to
+ * distinguish a "previous" from a "current").
+ *
+ * Over-folding bias: a descendant that USED to live under an
+ * ancestor but no longer does still contributes to the ancestor's fp
+ * until the next streaming-mode commit replaces canonical. Extra
+ * re-renders, never stale subtrees.
  */
 export function getPreviousRouteSnapshots(route: string): Map<string, PartialSnapshot> | undefined {
-  return previousScopeMap().get(route)
+  const ctx = registryAls.getStore()
+  if (ctx && ctx.route === route) {
+    if (ctx.previousView.size === 0) return undefined
+    return new Map(ctx.previousView)
+  }
+  const scope = ctx?.scope ?? getScope()
+  const baseline = canonical.get(scope)?.get(route)?.baseline
+  if (!baseline || baseline.size === 0) return undefined
+  return new Map(baseline)
 }
 
 /**
- * Drop one Partial's snapshot from the CURRENT-render registry (so
- * `clearRoute` won't move a poisoned manifest into the previous slot
- * on the next render). Called by the Partial body's manifest-scope
- * `onViolation` hook when `trackAccess` throws — without it, the bad
- * manifest captured before the throw would persist as the "stored"
- * set on every subsequent render and the same comparison would loop
- * forever (HMR clears state, but a plain reload doesn't fire HMR).
+ * Drop one Partial's snapshot from this request's view. Called by
+ * the manifest-scope `onViolation` hook when `recordAccess` throws —
+ * without it, the bad manifest captured before the throw would
+ * persist as the "stored" set on every subsequent render and the
+ * same comparison would loop.
+ *
+ * Inside a request context: removes from pendingWrites AND records
+ * an invalidation so commit excludes the id from canonical.
+ *
+ * Outside a request context (test cleanup): drops directly from
+ * canonical.
  */
 export function invalidateSnapshot(route: string, partialId: string): void {
-  scopeMap().get(route)?.delete(partialId)
-  // Also clear from previous: if the throw happened before the
-  // current render had a chance to register a fresh snapshot, the
-  // PREVIOUS map still holds the manifest that fed the violating
-  // `stored` set. Clearing both halves guarantees the next render
-  // starts with no `stored` for this Partial.
-  previousScopeMap().get(route)?.delete(partialId)
+  const ctx = registryAls.getStore()
+  if (ctx && ctx.route === route) {
+    ctx.pendingWrites.delete(partialId)
+    ctx.invalidations.add(partialId)
+    return
+  }
+  const scope = ctx?.scope ?? getScope()
+  const state = canonical.get(scope)?.get(route)
+  if (state) {
+    state.live.delete(partialId)
+    state.baseline.delete(partialId)
+  }
+}
+
+/**
+ * Atomically merge this request's pendingWrites into the canonical
+ * tree. Idempotent.
+ *
+ *   - **streaming mode**: canonical[route] is *replaced* by
+ *     pendingWrites. Snapshots that didn't re-register are dropped.
+ *     Subsumes the old `clearRoute(route)`-then-write pattern.
+ *   - **cache mode**: pendingWrites *overlay* canonical[route]. Ids
+ *     that didn't re-render keep their prior snapshots intact.
+ *
+ * Manifests are copied by value during the merge so canonical's
+ * snapshots don't alias any request's still-live `manifestScope`.
+ */
+export function commitRequestRegistry(ctx: RequestRegistry): void {
+  if (ctx.committed) return
+  ctx.committed = true
+
+  const state = canonicalRouteState(ctx.scope, ctx.route)
+
+  if (ctx.mode === "streaming") {
+    // baseline was already rotated at `enterRequestRegistry`. Replace
+    // live wholesale with this render's pendingWrites — ids that
+    // didn't re-register are stale and should disappear.
+    state.live = new Map()
+    for (const [id, snap] of ctx.pendingWrites) {
+      if (ctx.invalidations.has(id)) continue
+      state.live.set(id, freezeManifest(snap))
+    }
+    return
+  }
+
+  // Cache mode: overlay onto live; baseline untouched. Cache-mode
+  // bodies on subsequent requests still see the older streaming
+  // baseline as `manifestScope.stored` — which is what master did,
+  // and what keeps the conditional-read-after-early-return idiom
+  // (e.g. `<SearchArea>`) working. The strictness improvement
+  // (cache-mode also enforces the latest manifest) is left for a
+  // follow-up.
+  for (const id of ctx.invalidations) state.live.delete(id)
+  for (const [id, snap] of ctx.pendingWrites) {
+    state.live.set(id, freezeManifest(snap))
+  }
 }
 
 /**
  * Clear registry entries. No argument (or `"all"`): every scope is
  * wiped — used by HMR dispose hooks. Pass a scope to target a single
  * worker's entries.
+ *
+ * Doesn't touch any active per-request registry contexts: those
+ * stay valid for their owning render. New contexts opened after
+ * the clear simply see an empty `previousView`.
  */
 export function clearRegistry(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {
-    scopes.clear()
-    previousScopes.clear()
+    canonical.clear()
     return
   }
-  scopes.delete(scope)
-  previousScopes.delete(scope)
+  canonical.delete(scope)
 }
 
 export function _registryStats(): {
@@ -258,12 +460,14 @@ export function _registryStats(): {
 } {
   const byRoute: Record<string, string[]> = {}
   let partials = 0
-  const m = scopeMap()
-  for (const [route, bucket] of m) {
-    byRoute[route] = [...bucket.keys()]
-    partials += bucket.size
+  const m = canonical.get(getScope())
+  if (m) {
+    for (const [route, state] of m) {
+      byRoute[route] = [...state.live.keys()]
+      partials += state.live.size
+    }
   }
-  return { routes: m.size, partials, byRoute }
+  return { routes: m?.size ?? 0, partials, byRoute }
 }
 
 // HMR: snapshotted React elements reference component functions whose
