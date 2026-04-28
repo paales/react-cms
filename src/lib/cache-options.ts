@@ -17,11 +17,11 @@
  * Presence of the object opts into caching. Drop the prop to render
  * fresh every request.
  */
-export type VaryScalar = string | number | boolean | null | undefined;
+export type VaryScalar = string | number | boolean | null | undefined
 
 export interface CacheOptions {
-  maxAge?: number;
-  staleWhileRevalidate?: number;
-  vary?: Readonly<Record<string, VaryScalar>>;
-  bypass?: boolean;
+  maxAge?: number
+  staleWhileRevalidate?: number
+  vary?: Readonly<Record<string, VaryScalar>>
+  bypass?: boolean
 }

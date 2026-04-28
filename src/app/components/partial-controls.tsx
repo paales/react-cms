@@ -1,8 +1,8 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
-import { Button } from "@/components/ui/button";
+import { useState } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
+import { Button } from "@/components/ui/button"
 
 /**
  * Client component demonstrating partial-level re-fetching.
@@ -12,15 +12,15 @@ import { Button } from "@/components/ui/button";
  * are batched into one RSC request by the navigation dispatcher.
  */
 export function PartialControls() {
-  const nav = useNavigation();
-  const [pending, setPending] = useState<string | null>(null);
+  const nav = useNavigation()
+  const [pending, setPending] = useState<string | null>(null)
 
   async function refresh(id: string) {
-    setPending(id);
+    setPending(id)
     try {
-      await nav.reload({ selector: `#${id}` }).finished;
+      await nav.reload({ selector: `#${id}` }).finished
     } finally {
-      setPending(null);
+      setPending(null)
     }
   }
 
@@ -38,11 +38,9 @@ export function PartialControls() {
           onClick={() => refresh(id)}
           disabled={pending === id}
         >
-          {pending === id
-            ? "Refreshing..."
-            : `Refresh ${id[0].toUpperCase()}${id.slice(1)}`}
+          {pending === id ? "Refreshing..." : `Refresh ${id[0].toUpperCase()}${id.slice(1)}`}
         </Button>
       ))}
     </div>
-  );
+  )
 }

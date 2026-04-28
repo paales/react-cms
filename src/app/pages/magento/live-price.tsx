@@ -1,25 +1,22 @@
-import { RefreshPriceButton } from "./refresh-price-button.tsx";
+import { RefreshPriceButton } from "./refresh-price-button.tsx"
 
 export function LivePriceFallback({
   sku,
   basePrice,
   currency,
 }: {
-  sku: string;
-  basePrice: number;
-  currency: string;
+  sku: string
+  basePrice: number
+  currency: string
 }) {
   return (
-    <div
-      data-testid={`live-price-fallback-${sku}`}
-      className="mt-2 flex items-center gap-2"
-    >
+    <div data-testid={`live-price-fallback-${sku}`} className="mt-2 flex items-center gap-2">
       <span className="font-semibold italic text-muted-foreground tabular-nums">
         {currency} {basePrice.toFixed(2)}
       </span>
       <span className="text-xs text-muted-foreground">loading…</span>
     </div>
-  );
+  )
 }
 
 export async function LivePrice({
@@ -27,15 +24,15 @@ export async function LivePrice({
   basePrice,
   currency,
 }: {
-  sku: string;
-  basePrice: number;
-  currency: string;
+  sku: string
+  basePrice: number
+  currency: string
 }) {
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000))
 
-  const tick = Date.now();
-  const swing = Math.random() - 0.5;
-  const live = basePrice * (1 + swing);
+  const tick = Date.now()
+  const swing = Math.random() - 0.5
+  const live = basePrice * (1 + swing)
 
   return (
     <div
@@ -48,5 +45,5 @@ export async function LivePrice({
       </span>
       <RefreshPriceButton sku={sku} />
     </div>
-  );
+  )
 }

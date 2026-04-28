@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { useEffect } from "react";
-import { useNavigation } from "../lib/partial-client.tsx";
+import { useEffect } from "react"
+import { useNavigation } from "../lib/partial-client.tsx"
 
 /**
  * Client-side redirect. Rendered by `Root` when a page threw
@@ -18,9 +18,9 @@ import { useNavigation } from "../lib/partial-client.tsx";
  * wrong payload.
  */
 export function Redirect({ url }: { url: string }) {
-  const nav = useNavigation();
+  const nav = useNavigation()
   useEffect(() => {
-    void nav.navigate(url);
-  }, [url, nav]);
-  return null;
+    void nav.navigate(url)
+  }, [url, nav])
+  return null
 }

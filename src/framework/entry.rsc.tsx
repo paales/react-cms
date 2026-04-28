@@ -5,25 +5,21 @@ import {
   loadServerAction,
   decodeAction,
   decodeFormState,
-} from "@vitejs/plugin-rsc/rsc";
-import type { ReactFormState } from "react-dom/client";
-import { Root } from "../app/root.tsx";
-import { NotFoundPage } from "../app/pages/not-found.tsx";
-import { parseRenderRequest } from "./request.tsx";
-import {
-  getFrameworkControl,
-  runWithRequestAsync,
-  setRequest,
-} from "./context.ts";
-import { warmCmsCache } from "./cms-runtime.ts";
+} from "@vitejs/plugin-rsc/rsc"
+import type { ReactFormState } from "react-dom/client"
+import { Root } from "../app/root.tsx"
+import { NotFoundPage } from "../app/pages/not-found.tsx"
+import { parseRenderRequest } from "./request.tsx"
+import { getFrameworkControl, runWithRequestAsync, setRequest } from "./context.ts"
+import { warmCmsCache } from "./cms-runtime.ts"
 
 export type RscPayload = {
-  root: React.ReactNode;
-  returnValue?: { ok: boolean; data: unknown };
-  formState?: ReactFormState;
-};
+  root: React.ReactNode
+  returnValue?: { ok: boolean; data: unknown }
+  formState?: ReactFormState
+}
 
-export default { fetch: handler };
+export default { fetch: handler }
 
 async function handler(request: Request): Promise<Response> {
   // Dev-only cache-clear endpoint used by e2e tests that depend on a
@@ -39,7 +35,7 @@ async function handler(request: Request): Promise<Response> {
   //     does from dev, and what `beforeAll` in the Playwright fixture
   //     uses to reset the server on suite start.
   if (import.meta.env?.DEV) {
-    const url = new URL(request.url);
+    const url = new URL(request.url)
     if (url.pathname === "/__test/clear-caches") {
       const [
         { _clearCache },
@@ -55,31 +51,31 @@ async function handler(request: Request): Promise<Response> {
         import("./session.ts"),
         import("../app/chat/log.ts"),
         import("./cms-runtime.ts"),
-      ]);
-      const all = url.searchParams.get("all") === "1";
+      ])
+      const all = url.searchParams.get("all") === "1"
       if (all) {
-        await _clearCache("all");
-        clearCache("all");
-        clearRegistry("all");
-        _clearAllSessions("all");
-        _clearLogs("all");
+        await _clearCache("all")
+        clearCache("all")
+        clearRegistry("all")
+        _clearAllSessions("all")
+        _clearLogs("all")
       } else {
-        const scope = request.headers.get("x-test-scope") ?? "default";
-        await _clearCache(scope);
-        clearCache(scope);
-        clearRegistry(scope);
-        _clearAllSessions(scope);
-        _clearLogs(scope);
+        const scope = request.headers.get("x-test-scope") ?? "default"
+        await _clearCache(scope)
+        clearCache(scope)
+        clearRegistry(scope)
+        _clearAllSessions(scope)
+        _clearLogs(scope)
       }
       // Draft file is not scope-bucketed (it's on-disk, not in-memory);
       // always clear on both `all` and scoped calls. Tests writing to
       // the draft need a clean state per run.
-      await _clearCmsDraft();
-      return new Response("ok", { status: 200 });
+      await _clearCmsDraft()
+      return new Response("ok", { status: 200 })
     }
   }
 
-  const renderRequest = parseRenderRequest(request);
+  const renderRequest = parseRenderRequest(request)
 
   // Refresh the in-memory CMS cache against the storage backend
   // BEFORE rendering. The async backend read here means the sync
@@ -87,55 +83,54 @@ async function handler(request: Request): Promise<Response> {
   // and the storage backend can be swapped (`setCmsStorage`) without
   // the runtime having to know whether reads are sync-fast or
   // async-only.
-  await warmCmsCache();
+  await warmCmsCache()
 
-  const { result: response, cookies } = await runWithRequestAsync(
-    renderRequest.request,
-    () => handleRequest(renderRequest),
-  );
+  const { result: response, cookies } = await runWithRequestAsync(renderRequest.request, () =>
+    handleRequest(renderRequest),
+  )
 
   // Apply Set-Cookie headers from server actions/components
   for (const cookie of cookies) {
-    response.headers.append("set-cookie", cookie);
+    response.headers.append("set-cookie", cookie)
   }
 
-  return response;
+  return response
 }
 
 async function handleRequest(
   renderRequest: ReturnType<typeof parseRenderRequest>,
 ): Promise<Response> {
-  const request = renderRequest.request;
+  const request = renderRequest.request
 
-  let returnValue: RscPayload["returnValue"] | undefined;
-  let formState: ReactFormState | undefined;
-  let temporaryReferences: unknown | undefined;
-  let actionStatus: number | undefined;
+  let returnValue: RscPayload["returnValue"] | undefined
+  let formState: ReactFormState | undefined
+  let temporaryReferences: unknown | undefined
+  let actionStatus: number | undefined
 
   if (renderRequest.isAction === true) {
     if (renderRequest.actionId) {
-      const contentType = request.headers.get("content-type");
+      const contentType = request.headers.get("content-type")
       const body = contentType?.startsWith("multipart/form-data")
         ? await request.formData()
-        : await request.text();
-      temporaryReferences = createTemporaryReferenceSet();
-      const args = await decodeReply(body, { temporaryReferences });
-      const action = await loadServerAction(renderRequest.actionId);
+        : await request.text()
+      temporaryReferences = createTemporaryReferenceSet()
+      const args = await decodeReply(body, { temporaryReferences })
+      const action = await loadServerAction(renderRequest.actionId)
       try {
-        const data = await action.apply(null, args);
-        returnValue = { ok: true, data };
+        const data = await action.apply(null, args)
+        returnValue = { ok: true, data }
       } catch (e) {
-        returnValue = { ok: false, data: e };
-        actionStatus = 500;
+        returnValue = { ok: false, data: e }
+        actionStatus = 500
       }
     } else {
-      const formData = await request.formData();
-      const decodedAction = await decodeAction(formData);
+      const formData = await request.formData()
+      const decodedAction = await decodeAction(formData)
       try {
-        const result = await decodedAction();
-        formState = await decodeFormState(result, formData);
+        const result = await decodedAction()
+        formState = await decodeFormState(result, formData)
       } catch {
-        return new Response("Internal Server Error", { status: 500 });
+        return new Response("Internal Server Error", { status: 500 })
       }
     }
   }
@@ -160,55 +155,54 @@ async function handleRequest(
   // filtering would render only the named partials and lose the rest
   // of the page — so in that case fall back to `__populateCache=1`
   // which renders everything fresh to refill the client cache.
-  const clientHasCache = renderRequest.url.searchParams.has("cached");
-  const resultData = returnValue?.ok ? (returnValue.data as any) : null;
-  const directive = resultData?.revalidate ?? resultData?.invalidate;
+  const clientHasCache = renderRequest.url.searchParams.has("cached")
+  const resultData = returnValue?.ok ? (returnValue.data as any) : null
+  const directive = resultData?.revalidate ?? resultData?.invalidate
 
-  let needsUpdate = false;
+  let needsUpdate = false
 
   if (directive && typeof directive === "object" && !Array.isArray(directive)) {
-    const { selector } = directive as { selector?: string | string[] };
+    const { selector } = directive as { selector?: string | string[] }
     if (selector) {
-      const raw = Array.isArray(selector) ? selector.join(" ") : selector;
-      const tokens = raw.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-      const uniqueNames: string[] = [];
-      const sharedNames: string[] = [];
+      const raw = Array.isArray(selector) ? selector.join(" ") : selector
+      const tokens = raw
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
+      const uniqueNames: string[] = []
+      const sharedNames: string[] = []
       for (const tok of tokens) {
         if (tok.startsWith("#")) {
-          const n = tok.slice(1);
-          if (n && !uniqueNames.includes(n)) uniqueNames.push(n);
+          const n = tok.slice(1)
+          if (n && !uniqueNames.includes(n)) uniqueNames.push(n)
         } else if (tok.startsWith(".")) {
-          const n = tok.slice(1);
-          if (n && !sharedNames.includes(n)) sharedNames.push(n);
+          const n = tok.slice(1)
+          if (n && !sharedNames.includes(n)) sharedNames.push(n)
         } else {
           throw new Error(
             `Unprefixed token "${tok}" in action invalidate selector. ` +
               `Tokens must start with "#" or ".".`,
-          );
+          )
         }
       }
       if (uniqueNames.length > 0) {
-        const existing = renderRequest.url.searchParams.get("partials");
-        const merged = existing
-          ? `${existing},${uniqueNames.join(",")}`
-          : uniqueNames.join(",");
-        renderRequest.url.searchParams.set("partials", merged);
-        needsUpdate = true;
+        const existing = renderRequest.url.searchParams.get("partials")
+        const merged = existing ? `${existing},${uniqueNames.join(",")}` : uniqueNames.join(",")
+        renderRequest.url.searchParams.set("partials", merged)
+        needsUpdate = true
       }
       if (sharedNames.length > 0) {
-        const { invalidateByTags } = await import("../lib/partial-cache.ts");
-        invalidateByTags(sharedNames);
-        const existing = renderRequest.url.searchParams.get("tags");
-        const merged = existing
-          ? `${existing},${sharedNames.join(",")}`
-          : sharedNames.join(",");
-        renderRequest.url.searchParams.set("tags", merged);
-        needsUpdate = true;
+        const { invalidateByTags } = await import("../lib/partial-cache.ts")
+        invalidateByTags(sharedNames)
+        const existing = renderRequest.url.searchParams.get("tags")
+        const merged = existing ? `${existing},${sharedNames.join(",")}` : sharedNames.join(",")
+        renderRequest.url.searchParams.set("tags", merged)
+        needsUpdate = true
       }
 
       if (!clientHasCache) {
-        renderRequest.url.searchParams.set("__populateCache", "1");
-        needsUpdate = true;
+        renderRequest.url.searchParams.set("__populateCache", "1")
+        needsUpdate = true
       }
     }
   }
@@ -216,18 +210,22 @@ async function handleRequest(
   if (needsUpdate) {
     // Update the ALS request so getRequest() reflects the new params.
     // Only copy headers — the body was already consumed by the action handler.
-    setRequest(new Request(renderRequest.url, { headers: renderRequest.request.headers }));
+    setRequest(
+      new Request(renderRequest.url, {
+        headers: renderRequest.request.headers,
+      }),
+    )
   }
 
   const rscPayload: RscPayload = {
     root: <Root />,
     formState,
     returnValue,
-  };
+  }
   const rscStream = renderToReadableStream<RscPayload>(rscPayload, {
     temporaryReferences,
     onError: silenceClientDisconnect,
-  });
+  })
 
   // Root is a synchronous function — the plugin's renderToReadableStream
   // does an eager first render pass that executes Root's body before
@@ -248,27 +246,28 @@ async function handleRequest(
     return new Response(rscStream, {
       status: actionStatus,
       headers: { "content-type": "text/x-component;charset=utf-8" },
-    });
+    })
   }
 
-  const ssrEntryModule = await import.meta.viteRsc.loadModule<
-    typeof import("./entry.ssr.tsx")
-  >("ssr", "index");
+  const ssrEntryModule = await import.meta.viteRsc.loadModule<typeof import("./entry.ssr.tsx")>(
+    "ssr",
+    "index",
+  )
   const ssrResult = await ssrEntryModule.renderHTML(rscStream, {
     formState,
     debugNojs: renderRequest.url.searchParams.has("__nojs"),
-  });
+  })
 
   // Post-render check — catches async sentinels thrown from deep
   // inside the tree too. By this point renderHTML has awaited the
   // whole render, so the control channel is final.
-  const finalControl = getFrameworkControl();
+  const finalControl = getFrameworkControl()
 
   if (finalControl?.redirect) {
     return new Response(null, {
       status: finalControl.redirect.status,
       headers: { location: finalControl.redirect.url },
-    });
+    })
   }
 
   // Async `notFound()` — the first render produced the partially-
@@ -279,28 +278,25 @@ async function handleRequest(
     const notFoundPayload: RscPayload = {
       root: <NotFoundPage />,
       formState,
-    };
-    const notFoundStream = renderToReadableStream<RscPayload>(
-      notFoundPayload,
-      {
-        temporaryReferences: createTemporaryReferenceSet(),
-        onError: silenceClientDisconnect,
-      },
-    );
+    }
+    const notFoundStream = renderToReadableStream<RscPayload>(notFoundPayload, {
+      temporaryReferences: createTemporaryReferenceSet(),
+      onError: silenceClientDisconnect,
+    })
     const notFoundSsr = await ssrEntryModule.renderHTML(notFoundStream, {
       formState,
       debugNojs: renderRequest.url.searchParams.has("__nojs"),
-    });
+    })
     return new Response(notFoundSsr.stream, {
       status: 404,
       headers: { "Content-type": "text/html" },
-    });
+    })
   }
 
   return new Response(ssrResult.stream, {
     status: ssrResult.status,
     headers: { "Content-type": "text/html" },
-  });
+  })
 }
 
 // Swallow the synthesized "The render was aborted by the server without a
@@ -322,13 +318,13 @@ function silenceClientDisconnect(error: unknown): string | undefined {
       error.name === "RedirectError" ||
       error.message === "The render was aborted by the server without a reason."
     ) {
-      return undefined;
+      return undefined
     }
   }
-  console.error(error);
-  return undefined;
+  console.error(error)
+  return undefined
 }
 
 if (import.meta.hot) {
-  import.meta.hot.accept();
+  import.meta.hot.accept()
 }

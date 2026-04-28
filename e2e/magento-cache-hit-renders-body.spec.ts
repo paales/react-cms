@@ -1,4 +1,4 @@
-import { expect, request, test } from "./fixtures";
+import { expect, request, test } from "./fixtures"
 
 /**
  * Regression: on the *second* GET of /magento (when the server-side
@@ -12,28 +12,26 @@ import { expect, request, test } from "./fixtures";
  * SSR pathway through PartialsClient + renderTemplate.
  */
 test.beforeEach(async ({ baseURL }) => {
-  const ctx = await request.newContext();
-  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`);
-  await ctx.dispose();
-});
+  const ctx = await request.newContext()
+  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`)
+  await ctx.dispose()
+})
 
-test("second /magento render (Cache hit) still produces full body HTML", async ({
-  baseURL,
-}) => {
-  const ctx = await request.newContext();
-  const base = baseURL ?? "http://localhost:5173";
+test("second /magento render (Cache hit) still produces full body HTML", async ({ baseURL }) => {
+  const ctx = await request.newContext()
+  const base = baseURL ?? "http://localhost:5173"
 
   // Cold miss — populates the `<Cache>` store.
-  const first = await ctx.get(`${base}/magento`);
-  expect(first.ok()).toBe(true);
-  const firstHtml = await first.text();
+  const first = await ctx.get(`${base}/magento`)
+  expect(first.ok()).toBe(true)
+  const firstHtml = await first.text()
 
   // Warm hit.
-  const second = await ctx.get(`${base}/magento`);
-  expect(second.ok()).toBe(true);
-  const secondHtml = await second.text();
+  const second = await ctx.get(`${base}/magento`)
+  expect(second.ok()).toBe(true)
+  const secondHtml = await second.text()
 
-  await ctx.dispose();
+  await ctx.dispose()
 
   // Structural smoke test: a real Magento render has a nav, a header,
   // a product grid, and many live-price testids. All three must be
@@ -42,16 +40,15 @@ test("second /magento render (Cache hit) still produces full body HTML", async (
     ["cold", firstHtml],
     ["cached", secondHtml],
   ] as const) {
-    expect(html, `${label} render should contain <nav>`).toContain("<nav");
-    expect(html, `${label} render should contain <header>`).toContain("<header");
-    expect(
-      html,
-      `${label} render should contain the product grid`,
-    ).toContain('data-testid="product-grid"');
-    const priceMatches = html.match(/data-testid="live-price-[^"]+"/g) ?? [];
+    expect(html, `${label} render should contain <nav>`).toContain("<nav")
+    expect(html, `${label} render should contain <header>`).toContain("<header")
+    expect(html, `${label} render should contain the product grid`).toContain(
+      'data-testid="product-grid"',
+    )
+    const priceMatches = html.match(/data-testid="live-price-[^"]+"/g) ?? []
     expect(
       priceMatches.length,
       `${label} render should include many live-price testids`,
-    ).toBeGreaterThan(5);
+    ).toBeGreaterThan(5)
   }
-});
+})

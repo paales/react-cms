@@ -654,11 +654,11 @@ export type introspection_types = {
  * instead save to a .ts instead of a .d.ts file.
  */
 export type introspection = {
-  name: 'magento';
-  query: 'Query';
-  mutation: 'Mutation';
-  subscription: never;
-  types: introspection_types;
-};
+  name: "magento"
+  query: "Query"
+  mutation: "Mutation"
+  subscription: never
+  types: introspection_types
+}
 
-import * as gqlTada from 'gql.tada';
+import * as gqlTada from "gql.tada"

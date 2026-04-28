@@ -1,10 +1,10 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
 
 export function ClickCounter() {
-  const [n, setN] = useState(0);
+  const [n, setN] = useState(0)
   return (
     <Button
       type="button"
@@ -15,5 +15,5 @@ export function ClickCounter() {
     >
       clicked {n}×
     </Button>
-  );
+  )
 }

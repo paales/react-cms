@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect } from "./fixtures"
 
 // Skipped: depends on the `/chat-notes` route + the `defaultOpen`
 // plumbing on `<ChatOverlay/>`, both removed from `root.tsx`.
@@ -25,40 +25,34 @@ import { test, expect } from "./fixtures";
  */
 
 test.beforeEach(async ({ page }) => {
-  await page.goto("/__test/clear-caches");
-});
+  await page.goto("/__test/clear-caches")
+})
 
-test.skip("opened chat overlay survives navigation from / to /magento", async ({
-  page,
-}) => {
-  await page.goto("/");
+test.skip("opened chat overlay survives navigation from / to /magento", async ({ page }) => {
+  await page.goto("/")
   // The overlay pill sits in the page — wait until it's interactive
   // before clicking. Without this, a click can fire pre-hydration and
   // follow the plain `<a href="?chat=open">` fallback, which lands on
   // the window URL (not the frame URL) and leaves the session empty.
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("networkidle")
 
   // Open the overlay.
-  await page.locator('[data-testid="chat-open-pill"]').click();
+  await page.locator('[data-testid="chat-open-pill"]').click()
   await expect(page.locator('[data-testid="chat-box"]')).toBeVisible({
     timeout: 10000,
-  });
+  })
 
   // Wait for the default AA_CHAT_STREAMING message to start streaming
   // and accumulate some chunks.
-  const chunks = page.locator(
-    '[data-testid="chat-body-AA_CHAT_STREAMING"] [data-chunk]',
-  );
-  await expect(chunks.first()).toBeAttached({ timeout: 10000 });
-  await expect
-    .poll(() => chunks.count(), { timeout: 10000 })
-    .toBeGreaterThanOrEqual(3);
-  const chunksBefore = await chunks.count();
+  const chunks = page.locator('[data-testid="chat-body-AA_CHAT_STREAMING"] [data-chunk]')
+  await expect(chunks.first()).toBeAttached({ timeout: 10000 })
+  await expect.poll(() => chunks.count(), { timeout: 10000 }).toBeGreaterThanOrEqual(3)
+  const chunksBefore = await chunks.count()
 
   // Navigate to /magento via the top nav link (same intercept path the
   // user's repro uses — not a direct `page.goto`).
-  await page.locator('a[href="/magento"]').first().click();
-  await expect(page).toHaveURL(/\/magento/);
+  await page.locator('a[href="/magento"]').first().click()
+  await expect(page).toHaveURL(/\/magento/)
 
   // The overlay must still be open (not collapsed back to the pill).
   // Magento's initial render fetches from the GraphCommerce API, which
@@ -67,18 +61,14 @@ test.skip("opened chat overlay survives navigation from / to /magento", async ({
   // "Magento's API responded in 5s."
   await expect(page.locator('[data-testid="chat-box"]')).toBeVisible({
     timeout: 15000,
-  });
-  await expect(
-    page.locator('[data-testid="chat-msg-AA_CHAT_STREAMING"]'),
-  ).toBeAttached();
+  })
+  await expect(page.locator('[data-testid="chat-msg-AA_CHAT_STREAMING"]')).toBeAttached()
 
   // Chunk count must not regress. Whether we observe N or N+k chunks,
   // it must be ≥ what we saw pre-nav — a remount would drop to 0
   // before restreaming.
   const chunksAfter = await page
-    .locator(
-      '[data-testid="chat-body-AA_CHAT_STREAMING"] [data-chunk]',
-    )
-    .count();
-  expect(chunksAfter).toBeGreaterThanOrEqual(chunksBefore);
-});
+    .locator('[data-testid="chat-body-AA_CHAT_STREAMING"] [data-chunk]')
+    .count()
+  expect(chunksAfter).toBeGreaterThanOrEqual(chunksBefore)
+})

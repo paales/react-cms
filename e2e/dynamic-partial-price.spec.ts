@@ -1,4 +1,4 @@
-import { expect, request, test } from "./fixtures";
+import { expect, request, test } from "./fixtures"
 
 /**
  * Dynamic Partial discovery + refresh end-to-end.
@@ -17,47 +17,43 @@ import { expect, request, test } from "./fixtures";
 // without clearing, dynamic refetches can return cached bytes that
 // don't match the current page state.
 test.beforeEach(async ({ baseURL }) => {
-  const ctx = await request.newContext();
-  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`);
-  await ctx.dispose();
-});
+  const ctx = await request.newContext()
+  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`)
+  await ctx.dispose()
+})
 
 test("dynamic live-price Partial is discoverable and individually refetchable by id", async ({
   page,
 }) => {
-  const rscRefetches: Array<{ url: string; partials: string | null }> = [];
+  const rscRefetches: Array<{ url: string; partials: string | null }> = []
   page.on("request", (req) => {
-    const url = req.url();
+    const url = req.url()
     if (url.includes("_.rsc") && url.includes("partials=")) {
-      const u = new URL(url);
-      rscRefetches.push({ url, partials: u.searchParams.get("partials") });
+      const u = new URL(url)
+      rscRefetches.push({ url, partials: u.searchParams.get("partials") })
     }
-  });
+  })
 
-  await page.goto("/magento");
+  await page.goto("/magento")
 
   // Wait for the price grid to materialize. If the Partial self-wrap
   // weren't running / registering, these wouldn't be here.
-  const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first();
-  await expect(firstPrice).toBeVisible({ timeout: 15000 });
-  const priceCount = await page.locator('[data-testid^="live-price-"][data-price-tick]').count();
-  expect(priceCount).toBeGreaterThan(1);
+  const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first()
+  await expect(firstPrice).toBeVisible({ timeout: 15000 })
+  const priceCount = await page.locator('[data-testid^="live-price-"][data-price-tick]').count()
+  expect(priceCount).toBeGreaterThan(1)
 
-  const testId = await (await firstPrice.elementHandle())!.getAttribute(
-    "data-testid",
-  );
-  const sku = testId!.replace(/^live-price-/, "");
-  expect(sku.length).toBeGreaterThan(0);
+  const testId = await (await firstPrice.elementHandle())!.getAttribute("data-testid")
+  const sku = testId!.replace(/^live-price-/, "")
+  expect(sku.length).toBeGreaterThan(0)
 
-  rscRefetches.length = 0;
-  await page.locator(`[data-testid="refresh-price-${sku}"]`).click();
+  rscRefetches.length = 0
+  await page.locator(`[data-testid="refresh-price-${sku}"]`).click()
 
   // The refetch should hit the RSC endpoint with EXACTLY the targeted id.
-  await expect
-    .poll(() => rscRefetches.length, { timeout: 5000 })
-    .toBeGreaterThan(0);
-  expect(rscRefetches[0].partials).toBe(`price-${sku}`);
-});
+  await expect.poll(() => rscRefetches.length, { timeout: 5000 }).toBeGreaterThan(0)
+  expect(rscRefetches[0].partials).toBe(`price-${sku}`)
+})
 
 /**
  * DOM-patch assertion: clicking refresh should update the targeted
@@ -66,37 +62,33 @@ test("dynamic live-price Partial is discoverable and individually refetchable by
  * registry — otherwise the server response arrives but the client's
  * cache/template merge doesn't swap in the fresh content.
  */
-test("clicking refresh updates the targeted price's tick in the DOM", async ({
-  page,
-}) => {
-  await page.goto("/magento");
+test("clicking refresh updates the targeted price's tick in the DOM", async ({ page }) => {
+  await page.goto("/magento")
 
-  const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first();
-  await expect(firstPrice).toBeVisible({ timeout: 15000 });
+  const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first()
+  await expect(firstPrice).toBeVisible({ timeout: 15000 })
 
-  const testId = await (await firstPrice.elementHandle())!.getAttribute(
-    "data-testid",
-  );
-  const sku = testId!.replace(/^live-price-/, "");
+  const testId = await (await firstPrice.elementHandle())!.getAttribute("data-testid")
+  const sku = testId!.replace(/^live-price-/, "")
 
-  const tickBefore = await firstPrice.getAttribute("data-price-tick");
-  expect(tickBefore).toBeTruthy();
+  const tickBefore = await firstPrice.getAttribute("data-price-tick")
+  expect(tickBefore).toBeTruthy()
 
   // Read a sibling product's tick — should stay put across this refresh.
-  const otherPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').nth(1);
-  const otherTickBefore = await otherPrice.getAttribute("data-price-tick");
+  const otherPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').nth(1)
+  const otherTickBefore = await otherPrice.getAttribute("data-price-tick")
 
-  await page.locator(`[data-testid="refresh-price-${sku}"]`).click();
+  await page.locator(`[data-testid="refresh-price-${sku}"]`).click()
 
   // The targeted price's tick should update within a few seconds.
   await expect
     .poll(() => firstPrice.getAttribute("data-price-tick"), { timeout: 5000 })
-    .not.toBe(tickBefore);
+    .not.toBe(tickBefore)
 
   // Sibling did NOT get refreshed.
-  const otherTickAfter = await otherPrice.getAttribute("data-price-tick");
-  expect(otherTickAfter).toBe(otherTickBefore);
-});
+  const otherTickAfter = await otherPrice.getAttribute("data-price-tick")
+  expect(otherTickAfter).toBe(otherTickBefore)
+})
 
 /**
  * Tag-based bulk refresh. Clicking "Refresh all prices" should issue
@@ -108,22 +100,26 @@ test("clicking refresh updates the targeted price's tick in the DOM", async ({
 test("clicking 'refresh all prices' updates every visible price in one request", async ({
   page,
 }) => {
-  const rscRefetches: Array<{ url: string; tags: string | null; partials: string | null }> = [];
+  const rscRefetches: Array<{
+    url: string
+    tags: string | null
+    partials: string | null
+  }> = []
   page.on("request", (req) => {
-    const url = req.url();
+    const url = req.url()
     if (url.includes("_.rsc") && (url.includes("tags=") || url.includes("partials="))) {
-      const u = new URL(url);
+      const u = new URL(url)
       rscRefetches.push({
         url,
         tags: u.searchParams.get("tags"),
         partials: u.searchParams.get("partials"),
-      });
+      })
     }
-  });
+  })
 
-  await page.goto("/magento");
-  const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first();
-  await expect(firstPrice).toBeVisible({ timeout: 15000 });
+  await page.goto("/magento")
+  const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first()
+  await expect(firstPrice).toBeVisible({ timeout: 15000 })
 
   // Hydration must have installed `window.__rsc_partial_refetch`
   // before the click — otherwise the handler's early-return fires
@@ -132,7 +128,7 @@ test("clicking 'refresh all prices' updates every visible price in one request",
     () => typeof (window as any).__rsc_partial_refetch === "function",
     null,
     { timeout: 10000 },
-  );
+  )
 
   // Snapshot all visible ticks before the click.
   const before = await page.$$eval('[data-testid^="live-price-"][data-price-tick]', (els) =>
@@ -140,32 +136,33 @@ test("clicking 'refresh all prices' updates every visible price in one request",
       testId: el.getAttribute("data-testid") ?? "",
       tick: el.getAttribute("data-price-tick") ?? "",
     })),
-  );
-  expect(before.length).toBeGreaterThan(2);
+  )
+  expect(before.length).toBeGreaterThan(2)
 
-  rscRefetches.length = 0;
-  await page.locator('[data-testid="refresh-all-prices"]').click();
+  rscRefetches.length = 0
+  await page.locator('[data-testid="refresh-all-prices"]').click()
 
   // Exactly one refetch, carrying the `price` tag.
-  await expect
-    .poll(() => rscRefetches.length, { timeout: 5000 })
-    .toBeGreaterThan(0);
-  expect(rscRefetches[0].tags).toBe("price");
+  await expect.poll(() => rscRefetches.length, { timeout: 5000 }).toBeGreaterThan(0)
+  expect(rscRefetches[0].tags).toBe("price")
 
   // Every price's tick should update to a new value.
   await expect
-    .poll(async () => {
-      const after = await page.$$eval('[data-testid^="live-price-"][data-price-tick]', (els) =>
-        els.map((el) => ({
-          testId: el.getAttribute("data-testid") ?? "",
-          tick: el.getAttribute("data-price-tick") ?? "",
-        })),
-      );
-      const byId = new Map(after.map((x) => [x.testId, x.tick]));
-      return before.every((b) => {
-        const a = byId.get(b.testId);
-        return a != null && a !== b.tick;
-      });
-    }, { timeout: 5000 })
-    .toBe(true);
-});
+    .poll(
+      async () => {
+        const after = await page.$$eval('[data-testid^="live-price-"][data-price-tick]', (els) =>
+          els.map((el) => ({
+            testId: el.getAttribute("data-testid") ?? "",
+            tick: el.getAttribute("data-price-tick") ?? "",
+          })),
+        )
+        const byId = new Map(after.map((x) => [x.testId, x.tick]))
+        return before.every((b) => {
+          const a = byId.get(b.testId)
+          return a != null && a !== b.tick
+        })
+      },
+      { timeout: 5000 },
+    )
+    .toBe(true)
+})

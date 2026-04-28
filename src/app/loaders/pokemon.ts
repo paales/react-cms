@@ -16,15 +16,15 @@
  * own entity types. Commerce apps add `getProduct`, CMS-heavy apps
  * add `getPage`, etc.
  */
-import { getClosest } from "../../framework/context.ts";
-import type { Reference } from "../../framework/cms-runtime.ts";
-import { client } from "../data.ts";
-import { graphql } from "../pokeapi-graphql.ts";
+import { getClosest } from "../../framework/context.ts"
+import type { Reference } from "../../framework/cms-runtime.ts"
+import { client } from "../data.ts"
+import { graphql } from "../pokeapi-graphql.ts"
 
 export interface Pokemon {
-  readonly id: number;
-  readonly name: string;
-  readonly spriteUrl: string | null;
+  readonly id: number
+  readonly name: string
+  readonly spriteUrl: string | null
 }
 
 const PokemonByIdQuery = graphql(`
@@ -37,39 +37,35 @@ const PokemonByIdQuery = graphql(`
       }
     }
   }
-`);
+`)
 
 type SpriteJson = {
-  front_default?: string | null;
+  front_default?: string | null
   other?: {
-    "official-artwork"?: { front_default?: string | null } | null;
-  } | null;
-} | null;
+    "official-artwork"?: { front_default?: string | null } | null
+  } | null
+} | null
 
 function extractSprite(sprites: unknown): string | null {
-  const s = sprites as SpriteJson;
-  return (
-    s?.other?.["official-artwork"]?.front_default ?? s?.front_default ?? null
-  );
+  const s = sprites as SpriteJson
+  return s?.other?.["official-artwork"]?.front_default ?? s?.front_default ?? null
 }
 
-export async function getPokemon(
-  ref: Reference<"pokemon">,
-): Promise<Pokemon | null> {
+export async function getPokemon(ref: Reference<"pokemon">): Promise<Pokemon | null> {
   if (ref.value != null) {
-    const id = Number(ref.value);
-    if (!Number.isFinite(id)) return null;
-    const data = await client.request(PokemonByIdQuery, { id });
-    const p = data.pokemon_v2_pokemon[0];
-    if (!p) return null;
+    const id = Number(ref.value)
+    if (!Number.isFinite(id)) return null
+    const data = await client.request(PokemonByIdQuery, { id })
+    const p = data.pokemon_v2_pokemon[0]
+    if (!p) return null
     return {
       id: p.id,
       name: p.name,
       spriteUrl: extractSprite(p.pokemon_v2_pokemonsprites[0]?.sprites),
-    };
+    }
   }
   if (ref.fallback === "closest") {
-    return getClosest<Pokemon>("pokemon");
+    return getClosest<Pokemon>("pokemon")
   }
-  return null;
+  return null
 }

@@ -1,4 +1,4 @@
-import { expect, request, test } from "./fixtures";
+import { expect, request, test } from "./fixtures"
 
 /**
  * Cold-cache regression: on the first load (no cached entry), the
@@ -17,28 +17,26 @@ import { expect, request, test } from "./fixtures";
  * is still async — so outer Suspense fallbacks naturally fire.
  */
 test.beforeEach(async ({ baseURL }) => {
-  const ctx = await request.newContext();
-  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`);
-  await ctx.dispose();
-});
+  const ctx = await request.newContext()
+  await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`)
+  await ctx.dispose()
+})
 
-test("cold cache: LivePrice Suspense fallback appears before content", async ({
-  page,
-}) => {
-  const start = Date.now();
-  await page.goto("/magento", { waitUntil: "commit" });
+test("cold cache: LivePrice Suspense fallback appears before content", async ({ page }) => {
+  const start = Date.now()
+  await page.goto("/magento", { waitUntil: "commit" })
 
   // LivePrice awaits 1000ms. In streaming mode the outer shell +
   // per-card fallbacks should be visible well before that resolves.
   await page.waitForSelector('[data-testid^="live-price-fallback-"]', {
     timeout: 5000,
-  });
-  const fallbackTime = Date.now() - start;
+  })
+  const fallbackTime = Date.now() - start
 
   await page.waitForSelector('[data-testid^="live-price-"][data-price-tick]', {
     timeout: 15000,
-  });
-  const contentTime = Date.now() - start;
+  })
+  const contentTime = Date.now() - start
 
   // LivePrice has a 1000ms artificial delay. Streaming path: fallback
   // paints at ~500–700ms (GraphQL only), content at ~1500–1700ms.
@@ -47,35 +45,33 @@ test("cold cache: LivePrice Suspense fallback appears before content", async ({
   expect(
     contentTime - fallbackTime,
     `expected fallback to paint well before content. fallback=${fallbackTime}ms content=${contentTime}ms`,
-  ).toBeGreaterThan(400);
-});
+  ).toBeGreaterThan(400)
+})
 
-test("warm cache: LivePrice Suspense fallback still appears before content", async ({
-  page,
-}) => {
+test("warm cache: LivePrice Suspense fallback still appears before content", async ({ page }) => {
   // Populate cache.
-  await page.goto("/magento");
+  await page.goto("/magento")
   await page.waitForSelector('[data-testid^="live-price-"][data-price-tick]', {
     timeout: 15000,
-  });
+  })
 
   // Warm reload — cache hit serves bytes immediately; inner Partials
   // are re-injected as live holes so LivePrice still suspends.
-  const start = Date.now();
-  await page.goto("/magento", { waitUntil: "commit" });
+  const start = Date.now()
+  await page.goto("/magento", { waitUntil: "commit" })
 
   await page.waitForSelector('[data-testid^="live-price-fallback-"]', {
     timeout: 5000,
-  });
-  const fallbackTime = Date.now() - start;
+  })
+  const fallbackTime = Date.now() - start
 
   await page.waitForSelector('[data-testid^="live-price-"][data-price-tick]', {
     timeout: 15000,
-  });
-  const contentTime = Date.now() - start;
+  })
+  const contentTime = Date.now() - start
 
   expect(
     contentTime - fallbackTime,
     `warm cache: expected fallback to paint well before content. fallback=${fallbackTime}ms content=${contentTime}ms`,
-  ).toBeGreaterThan(400);
-});
+  ).toBeGreaterThan(400)
+})

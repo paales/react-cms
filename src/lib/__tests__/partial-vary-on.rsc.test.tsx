@@ -27,32 +27,32 @@
  *      fp. (Verifies the frame-leak fix lets ambient resolution
  *      work correctly via `parent.frameChain`.)
  */
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest"
 
 vi.mock("../cache.tsx", () => ({
   Cache: ({ children }: { children: React.ReactNode }) => children,
   _cacheStats: async () => ({ size: 0, keys: [] }),
   _clearCache: async () => {},
-}));
+}))
 
-import { renderWithRequest } from "../../test/rsc-server.ts";
-import { PartialRoot, Partial } from "../partial.tsx";
-import { ROOT, capturePartialContext } from "../partial-context.ts";
-import { clearRegistry } from "../partial-registry.ts";
-import { getSearchParam } from "../../framework/context.ts";
+import { renderWithRequest } from "../../test/rsc-server.ts"
+import { PartialRoot, Partial } from "../partial.tsx"
+import { ROOT, capturePartialContext } from "../partial-context.ts"
+import { clearRegistry } from "../partial-registry.ts"
+import { getSearchParam } from "../../framework/context.ts"
 
 beforeEach(() => {
-  clearRegistry();
-});
+  clearRegistry()
+})
 
 function extractFingerprint(text: string, partialId: string): string | null {
   const forward = new RegExp(
     `"partialId"\\s*:\\s*"${partialId}"[^{}]*?"partialFingerprint"\\s*:\\s*"([^"]+)"`,
-  );
+  )
   const reverse = new RegExp(
     `"partialFingerprint"\\s*:\\s*"([^"]+)"[^{}]*?"partialId"\\s*:\\s*"${partialId}"`,
-  );
-  return text.match(forward)?.[1] ?? text.match(reverse)?.[1] ?? null;
+  )
+  return text.match(forward)?.[1] ?? text.match(reverse)?.[1] ?? null
 }
 
 async function renderFp(
@@ -60,9 +60,9 @@ async function renderFp(
   node: React.ReactNode,
   partialId: string,
 ): Promise<string | null> {
-  const { stream } = await renderWithRequest(url, node);
-  const text = await new Response(stream).text();
-  return extractFingerprint(text, partialId);
+  const { stream } = await renderWithRequest(url, node)
+  const text = await new Response(stream).text()
+  return extractFingerprint(text, partialId)
 }
 
 /**
@@ -74,15 +74,15 @@ async function warmedFp(
   tree: React.ReactNode,
   partialId: string,
 ): Promise<string | null> {
-  await renderFp(url, tree, partialId);
-  return renderFp(url, tree, partialId);
+  await renderFp(url, tree, partialId)
+  return renderFp(url, tree, partialId)
 }
 
 describe("Partial fingerprint — auto-tracked manifest", () => {
   function ReadConfig() {
     // Hoisted at the sync top of this server component body.
-    const config = getSearchParam("config");
-    return <span>config={config ?? ""}</span>;
+    const config = getSearchParam("config")
+    return <span>config={config ?? ""}</span>
   }
 
   it("URL change in a tracked-accessor key produces a distinct fingerprint", async () => {
@@ -92,22 +92,22 @@ describe("Partial fingerprint — auto-tracked manifest", () => {
           <ReadConfig />
         </Partial>
       </PartialRoot>
-    );
+    )
 
     // Warm so the manifest exists for the second render's fp fold.
-    const fpA = await warmedFp("http://localhost/?config=0", tree, "fields");
-    clearRegistry();
-    const fpB = await warmedFp("http://localhost/?config=1", tree, "fields");
+    const fpA = await warmedFp("http://localhost/?config=0", tree, "fields")
+    clearRegistry()
+    const fpB = await warmedFp("http://localhost/?config=1", tree, "fields")
 
-    expect(fpA).toBeTruthy();
-    expect(fpB).toBeTruthy();
-    expect(fpA).not.toBe(fpB);
-  });
+    expect(fpA).toBeTruthy()
+    expect(fpB).toBeTruthy()
+    expect(fpA).not.toBe(fpB)
+  })
 
   it("URL change in an UNREAD key leaves the fingerprint unchanged", async () => {
     function ReadSelect() {
-      const select = getSearchParam("select");
-      return <span>{select ?? ""}</span>;
+      const select = getSearchParam("select")
+      return <span>{select ?? ""}</span>
     }
     const tree = (
       <PartialRoot>
@@ -115,24 +115,16 @@ describe("Partial fingerprint — auto-tracked manifest", () => {
           <ReadSelect />
         </Partial>
       </PartialRoot>
-    );
+    )
 
-    const fpA = await warmedFp(
-      "http://localhost/?select=a&unrelated=x",
-      tree,
-      "fields",
-    );
-    clearRegistry();
-    const fpB = await warmedFp(
-      "http://localhost/?select=a&unrelated=y",
-      tree,
-      "fields",
-    );
+    const fpA = await warmedFp("http://localhost/?select=a&unrelated=x", tree, "fields")
+    clearRegistry()
+    const fpB = await warmedFp("http://localhost/?select=a&unrelated=y", tree, "fields")
 
-    expect(fpA).toBeTruthy();
-    expect(fpB).toBeTruthy();
-    expect(fpA).toBe(fpB);
-  });
+    expect(fpA).toBeTruthy()
+    expect(fpB).toBeTruthy()
+    expect(fpA).toBe(fpB)
+  })
 
   it("ancestor fp captures a descendant's tracked-accessor reads", async () => {
     // Ancestor's own JSX shape is identical across both renders.
@@ -148,62 +140,52 @@ describe("Partial fingerprint — auto-tracked manifest", () => {
           </div>
         </Partial>
       </PartialRoot>
-    );
+    )
 
-    const fpA = await warmedFp("http://localhost/?config=0", tree, "root");
-    clearRegistry();
-    const fpB = await warmedFp("http://localhost/?config=1", tree, "root");
+    const fpA = await warmedFp("http://localhost/?config=0", tree, "root")
+    clearRegistry()
+    const fpB = await warmedFp("http://localhost/?config=1", tree, "root")
 
-    expect(fpA).toBeTruthy();
-    expect(fpB).toBeTruthy();
-    expect(fpA).not.toBe(fpB);
-  });
+    expect(fpA).toBeTruthy()
+    expect(fpB).toBeTruthy()
+    expect(fpA).not.toBe(fpB)
+  })
 
   it("ambient frame: a Partial inside a frame resolves its reads against the frame URL", async () => {
     function ReadQ() {
-      const q = getSearchParam("q");
-      return <span>{q ?? ""}</span>;
+      const q = getSearchParam("q")
+      return <span>{q ?? ""}</span>
     }
     function Inner() {
-      const parent = capturePartialContext();
+      const parent = capturePartialContext()
       return (
         <Partial parent={parent} selector="#inner">
           <ReadQ />
         </Partial>
-      );
+      )
     }
     const treeA = (
       <PartialRoot>
-        <Partial
-          parent={ROOT}
-          selector="#outer"
-          frame="outer"
-          frameUrl="/?q=alpha"
-        >
+        <Partial parent={ROOT} selector="#outer" frame="outer" frameUrl="/?q=alpha">
           <Inner />
         </Partial>
       </PartialRoot>
-    );
+    )
     const treeB = (
       <PartialRoot>
-        <Partial
-          parent={ROOT}
-          selector="#outer"
-          frame="outer"
-          frameUrl="/?q=beta"
-        >
+        <Partial parent={ROOT} selector="#outer" frame="outer" frameUrl="/?q=beta">
           <Inner />
         </Partial>
       </PartialRoot>
-    );
+    )
 
     // Page URL identical in both renders — only the frame URL differs.
-    const fpA = await warmedFp("http://localhost/", treeA, "inner");
-    clearRegistry();
-    const fpB = await warmedFp("http://localhost/", treeB, "inner");
+    const fpA = await warmedFp("http://localhost/", treeA, "inner")
+    clearRegistry()
+    const fpB = await warmedFp("http://localhost/", treeB, "inner")
 
-    expect(fpA).toBeTruthy();
-    expect(fpB).toBeTruthy();
-    expect(fpA).not.toBe(fpB);
-  });
-});
+    expect(fpA).toBeTruthy()
+    expect(fpB).toBeTruthy()
+    expect(fpA).not.toBe(fpB)
+  })
+})

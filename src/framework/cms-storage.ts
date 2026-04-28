@@ -26,30 +26,20 @@
  * `CMS_DATA_DIR=/var/lib/cms` (or wherever the JSON files live).
  */
 
-import {
-  existsSync,
-  readFileSync as fsReadFileSync,
-  statSync as fsStatSync,
-} from "node:fs";
-import {
-  mkdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import type { CmsStore } from "./cms-runtime.ts";
+import { existsSync, readFileSync as fsReadFileSync, statSync as fsStatSync } from "node:fs"
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises"
+import { dirname, resolve } from "node:path"
+import type { CmsStore } from "./cms-runtime.ts"
 
 /** Loaded store + the mtime tag used for cache invalidation. */
 export interface LoadedStore {
-  store: CmsStore;
+  store: CmsStore
   /** Storage-defined freshness tag. For file-system backends this is
    *  the file's `mtimeMs`; other backends can use any monotonic value
    *  that changes when the underlying data changes. The runtime
    *  treats it as opaque — it just compares to the cached value to
    *  decide whether to rebuild the index. */
-  mtime: number;
+  mtime: number
 }
 
 /**
@@ -60,13 +50,13 @@ export interface LoadedStore {
  * deterministic).
  */
 export interface CmsStorage {
-  loadPublished(): Promise<LoadedStore | null>;
-  loadPublishedSync(): LoadedStore | null;
-  savePublished(store: CmsStore): Promise<void>;
-  loadDraft(): Promise<LoadedStore | null>;
-  loadDraftSync(): LoadedStore | null;
-  saveDraft(store: CmsStore): Promise<void>;
-  deleteDraft(): Promise<void>;
+  loadPublished(): Promise<LoadedStore | null>
+  loadPublishedSync(): LoadedStore | null
+  savePublished(store: CmsStore): Promise<void>
+  loadDraft(): Promise<LoadedStore | null>
+  loadDraftSync(): LoadedStore | null
+  saveDraft(store: CmsStore): Promise<void>
+  deleteDraft(): Promise<void>
 }
 
 /**
@@ -81,37 +71,37 @@ export class JsonFileStorage implements CmsStorage {
   ) {}
 
   async loadPublished(): Promise<LoadedStore | null> {
-    return this.#loadAsync(this.publishedPath);
+    return this.#loadAsync(this.publishedPath)
   }
 
   loadPublishedSync(): LoadedStore | null {
-    return this.#loadSync(this.publishedPath);
+    return this.#loadSync(this.publishedPath)
   }
 
   async savePublished(store: CmsStore): Promise<void> {
-    await this.#writeAtomic(this.publishedPath, store);
+    await this.#writeAtomic(this.publishedPath, store)
   }
 
   async loadDraft(): Promise<LoadedStore | null> {
-    return this.#loadAsync(this.draftPath);
+    return this.#loadAsync(this.draftPath)
   }
 
   loadDraftSync(): LoadedStore | null {
-    return this.#loadSync(this.draftPath);
+    return this.#loadSync(this.draftPath)
   }
 
   async saveDraft(store: CmsStore): Promise<void> {
-    await this.#writeAtomic(this.draftPath, store);
+    await this.#writeAtomic(this.draftPath, store)
   }
 
   async deleteDraft(): Promise<void> {
-    if (existsSync(this.draftPath)) await unlink(this.draftPath);
+    if (existsSync(this.draftPath)) await unlink(this.draftPath)
   }
 
   async #loadAsync(path: string): Promise<LoadedStore | null> {
     try {
-      const text = await readFile(path, "utf8");
-      const store = JSON.parse(text) as CmsStore;
+      const text = await readFile(path, "utf8")
+      const store = JSON.parse(text) as CmsStore
       // We use `Date.now()` instead of stat because:
       //   1. Two file ops (stat + read) are racy — the file could
       //      change between them, leaving the cache with stale bytes
@@ -120,33 +110,33 @@ export class JsonFileStorage implements CmsStorage {
       //      they just need a value that changes when the bytes do.
       //      The async path is hit at request entry; freshness is
       //      established by re-reading.
-      return { store, mtime: Date.now() };
+      return { store, mtime: Date.now() }
     } catch {
-      return null;
+      return null
     }
   }
 
   #loadSync(path: string): LoadedStore | null {
     try {
-      const stat = fsStatSync(path);
-      const text = fsReadFileSync(path, "utf8");
-      const store = JSON.parse(text) as CmsStore;
-      return { store, mtime: stat.mtimeMs };
+      const stat = fsStatSync(path)
+      const text = fsReadFileSync(path, "utf8")
+      const store = JSON.parse(text) as CmsStore
+      return { store, mtime: stat.mtimeMs }
     } catch {
-      return null;
+      return null
     }
   }
 
   async #writeAtomic(path: string, store: CmsStore): Promise<void> {
-    await mkdir(dirname(path), { recursive: true });
+    await mkdir(dirname(path), { recursive: true })
     // Tmp suffix needs to be unique across concurrent writes within
     // the same process — two `writeDraftNode` calls in quick
     // succession can land on the same `Date.now()`. Append a random
     // segment so the two writes always pick distinct temp files.
-    const rand = Math.random().toString(36).slice(2, 10);
-    const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${rand}`;
-    await writeFile(tmp, JSON.stringify(store, null, 2) + "\n", "utf8");
-    await rename(tmp, path);
+    const rand = Math.random().toString(36).slice(2, 10)
+    const tmp = `${path}.tmp-${process.pid}-${Date.now()}-${rand}`
+    await writeFile(tmp, JSON.stringify(store, null, 2) + "\n", "utf8")
+    await rename(tmp, path)
   }
 }
 
@@ -162,35 +152,32 @@ export class JsonFileStorage implements CmsStorage {
  * bundling is no longer necessary; the JSON is read at runtime.
  */
 export function defaultCmsDataDir(): string {
-  const env = process.env.CMS_DATA_DIR;
-  if (env) return resolve(env);
-  return resolve(process.cwd(), "src/cms");
+  const env = process.env.CMS_DATA_DIR
+  if (env) return resolve(env)
+  return resolve(process.cwd(), "src/cms")
 }
 
-let _instance: CmsStorage | null = null;
+let _instance: CmsStorage | null = null
 
 /** Lazy singleton — created on first access. Tests / advanced
  *  callers can swap the backend via `setCmsStorage()` before the
  *  first read. */
 export function getCmsStorage(): CmsStorage {
   if (!_instance) {
-    const dir = defaultCmsDataDir();
-    _instance = new JsonFileStorage(
-      resolve(dir, "content.json"),
-      resolve(dir, "draft.json"),
-    );
+    const dir = defaultCmsDataDir()
+    _instance = new JsonFileStorage(resolve(dir, "content.json"), resolve(dir, "draft.json"))
   }
-  return _instance;
+  return _instance
 }
 
 /** Replace the singleton storage. Drops any cache the runtime might
  *  have for the old backend — call `_invalidateCmsStoreCache()` from
  *  cms-runtime if you want a clean slate after the swap. */
 export function setCmsStorage(backend: CmsStorage): void {
-  _instance = backend;
+  _instance = backend
 }
 
 /** Reset to default-resolved JsonFileStorage. Test cleanup helper. */
 export function _resetCmsStorage(): void {
-  _instance = null;
+  _instance = null
 }

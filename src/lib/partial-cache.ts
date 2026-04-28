@@ -21,47 +21,45 @@
  * buckets so their entries don't cross-contaminate.
  */
 
-import { getScope } from "../framework/context.ts";
-import { djb2 as hashQuery } from "./hash.ts";
+import { getScope } from "../framework/context.ts"
+import { djb2 as hashQuery } from "./hash.ts"
 
 interface CacheEntry {
-  data: Record<string, unknown>;
-  query: string;
-  tags: string[];
-  expiresAt: number;
+  data: Record<string, unknown>
+  query: string
+  tags: string[]
+  expiresAt: number
 }
 
 // CATEGORY C (docs-dev/server-isolation.md) — shared GraphQL response cache.
 // Entries keyed by query hash + variables within a scope; safe to share
 // across users for anonymous queries, and authenticated queries should
 // not end up here.
-const scopes = new Map<string, Map<string, CacheEntry>>();
+const scopes = new Map<string, Map<string, CacheEntry>>()
 
 function bucket(scope: string = getScope()): Map<string, CacheEntry> {
-  let b = scopes.get(scope);
+  let b = scopes.get(scope)
   if (!b) {
-    b = new Map();
-    scopes.set(scope, b);
+    b = new Map()
+    scopes.set(scope, b)
   }
-  return b;
+  return b
 }
 
 /**
  * Look up cached response data for a query.
  * Returns the data if found and not expired, null otherwise.
  */
-export function getCachedData(
-  query: string,
-): Record<string, unknown> | null {
-  const key = hashQuery(query);
-  const b = bucket();
-  const entry = b.get(key);
-  if (!entry) return null;
+export function getCachedData(query: string): Record<string, unknown> | null {
+  const key = hashQuery(query)
+  const b = bucket()
+  const entry = b.get(key)
+  if (!entry) return null
   if (Date.now() > entry.expiresAt) {
-    b.delete(key);
-    return null;
+    b.delete(key)
+    return null
   }
-  return entry.data;
+  return entry.data
 }
 
 /**
@@ -77,13 +75,13 @@ export function setCachedData(
   ttl: number,
   tags: string[] = [],
 ): void {
-  const key = hashQuery(query);
+  const key = hashQuery(query)
   bucket().set(key, {
     data,
     query,
     tags,
     expiresAt: Date.now() + ttl * 1000,
-  });
+  })
 }
 
 /**
@@ -92,16 +90,16 @@ export function setCachedData(
  * entry.rsc.tsx.
  */
 export function invalidateByTags(tags: string[]): number {
-  const tagSet = new Set(tags);
-  let purged = 0;
-  const b = bucket();
+  const tagSet = new Set(tags)
+  let purged = 0
+  const b = bucket()
   for (const [key, entry] of b) {
     if (entry.tags.some((t) => tagSet.has(t))) {
-      b.delete(key);
-      purged++;
+      b.delete(key)
+      purged++
     }
   }
-  return purged;
+  return purged
 }
 
 /**
@@ -112,19 +110,19 @@ export function invalidateByTags(tags: string[]): number {
  */
 export function clearCache(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {
-    scopes.clear();
-    return;
+    scopes.clear()
+    return
   }
-  scopes.delete(scope);
+  scopes.delete(scope)
 }
 
 /** Get cache stats for the current request's scope. Useful for debugging. */
 export function getCacheStats(): {
-  size: number;
-  entries: Array<{ query: string; tags: string[]; ttlRemaining: number }>;
+  size: number
+  entries: Array<{ query: string; tags: string[]; ttlRemaining: number }>
 } {
-  const now = Date.now();
-  const b = bucket();
+  const now = Date.now()
+  const b = bucket()
   return {
     size: b.size,
     entries: [...b.values()].map((e) => ({
@@ -132,5 +130,5 @@ export function getCacheStats(): {
       tags: e.tags,
       ttlRemaining: Math.max(0, Math.round((e.expiresAt - now) / 1000)),
     })),
-  };
+  }
 }

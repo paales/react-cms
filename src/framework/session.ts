@@ -31,19 +31,15 @@
  * trample each other's session state.
  */
 
-import {
-  _readCookieUntracked,
-  getScope,
-  setCookie,
-} from "./context.ts";
+import { _readCookieUntracked, getScope, setCookie } from "./context.ts"
 
 export interface FrameSessionState {
-  url: string;
+  url: string
 }
 
 export interface SessionState {
   /** Keys are dotted frame paths (e.g. `"cart"` or `"products.list"`). */
-  frames: Record<string, FrameSessionState>;
+  frames: Record<string, FrameSessionState>
 }
 
 /**
@@ -52,29 +48,29 @@ export interface SessionState {
  */
 function pathKey(path: readonly string[]): string {
   if (path.length === 0) {
-    throw new Error("session: frame path must be non-empty");
+    throw new Error("session: frame path must be non-empty")
   }
-  return path.join(".");
+  return path.join(".")
 }
 
-const SESSION_COOKIE = "__frame_sid";
+const SESSION_COOKIE = "__frame_sid"
 
 // CATEGORY C (docs-dev/server-isolation.md) — intentional shared map,
 // now nested under a per-scope bucket. Inner map keyed by opaque
 // session ID; different users don't collide within a scope.
-const scopes = new Map<string, Map<string, SessionState>>();
+const scopes = new Map<string, Map<string, SessionState>>()
 
 function store(scope: string = getScope()): Map<string, SessionState> {
-  let b = scopes.get(scope);
+  let b = scopes.get(scope)
   if (!b) {
-    b = new Map();
-    scopes.set(scope, b);
+    b = new Map()
+    scopes.set(scope, b)
   }
-  return b;
+  return b
 }
 
 function generateSessionId(): string {
-  return crypto.randomUUID();
+  return crypto.randomUUID()
 }
 
 /**
@@ -89,7 +85,7 @@ export function getSessionId(): string | null {
   // hoisting check would refuse the first request that introduces
   // any frame at all (the manifest grows). See the comment on
   // `_readCookieUntracked` in `framework/context.ts`.
-  return _readCookieUntracked(SESSION_COOKIE) ?? null;
+  return _readCookieUntracked(SESSION_COOKIE) ?? null
 }
 
 /**
@@ -100,11 +96,11 @@ export function getSessionId(): string | null {
  * first use. Subsequent calls in the same request are idempotent.
  */
 export function ensureSessionId(): string {
-  const existing = getSessionId();
-  if (existing) return existing;
-  const fresh = generateSessionId();
-  setCookie(SESSION_COOKIE, fresh);
-  return fresh;
+  const existing = getSessionId()
+  if (existing) return existing
+  const fresh = generateSessionId()
+  setCookie(SESSION_COOKIE, fresh)
+  return fresh
 }
 
 /**
@@ -113,9 +109,9 @@ export function ensureSessionId(): string {
  * between processes).
  */
 export function getSessionState(): SessionState {
-  const id = getSessionId();
-  if (!id) return { frames: {} };
-  return store().get(id) ?? { frames: {} };
+  const id = getSessionId()
+  if (!id) return { frames: {} }
+  return store().get(id) ?? { frames: {} }
 }
 
 /**
@@ -124,22 +120,19 @@ export function getSessionState(): SessionState {
  * path (every `<Partial frame>` ancestor from root, inner-most last).
  */
 export function getSessionFrameUrl(path: readonly string[]): string | null {
-  return getSessionState().frames[pathKey(path)]?.url ?? null;
+  return getSessionState().frames[pathKey(path)]?.url ?? null
 }
 
 /**
  * Set (or overwrite) a frame's URL in the session. Creates the
  * session (and Set-Cookies the ID) if it doesn't exist yet.
  */
-export function setSessionFrameUrl(
-  path: readonly string[],
-  url: string,
-): void {
-  const id = ensureSessionId();
-  const b = store();
-  const existing = b.get(id) ?? { frames: {} };
-  existing.frames = { ...existing.frames, [pathKey(path)]: { url } };
-  b.set(id, existing);
+export function setSessionFrameUrl(path: readonly string[], url: string): void {
+  const id = ensureSessionId()
+  const b = store()
+  const existing = b.get(id) ?? { frames: {} }
+  existing.frames = { ...existing.frames, [pathKey(path)]: { url } }
+  b.set(id, existing)
 }
 
 /**
@@ -147,15 +140,15 @@ export function setSessionFrameUrl(
  * if there's no session or no entry.
  */
 export function clearSessionFrame(path: readonly string[]): void {
-  const id = getSessionId();
-  if (!id) return;
-  const b = store();
-  const existing = b.get(id);
-  if (!existing) return;
-  const key = pathKey(path);
-  const { [key]: _removed, ...rest } = existing.frames;
-  existing.frames = rest;
-  b.set(id, existing);
+  const id = getSessionId()
+  if (!id) return
+  const b = store()
+  const existing = b.get(id)
+  if (!existing) return
+  const key = pathKey(path)
+  const { [key]: _removed, ...rest } = existing.frames
+  existing.frames = rest
+  b.set(id, existing)
 }
 
 /**
@@ -165,22 +158,25 @@ export function clearSessionFrame(path: readonly string[]): void {
  */
 export function _clearAllSessions(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {
-    scopes.clear();
-    return;
+    scopes.clear()
+    return
   }
-  scopes.delete(scope);
+  scopes.delete(scope)
 }
 
 /** Test/debug: stats on the current scope's session store. */
-export function _sessionStats(): { sessions: number; frameCounts: Record<string, number> } {
-  const frameCounts: Record<string, number> = {};
-  const b = store();
+export function _sessionStats(): {
+  sessions: number
+  frameCounts: Record<string, number>
+} {
+  const frameCounts: Record<string, number> = {}
+  const b = store()
   for (const state of b.values()) {
     for (const framePath of Object.keys(state.frames)) {
-      frameCounts[framePath] = (frameCounts[framePath] ?? 0) + 1;
+      frameCounts[framePath] = (frameCounts[framePath] ?? 0) + 1
     }
   }
-  return { sessions: b.size, frameCounts };
+  return { sessions: b.size, frameCounts }
 }
 
 if (import.meta.hot) {

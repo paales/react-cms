@@ -1,13 +1,13 @@
-import React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import React from "react"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 // The partial-registry is module-level and route-keyed. Clear it
 // before each test so tag resolution doesn't pick up entries
 // registered by a previous test that used the same fake route.
 beforeEach(async () => {
-  const { clearRegistry } = await import("../partial-registry.ts");
-  clearRegistry();
-});
+  const { clearRegistry } = await import("../partial-registry.ts")
+  clearRegistry()
+})
 
 // Accumulates what each Partial emitted during the last render —
 // populated by the mocked PartialErrorBoundary, which the Partial
@@ -16,27 +16,27 @@ beforeEach(async () => {
 // `fingerprints` props on PartialsClient (which are now registered
 // client-side instead of plumbed as props).
 const renderCapture: {
-  freshIds: string[];
-  fingerprints: Record<string, string>;
-  mode: string | undefined;
-  template: React.ReactNode;
-  children: React.ReactNode;
+  freshIds: string[]
+  fingerprints: Record<string, string>
+  mode: string | undefined
+  template: React.ReactNode
+  children: React.ReactNode
 } = {
   freshIds: [],
   fingerprints: {},
   mode: undefined,
   template: undefined,
   children: undefined,
-};
+}
 
 // Clear in place (not reassign) so `const x = renderCapture.freshIds`
 // references inside tests stay live across the clear.
 beforeEach(() => {
-  renderCapture.freshIds.length = 0;
+  renderCapture.freshIds.length = 0
   for (const k of Object.keys(renderCapture.fingerprints)) {
-    delete renderCapture.fingerprints[k];
+    delete renderCapture.fingerprints[k]
   }
-});
+})
 
 // Mock client components — useRef/class components need a full React renderer.
 vi.mock("../partial-client.tsx", () => ({
@@ -45,26 +45,26 @@ vi.mock("../partial-client.tsx", () => ({
     mode,
     template,
   }: {
-    children: React.ReactNode;
-    mode?: string;
-    template?: React.ReactNode;
+    children: React.ReactNode
+    mode?: string
+    template?: React.ReactNode
   }) => {
     // Reset the per-Partial capture at the start of each render so
     // tests see only what THIS render produced. Capture top-level
     // props (mode, template, children) as snapshots.
-    renderCapture.freshIds.length = 0;
+    renderCapture.freshIds.length = 0
     for (const k of Object.keys(renderCapture.fingerprints)) {
-      delete renderCapture.fingerprints[k];
+      delete renderCapture.fingerprints[k]
     }
-    renderCapture.mode = mode;
-    renderCapture.template = template;
-    renderCapture.children = children;
-    return children;
+    renderCapture.mode = mode
+    renderCapture.template = template
+    renderCapture.children = children
+    return children
   },
   getCachedPartialIds: () => [],
   registerClientPartial: (_id: string, _fp: string) => {},
   FrameNameProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
+}))
 
 vi.mock("../partial-error-boundary.tsx", () => ({
   PartialErrorBoundary: ({
@@ -72,19 +72,19 @@ vi.mock("../partial-error-boundary.tsx", () => ({
     partialId,
     partialFingerprint,
   }: {
-    children: React.ReactNode;
-    partialId?: string;
-    partialFingerprint?: string;
+    children: React.ReactNode
+    partialId?: string
+    partialFingerprint?: string
   }) => {
     if (partialId && partialFingerprint) {
       if (!renderCapture.freshIds.includes(partialId)) {
-        renderCapture.freshIds.push(partialId);
+        renderCapture.freshIds.push(partialId)
       }
-      renderCapture.fingerprints[partialId] = partialFingerprint;
+      renderCapture.fingerprints[partialId] = partialFingerprint
     }
-    return children;
+    return children
   },
-}));
+}))
 
 // Cache depends on `@vitejs/plugin-rsc/rsc` which resolves to a
 // virtual: URL only Vite can handle. In unit tests we mock it to
@@ -94,57 +94,51 @@ vi.mock("../cache.tsx", () => ({
   Cache: ({ children }: { children: React.ReactNode }) => children,
   _cacheStats: async () => ({ size: 0, keys: [] }),
   _clearCache: async () => {},
-}));
+}))
 
-import { PartialRoot, Partial } from "../partial.tsx";
-import { ROOT } from "../partial-context.ts";
-import { runWithRequestAsync } from "../../framework/context.ts";
+import { PartialRoot, Partial } from "../partial.tsx"
+import { ROOT } from "../partial-context.ts"
+import { runWithRequestAsync } from "../../framework/context.ts"
 
 function Hero() {
-  return <h1>Hero</h1>;
+  return <h1>Hero</h1>
 }
 function Stats() {
-  return <div>Stats</div>;
+  return <div>Stats</div>
 }
 function Species() {
-  return <p>Species</p>;
+  return <p>Species</p>
 }
 
 function fakeRequest(params?: Record<string, string>) {
-  const url = new URL("http://localhost/test");
+  const url = new URL("http://localhost/test")
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      url.searchParams.set(k, v);
+      url.searchParams.set(k, v)
     }
   }
-  return new Request(url);
+  return new Request(url)
 }
 
 async function renderToJSON(element: React.ReactNode): Promise<any> {
-  if (element instanceof Promise) element = await element;
-  if (
-    element == null ||
-    typeof element === "string" ||
-    typeof element === "number"
-  ) {
-    return element;
+  if (element instanceof Promise) element = await element
+  if (element == null || typeof element === "string" || typeof element === "number") {
+    return element
   }
   if (Array.isArray(element)) {
-    const results = await Promise.all(element.map(renderToJSON));
-    return results.filter(Boolean);
+    const results = await Promise.all(element.map(renderToJSON))
+    return results.filter(Boolean)
   }
   if (React.isValidElement(element)) {
-    const { type, props } = element as any;
+    const { type, props } = element as any
     if (typeof type === "function") {
-      const result = type(props);
-      return renderToJSON(result);
+      const result = type(props)
+      return renderToJSON(result)
     }
-    const children = props.children
-      ? await renderToJSON(props.children)
-      : undefined;
-    return { type, props: { ...props, children } };
+    const children = props.children ? await renderToJSON(props.children) : undefined
+    return { type, props: { ...props, children } }
   }
-  return null;
+  return null
 }
 
 /**
@@ -153,16 +147,9 @@ async function renderToJSON(element: React.ReactNode): Promise<any> {
  * no-filter render of the same tree, then performs the actual request
  * under test and returns its rendered output.
  */
-async function warmThenRender(
-  params: Record<string, string>,
-  tree: React.ReactNode,
-): Promise<any> {
-  await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree));
-  return (
-    await runWithRequestAsync(fakeRequest(params), async () =>
-      renderToJSON(tree),
-    )
-  ).result;
+async function warmThenRender(params: Record<string, string>, tree: React.ReactNode): Promise<any> {
+  await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree))
+  return (await runWithRequestAsync(fakeRequest(params), async () => renderToJSON(tree))).result
 }
 
 describe("PartialRoot architecture", () => {
@@ -181,9 +168,9 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(result).toHaveLength(3);
-  });
+    )
+    expect(result).toHaveLength(3)
+  })
 
   it("filters to requested partials", async () => {
     const tree = (
@@ -198,11 +185,11 @@ describe("PartialRoot architecture", () => {
           <Species />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ partials: "hero,stats" }, tree);
-    const rendered = result.filter(Boolean);
-    expect(rendered).toHaveLength(2);
-  });
+    )
+    const result = await warmThenRender({ partials: "hero,stats" }, tree)
+    const rendered = result.filter(Boolean)
+    expect(rendered).toHaveLength(2)
+  })
 
   it("filters to single partial", async () => {
     const tree = (
@@ -217,21 +204,19 @@ describe("PartialRoot architecture", () => {
           <Species />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ partials: "stats" }, tree);
+    )
+    const result = await warmThenRender({ partials: "stats" }, tree)
     // Cache mode passes wrappedChildren as positional args to
     // `React.createElement(PartialsClient, ..., ...wrappedChildren)`
     // to avoid the "missing key" warning, so a single filtered
     // partial arrives as one child (not an array of one).
-    const rendered = (Array.isArray(result) ? result : [result]).filter(
-      Boolean,
-    );
-    expect(rendered).toHaveLength(1);
-  });
+    const rendered = (Array.isArray(result) ? result : [result]).filter(Boolean)
+    expect(rendered).toHaveLength(1)
+  })
 
   it("passes props to partial content", async () => {
     function Greeting({ name }: { name?: string }) {
-      return <span>Hello {name}</span>;
+      return <span>Hello {name}</span>
     }
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
@@ -241,17 +226,15 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const rendered = (Array.isArray(result) ? result : [result]).filter(
-      Boolean,
-    );
-    expect(rendered).toHaveLength(1);
-    expect(JSON.stringify(rendered)).toContain("world");
-  });
+    )
+    const rendered = (Array.isArray(result) ? result : [result]).filter(Boolean)
+    expect(rendered).toHaveLength(1)
+    expect(JSON.stringify(rendered)).toContain("world")
+  })
 
   it("filters to nested partial", async () => {
     function Cart() {
-      return <span>cart-content</span>;
+      return <span>cart-content</span>
     }
     const tree = (
       <PartialRoot>
@@ -267,17 +250,17 @@ describe("PartialRoot architecture", () => {
           <Stats />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ partials: "cart" }, tree);
-    const str = JSON.stringify(result);
-    expect(str).toContain("cart-content");
-    expect(str).not.toContain("Timestamp");
-    expect(str).not.toContain("Stats");
-  });
+    )
+    const result = await warmThenRender({ partials: "cart" }, tree)
+    const str = JSON.stringify(result)
+    expect(str).toContain("cart-content")
+    expect(str).not.toContain("Timestamp")
+    expect(str).not.toContain("Stats")
+  })
 
   it("refreshing parent excludes nested partial content", async () => {
     function Cart() {
-      return <span>cart-content</span>;
+      return <span>cart-content</span>
     }
     const tree = (
       <PartialRoot>
@@ -293,7 +276,7 @@ describe("PartialRoot architecture", () => {
           <Stats />
         </Partial>
       </PartialRoot>
-    );
+    )
     // The client always sends `cached=id:fp,…` alongside a partial
     // refetch (see `fetchRscPayload` in entry.browser.tsx). The
     // server skips a non-explicit Partial iff its computed fp
@@ -301,21 +284,21 @@ describe("PartialRoot architecture", () => {
     // changed and must re-render. Warm-render first to capture
     // the real fingerprints, then feed them back on the refetch
     // so cart/stats match and get placeholder-skipped.
-    await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree));
-    const cartFp = renderCapture.fingerprints["cart"];
-    const statsFp = renderCapture.fingerprints["stats"];
+    await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree))
+    const cartFp = renderCapture.fingerprints["cart"]
+    const statsFp = renderCapture.fingerprints["stats"]
     const { result } = await runWithRequestAsync(
       fakeRequest({
         partials: "header",
         cached: `cart:${cartFp},stats:${statsFp}`,
       }),
       async () => renderToJSON(tree),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("Timestamp");
-    expect(str).not.toContain("cart-content");
-    expect(str).not.toContain("Stats");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("Timestamp")
+    expect(str).not.toContain("cart-content")
+    expect(str).not.toContain("Stats")
+  })
 
   it("renders partials without heavy wrapper divs", async () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
@@ -326,10 +309,10 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("Hero");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("Hero")
+  })
 
   it("discovers partials inside keyless wrappers", async () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
@@ -350,12 +333,12 @@ describe("PartialRoot architecture", () => {
           </footer>
         </PartialRoot>,
       ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("Hero");
-    expect(str).toContain("Stats");
-    expect(str).toContain("Species");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("Hero")
+    expect(str).toContain("Stats")
+    expect(str).toContain("Species")
+  })
 
   it("skips re-rendering partials whose fingerprint matches the client's ?cached= entry", async () => {
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -369,10 +352,10 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.fingerprints.hero).toBeDefined();
-    expect(renderCapture.fingerprints.stats).toBeDefined();
-    const heroFp = renderCapture.fingerprints.hero;
+    )
+    expect(renderCapture.fingerprints.hero).toBeDefined()
+    expect(renderCapture.fingerprints.stats).toBeDefined()
+    const heroFp = renderCapture.fingerprints.hero
 
     // Second render: client reports the `hero` fingerprint
     // unchanged, so the server emits a `<i data-partial hidden
@@ -391,11 +374,11 @@ describe("PartialRoot architecture", () => {
             </Partial>
           </PartialRoot>,
         ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("Stats");
-    expect(str).not.toContain("Hero");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("Stats")
+    expect(str).not.toContain("Hero")
+  })
 
   it("fingerprints are stable for same element tree", async () => {
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -406,8 +389,8 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const fp1 = renderCapture.fingerprints.hero;
+    )
+    const fp1 = renderCapture.fingerprints.hero
 
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
@@ -417,12 +400,12 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const fp2 = renderCapture.fingerprints.hero;
+    )
+    const fp2 = renderCapture.fingerprints.hero
 
-    expect(fp1).toBeDefined();
-    expect(fp1).toBe(fp2);
-  });
+    expect(fp1).toBeDefined()
+    expect(fp1).toBe(fp2)
+  })
 
   it("explicitly requested partials always render even with matching cached fingerprint", async () => {
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -436,8 +419,8 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const heroFp = renderCapture.fingerprints.hero;
+    )
+    const heroFp = renderCapture.fingerprints.hero
 
     const { result } = await runWithRequestAsync(
       fakeRequest({ partials: "hero", cached: `hero:${heroFp}` }),
@@ -452,12 +435,12 @@ describe("PartialRoot architecture", () => {
             </Partial>
           </PartialRoot>,
         ),
-    );
-    expect(renderCapture.freshIds).toContain("hero");
-    expect(renderCapture.freshIds).not.toContain("stats");
-    const str = JSON.stringify(result);
-    expect(str).toContain("Hero");
-  });
+    )
+    expect(renderCapture.freshIds).toContain("hero")
+    expect(renderCapture.freshIds).not.toContain("stats")
+    const str = JSON.stringify(result)
+    expect(str).toContain("Hero")
+  })
 
   it("refetch without props still renders when not in cached", async () => {
     const tree = (
@@ -469,15 +452,12 @@ describe("PartialRoot architecture", () => {
           <Stats />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender(
-      { partials: "hero", cached: "stats:somefp" },
-      tree,
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("Hero");
-    expect(str).not.toContain("Stats");
-  });
+    )
+    const result = await warmThenRender({ partials: "hero", cached: "stats:somefp" }, tree)
+    const str = JSON.stringify(result)
+    expect(str).toContain("Hero")
+    expect(str).not.toContain("Stats")
+  })
 
   it("renders all when no partials param", async () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
@@ -491,19 +471,19 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(result).toHaveLength(2);
-  });
+    )
+    expect(result).toHaveLength(2)
+  })
 
   it("filters partials by tag via ?tags= param", async () => {
     function CartBadge() {
-      return <span>cart-badge</span>;
+      return <span>cart-badge</span>
     }
     function CartDrawer() {
-      return <div>cart-drawer</div>;
+      return <div>cart-drawer</div>
     }
     function ProductGrid() {
-      return <div>products</div>;
+      return <div>products</div>
     }
     const tree = (
       <PartialRoot>
@@ -517,23 +497,23 @@ describe("PartialRoot architecture", () => {
           <ProductGrid />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ tags: "cart" }, tree);
-    const str = JSON.stringify(result);
-    expect(str).toContain("cart-badge");
-    expect(str).toContain("cart-drawer");
-    expect(str).not.toContain("products");
-  });
+    )
+    const result = await warmThenRender({ tags: "cart" }, tree)
+    const str = JSON.stringify(result)
+    expect(str).toContain("cart-badge")
+    expect(str).toContain("cart-drawer")
+    expect(str).not.toContain("products")
+  })
 
   it("combines ?partials= and ?tags= as union", async () => {
     function A() {
-      return <span>a-content</span>;
+      return <span>a-content</span>
     }
     function B() {
-      return <span>b-content</span>;
+      return <span>b-content</span>
     }
     function C() {
-      return <span>c-content</span>;
+      return <span>c-content</span>
     }
     const tree = (
       <PartialRoot>
@@ -547,17 +527,17 @@ describe("PartialRoot architecture", () => {
           <C />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ partials: "a", tags: "group" }, tree);
-    const str = JSON.stringify(result);
-    expect(str).toContain("a-content");
-    expect(str).toContain("b-content");
-    expect(str).not.toContain("c-content");
-  });
+    )
+    const result = await warmThenRender({ partials: "a", tags: "group" }, tree)
+    const str = JSON.stringify(result)
+    expect(str).toContain("a-content")
+    expect(str).toContain("b-content")
+    expect(str).not.toContain("c-content")
+  })
 
   it("does not leak reserved props onto the rendered content component", async () => {
     function MyComponent(props: Record<string, unknown>) {
-      return <span>{JSON.stringify(Object.keys(props).sort())}</span>;
+      return <span>{JSON.stringify(Object.keys(props).sort())}</span>
     }
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
@@ -567,12 +547,12 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("name");
-    expect(str).not.toContain("tags");
-    expect(str).not.toContain("cache");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("name")
+    expect(str).not.toContain("tags")
+    expect(str).not.toContain("cache")
+  })
 
   it("filters nested partial inside keyless wrapper", async () => {
     const tree = (
@@ -586,19 +566,19 @@ describe("PartialRoot architecture", () => {
           </Partial>
         </main>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ partials: "stats" }, tree);
-    const str = JSON.stringify(result);
-    expect(str).toContain("Stats");
-    expect(str).not.toContain("Hero");
-  });
+    )
+    const result = await warmThenRender({ partials: "stats" }, tree)
+    const str = JSON.stringify(result)
+    expect(str).toContain("Stats")
+    expect(str).not.toContain("Hero")
+  })
 
   it("tag-based invalidation renders only tagged partials", async () => {
     function Cart() {
-      return <span>cart-content</span>;
+      return <span>cart-content</span>
     }
     function Products() {
-      return <span>products</span>;
+      return <span>products</span>
     }
 
     const tree = (
@@ -610,14 +590,14 @@ describe("PartialRoot architecture", () => {
           <Products />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender({ tags: "cart" }, tree);
+    )
+    const result = await warmThenRender({ tags: "cart" }, tree)
 
-    expect(renderCapture.freshIds).toEqual(["cart"]);
-    const str = JSON.stringify(result);
-    expect(str).toContain("cart-content");
-  });
-});
+    expect(renderCapture.freshIds).toEqual(["cart"])
+    const str = JSON.stringify(result)
+    expect(str).toContain("cart-content")
+  })
+})
 
 describe("Partial discovery", () => {
   // The runtime path runs Partial's component body on every render, so
@@ -626,12 +606,12 @@ describe("Partial discovery", () => {
   // themselves and show up in `freshIds` just like statically-visible
   // Partials do. These tests pin that invariant.
   function Inner() {
-    return <span>inner-real-content</span>;
+    return <span>inner-real-content</span>
   }
 
   it("discovers a Partial passed as children through a wrapping component", async () => {
     function Wrapper({ children }: { children: React.ReactNode }) {
-      return <section className="wrap">{children}</section>;
+      return <section className="wrap">{children}</section>
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -644,9 +624,9 @@ describe("Partial discovery", () => {
           </Wrapper>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toContain("forwarded");
-  });
+    )
+    expect(renderCapture.freshIds).toContain("forwarded")
+  })
 
   it("discovers a Partial created inside a child component's return value", async () => {
     function ProductCard() {
@@ -654,7 +634,7 @@ describe("Partial discovery", () => {
         <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
-      );
+      )
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -665,9 +645,9 @@ describe("Partial discovery", () => {
           </div>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toContain("inside-card");
-  });
+    )
+    expect(renderCapture.freshIds).toContain("inside-card")
+  })
 
   it("discovers a nested Partial created inside a child component", async () => {
     function Body() {
@@ -678,7 +658,7 @@ describe("Partial discovery", () => {
             <Inner />
           </Partial>
         </>
-      );
+      )
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -689,10 +669,10 @@ describe("Partial discovery", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toContain("page");
-    expect(renderCapture.freshIds).toContain("nested-inside-body");
-  });
+    )
+    expect(renderCapture.freshIds).toContain("page")
+    expect(renderCapture.freshIds).toContain("nested-inside-body")
+  })
 
   it("discovers Partials that DIFFER between two requests (cross-navigation dynamism)", async () => {
     // Request A: pokemon list page — "list" partial
@@ -704,8 +684,8 @@ describe("Partial discovery", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toEqual(["list"]);
+    )
+    expect(renderCapture.freshIds).toEqual(["list"])
 
     // Request B: pokemon detail page — "hero" and "stats" partials.
     // Capture resets per render (see the mocked PartialsClient),
@@ -721,9 +701,9 @@ describe("Partial discovery", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toEqual(["hero", "stats"]);
-  });
+    )
+    expect(renderCapture.freshIds).toEqual(["hero", "stats"])
+  })
 
   it("discovers Partials produced by calling a page function inline (today's Root pattern)", async () => {
     // Mirrors src/app/root.tsx — pickRoute calls PokemonPage() directly,
@@ -738,15 +718,15 @@ describe("Partial discovery", () => {
             <Inner />
           </Partial>
         </>
-      );
+      )
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(<PartialRoot>{PokemonPage()}</PartialRoot>),
-    );
-    expect(renderCapture.freshIds).toContain("hero");
-    expect(renderCapture.freshIds).toContain("stats");
-  });
+    )
+    expect(renderCapture.freshIds).toContain("hero")
+    expect(renderCapture.freshIds).toContain("stats")
+  })
 
   it("discovers Partials when a page is rendered as <PokemonPage/> (component element, not called)", async () => {
     // The old static walker couldn't see through <PokemonPage/>;
@@ -762,7 +742,7 @@ describe("Partial discovery", () => {
             <Inner />
           </Partial>
         </>
-      );
+      )
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -771,11 +751,11 @@ describe("Partial discovery", () => {
           <PokemonPage />
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toContain("hero-cmp");
-    expect(renderCapture.freshIds).toContain("stats-cmp");
-  });
-});
+    )
+    expect(renderCapture.freshIds).toContain("hero-cmp")
+    expect(renderCapture.freshIds).toContain("stats-cmp")
+  })
+})
 
 describe("Deep (dynamic) Partial discovery", () => {
   // A Partial produced inside a child component's return value —
@@ -785,7 +765,7 @@ describe("Deep (dynamic) Partial discovery", () => {
   // during render. These tests pin the *functional* invariants
   // regardless of which path the framework uses internally.
   function Inner() {
-    return <span>inner-real-content</span>;
+    return <span>inner-real-content</span>
   }
 
   it("registers a Partial produced inside a component body during first render", async () => {
@@ -794,7 +774,7 @@ describe("Deep (dynamic) Partial discovery", () => {
         <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
-      );
+      )
     }
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
@@ -804,14 +784,14 @@ describe("Deep (dynamic) Partial discovery", () => {
           </div>
         </PartialRoot>,
       ),
-    );
-    const { lookupPartial } = await import("../partial-registry.ts");
-    expect(lookupPartial("/test", "inside-card")).toBeDefined();
-  });
+    )
+    const { lookupPartial } = await import("../partial-registry.ts")
+    expect(lookupPartial("/test", "inside-card")).toBeDefined()
+  })
 
   it("registers Partials produced by .map() inside a component", async () => {
     function ProductList() {
-      const skus = ["abc", "def", "ghi"];
+      const skus = ["abc", "def", "ghi"]
       return (
         <ul>
           {skus.map((sku) => (
@@ -820,7 +800,7 @@ describe("Deep (dynamic) Partial discovery", () => {
             </Partial>
           ))}
         </ul>
-      );
+      )
     }
     await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
@@ -828,12 +808,12 @@ describe("Deep (dynamic) Partial discovery", () => {
           <ProductList />
         </PartialRoot>,
       ),
-    );
-    const { lookupPartial } = await import("../partial-registry.ts");
+    )
+    const { lookupPartial } = await import("../partial-registry.ts")
     for (const sku of ["abc", "def", "ghi"]) {
-      expect(lookupPartial("/test", `price-${sku}`)).toBeDefined();
+      expect(lookupPartial("/test", `price-${sku}`)).toBeDefined()
     }
-  });
+  })
 
   it("deep dynamic Partial is refetchable by id (registry supplement)", async () => {
     function ProductCard() {
@@ -841,7 +821,7 @@ describe("Deep (dynamic) Partial discovery", () => {
         <Partial parent={ROOT} selector="#price-abc">
           <Inner />
         </Partial>
-      );
+      )
     }
 
     // Full render populates registry.
@@ -853,22 +833,20 @@ describe("Deep (dynamic) Partial discovery", () => {
           </div>
         </PartialRoot>,
       ),
-    );
+    )
 
     // Refetch by id resolves through the registry.
-    const { result } = await runWithRequestAsync(
-      fakeRequest({ partials: "price-abc" }),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <div>
-              <ProductCard />
-            </div>
-          </PartialRoot>,
-        ),
-    );
-    expect(JSON.stringify(result)).toContain("inner-real-content");
-  });
+    const { result } = await runWithRequestAsync(fakeRequest({ partials: "price-abc" }), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <div>
+            <ProductCard />
+          </div>
+        </PartialRoot>,
+      ),
+    )
+    expect(JSON.stringify(result)).toContain("inner-real-content")
+  })
 
   it("dynamic Partial is refetchable by tag", async () => {
     function ProductList() {
@@ -881,7 +859,7 @@ describe("Deep (dynamic) Partial discovery", () => {
             <Inner />
           </Partial>
         </ul>
-      );
+      )
     }
 
     // Prime the registry.
@@ -891,22 +869,20 @@ describe("Deep (dynamic) Partial discovery", () => {
           <ProductList />
         </PartialRoot>,
       ),
-    );
+    )
 
     // `?tags=price` should resolve to both price-abc and price-def via
     // the registry's tag index.
-    const { result } = await runWithRequestAsync(
-      fakeRequest({ tags: "price" }),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <ProductList />
-          </PartialRoot>,
-        ),
-    );
-    const str = JSON.stringify(result);
-    expect(str.match(/inner-real-content/g)?.length).toBe(2);
-  });
+    const { result } = await runWithRequestAsync(fakeRequest({ tags: "price" }), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <ProductList />
+        </PartialRoot>,
+      ),
+    )
+    const str = JSON.stringify(result)
+    expect(str.match(/inner-real-content/g)?.length).toBe(2)
+  })
 
   it("deep dynamic Partial is included in freshIds on first render", async () => {
     function ProductCard() {
@@ -914,7 +890,7 @@ describe("Deep (dynamic) Partial discovery", () => {
         <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
-      );
+      )
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -925,9 +901,9 @@ describe("Deep (dynamic) Partial discovery", () => {
           </div>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.freshIds).toContain("inside-card");
-  });
+    )
+    expect(renderCapture.freshIds).toContain("inside-card")
+  })
 
   it("fingerprint is computed for deep dynamic Partial on first render", async () => {
     function ProductCard() {
@@ -935,7 +911,7 @@ describe("Deep (dynamic) Partial discovery", () => {
         <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
-      );
+      )
     }
 
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -946,9 +922,9 @@ describe("Deep (dynamic) Partial discovery", () => {
           </div>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.fingerprints["inside-card"]).toBeTruthy();
-  });
+    )
+    expect(renderCapture.fingerprints["inside-card"]).toBeTruthy()
+  })
 
   it("fingerprint skip applies to deep dynamic Partial on nav", async () => {
     function ProductCard() {
@@ -956,7 +932,7 @@ describe("Deep (dynamic) Partial discovery", () => {
         <Partial parent={ROOT} selector="#inside-card">
           <Inner />
         </Partial>
-      );
+      )
     }
 
     // First render — capture fingerprint.
@@ -968,9 +944,9 @@ describe("Deep (dynamic) Partial discovery", () => {
           </div>
         </PartialRoot>,
       ),
-    );
-    const fp = renderCapture.fingerprints["inside-card"];
-    expect(fp).toBeTruthy();
+    )
+    const fp = renderCapture.fingerprints["inside-card"]
+    expect(fp).toBeTruthy()
 
     // Second render — client reports that fingerprint; server should
     // emit a placeholder and not render `<Inner/>`.
@@ -984,10 +960,10 @@ describe("Deep (dynamic) Partial discovery", () => {
             </div>
           </PartialRoot>,
         ),
-    );
-    expect(JSON.stringify(result)).not.toContain("inner-real-content");
-  });
-});
+    )
+    expect(JSON.stringify(result)).not.toContain("inner-real-content")
+  })
+})
 
 describe("Collision detection", () => {
   it("throws on duplicate partial id", async () => {
@@ -1004,8 +980,8 @@ describe("Collision detection", () => {
           </PartialRoot>,
         ),
       ),
-    ).rejects.toThrow(/Duplicate "#cart"/);
-  });
+    ).rejects.toThrow(/Duplicate "#cart"/)
+  })
 
   it("throws on duplicate id when nested inside another partial", async () => {
     await expect(
@@ -1025,8 +1001,8 @@ describe("Collision detection", () => {
           </PartialRoot>,
         ),
       ),
-    ).rejects.toThrow(/Duplicate "#cart"/);
-  });
+    ).rejects.toThrow(/Duplicate "#cart"/)
+  })
 
   it("allows unique ids at any depth", async () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
@@ -1044,10 +1020,10 @@ describe("Collision detection", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(result).toBeTruthy();
-  });
-});
+    )
+    expect(result).toBeTruthy()
+  })
+})
 
 describe("Streaming mode", () => {
   it("full render uses streaming mode", async () => {
@@ -1062,9 +1038,9 @@ describe("Streaming mode", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.mode).toBe("streaming");
-  });
+    )
+    expect(renderCapture.mode).toBe("streaming")
+  })
 
   it("partial refetch uses cache mode", async () => {
     const tree = (
@@ -1076,20 +1052,18 @@ describe("Streaming mode", () => {
           <Stats />
         </Partial>
       </PartialRoot>
-    );
+    )
     // Warm registry with a streaming render, then refetch.
-    await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree));
-    await runWithRequestAsync(fakeRequest({ partials: "hero" }), async () =>
-      renderToJSON(tree),
-    );
-    expect(renderCapture.mode).toBe("cache");
-  });
+    await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree))
+    await runWithRequestAsync(fakeRequest({ partials: "hero" }), async () => renderToJSON(tree))
+    expect(renderCapture.mode).toBe("cache")
+  })
 
   it("partials with fallback prop are wrapped in Suspense in streaming mode", async () => {
     function SlowCart() {
-      return <span>cart</span>;
+      return <span>cart</span>
     }
-    const fallback = <span>loading...</span>;
+    const fallback = <span>loading...</span>
 
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
@@ -1102,19 +1076,19 @@ describe("Streaming mode", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
+    )
 
     // Walk the rendered tree for any Suspense element — it's there
     // because <Partial parent={ROOT} selector="#cart" fallback={...}> wrapped its content.
     function findSuspense(node: any): boolean {
-      if (Array.isArray(node)) return node.some(findSuspense);
-      if (!node || typeof node !== "object") return false;
-      if (node.type === React.Suspense) return true;
-      const kids = node?.props?.children;
-      return findSuspense(kids);
+      if (Array.isArray(node)) return node.some(findSuspense)
+      if (!node || typeof node !== "object") return false
+      if (node.type === React.Suspense) return true
+      const kids = node?.props?.children
+      return findSuspense(kids)
     }
-    expect(findSuspense(result)).toBe(true);
-  });
+    expect(findSuspense(result)).toBe(true)
+  })
 
   it("wraps Partial in Suspense when a fallback is provided", async () => {
     // With a fallback: outer wrapper is `<Suspense key={id}>…</Suspense>`.
@@ -1133,17 +1107,16 @@ describe("Streaming mode", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
+    )
 
     function countSuspense(node: any): number {
-      if (Array.isArray(node))
-        return node.reduce((sum, n) => sum + countSuspense(n), 0);
-      if (!node || typeof node !== "object") return 0;
-      const self = node.type === React.Suspense ? 1 : 0;
-      return self + countSuspense(node?.props?.children);
+      if (Array.isArray(node)) return node.reduce((sum, n) => sum + countSuspense(n), 0)
+      if (!node || typeof node !== "object") return 0
+      const self = node.type === React.Suspense ? 1 : 0
+      return self + countSuspense(node?.props?.children)
     }
-    expect(countSuspense(result)).toBe(2);
-  });
+    expect(countSuspense(result)).toBe(2)
+  })
 
   it("omits Suspense when no fallback (nested-substitution invariant)", async () => {
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
@@ -1157,17 +1130,16 @@ describe("Streaming mode", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
+    )
 
     function countSuspense(node: any): number {
-      if (Array.isArray(node))
-        return node.reduce((sum, n) => sum + countSuspense(n), 0);
-      if (!node || typeof node !== "object") return 0;
-      const self = node.type === React.Suspense ? 1 : 0;
-      return self + countSuspense(node?.props?.children);
+      if (Array.isArray(node)) return node.reduce((sum, n) => sum + countSuspense(n), 0)
+      if (!node || typeof node !== "object") return 0
+      const self = node.type === React.Suspense ? 1 : 0
+      return self + countSuspense(node?.props?.children)
     }
-    expect(countSuspense(result)).toBe(0);
-  });
+    expect(countSuspense(result)).toBe(0)
+  })
 
   it("streaming mode captures fingerprints for each Partial", async () => {
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -1181,11 +1153,11 @@ describe("Streaming mode", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
+    )
 
-    expect(renderCapture.fingerprints).toHaveProperty("hero");
-    expect(renderCapture.fingerprints).toHaveProperty("stats");
-  });
+    expect(renderCapture.fingerprints).toHaveProperty("hero")
+    expect(renderCapture.fingerprints).toHaveProperty("stats")
+  })
 
   it("cache mode renders only the requested partial as children", async () => {
     const tree = (
@@ -1197,24 +1169,22 @@ describe("Streaming mode", () => {
           <Stats />
         </Partial>
       </PartialRoot>
-    );
-    await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree));
-    await runWithRequestAsync(fakeRequest({ partials: "hero" }), async () =>
-      renderToJSON(tree),
-    );
+    )
+    await runWithRequestAsync(fakeRequest(), async () => renderToJSON(tree))
+    await runWithRequestAsync(fakeRequest({ partials: "hero" }), async () => renderToJSON(tree))
 
     // Template is now client-derived, not a server prop.
-    expect(renderCapture.mode).toBe("cache");
-    const children = React.Children.toArray(renderCapture.children);
-    expect(children.length).toBe(1);
-  });
+    expect(renderCapture.mode).toBe("cache")
+    const children = React.Children.toArray(renderCapture.children)
+    expect(children.length).toBe(1)
+  })
 
   it("__populateCache renders all partials via streaming mode", async () => {
     function CartBadge() {
-      return <span>cart-badge</span>;
+      return <span>cart-badge</span>
     }
     function Products() {
-      return <span>products</span>;
+      return <span>products</span>
     }
 
     const { result } = await runWithRequestAsync(
@@ -1230,22 +1200,22 @@ describe("Streaming mode", () => {
             </Partial>
           </PartialRoot>,
         ),
-    );
+    )
 
-    expect(renderCapture.freshIds).toContain("cart");
-    expect(renderCapture.freshIds).toContain("products");
+    expect(renderCapture.freshIds).toContain("cart")
+    expect(renderCapture.freshIds).toContain("products")
 
-    const str = JSON.stringify(result);
-    expect(str).toContain("cart-badge");
-    expect(str).toContain("products");
-  });
+    const str = JSON.stringify(result)
+    expect(str).toContain("cart-badge")
+    expect(str).toContain("products")
+  })
 
   it("tag invalidation with ?cached= only renders tagged partial", async () => {
     function CartBadge() {
-      return <span>cart-badge</span>;
+      return <span>cart-badge</span>
     }
     function Products() {
-      return <span>products</span>;
+      return <span>products</span>
     }
 
     const tree = (
@@ -1257,17 +1227,14 @@ describe("Streaming mode", () => {
           <Products />
         </Partial>
       </PartialRoot>
-    );
-    const result = await warmThenRender(
-      { tags: "cart", cached: "cart:abc,products:def" },
-      tree,
-    );
+    )
+    const result = await warmThenRender({ tags: "cart", cached: "cart:abc,products:def" }, tree)
 
-    expect(renderCapture.freshIds).toEqual(["cart"]);
-    const str = JSON.stringify(result);
-    expect(str).toContain("cart-badge");
-  });
-});
+    expect(renderCapture.freshIds).toEqual(["cart"])
+    const str = JSON.stringify(result)
+    expect(str).toContain("cart-badge")
+  })
+})
 
 describe("Cart invalidation: header must not re-render", () => {
   // Mirrors the actual MagentoPage layout:
@@ -1291,10 +1258,10 @@ describe("Cart invalidation: header must not re-render", () => {
   // - NOT re-render products
 
   function CartBadge({ quantity }: { quantity: number | string }) {
-    return <span data-testid="cart-badge">Cart: {quantity}</span>;
+    return <span data-testid="cart-badge">Cart: {quantity}</span>
   }
   function ProductGrid() {
-    return <div data-testid="products">Products here</div>;
+    return <div data-testid="products">Products here</div>
   }
 
   const cartTree = (
@@ -1313,33 +1280,30 @@ describe("Cart invalidation: header must not re-render", () => {
         </Partial>
       </main>
     </PartialRoot>
-  );
+  )
 
   it("tag=cart with cache: only cart is fresh, header and products are cached", async () => {
-    await warmThenRender(
-      { tags: "cart", cached: "header:h1,cart:c1,products:p1" },
-      cartTree,
-    );
+    await warmThenRender({ tags: "cart", cached: "header:h1,cart:c1,products:p1" }, cartTree)
 
-    expect(renderCapture.freshIds).toEqual(["cart"]);
-    expect(renderCapture.freshIds).not.toContain("header");
-    expect(renderCapture.freshIds).not.toContain("products");
-  });
+    expect(renderCapture.freshIds).toEqual(["cart"])
+    expect(renderCapture.freshIds).not.toContain("header")
+    expect(renderCapture.freshIds).not.toContain("products")
+  })
 
   it("tag=cart with cache: header content is NOT in the rendered output", async () => {
     const result = await warmThenRender(
       { tags: "cart", cached: "header:h1,cart:c1,products:p1" },
       cartTree,
-    );
+    )
 
-    const str = JSON.stringify(result);
+    const str = JSON.stringify(result)
     // Cart badge should be present (it's being re-rendered)
-    expect(str).toContain("cart-badge");
+    expect(str).toContain("cart-badge")
     // Header timestamp must NOT be in the fresh output — it's served from cache
-    expect(str).not.toContain("Timestamp:");
+    expect(str).not.toContain("Timestamp:")
     // Products must NOT be in the fresh output — served from cache
-    expect(str).not.toContain("products");
-  });
+    expect(str).not.toContain("products")
+  })
 
   it("__populateCache renders all partials (first action), subsequent only renders cart", async () => {
     const makeTree = () => (
@@ -1358,16 +1322,15 @@ describe("Cart invalidation: header must not re-render", () => {
           </Partial>
         </main>
       </PartialRoot>
-    );
+    )
 
     // First action: __populateCache → all partials render.
-    await runWithRequestAsync(
-      fakeRequest({ tags: "cart", __populateCache: "1" }),
-      async () => renderToJSON(makeTree()),
-    );
-    expect(renderCapture.freshIds).toContain("header");
-    expect(renderCapture.freshIds).toContain("cart");
-    expect(renderCapture.freshIds).toContain("products");
+    await runWithRequestAsync(fakeRequest({ tags: "cart", __populateCache: "1" }), async () =>
+      renderToJSON(makeTree()),
+    )
+    expect(renderCapture.freshIds).toContain("header")
+    expect(renderCapture.freshIds).toContain("cart")
+    expect(renderCapture.freshIds).toContain("products")
 
     // Subsequent action: with cache → only cart.
     await runWithRequestAsync(
@@ -1376,10 +1339,10 @@ describe("Cart invalidation: header must not re-render", () => {
         cached: "header:h1,cart:c1,products:p1",
       }),
       async () => renderToJSON(makeTree()),
-    );
-    expect(renderCapture.freshIds).toEqual(["cart"]);
-  });
-});
+    )
+    expect(renderCapture.freshIds).toEqual(["cart"])
+  })
+})
 
 // ── Dynamic Partial registry ───────────────────────────────────────────
 //
@@ -1398,41 +1361,36 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
       registerPartial: _reg,
       clearRegistry,
       _registryStats,
-    } = await import("../partial-registry.ts");
-    clearRegistry();
+    } = await import("../partial-registry.ts")
+    clearRegistry()
 
     function GoldPrice({ sku }: { sku: string }) {
-      return <span data-sku={sku}>$1.00</span>;
+      return <span data-sku={sku}>$1.00</span>
     }
 
-    await runWithRequestAsync(
-      new Request("http://localhost/registry-test"),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <Partial parent={ROOT} selector="#hero">
-              <Hero />
-            </Partial>
-            <Partial parent={ROOT} selector="#price-ABC">
-              <GoldPrice sku="ABC" />
-            </Partial>
-          </PartialRoot>,
-        ),
-    );
+    await runWithRequestAsync(new Request("http://localhost/registry-test"), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <Partial parent={ROOT} selector="#hero">
+            <Hero />
+          </Partial>
+          <Partial parent={ROOT} selector="#price-ABC">
+            <GoldPrice sku="ABC" />
+          </Partial>
+        </PartialRoot>,
+      ),
+    )
 
-    const stats = _registryStats();
-    expect(stats.byRoute["/registry-test"]).toEqual(
-      expect.arrayContaining(["hero", "price-ABC"]),
-    );
-  });
+    const stats = _registryStats()
+    expect(stats.byRoute["/registry-test"]).toEqual(expect.arrayContaining(["hero", "price-ABC"]))
+  })
 
   it("dynamic partial (produced inside an opaque function component) is registered when it renders and can be refetched", async () => {
-    const { clearRegistry, _registryStats } =
-      await import("../partial-registry.ts");
-    clearRegistry();
+    const { clearRegistry, _registryStats } = await import("../partial-registry.ts")
+    clearRegistry()
 
     function GoldPrice({ sku }: { sku: string }) {
-      return <span data-testid={`price-${sku}`}>$1.00</span>;
+      return <span data-testid={`price-${sku}`}>$1.00</span>
     }
 
     // ProductList is opaque to the bootstrap walk: the Partials it
@@ -1447,45 +1405,41 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
             </Partial>
           ))}
         </>
-      );
+      )
     }
 
     // First render: populates the registry for the route.
-    await runWithRequestAsync(
-      new Request("http://localhost/dynamic"),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <ProductList />
-          </PartialRoot>,
-        ),
-    );
+    await runWithRequestAsync(new Request("http://localhost/dynamic"), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <ProductList />
+        </PartialRoot>,
+      ),
+    )
 
-    const stats = _registryStats();
+    const stats = _registryStats()
     expect(stats.byRoute["/dynamic"]).toEqual(
       expect.arrayContaining(["price-A", "price-B", "price-C"]),
-    );
+    )
 
     // Subsequent refetch for one dynamic id.
-    await runWithRequestAsync(
-      new Request("http://localhost/dynamic?partials=price-B"),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <ProductList />
-          </PartialRoot>,
-        ),
-    );
+    await runWithRequestAsync(new Request("http://localhost/dynamic?partials=price-B"), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <ProductList />
+        </PartialRoot>,
+      ),
+    )
 
     // Only price-B rendered; the registry resolved it even though
     // `seedRegistry` (the static walk) couldn't see through
     // ProductList.
-    expect(renderCapture.freshIds).toEqual(["price-B"]);
-  });
+    expect(renderCapture.freshIds).toEqual(["price-B"])
+  })
 
   it("falls back to full render when a requested id is neither static nor in the registry", async () => {
-    const { clearRegistry } = await import("../partial-registry.ts");
-    clearRegistry();
+    const { clearRegistry } = await import("../partial-registry.ts")
+    clearRegistry()
 
     // Ask for `price-UNKNOWN` on a route where no full render has
     // populated it. PartialRoot should ignore the (stale) filter
@@ -1501,20 +1455,19 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
             </Partial>
           </PartialRoot>,
         ),
-    );
+    )
 
     // Full-render fallback rendered `hero` even though the caller
     // asked for price-UNKNOWN.
-    expect(renderCapture.freshIds).toContain("hero");
-  });
+    expect(renderCapture.freshIds).toContain("hero")
+  })
 
   it("registry captures each dynamic partial's content so refetch can render it without the ancestor", async () => {
-    const { clearRegistry, lookupPartial } =
-      await import("../partial-registry.ts");
-    clearRegistry();
+    const { clearRegistry, lookupPartial } = await import("../partial-registry.ts")
+    clearRegistry()
 
     function GoldPrice({ sku }: { sku: string }) {
-      return <span data-sku={sku}>base:{sku}</span>;
+      return <span data-sku={sku}>base:{sku}</span>
     }
 
     function ProductList() {
@@ -1526,7 +1479,7 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
             </Partial>
           ))}
         </>
-      );
+      )
     }
 
     await runWithRequestAsync(new Request("http://localhost/snap"), async () =>
@@ -1535,26 +1488,26 @@ describe("Dynamic Partial discovery via route-scoped registry", () => {
           <ProductList />
         </PartialRoot>,
       ),
-    );
+    )
 
-    const snap = lookupPartial("/snap", "price-Y");
-    expect(snap).toBeDefined();
+    const snap = lookupPartial("/snap", "price-Y")
+    expect(snap).toBeDefined()
     // The snapshot's content is the *original* JSX inside the
     // `<Partial>` — a single element of type GoldPrice with the
     // parent-bound `sku` prop. That's enough for a refetch to
     // render it directly; ancestor execution isn't needed.
-    const content = snap!.content as React.ReactElement<any>;
-    expect(React.isValidElement(content)).toBe(true);
-    expect((content.props as any).sku).toBe("Y");
-  });
-});
+    const content = snap!.content as React.ReactElement<any>
+    expect(React.isValidElement(content)).toBe(true)
+    expect((content.props as any).sku).toBe("Y")
+  })
+})
 
 describe("Partial defer prop", () => {
   function Dormant() {
-    return <div data-testid="dormant">dormant</div>;
+    return <div data-testid="dormant">dormant</div>
   }
   function Activated() {
-    return <div data-testid="activated">activated</div>;
+    return <div data-testid="activated">activated</div>
   }
 
   it("emits fallback when defer={true} and not explicitly requested", async () => {
@@ -1566,61 +1519,55 @@ describe("Partial defer prop", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("dormant");
-    expect(str).not.toContain("activated");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("dormant")
+    expect(str).not.toContain("activated")
+  })
 
   it("renders content when the deferred id is in ?partials=", async () => {
-    const { result } = await runWithRequestAsync(
-      fakeRequest({ partials: "feed" }),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
-              <Activated />
-            </Partial>
-          </PartialRoot>,
-        ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("activated");
-    expect(str).not.toContain("dormant");
-  });
+    const { result } = await runWithRequestAsync(fakeRequest({ partials: "feed" }), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
+            <Activated />
+          </Partial>
+        </PartialRoot>,
+      ),
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("activated")
+    expect(str).not.toContain("dormant")
+  })
 
   it("clones an activator element with partialId + fallback as children", async () => {
     function Activator({
       partialId,
       children,
     }: {
-      partialId?: string;
-      children?: React.ReactNode;
+      partialId?: string
+      children?: React.ReactNode
     }) {
       return (
         <div data-activator data-id={partialId}>
           {children}
         </div>
-      );
+      )
     }
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial parent={ROOT}
-            selector="#feed"
-            defer={<Activator />}
-            fallback={<Dormant />}
-          >
+          <Partial parent={ROOT} selector="#feed" defer={<Activator />} fallback={<Dormant />}>
             <Activated />
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain("dormant");
-    expect(str).toContain('"data-id":"feed"');
-    expect(str).not.toContain("activated");
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain("dormant")
+    expect(str).toContain('"data-id":"feed"')
+    expect(str).not.toContain("activated")
+  })
 
   it("preserves user-set activator props when cloning", async () => {
     function Activator({
@@ -1628,20 +1575,21 @@ describe("Partial defer prop", () => {
       children,
       label,
     }: {
-      partialId?: string;
-      children?: React.ReactNode;
-      label?: string;
+      partialId?: string
+      children?: React.ReactNode
+      label?: string
     }) {
       return (
         <div data-label={label} data-id={partialId}>
           {children}
         </div>
-      );
+      )
     }
     const { result } = await runWithRequestAsync(fakeRequest(), async () =>
       renderToJSON(
         <PartialRoot>
-          <Partial parent={ROOT}
+          <Partial
+            parent={ROOT}
             selector="#feed"
             defer={<Activator label="hello" />}
             fallback={<Dormant />}
@@ -1650,33 +1598,31 @@ describe("Partial defer prop", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const str = JSON.stringify(result);
-    expect(str).toContain('"data-label":"hello"');
-    expect(str).toContain('"data-id":"feed"');
-  });
+    )
+    const str = JSON.stringify(result)
+    expect(str).toContain('"data-label":"hello"')
+    expect(str).toContain('"data-id":"feed"')
+  })
 
   it("registers the deferred partial so activation refetches can look it up", async () => {
-    const { lookupPartial } = await import("../partial-registry.ts");
-    await runWithRequestAsync(
-      new Request("http://localhost/defer-route"),
-      async () =>
-        renderToJSON(
-          <PartialRoot>
-            <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
-              <Activated />
-            </Partial>
-          </PartialRoot>,
-        ),
-    );
-    const snap = lookupPartial("/defer-route", "feed");
-    expect(snap).toBeDefined();
+    const { lookupPartial } = await import("../partial-registry.ts")
+    await runWithRequestAsync(new Request("http://localhost/defer-route"), async () =>
+      renderToJSON(
+        <PartialRoot>
+          <Partial parent={ROOT} selector="#feed" defer fallback={<Dormant />}>
+            <Activated />
+          </Partial>
+        </PartialRoot>,
+      ),
+    )
+    const snap = lookupPartial("/defer-route", "feed")
+    expect(snap).toBeDefined()
     // The registered content is the REAL content, not the fallback —
     // so an activation refetch renders `<Activated/>`, not `<Dormant/>`.
-    const content = snap!.content as React.ReactElement<any>;
-    expect(React.isValidElement(content)).toBe(true);
-    expect(content.type).toBe(Activated);
-  });
+    const content = snap!.content as React.ReactElement<any>
+    expect(React.isValidElement(content)).toBe(true)
+    expect(content.type).toBe(Activated)
+  })
 
   it("emits a partial fingerprint even when deferred (so nav-skip still works)", async () => {
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -1687,58 +1633,58 @@ describe("Partial defer prop", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    expect(renderCapture.fingerprints.feed).toBeDefined();
-  });
-});
+    )
+    expect(renderCapture.fingerprints.feed).toBeDefined()
+  })
+})
 
 describe("parseSelector", () => {
   it("splits a space-separated selector string", async () => {
-    const { parseSelector } = await import("../partial-component.tsx");
+    const { parseSelector } = await import("../partial-component.tsx")
     expect(parseSelector("#price .featured .product")).toEqual({
       uniqueTokens: ["price"],
       sharedTokens: ["featured", "product"],
-    });
-  });
+    })
+  })
 
   it("accepts an array (space-joined internally)", async () => {
-    const { parseSelector } = await import("../partial-component.tsx");
+    const { parseSelector } = await import("../partial-component.tsx")
     expect(parseSelector(["#cart", ".header"])).toEqual({
       uniqueTokens: ["cart"],
       sharedTokens: ["header"],
-    });
-  });
+    })
+  })
 
   it("deduplicates repeated tokens", async () => {
-    const { parseSelector } = await import("../partial-component.tsx");
+    const { parseSelector } = await import("../partial-component.tsx")
     expect(parseSelector("  #cart  #cart  .header ")).toEqual({
       uniqueTokens: ["cart"],
       sharedTokens: ["header"],
-    });
-  });
+    })
+  })
 
   it("throws on empty selector", async () => {
-    const { parseSelector } = await import("../partial-component.tsx");
+    const { parseSelector } = await import("../partial-component.tsx")
     // @ts-expect-error testing runtime guard
-    expect(() => parseSelector(undefined)).toThrow();
-    expect(() => parseSelector("")).toThrow();
-    expect(() => parseSelector("   ")).toThrow();
-  });
+    expect(() => parseSelector(undefined)).toThrow()
+    expect(() => parseSelector("")).toThrow()
+    expect(() => parseSelector("   ")).toThrow()
+  })
 
   it("throws on unprefixed tokens with a hint", async () => {
-    const { parseSelector } = await import("../partial-component.tsx");
-    expect(() => parseSelector("cart")).toThrow(/Unprefixed token/);
-    expect(() => parseSelector("#a bare")).toThrow(/Unprefixed token/);
-  });
+    const { parseSelector } = await import("../partial-component.tsx")
+    expect(() => parseSelector("cart")).toThrow(/Unprefixed token/)
+    expect(() => parseSelector("#a bare")).toThrow(/Unprefixed token/)
+  })
 
   it("handles multiple `#`-tokens on one selector", async () => {
-    const { parseSelector } = await import("../partial-component.tsx");
+    const { parseSelector } = await import("../partial-component.tsx")
     expect(parseSelector("#cart #header-cart .cart")).toEqual({
       uniqueTokens: ["cart", "header-cart"],
       sharedTokens: ["cart"],
-    });
-  });
-});
+    })
+  })
+})
 
 describe("Selector parsing + effective-id synthesis", () => {
   it("parses multiple `.`-tokens from a space-separated selector", async () => {
@@ -1750,13 +1696,13 @@ describe("Selector parsing + effective-id synthesis", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const { lookupPartial } = await import("../partial-registry.ts");
-    const snap = lookupPartial("/test", "thing");
-    expect(snap?.uniqueTokens).toEqual(["thing"]);
-    expect(snap?.sharedTokens).toEqual(["price", "product"]);
-    expect(JSON.stringify(result)).toContain("hello");
-  });
+    )
+    const { lookupPartial } = await import("../partial-registry.ts")
+    const snap = lookupPartial("/test", "thing")
+    expect(snap?.uniqueTokens).toEqual(["thing"])
+    expect(snap?.sharedTokens).toEqual(["price", "product"])
+    expect(JSON.stringify(result)).toContain("hello")
+  })
 
   it("synthesizes __anon:<sorted-.class-tokens> when there is no `#` token", async () => {
     await runWithRequestAsync(fakeRequest(), async () =>
@@ -1767,13 +1713,13 @@ describe("Selector parsing + effective-id synthesis", () => {
           </Partial>
         </PartialRoot>,
       ),
-    );
-    const { lookupPartial } = await import("../partial-registry.ts");
-    const snap = lookupPartial("/test", "__anon:cart");
-    expect(snap).toBeDefined();
-    expect(snap?.uniqueTokens).toEqual([]);
-    expect(snap?.sharedTokens).toEqual(["cart"]);
-  });
+    )
+    const { lookupPartial } = await import("../partial-registry.ts")
+    const snap = lookupPartial("/test", "__anon:cart")
+    expect(snap).toBeDefined()
+    expect(snap?.uniqueTokens).toEqual([])
+    expect(snap?.sharedTokens).toEqual(["cart"])
+  })
 
   it("throws when selector is missing", async () => {
     await expect(
@@ -1787,8 +1733,8 @@ describe("Selector parsing + effective-id synthesis", () => {
           </PartialRoot>,
         ),
       ),
-    ).rejects.toThrow(/selector/);
-  });
+    ).rejects.toThrow(/selector/)
+  })
 
   it("throws when parent is missing", async () => {
     await expect(
@@ -1802,8 +1748,8 @@ describe("Selector parsing + effective-id synthesis", () => {
           </PartialRoot>,
         ),
       ),
-    ).rejects.toThrow(/parent/);
-  });
+    ).rejects.toThrow(/parent/)
+  })
 
   it("throws on duplicate anonymous Partials (same sorted `.`-tokens)", async () => {
     await expect(
@@ -1821,8 +1767,8 @@ describe("Selector parsing + effective-id synthesis", () => {
           </PartialRoot>,
         ),
       ),
-    ).rejects.toThrow(/Duplicate anonymous/);
-  });
+    ).rejects.toThrow(/Duplicate anonymous/)
+  })
 
   it("throws on unprefixed tokens", async () => {
     await expect(
@@ -1835,6 +1781,6 @@ describe("Selector parsing + effective-id synthesis", () => {
           </PartialRoot>,
         ),
       ),
-    ).rejects.toThrow(/Unprefixed token/);
-  });
-});
+    ).rejects.toThrow(/Unprefixed token/)
+  })
+})

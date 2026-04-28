@@ -1,5 +1,5 @@
-import { Partial, capturePartialContext } from "../../lib";
-import { NavRootBlock } from "../blocks/nav-root.tsx";
+import { Partial, capturePartialContext } from "../../lib"
+import { NavRootBlock } from "../blocks/nav-root.tsx"
 
 /**
  * Shared cross-page nav. CMS-aware: the link list lives in the CMS
@@ -12,10 +12,10 @@ import { NavRootBlock } from "../blocks/nav-root.tsx";
  * the grammar; data fills it (CMS_VISION.md Principle #5).
  */
 export function AppNav() {
-  const parent = capturePartialContext();
+  const parent = capturePartialContext()
   return (
     <Partial parent={parent} selector="#app-nav" cmsId="app-nav">
       <NavRootBlock />
     </Partial>
-  );
+  )
 }

@@ -14,7 +14,7 @@
  *      resolved against `pathname:/cms-demo/:slug`, cascade picks the
  *      most-specific match.
  */
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest"
 
 // `cache.tsx` imports `@vitejs/plugin-rsc/rsc` which resolves to a
 // `virtual:` module the Node ESM loader can't handle. Bypass-mock
@@ -25,49 +25,43 @@ vi.mock("../cache.tsx", () => ({
   Cache: ({ children }: { children: React.ReactNode }) => children,
   _cacheStats: async () => ({ size: 0, keys: [] }),
   _clearCache: async () => {},
-}));
+}))
 
-import {
-  getEnum,
-  getNumber,
-  getText,
-} from "../../framework/context.ts";
-import { Partial, PartialRoot } from "../partial.tsx";
-import { ROOT } from "../partial-context.ts";
-import { clearRegistry } from "../partial-registry.ts";
-import { flightToString, renderWithRequest } from "../../test/rsc-server.ts";
+import { getEnum, getNumber, getText } from "../../framework/context.ts"
+import { Partial, PartialRoot } from "../partial.tsx"
+import { ROOT } from "../partial-context.ts"
+import { clearRegistry } from "../partial-registry.ts"
+import { flightToString, renderWithRequest } from "../../test/rsc-server.ts"
 
 beforeEach(() => {
-  clearRegistry();
-});
+  clearRegistry()
+})
 
 // Each block emits its fields as one interpolated string so Flight
 // encodes them as a single child (rather than an array of siblings
 // split by commas) — makes `text.includes(...)` assertions robust.
 
 function NoCmsBlock() {
-  const headline = getText("headline");
-  return <div>{`no-cms:${headline || "empty"}`}</div>;
+  const headline = getText("headline")
+  return <div>{`no-cms:${headline || "empty"}`}</div>
 }
 
 function HeroBlock() {
-  const headline = getText("headline");
-  const tone = getEnum("tone", ["calm", "loud"] as const);
-  return <div>{`hero:${headline}|tone:${tone}`}</div>;
+  const headline = getText("headline")
+  const tone = getEnum("tone", ["calm", "loud"] as const)
+  return <div>{`hero:${headline}|tone:${tone}`}</div>
 }
 
 function GreetingBlock() {
-  const headline = getText("headline");
-  const body = getText("body");
-  const accent = getNumber("accent");
-  return (
-    <div>{`greeting:${headline}|body:${body}|accent:${accent}`}</div>
-  );
+  const headline = getText("headline")
+  const body = getText("body")
+  const accent = getNumber("accent")
+  return <div>{`greeting:${headline}|body:${body}|accent:${accent}`}</div>
 }
 
 async function renderToText(url: string, node: React.ReactNode): Promise<string> {
-  const { stream } = await renderWithRequest(url, node);
-  return flightToString(stream);
+  const { stream } = await renderWithRequest(url, node)
+  return flightToString(stream)
 }
 
 describe("CMS content accessors inside <Partial cmsId>", () => {
@@ -78,10 +72,10 @@ describe("CMS content accessors inside <Partial cmsId>", () => {
           <NoCmsBlock />
         </Partial>
       </PartialRoot>
-    );
-    const text = await renderToText("http://localhost/cms-demo", tree);
-    expect(text).toContain("no-cms:empty");
-  });
+    )
+    const text = await renderToText("http://localhost/cms-demo", tree)
+    expect(text).toContain("no-cms:empty")
+  })
 
   it("global-config Partial resolves the default fields", async () => {
     const tree = (
@@ -90,61 +84,49 @@ describe("CMS content accessors inside <Partial cmsId>", () => {
           <HeroBlock />
         </Partial>
       </PartialRoot>
-    );
-    const text = await renderToText("http://localhost/cms-demo", tree);
-    expect(text).toContain("hero:Welcome to the CMS demo");
-    expect(text).toContain("tone:calm");
-  });
+    )
+    const text = await renderToText("http://localhost/cms-demo", tree)
+    expect(text).toContain("hero:Welcome to the CMS demo")
+    expect(text).toContain("tone:calm")
+  })
 
   it("per-slug Partial picks the exact-match config on /cms-demo/alpha", async () => {
     const tree = (
       <PartialRoot>
-        <Partial
-          parent={ROOT}
-          selector="#greeting"
-          cmsId="cms-demo-greeting"
-        >
+        <Partial parent={ROOT} selector="#greeting" cmsId="cms-demo-greeting">
           <GreetingBlock />
         </Partial>
       </PartialRoot>
-    );
-    const text = await renderToText("http://localhost/cms-demo/alpha", tree);
-    expect(text).toContain("greeting:Hello, Alpha!");
-    expect(text).toContain("accent:3");
-  });
+    )
+    const text = await renderToText("http://localhost/cms-demo/alpha", tree)
+    expect(text).toContain("greeting:Hello, Alpha!")
+    expect(text).toContain("accent:3")
+  })
 
   it("per-slug Partial picks the {in: [...]} config on /cms-demo/beta", async () => {
     const tree = (
       <PartialRoot>
-        <Partial
-          parent={ROOT}
-          selector="#greeting"
-          cmsId="cms-demo-greeting"
-        >
+        <Partial parent={ROOT} selector="#greeting" cmsId="cms-demo-greeting">
           <GreetingBlock />
         </Partial>
       </PartialRoot>
-    );
-    const text = await renderToText("http://localhost/cms-demo/beta", tree);
-    expect(text).toContain("greeting:Beta/Gamma view");
-  });
+    )
+    const text = await renderToText("http://localhost/cms-demo/beta", tree)
+    expect(text).toContain("greeting:Beta/Gamma view")
+  })
 
   it("per-slug Partial falls through to the default config on an unmatched slug", async () => {
     const tree = (
       <PartialRoot>
-        <Partial
-          parent={ROOT}
-          selector="#greeting"
-          cmsId="cms-demo-greeting"
-        >
+        <Partial parent={ROOT} selector="#greeting" cmsId="cms-demo-greeting">
           <GreetingBlock />
         </Partial>
       </PartialRoot>
-    );
-    const text = await renderToText("http://localhost/cms-demo/zulu", tree);
-    expect(text).toContain("greeting:Default greeting");
-    expect(text).toContain("accent:1");
-  });
+    )
+    const text = await renderToText("http://localhost/cms-demo/zulu", tree)
+    expect(text).toContain("greeting:Default greeting")
+    expect(text).toContain("accent:1")
+  })
 
   it("sibling Partials with different cmsIds don't leak fields across scopes", async () => {
     const tree = (
@@ -152,17 +134,13 @@ describe("CMS content accessors inside <Partial cmsId>", () => {
         <Partial parent={ROOT} selector="#hero" cmsId="cms-demo-hero">
           <HeroBlock />
         </Partial>
-        <Partial
-          parent={ROOT}
-          selector="#greeting"
-          cmsId="cms-demo-greeting"
-        >
+        <Partial parent={ROOT} selector="#greeting" cmsId="cms-demo-greeting">
           <GreetingBlock />
         </Partial>
       </PartialRoot>
-    );
-    const text = await renderToText("http://localhost/cms-demo/alpha", tree);
-    expect(text).toContain("hero:Welcome to the CMS demo");
-    expect(text).toContain("greeting:Hello, Alpha!");
-  });
-});
+    )
+    const text = await renderToText("http://localhost/cms-demo/alpha", tree)
+    expect(text).toContain("hero:Welcome to the CMS demo")
+    expect(text).toContain("greeting:Hello, Alpha!")
+  })
+})

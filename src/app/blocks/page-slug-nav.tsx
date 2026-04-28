@@ -6,7 +6,7 @@
  * benefits of modeling root as a slot — the "navigation" itself
  * is just another contributable block).
  */
-import { buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button"
 
 const SLUG_LINKS: ReadonlyArray<[href: string, label: string]> = [
   ["/cms-demo", "Default (no slug)"],
@@ -14,7 +14,7 @@ const SLUG_LINKS: ReadonlyArray<[href: string, label: string]> = [
   ["/cms-demo/beta", "beta"],
   ["/cms-demo/gamma", "gamma"],
   ["/cms-demo/zulu", "zulu (unmatched)"],
-];
+]
 
 export function PageSlugNavBlock() {
   return (
@@ -24,14 +24,10 @@ export function PageSlugNavBlock() {
       data-testid="cms-demo-slug-nav-block"
     >
       {SLUG_LINKS.map(([href, label]) => (
-        <a
-          key={href}
-          href={href}
-          className={buttonVariants({ variant: "ghost", size: "sm" })}
-        >
+        <a key={href} href={href} className={buttonVariants({ variant: "ghost", size: "sm" })}>
           {label}
         </a>
       ))}
     </nav>
-  );
+  )
 }

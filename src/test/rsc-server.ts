@@ -17,16 +17,16 @@
  * stabilises upstream.
  */
 
-import type { ReactNode } from "react";
-import { runWithRequestAsync } from "../framework/context.ts";
+import type { ReactNode } from "react"
+import { runWithRequestAsync } from "../framework/context.ts"
 // Import the vendored Flight server/client directly. Going through
 // `@vitejs/plugin-rsc/react/rsc` or `/rsc` pulls in plugin runtime
 // code that expects Vite's transform pipeline (`import.meta.env.DEV`,
 // virtual module graph, etc.) — fine in the app, not fine in bare
 // Vitest. The `server.edge` / `client.edge` bundles only need the
 // `react-server` condition (set in `vitest.rsc.config.ts`).
-import * as ReactServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge";
-import * as ReactClient from "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge";
+import * as ReactServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge"
+import * as ReactClient from "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge"
 
 // Permissive Proxy manifests — `@vitejs/plugin-rsc`'s `"use client"`
 // transform stamps each client component with a module path like
@@ -37,45 +37,40 @@ import * as ReactClient from "@vitejs/plugin-rsc/vendor/react-server-dom/client.
 // they don't mount the client reference, so empty `chunks` are fine.
 const CLIENT_MANIFEST = new Proxy({} as Record<string, unknown>, {
   get: (_t, id) => {
-    if (typeof id !== "string") return undefined;
-    return { id, chunks: [], name: "*" };
+    if (typeof id !== "string") return undefined
+    return { id, chunks: [], name: "*" }
   },
-});
+})
 // Consumer side is nested: `config[modulePath][exportName]` or
 // `config[modulePath]["*"]`. A Proxy-of-Proxies handles both paths.
 const CONSUMER_MANIFEST = new Proxy({} as Record<string, unknown>, {
   get: (_t, id) => {
-    if (typeof id !== "string") return undefined;
+    if (typeof id !== "string") return undefined
     return new Proxy({} as Record<string, unknown>, {
-      get: (_t2, name) =>
-        typeof name === "string"
-          ? { id, chunks: [], name }
-          : undefined,
-    });
+      get: (_t2, name) => (typeof name === "string" ? { id, chunks: [], name } : undefined),
+    })
   },
-});
+})
 const SERVER_MANIFEST = {
   serverModuleMap: {},
   moduleMap: CONSUMER_MANIFEST,
-};
+}
 
 function renderToReadableStream<T>(data: T): ReadableStream<Uint8Array> {
-  return ReactServer.renderToReadableStream(data, CLIENT_MANIFEST);
+  return ReactServer.renderToReadableStream(data, CLIENT_MANIFEST)
 }
 
-function createFromReadableStream<T>(
-  stream: ReadableStream<Uint8Array>,
-): Promise<T> {
+function createFromReadableStream<T>(stream: ReadableStream<Uint8Array>): Promise<T> {
   return ReactClient.createFromReadableStream(stream, {
     serverConsumerManifest: SERVER_MANIFEST,
-  });
+  })
 }
 
-export type FlightBytes = ReadableStream<Uint8Array>;
+export type FlightBytes = ReadableStream<Uint8Array>
 
 /** Render a server tree to raw Flight bytes. Nothing is mounted. */
 export function renderServerToFlight(node: ReactNode): FlightBytes {
-  return renderToReadableStream(node);
+  return renderToReadableStream(node)
 }
 
 /**
@@ -84,7 +79,7 @@ export function renderServerToFlight(node: ReactNode): FlightBytes {
  * stream; if the caller also needs the bytes, `.tee()` first.
  */
 export async function flightToString(stream: FlightBytes): Promise<string> {
-  return new Response(stream).text();
+  return new Response(stream).text()
 }
 
 /**
@@ -93,21 +88,18 @@ export async function flightToString(stream: FlightBytes): Promise<string> {
  * mount anything.
  */
 export function consumePayload<T>(stream: FlightBytes): Promise<T> {
-  return createFromReadableStream<T>(stream);
+  return createFromReadableStream<T>(stream)
 }
 
 /** Convenience: render + tee + stringify + parse in one call. */
 export async function renderAndInspect<T>(node: ReactNode): Promise<{
-  text: string;
-  payload: T;
+  text: string
+  payload: T
 }> {
-  const stream = renderServerToFlight(node);
-  const [a, b] = stream.tee();
-  const [text, payload] = await Promise.all([
-    flightToString(a),
-    consumePayload<T>(b),
-  ]);
-  return { text, payload };
+  const stream = renderServerToFlight(node)
+  const [a, b] = stream.tee()
+  const [text, payload] = await Promise.all([flightToString(a), consumePayload<T>(b)])
+  return { text, payload }
 }
 
 /**
@@ -130,13 +122,13 @@ export async function renderWithRequest(
   node: ReactNode,
   options: { headers?: Record<string, string> } = {},
 ): Promise<{ stream: FlightBytes; cookies: string[] }> {
-  const request = new Request(url, { headers: options.headers });
+  const request = new Request(url, { headers: options.headers })
   // `runWithRequestAsync` expects an async fn; wrap the sync render
   // call so the ALS scope persists across the stream lifetime. The
   // stream itself is sync-returned, but rendering into it happens
   // lazily as consumers pull — so we tee it here to capture.
   const { result, cookies } = await runWithRequestAsync(request, async () => {
-    return renderServerToFlight(node);
-  });
-  return { stream: result, cookies };
+    return renderServerToFlight(node)
+  })
+  return { stream: result, cookies }
 }

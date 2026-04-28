@@ -8,8 +8,8 @@
  * page-root, the palette would default to "show every block type"
  * because the parent has no type tag the manifest can key on.
  */
-import { Children } from "../../lib";
+import { Children } from "../../lib"
 
 export function PageRootBlock() {
-  return <Children name="body" allow=".page-block" />;
+  return <Children name="body" allow=".page-block" />
 }

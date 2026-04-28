@@ -1,14 +1,14 @@
-import { Partial } from "../../lib/partial.tsx";
-import { ROOT, capturePartialContext } from "../../lib/partial-context.ts";
-import { getSearchParam } from "../../framework/context.ts";
-import { ChatMessage } from "./piece.tsx";
+import { Partial } from "../../lib/partial.tsx"
+import { ROOT, capturePartialContext } from "../../lib/partial-context.ts"
+import { getSearchParam } from "../../framework/context.ts"
+import { ChatMessage } from "./piece.tsx"
 import {
   AutoScrollToBottom,
   ChatClosePill,
   ChatOpenPill,
   NewMessageLink,
   ResetChatButton,
-} from "./chat-controls.tsx";
+} from "./chat-controls.tsx"
 
 /**
  * Ordered pool of markdown files streamable into the chat. The
@@ -39,25 +39,25 @@ export const AVAILABLE_FILES = [
   // Archived design retrospectives — useful chat content.
   "STREAMING_CHAT",
   "PARTIAL_ARCHITECTURE",
-];
+]
 
-const DEFAULT_MSG = "AA_CHAT_STREAMING";
+const DEFAULT_MSG = "AA_CHAT_STREAMING"
 
 function parseMsgs(param: string | null): string[] {
-  if (param == null) return [DEFAULT_MSG];
+  if (param == null) return [DEFAULT_MSG]
   return param
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => s && AVAILABLE_FILES.includes(s));
+    .filter((s) => s && AVAILABLE_FILES.includes(s))
 }
 
 function computeNextHref(msgIds: string[]): string | null {
-  const next = AVAILABLE_FILES.find((f) => !msgIds.includes(f));
-  if (!next) return null;
-  const params = new URLSearchParams();
-  params.set("msgs", [...msgIds, next].join(","));
-  params.set("chat", "open");
-  return `?${params.toString()}`;
+  const next = AVAILABLE_FILES.find((f) => !msgIds.includes(f))
+  if (!next) return null
+  const params = new URLSearchParams()
+  params.set("msgs", [...msgIds, next].join(","))
+  params.set("chat", "open")
+  return `?${params.toString()}`
 }
 
 export function ChatOverlay() {
@@ -65,19 +65,19 @@ export function ChatOverlay() {
     <Partial parent={ROOT} selector="#chat-overlay" frame="chat-overlay">
       <ChatOverlayBody />
     </Partial>
-  );
+  )
 }
 
 function ChatOverlayBody() {
-  const parent = capturePartialContext();
-  const chatParam = getSearchParam("chat");
-  const open = chatParam != null ? chatParam === "open" : false;
+  const parent = capturePartialContext()
+  const chatParam = getSearchParam("chat")
+  const open = chatParam != null ? chatParam === "open" : false
 
-  if (!open) return <ChatOpenPill />;
+  if (!open) return <ChatOpenPill />
 
-  const msgsParam = getSearchParam("msgs");
-  const msgIds = parseMsgs(msgsParam);
-  const nextHref = computeNextHref(msgIds);
+  const msgsParam = getSearchParam("msgs")
+  const msgIds = parseMsgs(msgsParam)
+  const nextHref = computeNextHref(msgIds)
 
   return (
     <aside
@@ -93,24 +93,14 @@ function ChatOverlayBody() {
       </header>
       <AutoScrollToBottom containerTestId="chat-list" />
       <Partial parent={parent} selector="#chat-list">
-        <div
-          data-testid="chat-list"
-          className="min-h-30 flex-1 overflow-y-auto px-3 py-2"
-        >
+        <div data-testid="chat-list" className="min-h-30 flex-1 overflow-y-auto px-3 py-2">
           {msgIds.length === 0 ? (
-            <div
-              data-testid="chat-empty"
-              className="text-xs italic text-muted-foreground"
-            >
+            <div data-testid="chat-empty" className="text-xs italic text-muted-foreground">
               No messages. Click “stream next note” to start.
             </div>
           ) : (
             msgIds.map((fileId) => (
-              <Partial
-                parent={parent}
-                key={`chat-msg-${fileId}`}
-                selector={`#chat-msg-${fileId}`}
-              >
+              <Partial parent={parent} key={`chat-msg-${fileId}`} selector={`#chat-msg-${fileId}`}>
                 <ChatMessage fileId={fileId} />
               </Partial>
             ))
@@ -121,5 +111,5 @@ function ChatOverlayBody() {
         <NewMessageLink nextHref={nextHref} />
       </footer>
     </aside>
-  );
+  )
 }

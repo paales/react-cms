@@ -33,10 +33,10 @@
  * onto the top level alongside these framework fields.
  */
 export interface FrameEntryState {
-  readonly __frames?: Record<string, { url: string }>;
-  readonly __frameHistory?: Record<string, { past: string[]; future: string[] }>;
-  readonly __frameState?: Record<string, Record<string, unknown>>;
-  readonly [userKey: string]: unknown;
+  readonly __frames?: Record<string, { url: string }>
+  readonly __frameHistory?: Record<string, { past: string[]; future: string[] }>
+  readonly __frameState?: Record<string, Record<string, unknown>>
+  readonly [userKey: string]: unknown
 }
 
 /**
@@ -44,11 +44,8 @@ export interface FrameEntryState {
  * `NavigationHistoryEntry` with a narrower `getState()` return type.
  * Lets consumers read frame snapshots without `as` casts.
  */
-export interface FrameNavigationHistoryEntry extends Omit<
-  NavigationHistoryEntry,
-  "getState"
-> {
-  getState(): FrameEntryState | null;
+export interface FrameNavigationHistoryEntry extends Omit<NavigationHistoryEntry, "getState"> {
+  getState(): FrameEntryState | null
 }
 
 // ─── Framework navigate/reload extensions ─────────────────────────
@@ -68,7 +65,7 @@ export interface FrameNavigationHistoryEntry extends Omit<
  * from a frame handle throws; from the window handle it goes through
  * the browser's normal cross-origin navigation behavior.
  */
-export type NavigateTarget = string | URL | ((current: URL) => URL | string);
+export type NavigateTarget = string | URL | ((current: URL) => URL | string)
 
 /**
  * Superset of the browser's `NavigationNavigateOptions` with the
@@ -107,7 +104,7 @@ export interface FrameworkNavigateOptions extends NavigationNavigateOptions {
    * search / filter results where per-row reveal improves perceived
    * latency.
    */
-  disableTransition?: boolean;
+  disableTransition?: boolean
   /**
    * CSS-style selector naming the Partials to refetch. Space-separated
    * (or array) list of tokens; each token starts with `#` (unique) or
@@ -123,7 +120,7 @@ export interface FrameworkNavigateOptions extends NavigationNavigateOptions {
    * skipped. Ignored on frame handles (frame navigation always
    * refetches the whole frame subtree).
    */
-  selector?: string | string[];
+  selector?: string | string[]
   /**
    * Update the URL without triggering ANY refetch. Useful for
    * bookmarkability-only URL sync (infinite scroll's `?pages=`) where
@@ -131,7 +128,7 @@ export interface FrameworkNavigateOptions extends NavigationNavigateOptions {
    * `silent` wins and the refetch is skipped. Ignored on frame
    * handles (frame navigation always refetches the frame).
    */
-  silent?: boolean;
+  silent?: boolean
 }
 
 /**
@@ -141,8 +138,8 @@ export interface FrameworkNavigateOptions extends NavigationNavigateOptions {
  * every Partial carrying the `.price` label.
  */
 export interface FrameworkReloadOptions extends NavigationReloadOptions {
-  selector?: string | string[];
-  disableTransition?: boolean;
+  selector?: string | string[]
+  disableTransition?: boolean
 }
 
 /**
@@ -154,8 +151,8 @@ export interface FrameworkReloadOptions extends NavigationReloadOptions {
  * frame dispatch) so callers can `await result.finished` unconditionally.
  */
 export interface FrameworkNavigationResult {
-  readonly committed: Promise<NavigationHistoryEntry>;
-  readonly finished: Promise<NavigationHistoryEntry>;
+  readonly committed: Promise<NavigationHistoryEntry>
+  readonly finished: Promise<NavigationHistoryEntry>
 }
 
 // ─── FrameworkNavigation ──────────────────────────────────────────
@@ -184,18 +181,15 @@ export interface FrameworkNavigation extends Omit<
   Navigation,
   "currentEntry" | "entries" | "navigate" | "reload"
 > {
-  readonly currentEntry: FrameNavigationHistoryEntry | null;
-  entries(): FrameNavigationHistoryEntry[];
+  readonly currentEntry: FrameNavigationHistoryEntry | null
+  entries(): FrameNavigationHistoryEntry[]
   /**
    * Frame name this handle is bound to, or `null` for the
    * window-scoped handle. Framework-only — not on `Navigation`.
    */
-  readonly name: string | null;
-  navigate(
-    target: NavigateTarget,
-    options?: FrameworkNavigateOptions,
-  ): FrameworkNavigationResult;
-  reload(options?: FrameworkReloadOptions): FrameworkNavigationResult;
+  readonly name: string | null
+  navigate(target: NavigateTarget, options?: FrameworkNavigateOptions): FrameworkNavigationResult
+  reload(options?: FrameworkReloadOptions): FrameworkNavigationResult
 }
 
 /**
@@ -208,6 +202,6 @@ export interface FrameworkNavigation extends Omit<
  *   nav.navigate("/foo", { info: { reason: "prefetch" } });
  */
 export function getNavigation(): Navigation | null {
-  const nav = (globalThis as { navigation?: Navigation }).navigation;
-  return nav ?? null;
+  const nav = (globalThis as { navigation?: Navigation }).navigation
+  return nav ?? null
 }

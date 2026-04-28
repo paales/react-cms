@@ -7,4 +7,4 @@
  * want act support here (browser tests that drive user interactions
  * need a way to flush scheduled updates), so flip it on.
  */
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true

@@ -1,4 +1,4 @@
-"use client";
+"use client"
 
 /**
  * Client-side partial merge coordinator.
@@ -37,7 +37,7 @@ import React, {
   useState,
   useRef,
   type ReactNode,
-} from "react";
+} from "react"
 import {
   getNavigation,
   type FrameEntryState,
@@ -47,7 +47,7 @@ import {
   type FrameworkNavigationResult,
   type FrameworkReloadOptions,
   type NavigateTarget,
-} from "../framework/navigation-api.ts";
+} from "../framework/navigation-api.ts"
 
 /**
  * Return true if the node looks like the outermost wrapper a
@@ -63,10 +63,10 @@ import {
  * also carries `partialId` — we detect via `type === Suspense`.
  */
 function isPartialWrapper(node: React.ReactElement): boolean {
-  if (node.key == null) return false;
-  if (node.type === Suspense) return true;
-  const props = node.props as { partialId?: unknown };
-  return typeof props?.partialId === "string";
+  if (node.key == null) return false
+  if (node.type === Suspense) return true
+  const props = node.props as { partialId?: unknown }
+  return typeof props?.partialId === "string"
 }
 
 /**
@@ -84,17 +84,17 @@ function isPartialWrapper(node: React.ReactElement): boolean {
  * peek at the direct child's `partialId`.
  */
 function getPartialId(node: React.ReactElement): string | null {
-  const props = node.props as { partialId?: unknown; children?: unknown };
-  if (typeof props.partialId === "string") return props.partialId;
+  const props = node.props as { partialId?: unknown; children?: unknown }
+  if (typeof props.partialId === "string") return props.partialId
   if (node.type === Suspense) {
-    const child = props.children;
+    const child = props.children
     if (isValidElement(child)) {
-      const cp = (child as React.ReactElement).props as { partialId?: unknown };
-      if (typeof cp.partialId === "string") return cp.partialId;
+      const cp = (child as React.ReactElement).props as { partialId?: unknown }
+      if (typeof cp.partialId === "string") return cp.partialId
     }
-    if (node.key != null) return String(node.key);
+    if (node.key != null) return String(node.key)
   }
-  return null;
+  return null
 }
 
 /**
@@ -106,21 +106,20 @@ function getPartialId(node: React.ReactElement): string | null {
  */
 function getPartialFingerprint(node: React.ReactElement): string | null {
   const props = node.props as {
-    partialFingerprint?: unknown;
-    children?: unknown;
-  };
-  if (typeof props.partialFingerprint === "string")
-    return props.partialFingerprint;
+    partialFingerprint?: unknown
+    children?: unknown
+  }
+  if (typeof props.partialFingerprint === "string") return props.partialFingerprint
   if (node.type === Suspense) {
-    const child = props.children;
+    const child = props.children
     if (isValidElement(child)) {
       const cp = (child as React.ReactElement).props as {
-        partialFingerprint?: unknown;
-      };
-      if (typeof cp.partialFingerprint === "string") return cp.partialFingerprint;
+        partialFingerprint?: unknown
+      }
+      if (typeof cp.partialFingerprint === "string") return cp.partialFingerprint
     }
   }
-  return null;
+  return null
 }
 
 interface PartialsClientProps {
@@ -133,11 +132,11 @@ interface PartialsClientProps {
    *   Used on partial re-fetches where only requested partials are fresh
    *   and the rest are served from the client cache.
    */
-  mode?: "streaming" | "cache";
+  mode?: "streaming" | "cache"
   // Optional at the type level so callers that supply children via
   // positional `createElement(PartialsClient, props, ...children)`
   // don't trip the required-prop check.
-  children?: ReactNode;
+  children?: ReactNode
 }
 
 /**
@@ -153,7 +152,7 @@ interface PartialsClientProps {
  * streaming on refetch. See notes/archive/STREAMING_DEBUG_NOTES.md §7-8.
  */
 function isPlaceholder(child: React.ReactElement): boolean {
-  return child.type === "i" && (child.props as any)["data-partial"] === true;
+  return child.type === "i" && (child.props as any)["data-partial"] === true
 }
 
 /**
@@ -162,11 +161,11 @@ function isPlaceholder(child: React.ReactElement): boolean {
  * `.map()` key into `"outer,inner"` for dynamic Partials.
  */
 function getPlaceholderId(node: React.ReactElement): string | null {
-  const props = node.props as { ["data-partial-id"]?: unknown };
+  const props = node.props as { ["data-partial-id"]?: unknown }
   if (typeof props["data-partial-id"] === "string") {
-    return props["data-partial-id"];
+    return props["data-partial-id"]
   }
-  return node.key != null ? String(node.key) : null;
+  return node.key != null ? String(node.key) : null
 }
 
 /**
@@ -181,36 +180,36 @@ function getPlaceholderId(node: React.ReactElement): string | null {
  * under the next render.
  */
 function harvestPartialIds(node: ReactNode, out: Set<string>): void {
-  if (node == null || typeof node === "boolean") return;
-  if (typeof node === "string" || typeof node === "number") return;
+  if (node == null || typeof node === "boolean") return
+  if (typeof node === "string" || typeof node === "number") return
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      harvestPartialIds(node[i] as ReactNode, out);
+      harvestPartialIds(node[i] as ReactNode, out)
     }
-    return;
+    return
   }
-  const unwrapped = unwrapLazy(node);
+  const unwrapped = unwrapLazy(node)
   if (unwrapped !== node) {
-    if (unwrapped == null) return;
-    harvestPartialIds(unwrapped as ReactNode, out);
-    return;
+    if (unwrapped == null) return
+    harvestPartialIds(unwrapped as ReactNode, out)
+    return
   }
-  if (!isValidElement(node)) return;
+  if (!isValidElement(node)) return
 
   if (isPartialWrapper(node)) {
-    const id = getPartialId(node);
-    if (id) out.add(id);
-    const inner = (node.props as { children?: ReactNode })?.children;
-    if (inner != null) harvestPartialIds(inner, out);
-    return;
+    const id = getPartialId(node)
+    if (id) out.add(id)
+    const inner = (node.props as { children?: ReactNode })?.children
+    if (inner != null) harvestPartialIds(inner, out)
+    return
   }
   if (isPlaceholder(node)) {
-    const id = getPlaceholderId(node);
-    if (id) out.add(id);
-    return;
+    const id = getPlaceholderId(node)
+    if (id) out.add(id)
+    return
   }
-  const inner = (node.props as { children?: ReactNode })?.children;
-  if (inner != null) harvestPartialIds(inner, out);
+  const inner = (node.props as { children?: ReactNode })?.children
+  if (inner != null) harvestPartialIds(inner, out)
 }
 
 /**
@@ -222,16 +221,16 @@ function substituteNested(
   cache: Map<string, ReactNode>,
   skipId: string,
 ): ReactNode {
-  if (node == null || typeof node === "boolean") return node;
-  if (typeof node === "string" || typeof node === "number") return node;
+  if (node == null || typeof node === "boolean") return node
+  if (typeof node === "string" || typeof node === "number") return node
   if (Array.isArray(node)) {
-    let changed = false;
+    let changed = false
     const mapped = node.map((c) => {
-      const s = substituteNested(c, cache, skipId);
-      if (s !== c) changed = true;
-      return s;
-    });
-    return changed ? mapped : node;
+      const s = substituteNested(c, cache, skipId)
+      if (s !== c) changed = true
+      return s
+    })
+    return changed ? mapped : node
   }
 
   // Flight lazy refs appear as children of cached client-component
@@ -241,13 +240,13 @@ function substituteNested(
   // unwrap so we can descend into the nested tree and find keyed
   // partials to swap. Pending / errored lazies return null; we treat
   // them as opaque and leave the original node in place.
-  const unwrapped = unwrapLazy(node);
+  const unwrapped = unwrapLazy(node)
   if (unwrapped !== node) {
-    if (unwrapped == null) return node;
-    return substituteNested(unwrapped as ReactNode, cache, skipId);
+    if (unwrapped == null) return node
+    return substituteNested(unwrapped as ReactNode, cache, skipId)
   }
 
-  if (!isValidElement(node)) return node;
+  if (!isValidElement(node)) return node
 
   // Placeholder: substitute from cache. Id comes from the
   // `data-partial-id` prop (stable), not the key (Flight composites).
@@ -269,10 +268,10 @@ function substituteNested(
   // wrapper that contains a placeholder pointing to itself (which
   // happens any time a fp-skipped partial gets cached).
   if (isPlaceholder(node)) {
-    const id = getPlaceholderId(node);
+    const id = getPlaceholderId(node)
     if (id && id !== skipId) {
-      const fresh = cache.get(id);
-      return fresh ? substituteNested(fresh, cache, id) : node;
+      const fresh = cache.get(id)
+      return fresh ? substituteNested(fresh, cache, id) : node
     }
   }
 
@@ -287,9 +286,9 @@ function substituteNested(
   // composed/group containers) keep their old children references —
   // so the new content never reaches the rendered tree.
   if (isPartialWrapper(node)) {
-    const id = getPartialId(node);
+    const id = getPartialId(node)
     if (id && id !== skipId) {
-      const fresh = cache.get(id);
+      const fresh = cache.get(id)
       if (fresh && fresh !== node) {
         // Recurse into the substituted wrapper. A cache-mode
         // refetch can produce a wrapper whose children are
@@ -298,7 +297,7 @@ function substituteNested(
         // tree, leaving partial regions blank. Pass `id` as the new
         // skipId so the recursion can't loop on a wrapper that
         // contains a placeholder pointing to itself.
-        return substituteNested(fresh, cache, id);
+        return substituteNested(fresh, cache, id)
       }
       // Wrapper unchanged — keep descending so nested partials whose
       // cache entries DID change still get substituted. Lazy-safety:
@@ -308,38 +307,38 @@ function substituteNested(
     }
   }
 
-  const children = (node.props as any).children;
-  if (children == null) return node;
-  const newChildren = substituteNested(children, cache, skipId);
-  if (newChildren === children) return node;
+  const children = (node.props as any).children
+  if (children == null) return node
+  const newChildren = substituteNested(children, cache, skipId)
+  if (newChildren === children) return node
   // Spread arrays as variadic — see the matching comment in
   // cache.tsx#resolveLazies. Flight-decoded children are arrays
   // even for static JSX siblings, and a bare `cloneElement(node,
   // {}, arr)` triggers React's "unique key" warning.
   return Array.isArray(newChildren)
     ? cloneElement(node, {}, ...newChildren)
-    : cloneElement(node, {}, newChildren);
+    : cloneElement(node, {}, newChildren)
 }
 
-const LAZY_SYMBOL_STR = "Symbol(react.lazy)";
+const LAZY_SYMBOL_STR = "Symbol(react.lazy)"
 
 /**
  * Unwrap a raw lazy reference at the tree level.
  */
 function unwrapLazy(node: unknown): unknown {
-  if (node == null || typeof node !== "object") return node;
-  const n = node as any;
-  if (typeof n.$$typeof !== "symbol") return node;
-  if (n.$$typeof.toString() !== LAZY_SYMBOL_STR) return node;
-  const payload = n._payload;
-  if (payload && payload._status === 1) return payload._result;
+  if (node == null || typeof node !== "object") return node
+  const n = node as any
+  if (typeof n.$$typeof !== "symbol") return node
+  if (n.$$typeof.toString() !== LAZY_SYMBOL_STR) return node
+  const payload = n._payload
+  if (payload && payload._status === 1) return payload._result
   try {
-    const init = n._init;
-    if (typeof init === "function") return init(payload);
+    const init = n._init
+    if (typeof init === "function") return init(payload)
   } catch {
     // Pending/errored — treat as opaque
   }
-  return null;
+  return null
 }
 
 /**
@@ -372,27 +371,27 @@ function cacheFromStreamingChildren(
   cache: Map<string, ReactNode>,
   seen?: Set<string>,
 ): void {
-  if (node == null || typeof node === "boolean") return;
-  if (typeof node === "string" || typeof node === "number") return;
+  if (node == null || typeof node === "boolean") return
+  if (typeof node === "string" || typeof node === "number") return
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      cacheFromStreamingChildren(node[i] as ReactNode, cache, seen);
+      cacheFromStreamingChildren(node[i] as ReactNode, cache, seen)
     }
-    return;
+    return
   }
-  const unwrapped = unwrapLazy(node);
+  const unwrapped = unwrapLazy(node)
   if (unwrapped !== node) {
-    if (unwrapped == null) return;
-    cacheFromStreamingChildren(unwrapped as ReactNode, cache, seen);
-    return;
+    if (unwrapped == null) return
+    cacheFromStreamingChildren(unwrapped as ReactNode, cache, seen)
+    return
   }
-  if (!isValidElement(node)) return;
+  if (!isValidElement(node)) return
 
   if (isPartialWrapper(node)) {
-    const id = getPartialId(node);
+    const id = getPartialId(node)
     if (id) {
-      seen?.add(id);
-      cache.set(id, node);
+      seen?.add(id)
+      cache.set(id, node)
       // Populate `_fingerprints` synchronously from the tree walk
       // rather than waiting for each `<PartialErrorBoundary>` to
       // commit on the client. The commit order is non-deterministic
@@ -401,15 +400,15 @@ function cacheFromStreamingChildren(
       // client nav could otherwise send a `?cached=` that's missing
       // late-committing ids. The wrapper already carries the
       // fingerprint — just lift it off.
-      const fp = getPartialFingerprint(node);
-      if (fp) _fingerprints.set(id, fp);
+      const fp = getPartialFingerprint(node)
+      if (fp) _fingerprints.set(id, fp)
     }
     // Descend: nested partial wrappers need their own top-level cache
     // entries so subsequent parent-only refetches with inner
     // placeholders can fill the holes.
-    const inner = (node.props as any)?.children;
-    if (inner != null) cacheFromStreamingChildren(inner, cache, seen);
-    return;
+    const inner = (node.props as any)?.children
+    if (inner != null) cacheFromStreamingChildren(inner, cache, seen)
+    return
   }
   if (isPlaceholder(node)) {
     // Placeholder means "server skipped this partial; client keeps
@@ -420,14 +419,14 @@ function cacheFromStreamingChildren(
     // pruned out of `_cache` and the next render's `substituteNested`
     // call would leave the `<i hidden>` placeholder in the DOM —
     // blanking the partial's region until a hard reload.
-    const id = getPlaceholderId(node);
-    if (id) seen?.add(id);
-    return;
+    const id = getPlaceholderId(node)
+    if (id) seen?.add(id)
+    return
   }
 
-  const inner = (node.props as any)?.children;
+  const inner = (node.props as any)?.children
   if (inner != null) {
-    cacheFromStreamingChildren(inner, cache, seen);
+    cacheFromStreamingChildren(inner, cache, seen)
   }
 }
 
@@ -449,67 +448,64 @@ function cacheFromStreamingChildren(
  * unresolved Flight lazies). Everything non-partial walks freely.
  */
 function deriveTemplate(node: ReactNode): ReactNode {
-  if (node == null || typeof node === "boolean") return node;
-  if (typeof node === "string" || typeof node === "number") return node;
+  if (node == null || typeof node === "boolean") return node
+  if (typeof node === "string" || typeof node === "number") return node
   if (Array.isArray(node)) {
-    return node.map((c) => deriveTemplate(c as ReactNode));
+    return node.map((c) => deriveTemplate(c as ReactNode))
   }
-  const unwrapped = unwrapLazy(node);
+  const unwrapped = unwrapLazy(node)
   if (unwrapped !== node) {
-    return deriveTemplate(unwrapped as ReactNode);
+    return deriveTemplate(unwrapped as ReactNode)
   }
-  if (!isValidElement(node)) return node;
+  if (!isValidElement(node)) return node
 
   if (isPartialWrapper(node)) {
-    const id = getPartialId(node);
-    return id ? <i key={id} hidden data-partial data-partial-id={id} /> : node;
+    const id = getPartialId(node)
+    return id ? <i key={id} hidden data-partial data-partial-id={id} /> : node
   }
   if (isPlaceholder(node)) {
     // Already a placeholder (server emitted a fingerprint-match skip);
     // re-emit with a clean key derived from `data-partial-id` to
     // undo any Flight key-composite artifacts (e.g. "page-1,page-1"
     // for .map()-produced placeholders).
-    const id = getPlaceholderId(node);
-    return id ? <i key={id} hidden data-partial data-partial-id={id} /> : node;
+    const id = getPlaceholderId(node)
+    return id ? <i key={id} hidden data-partial data-partial-id={id} /> : node
   }
 
-  const inner = (node.props as any)?.children;
-  if (inner == null) return node;
-  const newInner = deriveTemplate(inner);
-  if (newInner === inner) return node;
+  const inner = (node.props as any)?.children
+  if (inner == null) return node
+  const newInner = deriveTemplate(inner)
+  if (newInner === inner) return node
   return Array.isArray(newInner)
     ? cloneElement(node, {}, ...newInner)
-    : cloneElement(node, {}, newInner);
+    : cloneElement(node, {}, newInner)
 }
 
-function renderTemplate(
-  template: ReactNode,
-  cache: Map<string, ReactNode>,
-): ReactNode[] {
-  const result: ReactNode[] = [];
+function renderTemplate(template: ReactNode, cache: Map<string, ReactNode>): ReactNode[] {
+  const result: ReactNode[] = []
 
   Children.forEach(template, (child) => {
     if (!isValidElement(child)) {
-      result.push(child);
-      return;
+      result.push(child)
+      return
     }
     if (isPlaceholder(child)) {
-      const id = getPlaceholderId(child);
+      const id = getPlaceholderId(child)
       if (id) {
-        const cached = cache.get(id);
-        if (cached) result.push(substituteNested(cached, cache, id));
+        const cached = cache.get(id)
+        if (cached) result.push(substituteNested(cached, cache, id))
       }
-      return;
+      return
     }
     if ((child.props as any).children != null) {
-      const inner = renderTemplate((child.props as any).children, cache);
-      result.push(cloneElement(child, {}, ...inner));
+      const inner = renderTemplate((child.props as any).children, cache)
+      result.push(cloneElement(child, {}, ...inner))
     } else {
-      result.push(child);
+      result.push(child)
     }
-  });
+  })
 
-  return result;
+  return result
 }
 
 /**
@@ -519,8 +515,8 @@ function renderTemplate(
  * remount in entry.browser.tsx. Without this, each refetch would wipe the
  * cache and force every partial to re-render.
  */
-const _cache = new Map<string, ReactNode>();
-const _fingerprints = new Map<string, string>();
+const _cache = new Map<string, ReactNode>()
+const _fingerprints = new Map<string, string>()
 
 /**
  * Structural layout skeleton, derived from the most recent full-payload
@@ -532,7 +528,7 @@ const _fingerprints = new Map<string, string>();
  * Keyed by route (pathname + search). Same-URL refetches reuse the
  * cached template; different-URL navigations re-derive.
  */
-let _template: ReactNode = null;
+let _template: ReactNode = null
 
 /**
  * Register a partial's fingerprint from the client side.
@@ -543,7 +539,7 @@ let _template: ReactNode = null;
  * here to tell the server what's already cached.
  */
 export function registerClientPartial(id: string, fingerprint: string): void {
-  _fingerprints.set(id, fingerprint);
+  _fingerprints.set(id, fingerprint)
 }
 
 /**
@@ -561,11 +557,11 @@ export function registerClientPartial(id: string, fingerprint: string): void {
  * reported correctly. See `docs/partial.md`.
  */
 export function getCachedPartialIds(): string[] {
-  const out: string[] = [];
+  const out: string[] = []
   for (const [id, fp] of _fingerprints) {
-    out.push(`${id}:${fp}`);
+    out.push(`${id}:${fp}`)
   }
-  return out;
+  return out
 }
 
 // ─── Framework-internal navigation info ───────────────────────────
@@ -592,26 +588,21 @@ export function getCachedPartialIds(): string[] {
 // page-level navigation.
 
 interface FrameworkSilentInfo {
-  __framework: "silent-navigate";
-  mode: "window" | "frame";
-  name?: string;
+  __framework: "silent-navigate"
+  mode: "window" | "frame"
+  name?: string
 }
 
-function makeSilentInfo(
-  mode: "window" | "frame",
-  name?: string,
-): FrameworkSilentInfo {
-  return { __framework: "silent-navigate", mode, name };
+function makeSilentInfo(mode: "window" | "frame", name?: string): FrameworkSilentInfo {
+  return { __framework: "silent-navigate", mode, name }
 }
 
-export function isFrameworkSilentInfo(
-  info: unknown,
-): info is FrameworkSilentInfo {
+export function isFrameworkSilentInfo(info: unknown): info is FrameworkSilentInfo {
   return (
     info != null &&
     typeof info === "object" &&
     (info as { __framework?: unknown }).__framework === "silent-navigate"
-  );
+  )
 }
 
 // ─── Selector parsing (client-side, mirrors partial-component.tsx) ───
@@ -621,33 +612,37 @@ export function isFrameworkSilentInfo(
 // `reload({ selector })` / `navigate(url, { selector })` — we parse
 // them here before splitting into the wire params the server expects.
 
-function parseSelectorClient(
-  input: string | string[] | undefined,
-): { uniqueTokens: string[]; sharedTokens: string[] } {
-  if (input == null) return { uniqueTokens: [], sharedTokens: [] };
+function parseSelectorClient(input: string | string[] | undefined): {
+  uniqueTokens: string[]
+  sharedTokens: string[]
+} {
+  if (input == null) return { uniqueTokens: [], sharedTokens: [] }
   // Mirror the server parser: string form splits on whitespace;
   // array form keeps each element as one token (so values with
   // spaces — SKUs, slugs — survive intact).
   const tokens = Array.isArray(input)
     ? input.map((t) => (typeof t === "string" ? t.trim() : "")).filter(Boolean)
-    : input.split(/\s+/).map((t) => t.trim()).filter(Boolean);
-  const uniqueTokens: string[] = [];
-  const sharedTokens: string[] = [];
+    : input
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
+  const uniqueTokens: string[] = []
+  const sharedTokens: string[] = []
   for (const tok of tokens) {
     if (tok.startsWith("#")) {
-      const name = tok.slice(1);
-      if (name && !uniqueTokens.includes(name)) uniqueTokens.push(name);
+      const name = tok.slice(1)
+      if (name && !uniqueTokens.includes(name)) uniqueTokens.push(name)
     } else if (tok.startsWith(".")) {
-      const name = tok.slice(1);
-      if (name && !sharedTokens.includes(name)) sharedTokens.push(name);
+      const name = tok.slice(1)
+      if (name && !sharedTokens.includes(name)) sharedTokens.push(name)
     } else {
       throw new Error(
         `Unprefixed token "${tok}" in selector. Tokens must start with ` +
           `"#" (unique) or "." (shared). Did you mean "#${tok}" or ".${tok}"?`,
-      );
+      )
     }
   }
-  return { uniqueTokens, sharedTokens };
+  return { uniqueTokens, sharedTokens }
 }
 
 // ─── Microtask-batched targeted-refetch dispatcher ────────────────
@@ -659,37 +654,36 @@ function parseSelectorClient(
 
 interface RefetchBatchEntry {
   /** `#`-token names (sans `#`) — become `?partials=…` on the wire. */
-  uniqueTokens: string[];
+  uniqueTokens: string[]
   /** `.`-token names (sans `.`) — become `?tags=…` on the wire. */
-  sharedTokens: string[];
-  disableTransition: boolean;
+  sharedTokens: string[]
+  disableTransition: boolean
 }
 
-let _batchRef: RefetchBatchEntry[] = [];
-let _batchPromise: { promise: Promise<void>; resolve: () => void } | null =
-  null;
+let _batchRef: RefetchBatchEntry[] = []
+let _batchPromise: { promise: Promise<void>; resolve: () => void } | null = null
 
 async function flushRefetchBatch(batch: RefetchBatchEntry[]): Promise<void> {
   const handler = (
     window as Window & {
-      __rsc_partial_refetch?: (url: string) => Promise<void>;
+      __rsc_partial_refetch?: (url: string) => Promise<void>
     }
-  ).__rsc_partial_refetch;
-  if (!handler) return;
+  ).__rsc_partial_refetch
+  if (!handler) return
 
-  const uniques = new Set<string>();
-  const shareds = new Set<string>();
-  let disableTransition = false;
+  const uniques = new Set<string>()
+  const shareds = new Set<string>()
+  let disableTransition = false
   for (const entry of batch) {
-    for (const u of entry.uniqueTokens) uniques.add(u);
-    for (const s of entry.sharedTokens) shareds.add(s);
-    if (entry.disableTransition) disableTransition = true;
+    for (const u of entry.uniqueTokens) uniques.add(u)
+    for (const s of entry.sharedTokens) shareds.add(s)
+    if (entry.disableTransition) disableTransition = true
   }
 
-  const url = new URL(window.location.href);
-  if (uniques.size > 0) url.searchParams.set("partials", [...uniques].join(","));
-  if (shareds.size > 0) url.searchParams.set("tags", [...shareds].join(","));
-  if (disableTransition) url.searchParams.set("disableTransition", "1");
+  const url = new URL(window.location.href)
+  if (uniques.size > 0) url.searchParams.set("partials", [...uniques].join(","))
+  if (shareds.size > 0) url.searchParams.set("tags", [...shareds].join(","))
+  if (disableTransition) url.searchParams.set("disableTransition", "1")
 
   // Send cached fingerprints for the non-target set so the server can
   // skip the unchanged ones via fingerprint-match placeholders. We
@@ -699,14 +693,12 @@ async function flushRefetchBatch(batch: RefetchBatchEntry[]): Promise<void> {
   // filter on the effective id works. For the rare multi-`#` case
   // we'd send the fingerprint anyway and the server would match it.
   if (uniques.size > 0) {
-    const targetPrefixes = [...uniques].map((u) => `${u}:`);
-    const cached = getCachedPartialIds().filter(
-      (t) => !targetPrefixes.some((p) => t.startsWith(p)),
-    );
-    if (cached.length > 0) url.searchParams.set("cached", cached.join(","));
+    const targetPrefixes = [...uniques].map((u) => `${u}:`)
+    const cached = getCachedPartialIds().filter((t) => !targetPrefixes.some((p) => t.startsWith(p)))
+    if (cached.length > 0) url.searchParams.set("cached", cached.join(","))
   }
 
-  await handler(url.toString());
+  await handler(url.toString())
 }
 
 /**
@@ -715,22 +707,22 @@ async function flushRefetchBatch(batch: RefetchBatchEntry[]): Promise<void> {
  * the flush completes.
  */
 function enqueueRefetch(entry: RefetchBatchEntry): Promise<void> {
-  _batchRef.push(entry);
+  _batchRef.push(entry)
   if (!_batchPromise) {
-    let resolve!: () => void;
+    let resolve!: () => void
     const promise = new Promise<void>((r) => {
-      resolve = r;
-    });
-    _batchPromise = { promise, resolve };
+      resolve = r
+    })
+    _batchPromise = { promise, resolve }
     queueMicrotask(() => {
-      const batch = _batchRef;
-      const done = _batchPromise!.resolve;
-      _batchRef = [];
-      _batchPromise = null;
-      flushRefetchBatch(batch).then(done);
-    });
+      const batch = _batchRef
+      const done = _batchPromise!.resolve
+      _batchRef = []
+      _batchPromise = null
+      flushRefetchBatch(batch).then(done)
+    })
   }
-  return _batchPromise.promise;
+  return _batchPromise.promise
 }
 
 // ─── Frame navigation ─────────────────────────────────────────────
@@ -742,7 +734,7 @@ function enqueueRefetch(entry: RefetchBatchEntry): Promise<void> {
  * return a synchronous value without a server round-trip. The server
  * session is authoritative — this is a UX cache.
  */
-const _frameUrls = new Map<string, string>();
+const _frameUrls = new Map<string, string>()
 
 /**
  * Client-side context carrying the AMBIENT frame path (outer-most to
@@ -756,11 +748,11 @@ const _frameUrls = new Map<string, string>();
  */
 export const FrameNameContext = createContext<readonly string[]>(
   Object.freeze([]) as readonly string[],
-);
+)
 
 /** Dotted canonical name for a frame path. */
 function joinFramePath(path: readonly string[]): string {
-  return path.join(".");
+  return path.join(".")
 }
 
 /**
@@ -769,7 +761,7 @@ function joinFramePath(path: readonly string[]): string {
  * back/forward can diff two entries and dispatch refetches for the
  * frames that changed. See `docs/frames-navigation.md`.
  */
-const FRAMES_KEY = "__frames";
+const FRAMES_KEY = "__frames"
 
 /**
  * Tree-shaped per-frame record on a navigation entry. Every
@@ -789,8 +781,8 @@ const FRAMES_KEY = "__frames";
  * its parent's and vice versa.
  */
 interface FrameHistoryEntry {
-  past: string[];
-  future: string[];
+  past: string[]
+  future: string[]
 }
 
 interface FrameNode {
@@ -798,14 +790,14 @@ interface FrameNode {
    *  exist only to carry `__frames` for descendants (e.g. a parent
    *  node whose children mutated first). Readers fall back to
    *  `_frameUrls`. */
-  url?: string;
-  __frameHistory?: FrameHistoryEntry;
-  __frameState?: Record<string, unknown>;
-  __frames?: Record<string, FrameNode>;
+  url?: string
+  __frameHistory?: FrameHistoryEntry
+  __frameState?: Record<string, unknown>
+  __frames?: Record<string, FrameNode>
 }
 
 interface FramesTree {
-  [localName: string]: FrameNode;
+  [localName: string]: FrameNode
 }
 
 /**
@@ -813,25 +805,22 @@ interface FramesTree {
  * Exported for `entry.browser.tsx`'s traverse listener.
  */
 export function _readFramesSnapshot(state: unknown): FramesTree {
-  if (state == null || typeof state !== "object") return {};
-  const v = (state as Record<string, unknown>)[FRAMES_KEY];
-  if (v == null || typeof v !== "object") return {};
-  return v as FramesTree;
+  if (state == null || typeof state !== "object") return {}
+  const v = (state as Record<string, unknown>)[FRAMES_KEY]
+  if (v == null || typeof v !== "object") return {}
+  return v as FramesTree
 }
 
 /** Walk the tree at `path`, returning the node or `undefined`. */
-export function _readFrameNode(
-  state: unknown,
-  path: readonly string[],
-): FrameNode | undefined {
-  let cursor: FrameNode | undefined = undefined;
-  let level: FramesTree = _readFramesSnapshot(state);
+export function _readFrameNode(state: unknown, path: readonly string[]): FrameNode | undefined {
+  let cursor: FrameNode | undefined = undefined
+  let level: FramesTree = _readFramesSnapshot(state)
   for (const name of path) {
-    cursor = level[name];
-    if (cursor == null) return undefined;
-    level = cursor.__frames ?? {};
+    cursor = level[name]
+    if (cursor == null) return undefined
+    level = cursor.__frames ?? {}
   }
-  return cursor;
+  return cursor
 }
 
 /**
@@ -843,15 +832,15 @@ export function _collectFramePaths(
   tree: FramesTree,
   prefix: readonly string[] = [],
 ): Record<string, { url: string }> {
-  const out: Record<string, { url: string }> = {};
+  const out: Record<string, { url: string }> = {}
   for (const [name, node] of Object.entries(tree)) {
-    const path = [...prefix, name];
-    if (node.url != null) out[path.join(".")] = { url: node.url };
+    const path = [...prefix, name]
+    if (node.url != null) out[path.join(".")] = { url: node.url }
     if (node.__frames) {
-      Object.assign(out, _collectFramePaths(node.__frames, path));
+      Object.assign(out, _collectFramePaths(node.__frames, path))
     }
   }
-  return out;
+  return out
 }
 
 /**
@@ -865,29 +854,29 @@ function writeFrameNode(
   patch: (node: FrameNode) => FrameNode,
 ): Record<string, unknown> {
   if (path.length === 0) {
-    throw new Error("writeFrameNode: path must be non-empty");
+    throw new Error("writeFrameNode: path must be non-empty")
   }
-  const base = (priorState as Record<string, unknown> | null) ?? {};
-  const rootTree: FramesTree = { ...(_readFramesSnapshot(priorState) ?? {}) };
+  const base = (priorState as Record<string, unknown> | null) ?? {}
+  const rootTree: FramesTree = { ...(_readFramesSnapshot(priorState) ?? {}) }
 
   // Walk into the tree, cloning each node we pass through.
-  let levelTree = rootTree;
+  let levelTree = rootTree
   for (let i = 0; i < path.length - 1; i++) {
-    const name = path[i];
-    const existing = levelTree[name] ?? {};
-    const childrenCopy = { ...(existing.__frames ?? {}) };
-    const cloned: FrameNode = { ...existing, __frames: childrenCopy };
-    levelTree[name] = cloned;
-    levelTree = childrenCopy;
+    const name = path[i]
+    const existing = levelTree[name] ?? {}
+    const childrenCopy = { ...(existing.__frames ?? {}) }
+    const cloned: FrameNode = { ...existing, __frames: childrenCopy }
+    levelTree[name] = cloned
+    levelTree = childrenCopy
   }
-  const leafName = path[path.length - 1];
-  levelTree[leafName] = patch(levelTree[leafName] ?? {});
+  const leafName = path[path.length - 1]
+  levelTree[leafName] = patch(levelTree[leafName] ?? {})
 
-  return { ...base, [FRAMES_KEY]: rootTree };
+  return { ...base, [FRAMES_KEY]: rootTree }
 }
 
 function emptyHistoryEntry(): FrameHistoryEntry {
-  return { past: [], future: [] };
+  return { past: [], future: [] }
 }
 
 /**
@@ -902,23 +891,23 @@ export function FrameNameProvider({
   initialUrl,
   children,
 }: {
-  path: readonly string[];
-  initialUrl: string;
-  children: ReactNode;
+  path: readonly string[]
+  initialUrl: string
+  children: ReactNode
 }) {
-  const key = joinFramePath(path);
+  const key = joinFramePath(path)
   useEffect(() => {
     // Client cache: so `useNavigation(path).currentEntry.url` is
     // non-null on cold load.
     if (!_frameUrls.has(key)) {
-      _frameUrls.set(key, initialUrl);
+      _frameUrls.set(key, initialUrl)
     }
-    const nav = getNavigation();
-    if (!nav) return;
-    const current = nav.currentEntry?.getState() ?? null;
-    const existing = _readFrameNode(current, path);
-    const hasUrl = existing?.url != null;
-    const hasHistory = existing?.__frameHistory != null;
+    const nav = getNavigation()
+    if (!nav) return
+    const current = nav.currentEntry?.getState() ?? null
+    const existing = _readFrameNode(current, path)
+    const hasUrl = existing?.url != null
+    const hasHistory = existing?.__frameHistory != null
     if (!hasUrl || !hasHistory) {
       nav.updateCurrentEntry({
         state: writeFrameNode(current, path, (node) => ({
@@ -926,10 +915,10 @@ export function FrameNameProvider({
           url: node.url ?? initialUrl,
           __frameHistory: node.__frameHistory ?? emptyHistoryEntry(),
         })),
-      });
+      })
     }
-  }, [key, initialUrl]);
-  return <FrameNameContext value={path}>{children}</FrameNameContext>;
+  }, [key, initialUrl])
+  return <FrameNameContext value={path}>{children}</FrameNameContext>
 }
 
 /**
@@ -944,17 +933,17 @@ export async function _dispatchFrameRefetch(
   url: string,
   options?: FrameworkNavigateOptions,
 ): Promise<void> {
-  const key = joinFramePath(path);
-  _frameUrls.set(key, url);
+  const key = joinFramePath(path)
+  _frameUrls.set(key, url)
   const handler = (
     window as Window & {
-      __rsc_partial_refetch?: (url: string) => Promise<void>;
+      __rsc_partial_refetch?: (url: string) => Promise<void>
     }
-  ).__rsc_partial_refetch;
-  if (!handler) return;
-  const refetchUrl = new URL(window.location.href);
-  refetchUrl.searchParams.set("__frame", key);
-  refetchUrl.searchParams.set("__frameUrl", url);
+  ).__rsc_partial_refetch
+  if (!handler) return
+  const refetchUrl = new URL(window.location.href)
+  refetchUrl.searchParams.set("__frame", key)
+  refetchUrl.searchParams.set("__frameUrl", url)
   // Narrow to the TOP-LEVEL frame of the path as the partials filter.
   // For a top-level frame (path `["cart"]`), that's `partials=cart` —
   // same as pre-nesting behavior. For a nested frame (path
@@ -976,11 +965,11 @@ export async function _dispatchFrameRefetch(
   // want a full render so URL-dependent content (e.g. main listing
   // switching on `?product=`) rerenders while `__frame` still
   // updates the session.
-  refetchUrl.searchParams.set("partials", path[0]);
+  refetchUrl.searchParams.set("partials", path[0])
   if (options?.disableTransition) {
-    refetchUrl.searchParams.set("disableTransition", "1");
+    refetchUrl.searchParams.set("disableTransition", "1")
   }
-  await handler(refetchUrl.toString());
+  await handler(refetchUrl.toString())
 }
 
 // ─── NavigateTarget resolution ────────────────────────────────────
@@ -997,30 +986,25 @@ export async function _dispatchFrameRefetch(
 /** Resolve a `NavigateTarget` against a base URL. */
 function applyTarget(target: NavigateTarget, base: URL): URL {
   if (typeof target === "function") {
-    const result = target(new URL(base.href));
-    return typeof result === "string" ? new URL(result, base) : result;
+    const result = target(new URL(base.href))
+    return typeof result === "string" ? new URL(result, base) : result
   }
-  if (target instanceof URL) return new URL(target.href);
-  return new URL(target, base);
+  if (target instanceof URL) return new URL(target.href)
+  return new URL(target, base)
 }
 
 function resolveWindowTarget(target: NavigateTarget): string {
-  const base = new URL(window.location.href);
-  return applyTarget(target, base).href;
+  const base = new URL(window.location.href)
+  return applyTarget(target, base).href
 }
 
 function resolveFrameTarget(target: NavigateTarget, frameName: string): string {
-  const base = new URL(
-    _frameUrls.get(frameName) ?? "/",
-    window.location.origin,
-  );
-  const next = applyTarget(target, base);
+  const base = new URL(_frameUrls.get(frameName) ?? "/", window.location.origin)
+  const next = applyTarget(target, base)
   if (next.origin !== base.origin) {
-    throw new Error(
-      `frame "${frameName}" cannot navigate cross-origin (got ${next.origin})`,
-    );
+    throw new Error(`frame "${frameName}" cannot navigate cross-origin (got ${next.origin})`)
   }
-  return next.pathname + next.search + next.hash;
+  return next.pathname + next.search + next.hash
 }
 
 // ─── FrameworkNavigationResult plumbing ───────────────────────────
@@ -1042,11 +1026,11 @@ function tightenResult(
   result: NavigationResult,
   fallbackEntry: () => NavigationHistoryEntry,
 ): FrameworkNavigationResult {
-  const committed = result.committed ?? Promise.resolve(fallbackEntry());
-  const finished = result.finished ?? Promise.resolve(fallbackEntry());
-  sinkAbort(committed);
-  sinkAbort(finished);
-  return { committed, finished };
+  const committed = result.committed ?? Promise.resolve(fallbackEntry())
+  const finished = result.finished ?? Promise.resolve(fallbackEntry())
+  sinkAbort(committed)
+  sinkAbort(finished)
+  return { committed, finished }
 }
 
 function sinkAbort(p: Promise<unknown>): void {
@@ -1056,11 +1040,11 @@ function sinkAbort(p: Promise<unknown>): void {
   // the rejection — Promise allows multiple subscribers, each receives
   // the settled value independently.
   p.catch((err) => {
-    if (err instanceof Error && err.name === "AbortError") return;
+    if (err instanceof Error && err.name === "AbortError") return
     // Re-raise anything else so it shows up in the console (matches the
     // default unhandled-rejection behavior for non-AbortErrors).
-    console.error(err);
-  });
+    console.error(err)
+  })
 }
 
 /**
@@ -1070,20 +1054,17 @@ function sinkAbort(p: Promise<unknown>): void {
  * resolves immediately with the current entry; `finished` resolves
  * after the supplied work completes.
  */
-function syntheticResult(
-  nav: Navigation,
-  work: Promise<unknown>,
-): FrameworkNavigationResult {
+function syntheticResult(nav: Navigation, work: Promise<unknown>): FrameworkNavigationResult {
   const entry = () => {
-    const e = nav.currentEntry;
-    if (!e) throw new Error("navigation has no current entry");
-    return e;
-  };
-  const committed = Promise.resolve().then(entry);
-  const finished = work.then(entry);
-  sinkAbort(committed);
-  sinkAbort(finished);
-  return { committed, finished };
+    const e = nav.currentEntry
+    if (!e) throw new Error("navigation has no current entry")
+    return e
+  }
+  const committed = Promise.resolve().then(entry)
+  const finished = work.then(entry)
+  sinkAbort(committed)
+  sinkAbort(finished)
+  return { committed, finished }
 }
 
 /**
@@ -1096,30 +1077,30 @@ function composeResult(
   fallbackEntry: () => NavigationHistoryEntry,
   extraWork: () => Promise<unknown>,
 ): FrameworkNavigationResult {
-  const committed = result.committed ?? Promise.resolve(fallbackEntry());
-  const baseFinished = result.finished ?? Promise.resolve(fallbackEntry());
+  const committed = result.committed ?? Promise.resolve(fallbackEntry())
+  const baseFinished = result.finished ?? Promise.resolve(fallbackEntry())
   const finished = (async () => {
-    const entry = await baseFinished;
-    await extraWork();
-    return entry;
-  })();
-  sinkAbort(committed);
-  sinkAbort(finished);
-  return { committed, finished };
+    const entry = await baseFinished
+    await extraWork()
+    return entry
+  })()
+  sinkAbort(committed)
+  sinkAbort(finished)
+  return { committed, finished }
 }
 
 function parseOptionsSelector(
   options: FrameworkNavigateOptions | FrameworkReloadOptions | undefined,
 ): { uniqueTokens: string[]; sharedTokens: string[] } {
-  if (!options?.selector) return { uniqueTokens: [], sharedTokens: [] };
-  return parseSelectorClient(options.selector);
+  if (!options?.selector) return { uniqueTokens: [], sharedTokens: [] }
+  return parseSelectorClient(options.selector)
 }
 
 function hasRefetchFilter(
   options: FrameworkNavigateOptions | FrameworkReloadOptions | undefined,
 ): boolean {
-  const parsed = parseOptionsSelector(options);
-  return parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0;
+  const parsed = parseOptionsSelector(options)
+  return parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0
 }
 
 // ─── Frame entry projection ───────────────────────────────────────
@@ -1134,31 +1115,30 @@ function projectEntryForFrame(
   entry: NavigationHistoryEntry | null,
   path: readonly string[],
 ): FrameNavigationHistoryEntry | null {
-  if (!entry) return null;
-  const key = joinFramePath(path);
-  const node = _readFrameNode(entry.getState(), path);
-  const frameUrl = node?.url ?? _frameUrls.get(key) ?? "/";
-  const origin =
-    typeof window !== "undefined" ? window.location.origin : "http://_";
-  const absoluteUrl = new URL(frameUrl, origin).href;
+  if (!entry) return null
+  const key = joinFramePath(path)
+  const node = _readFrameNode(entry.getState(), path)
+  const frameUrl = node?.url ?? _frameUrls.get(key) ?? "/"
+  const origin = typeof window !== "undefined" ? window.location.origin : "http://_"
+  const absoluteUrl = new URL(frameUrl, origin).href
   return new Proxy(entry, {
     get(_target, prop, _receiver) {
-      if (prop === "url") return absoluteUrl;
+      if (prop === "url") return absoluteUrl
       if (prop === "getState") {
         return function getState(): FrameEntryState | null {
-          const bucket = _readFrameNode(entry.getState(), path)?.__frameState;
-          if (bucket == null || typeof bucket !== "object") return null;
-          return bucket as FrameEntryState;
-        };
+          const bucket = _readFrameNode(entry.getState(), path)?.__frameState
+          if (bucket == null || typeof bucket !== "object") return null
+          return bucket as FrameEntryState
+        }
       }
       // Native NavigationHistoryEntry getters (url, key, id, index,
       // sameDocument) throw "Illegal invocation" when invoked with a
       // non-NavigationHistoryEntry `this` — so we must bypass the
       // Proxy receiver and read directly off the underlying entry.
-      const value = (entry as unknown as Record<string | symbol, unknown>)[prop];
-      return typeof value === "function" ? value.bind(entry) : value;
+      const value = (entry as unknown as Record<string | symbol, unknown>)[prop]
+      return typeof value === "function" ? value.bind(entry) : value
     },
-  }) as FrameNavigationHistoryEntry;
+  }) as FrameNavigationHistoryEntry
 }
 
 // ─── SSR / no-Navigation stub ─────────────────────────────────────
@@ -1170,12 +1150,12 @@ function projectEntryForFrame(
 // client after hydration.
 
 function nullNavigation(name: string | null): FrameworkNavigation {
-  const stubEntry = null as unknown as NavigationHistoryEntry;
+  const stubEntry = null as unknown as NavigationHistoryEntry
   const stubResult: FrameworkNavigationResult = {
     committed: Promise.resolve(stubEntry),
     finished: Promise.resolve(stubEntry),
-  };
-  const stubNavResult = stubResult as unknown as NavigationResult;
+  }
+  const stubNavResult = stubResult as unknown as NavigationResult
   return {
     name,
     currentEntry: null,
@@ -1197,7 +1177,7 @@ function nullNavigation(name: string | null): FrameworkNavigation {
     onnavigate: null,
     onnavigateerror: null,
     onnavigatesuccess: null,
-  } as unknown as FrameworkNavigation;
+  } as unknown as FrameworkNavigation
 }
 
 // ─── Handle builders ──────────────────────────────────────────────
@@ -1210,18 +1190,17 @@ function nullNavigation(name: string | null): FrameworkNavigation {
  * else passes straight through to the browser.
  */
 function buildWindowNavigationHandle(): FrameworkNavigation {
-  const nav = getNavigation();
-  if (!nav) return nullNavigation(null);
+  const nav = getNavigation()
+  if (!nav) return nullNavigation(null)
 
   const windowNavigate = (
     target: NavigateTarget,
     options?: FrameworkNavigateOptions,
   ): FrameworkNavigationResult => {
-    const url = resolveWindowTarget(target);
-    const parsed = parseOptionsSelector(options);
-    const filtered =
-      parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0;
-    const silent = options?.silent === true;
+    const url = resolveWindowTarget(target)
+    const parsed = parseOptionsSelector(options)
+    const filtered = parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0
+    const silent = options?.silent === true
     if (filtered || silent) {
       // URL-only update — the page-level listener sees the branded
       // info and declines to intercept, so no refetch fires from its
@@ -1231,8 +1210,8 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
         history: options?.history ?? "push",
         state: options?.state ?? null,
         info: makeSilentInfo("window"),
-      });
-      if (silent) return tightenResult(result, () => nav.currentEntry!);
+      })
+      if (silent) return tightenResult(result, () => nav.currentEntry!)
       return composeResult(
         result,
         () => nav.currentEntry!,
@@ -1242,7 +1221,7 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
             sharedTokens: parsed.sharedTokens,
             disableTransition: options?.disableTransition ?? false,
           }),
-      );
+      )
     }
     return tightenResult(
       nav.navigate(url, {
@@ -1251,13 +1230,11 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
         info: options?.info,
       }),
       () => nav.currentEntry!,
-    );
-  };
+    )
+  }
 
-  const windowReload = (
-    options?: FrameworkReloadOptions,
-  ): FrameworkNavigationResult => {
-    const parsed = parseOptionsSelector(options);
+  const windowReload = (options?: FrameworkReloadOptions): FrameworkNavigationResult => {
+    const parsed = parseOptionsSelector(options)
     if (parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0) {
       return syntheticResult(
         nav,
@@ -1266,28 +1243,28 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
           sharedTokens: parsed.sharedTokens,
           disableTransition: options?.disableTransition ?? false,
         }),
-      );
+      )
     }
     return tightenResult(
       nav.reload({ state: options?.state, info: options?.info }),
       () => nav.currentEntry!,
-    );
-  };
+    )
+  }
 
   return new Proxy(nav, {
     get(_target, prop, _receiver) {
-      if (prop === "name") return null;
-      if (prop === "navigate") return windowNavigate;
-      if (prop === "reload") return windowReload;
+      if (prop === "name") return null
+      if (prop === "navigate") return windowNavigate
+      if (prop === "reload") return windowReload
       // Native Navigation getters (currentEntry, canGoBack,
       // canGoForward, transition, activation) throw "Illegal
       // invocation" when invoked with a non-Navigation `this`, so we
       // have to bypass the Proxy receiver and read directly off
       // `window.navigation`.
-      const value = (nav as unknown as Record<string | symbol, unknown>)[prop];
-      return typeof value === "function" ? value.bind(nav) : value;
+      const value = (nav as unknown as Record<string | symbol, unknown>)[prop]
+      return typeof value === "function" ? value.bind(nav) : value
     },
-  }) as unknown as FrameworkNavigation;
+  }) as unknown as FrameworkNavigation
 }
 
 /**
@@ -1310,40 +1287,38 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
  * state under `__frameState[name]`.
  */
 function buildFrameHandle(path: readonly string[]): FrameworkNavigation {
-  const nav = getNavigation();
-  const key = joinFramePath(path);
-  if (!nav) return nullNavigation(key);
+  const nav = getNavigation()
+  const key = joinFramePath(path)
+  if (!nav) return nullNavigation(key)
   if (path.length === 0) {
-    throw new Error("buildFrameHandle: path must be non-empty");
+    throw new Error("buildFrameHandle: path must be non-empty")
   }
 
   const frameNavigate = (
     target: NavigateTarget,
     options?: FrameworkNavigateOptions,
   ): FrameworkNavigationResult => {
-    const url = resolveFrameTarget(target, key);
-    const historyMode: NavigationHistoryBehavior = options?.history ?? "auto";
+    const url = resolveFrameTarget(target, key)
+    const historyMode: NavigationHistoryBehavior = options?.history ?? "auto"
 
-    const priorState =
-      (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {};
-    const priorNode = _readFrameNode(priorState, path);
+    const priorState = (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
+    const priorNode = _readFrameNode(priorState, path)
     // Prior URL for this frame — prefer the entry snapshot, fall back
     // to the module-level cache for first nav before FrameNameProvider
     // seeded the entry.
-    const priorUrl = priorNode?.url ?? _frameUrls.get(key) ?? null;
+    const priorUrl = priorNode?.url ?? _frameUrls.get(key) ?? null
 
     // History update policy per mode:
     //   auto  — push prior URL onto past, clear future. (DEFAULT)
     //   push  — same push on the per-frame stack, PLUS a new browser
     //           entry (drawer URLs the user wants in browser history).
     //   replace — no change to the per-frame stack (pure URL sync).
-    const pushToHistory = historyMode === "auto" || historyMode === "push";
+    const pushToHistory = historyMode === "auto" || historyMode === "push"
 
-    const userState =
-      (options?.state as Record<string, unknown> | null) ?? null;
-    const baseState = { ...priorState, ...(userState ?? {}) };
+    const userState = (options?.state as Record<string, unknown> | null) ?? null
+    const baseState = { ...priorState, ...(userState ?? {}) }
     const nextState = writeFrameNode(baseState, path, (node) => {
-      const existingHistory = node.__frameHistory ?? emptyHistoryEntry();
+      const existingHistory = node.__frameHistory ?? emptyHistoryEntry()
       const nextHistory: FrameHistoryEntry = pushToHistory
         ? {
             past:
@@ -1352,25 +1327,22 @@ function buildFrameHandle(path: readonly string[]): FrameworkNavigation {
                 : existingHistory.past,
             future: [],
           }
-        : existingHistory;
-      return { ...node, url, __frameHistory: nextHistory };
-    });
+        : existingHistory
+      return { ...node, url, __frameHistory: nextHistory }
+    })
 
     // Seed the client-side frame-URL cache BEFORE we touch Navigation —
     // `nav.navigate`/`updateCurrentEntry` fires events synchronously
     // that bump reactive consumers; waiting would have them read a
     // stale URL.
-    _frameUrls.set(key, url);
+    _frameUrls.set(key, url)
 
     if (historyMode === "auto") {
       // No new browser entry. updateCurrentEntry patches state in
       // place, fires currententrychange (consumers update) but NOT
       // navigate — no silent-info bypass needed.
-      nav.updateCurrentEntry({ state: nextState });
-      return syntheticResult(
-        nav,
-        _dispatchFrameRefetch(path, url, options),
-      );
+      nav.updateCurrentEntry({ state: nextState })
+      return syntheticResult(nav, _dispatchFrameRefetch(path, url, options))
     }
 
     // Explicit push/replace — browser entry grows/replaces. Use the
@@ -1380,129 +1352,115 @@ function buildFrameHandle(path: readonly string[]): FrameworkNavigation {
       history: historyMode,
       state: nextState,
       info: makeSilentInfo("frame", key),
-    });
+    })
     return composeResult(
       result,
       () => nav.currentEntry!,
       () => _dispatchFrameRefetch(path, url, options),
-    );
-  };
+    )
+  }
 
-  const frameReload = (
-    options?: FrameworkReloadOptions,
-  ): FrameworkNavigationResult => {
-    const url = _frameUrls.get(key);
-    if (!url) return syntheticResult(nav, Promise.resolve());
-    return syntheticResult(
-      nav,
-      _dispatchFrameRefetch(path, url, options),
-    );
-  };
+  const frameReload = (options?: FrameworkReloadOptions): FrameworkNavigationResult => {
+    const url = _frameUrls.get(key)
+    if (!url) return syntheticResult(nav, Promise.resolve())
+    return syntheticResult(nav, _dispatchFrameRefetch(path, url, options))
+  }
 
   /**
    * Move within the per-entry `__frameHistory` arrays. No browser
    * traversal — pure state patch via `updateCurrentEntry` plus a
    * refetch dispatch. Missing / empty stack → no-op with stub result.
    */
-  const frameTraverseInState = (
-    direction: "back" | "forward",
-  ): NavigationResult => {
-    const stub = null as unknown as NavigationHistoryEntry;
-    const priorState =
-      (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {};
-    const priorNode = _readFrameNode(priorState, path);
-    const history = priorNode?.__frameHistory ?? emptyHistoryEntry();
-    const currentUrl = priorNode?.url ?? _frameUrls.get(key) ?? null;
+  const frameTraverseInState = (direction: "back" | "forward"): NavigationResult => {
+    const stub = null as unknown as NavigationHistoryEntry
+    const priorState = (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
+    const priorNode = _readFrameNode(priorState, path)
+    const history = priorNode?.__frameHistory ?? emptyHistoryEntry()
+    const currentUrl = priorNode?.url ?? _frameUrls.get(key) ?? null
 
-    let nextUrl: string | null = null;
-    let nextPast = history.past;
-    let nextFuture = history.future;
+    let nextUrl: string | null = null
+    let nextPast = history.past
+    let nextFuture = history.future
     if (direction === "back") {
       if (history.past.length === 0) {
         return {
           committed: Promise.resolve(stub),
           finished: Promise.resolve(stub),
-        };
+        }
       }
-      nextUrl = history.past[history.past.length - 1];
-      nextPast = history.past.slice(0, -1);
-      nextFuture =
-        currentUrl != null ? [currentUrl, ...history.future] : history.future;
+      nextUrl = history.past[history.past.length - 1]
+      nextPast = history.past.slice(0, -1)
+      nextFuture = currentUrl != null ? [currentUrl, ...history.future] : history.future
     } else {
       if (history.future.length === 0) {
         return {
           committed: Promise.resolve(stub),
           finished: Promise.resolve(stub),
-        };
+        }
       }
-      nextUrl = history.future[0];
-      nextFuture = history.future.slice(1);
-      nextPast =
-        currentUrl != null ? [...history.past, currentUrl] : history.past;
+      nextUrl = history.future[0]
+      nextFuture = history.future.slice(1)
+      nextPast = currentUrl != null ? [...history.past, currentUrl] : history.past
     }
 
-    const resolvedNextUrl = nextUrl;
+    const resolvedNextUrl = nextUrl
     const nextState = writeFrameNode(priorState, path, (node) => ({
       ...node,
       url: resolvedNextUrl,
       __frameHistory: { past: nextPast, future: nextFuture },
-    }));
+    }))
 
-    _frameUrls.set(key, resolvedNextUrl);
-    nav.updateCurrentEntry({ state: nextState });
-    const work = _dispatchFrameRefetch(path, resolvedNextUrl);
-    const resolveEntry = () => nav.currentEntry ?? stub;
+    _frameUrls.set(key, resolvedNextUrl)
+    nav.updateCurrentEntry({ state: nextState })
+    const work = _dispatchFrameRefetch(path, resolvedNextUrl)
+    const resolveEntry = () => nav.currentEntry ?? stub
     return {
       committed: Promise.resolve(resolveEntry()),
       finished: work.then(resolveEntry),
-    };
-  };
+    }
+  }
 
-  const frameUpdateCurrentEntry = (
-    options: NavigationUpdateCurrentEntryOptions,
-  ): void => {
-    const current =
-      (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {};
-    const patch = options.state as Record<string, unknown> | null;
+  const frameUpdateCurrentEntry = (options: NavigationUpdateCurrentEntryOptions): void => {
+    const current = (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
+    const patch = options.state as Record<string, unknown> | null
     const next = writeFrameNode(current, path, (node) => ({
       ...node,
       __frameState: { ...(node.__frameState ?? {}), ...(patch ?? {}) },
-    }));
-    nav.updateCurrentEntry({ state: next });
-  };
+    }))
+    nav.updateCurrentEntry({ state: next })
+  }
 
   return new Proxy(nav, {
     get(target, prop, receiver) {
-      if (prop === "name") return key;
-      if (prop === "navigate") return frameNavigate;
-      if (prop === "reload") return frameReload;
-      if (prop === "back") return () => frameTraverseInState("back");
-      if (prop === "forward") return () => frameTraverseInState("forward");
+      if (prop === "name") return key
+      if (prop === "navigate") return frameNavigate
+      if (prop === "reload") return frameReload
+      if (prop === "back") return () => frameTraverseInState("back")
+      if (prop === "forward") return () => frameTraverseInState("forward")
       if (prop === "canGoBack") {
-        const node = _readFrameNode(target.currentEntry?.getState(), path);
-        return (node?.__frameHistory?.past.length ?? 0) > 0;
+        const node = _readFrameNode(target.currentEntry?.getState(), path)
+        return (node?.__frameHistory?.past.length ?? 0) > 0
       }
       if (prop === "canGoForward") {
-        const node = _readFrameNode(target.currentEntry?.getState(), path);
-        return (node?.__frameHistory?.future.length ?? 0) > 0;
+        const node = _readFrameNode(target.currentEntry?.getState(), path)
+        return (node?.__frameHistory?.future.length ?? 0) > 0
       }
-      if (prop === "currentEntry")
-        return projectEntryForFrame(target.currentEntry, path);
+      if (prop === "currentEntry") return projectEntryForFrame(target.currentEntry, path)
       if (prop === "entries") {
         return () =>
           target
             .entries()
             .map((e) => projectEntryForFrame(e, path))
-            .filter((e): e is FrameNavigationHistoryEntry => e !== null);
+            .filter((e): e is FrameNavigationHistoryEntry => e !== null)
       }
-      if (prop === "updateCurrentEntry") return frameUpdateCurrentEntry;
+      if (prop === "updateCurrentEntry") return frameUpdateCurrentEntry
       // See window-handle Proxy above — native Navigation getters
       // throw "Illegal invocation" when reached via the Proxy
       // receiver, so we read directly off `target` (window.navigation).
-      const value = (target as unknown as Record<string | symbol, unknown>)[prop];
-      return typeof value === "function" ? value.bind(target) : value;
+      const value = (target as unknown as Record<string | symbol, unknown>)[prop]
+      return typeof value === "function" ? value.bind(target) : value
     },
-  }) as unknown as FrameworkNavigation;
+  }) as unknown as FrameworkNavigation
 }
 
 /**
@@ -1517,19 +1475,15 @@ function buildFrameHandle(path: readonly string[]): FrameworkNavigation {
  * component methods, module scope, callbacks invoked from
  * `useActivate` subscriptions — where the hook can't reach).
  */
-export function _frame(
-  pathOrName: string | readonly string[],
-): FrameworkNavigation {
-  const path = Array.isArray(pathOrName)
-    ? pathOrName
-    : splitFramePath(pathOrName as string);
-  return buildFrameHandle(path);
+export function _frame(pathOrName: string | readonly string[]): FrameworkNavigation {
+  const path = Array.isArray(pathOrName) ? pathOrName : splitFramePath(pathOrName as string)
+  return buildFrameHandle(path)
 }
 
 /** Parse a dotted frame path into its component names. Empty → []. */
 function splitFramePath(dotted: string): readonly string[] {
-  if (!dotted) return [];
-  return dotted.split(".").filter(Boolean);
+  if (!dotted) return []
+  return dotted.split(".").filter(Boolean)
 }
 
 /**
@@ -1549,7 +1503,7 @@ function splitFramePath(dotted: string): readonly string[] {
  * syncs don't trigger a full page refetch.
  */
 export function _windowNav(): FrameworkNavigation {
-  return buildWindowNavigationHandle();
+  return buildWindowNavigationHandle()
 }
 
 /**
@@ -1574,30 +1528,29 @@ export function _windowNav(): FrameworkNavigation {
  * "reload" icon) works at the page level and per-frame.
  */
 export function useNavigation(name?: string): FrameworkNavigation {
-  const ambient = useContext(FrameNameContext);
-  const resolvedPath: readonly string[] =
-    name != null ? splitFramePath(name) : ambient;
+  const ambient = useContext(FrameNameContext)
+  const resolvedPath: readonly string[] = name != null ? splitFramePath(name) : ambient
   // Stable key for memoization — names may be dotted, ambients may be
   // distinct arrays that encode the same path across renders.
-  const resolvedKey = joinFramePath(resolvedPath);
+  const resolvedKey = joinFramePath(resolvedPath)
   // Bump on any navigation so computed getters (`currentUrl`,
   // `canGoBack`, `entryState`) re-read after a commit. Runs for all
   // navigation types — framework-silent window navs and frame navs
   // alike — because both surface new client-side state that reactive
   // consumers (e.g. a header button reading `frameNav.currentUrl`)
   // need to pick up.
-  const [, tick] = useState(0);
+  const [, tick] = useState(0)
   useEffect(() => {
-    const nav = getNavigation();
-    if (!nav) return;
-    const bump = () => tick((n) => n + 1);
-    nav.addEventListener("currententrychange", bump);
-    nav.addEventListener("navigate", bump);
+    const nav = getNavigation()
+    if (!nav) return
+    const bump = () => tick((n) => n + 1)
+    nav.addEventListener("currententrychange", bump)
+    nav.addEventListener("navigate", bump)
     return () => {
-      nav.removeEventListener("currententrychange", bump);
-      nav.removeEventListener("navigate", bump);
-    };
-  }, []);
+      nav.removeEventListener("currententrychange", bump)
+      nav.removeEventListener("navigate", bump)
+    }
+  }, [])
   // Memoize the handle so a consumer effect that depends on it
   // doesn't re-run on every render. The handle's getters read live
   // state, so memoizing doesn't stale the values — and keeping the
@@ -1610,14 +1563,12 @@ export function useNavigation(name?: string): FrameworkNavigation {
   // fresh props.)
   return useMemo(
     () =>
-      resolvedPath.length > 0
-        ? buildFrameHandle(resolvedPath)
-        : buildWindowNavigationHandle(),
+      resolvedPath.length > 0 ? buildFrameHandle(resolvedPath) : buildWindowNavigationHandle(),
     // resolvedKey captures any change to the path — resolvedPath is a
     // fresh array each render, so we can't use it as a dep directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [resolvedKey],
-  );
+  )
 }
 
 /**
@@ -1659,32 +1610,29 @@ export function useActivate(
   subscribe: (fire: () => void) => (() => void) | void,
   opts?: { once?: boolean },
 ): void {
-  const once = opts?.once ?? true;
-  const firedRef = useRef(false);
-  const subscribeRef = useRef(subscribe);
-  subscribeRef.current = subscribe;
+  const once = opts?.once ?? true
+  const firedRef = useRef(false)
+  const subscribeRef = useRef(subscribe)
+  subscribeRef.current = subscribe
 
   useEffect(() => {
     const cleanup = subscribeRef.current(() => {
-      if (once && firedRef.current) return;
-      firedRef.current = true;
+      if (once && firedRef.current) return
+      firedRef.current = true
       void enqueueRefetch({
         uniqueTokens: [partialId],
         sharedTokens: [],
         disableTransition: false,
-      });
-    });
+      })
+    })
     return () => {
-      if (typeof cleanup === "function") cleanup();
-    };
-  }, [partialId, once]);
+      if (typeof cleanup === "function") cleanup()
+    }
+  }, [partialId, once])
 }
 
-export function PartialsClient({
-  mode = "cache",
-  children,
-}: PartialsClientProps) {
-  const cache = _cache;
+export function PartialsClient({ mode = "cache", children }: PartialsClientProps) {
+  const cache = _cache
 
   // ── Streaming mode ──────────────────────────────────────────────────
   //
@@ -1719,10 +1667,10 @@ export function PartialsClient({
     // fresh but whose own region was fp-skipped — leaving
     // `substituteNested` no entry to fill the placeholder with on the
     // next render.
-    const seen = new Set<string>();
-    cacheFromStreamingChildren(children, cache, seen);
-    const derived = deriveTemplate(children);
-    _template = derived;
+    const seen = new Set<string>()
+    cacheFromStreamingChildren(children, cache, seen)
+    const derived = deriveTemplate(children)
+    _template = derived
 
     // Expand `seen` with nested partial ids reachable through cached
     // wrappers. When the server fp-skips an OUTER partial (e.g.
@@ -1737,25 +1685,24 @@ export function PartialsClient({
     // Frontier-style BFS: each newly-discovered id can itself be a
     // wrapper containing more nested partials, so harvest until no
     // new ids appear.
-    let frontier: string[] = [...seen];
+    let frontier: string[] = [...seen]
     while (frontier.length > 0) {
-      const next: string[] = [];
+      const next: string[] = []
       for (const id of frontier) {
-        const wrapper = cache.get(id);
-        if (!wrapper) continue;
-        const inner = (wrapper as { props?: { children?: ReactNode } })
-          .props?.children;
-        if (inner == null) continue;
-        const nested = new Set<string>();
-        harvestPartialIds(inner, nested);
+        const wrapper = cache.get(id)
+        if (!wrapper) continue
+        const inner = (wrapper as { props?: { children?: ReactNode } }).props?.children
+        if (inner == null) continue
+        const nested = new Set<string>()
+        harvestPartialIds(inner, nested)
         for (const nid of nested) {
           if (!seen.has(nid)) {
-            seen.add(nid);
-            next.push(nid);
+            seen.add(nid)
+            next.push(nid)
           }
         }
       }
-      frontier = next;
+      frontier = next
     }
 
     // Drop entries from prior routes that don't appear on the new
@@ -1763,14 +1710,14 @@ export function PartialsClient({
     // tree, AND nested ids harvested from cached wrappers, so any
     // partial still backing the rendered tree survives.
     for (const id of [..._cache.keys()]) {
-      if (!seen.has(id)) _cache.delete(id);
+      if (!seen.has(id)) _cache.delete(id)
     }
     for (const id of [..._fingerprints.keys()]) {
-      if (!seen.has(id)) _fingerprints.delete(id);
+      if (!seen.has(id)) _fingerprints.delete(id)
     }
 
-    const rendered = renderTemplate(derived, cache);
-    return renderChildren(rendered);
+    const rendered = renderTemplate(derived, cache)
+    return renderChildren(rendered)
   }
 
   // ── Cache mode ──────────────────────────────────────────────────────
@@ -1785,10 +1732,10 @@ export function PartialsClient({
   // inner partial would cache only the outer wrapper; a subsequent
   // same-URL refetch (which emits a placeholder for the inner) would
   // find no top-level cache entry to fill the placeholder.
-  cacheFromStreamingChildren(children, cache);
+  cacheFromStreamingChildren(children, cache)
 
-  const rendered = renderTemplate(_template, cache);
-  return renderChildren(rendered);
+  const rendered = renderTemplate(_template, cache)
+  return renderChildren(rendered)
 }
 
 /**
@@ -1801,6 +1748,5 @@ export function PartialsClient({
  * `partialFromSnapshot`).
  */
 function renderChildren(rendered: ReactNode[]): ReactNode {
-  return React.createElement(React.Fragment, null, ...rendered);
+  return React.createElement(React.Fragment, null, ...rendered)
 }
-

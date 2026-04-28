@@ -4,41 +4,41 @@ import {
   setServerCallback,
   createTemporaryReferenceSet,
   encodeReply,
-} from "@vitejs/plugin-rsc/browser";
-import React from "react";
-import { createRoot, hydrateRoot } from "react-dom/client";
-import { rscStream } from "rsc-html-stream/client";
-import type { RscPayload } from "./entry.rsc";
-import { GlobalErrorBoundary } from "./error-boundary";
-import { createRscRenderRequest } from "./request";
+} from "@vitejs/plugin-rsc/browser"
+import React from "react"
+import { createRoot, hydrateRoot } from "react-dom/client"
+import { rscStream } from "rsc-html-stream/client"
+import type { RscPayload } from "./entry.rsc"
+import { GlobalErrorBoundary } from "./error-boundary"
+import { createRscRenderRequest } from "./request"
 import {
   _collectFramePaths,
   _dispatchFrameRefetch,
   _readFramesSnapshot,
   getCachedPartialIds,
   isFrameworkSilentInfo,
-} from "../lib/partial-client";
-import { getNavigation } from "./navigation-api.ts";
+} from "../lib/partial-client"
+import { getNavigation } from "./navigation-api.ts"
 
 async function main() {
-  let setPayload: (v: RscPayload) => void;
-  let setPayloadRaw: (v: RscPayload) => void;
+  let setPayload: (v: RscPayload) => void
+  let setPayloadRaw: (v: RscPayload) => void
 
-  const initialPayload = await createFromReadableStream<RscPayload>(rscStream);
+  const initialPayload = await createFromReadableStream<RscPayload>(rscStream)
 
   function BrowserRoot() {
-    const [payload, setPayload_] = React.useState(initialPayload);
+    const [payload, setPayload_] = React.useState(initialPayload)
 
     React.useEffect(() => {
-      setPayload = (v) => React.startTransition(() => setPayload_(v));
-      setPayloadRaw = setPayload_;
-    }, [setPayload_]);
+      setPayload = (v) => React.startTransition(() => setPayload_(v))
+      setPayloadRaw = setPayload_
+    }, [setPayload_])
 
     React.useEffect(() => {
-      return listenNavigation((url) => fetchRscPayload(url));
-    }, []);
+      return listenNavigation((url) => fetchRscPayload(url))
+    }, [])
 
-    return payload.root;
+    return payload.root
   }
 
   async function fetchRscPayload(overrideUrl?: string) {
@@ -46,11 +46,11 @@ async function main() {
     // If the caller already set ?cached= (e.g. a targeted refetch built by
     // `useNavigation().reload({selector})`), respect that instead of overwriting
     // with the full list.
-    const url = new URL(overrideUrl ?? window.location.href);
+    const url = new URL(overrideUrl ?? window.location.href)
     if (!url.searchParams.has("cached")) {
-      const cachedIds = getCachedPartialIds();
+      const cachedIds = getCachedPartialIds()
       if (cachedIds.length > 0) {
-        url.searchParams.set("cached", cachedIds.join(","));
+        url.searchParams.set("cached", cachedIds.join(","))
       }
     }
     // Suspense keys are bare partial ids — React reconciles each
@@ -69,14 +69,14 @@ async function main() {
     //     chunks as they arrive, giving per-row progressive streaming.
     //     Good for search / filter results where per-row reveal
     //     improves perceived latency.
-    const disableTransition = url.searchParams.has("disableTransition");
-    const renderRequest = createRscRenderRequest(url.toString());
-    const response = await fetch(renderRequest);
-    const payload = await createFromReadableStream<RscPayload>(response.body!);
+    const disableTransition = url.searchParams.has("disableTransition")
+    const renderRequest = createRscRenderRequest(url.toString())
+    const response = await fetch(renderRequest)
+    const payload = await createFromReadableStream<RscPayload>(response.body!)
     if (disableTransition) {
-      setPayloadRaw(payload);
+      setPayloadRaw(payload)
     } else {
-      setPayload(payload);
+      setPayload(payload)
     }
   }
 
@@ -85,31 +85,30 @@ async function main() {
   // Exposed on `window` directly to avoid module-instance duplication
   // between the browser entry bundle and "use client" component
   // bundles.
-  (window as any).__rsc_partial_refetch = (url: string) =>
-    fetchRscPayload(url);
+  ;(window as any).__rsc_partial_refetch = (url: string) => fetchRscPayload(url)
 
   setServerCallback(async (id, args) => {
-    const temporaryReferences = createTemporaryReferenceSet();
+    const temporaryReferences = createTemporaryReferenceSet()
     // Include cached partial fingerprints so the server can skip
     // unchanged partials after a server action (same as navigation).
-    const actionUrl = new URL(window.location.href);
-    const cachedIds = getCachedPartialIds();
+    const actionUrl = new URL(window.location.href)
+    const cachedIds = getCachedPartialIds()
     if (cachedIds.length > 0) {
-      actionUrl.searchParams.set("cached", cachedIds.join(","));
+      actionUrl.searchParams.set("cached", cachedIds.join(","))
     }
     const renderRequest = createRscRenderRequest(actionUrl.toString(), {
       id,
       body: await encodeReply(args, { temporaryReferences }),
-    });
+    })
     const payload = await createFromFetch<RscPayload>(fetch(renderRequest), {
       temporaryReferences,
-    });
+    })
 
-    setPayload(payload);
-    const { ok, data } = payload.returnValue!;
-    if (!ok) throw data;
-    return data;
-  });
+    setPayload(payload)
+    const { ok, data } = payload.returnValue!
+    if (!ok) throw data
+    return data
+  })
 
   const browserRoot = (
     <React.StrictMode>
@@ -117,43 +116,43 @@ async function main() {
         <BrowserRoot />
       </GlobalErrorBoundary>
     </React.StrictMode>
-  );
+  )
 
   if ("__NO_HYDRATE" in globalThis) {
-    createRoot(document).render(browserRoot);
+    createRoot(document).render(browserRoot)
   } else {
     hydrateRoot(document, browserRoot, {
       formState: initialPayload.formState,
       onRecoverableError: silenceTornStream,
-    });
+    })
   }
 
   if (import.meta.hot) {
     import.meta.hot.on("rsc:update", () => {
       fetchRscPayload().catch((err) => {
-        if (err instanceof Error && err.name === "AbortError") return;
-        console.error(err);
-      });
-    });
+        if (err instanceof Error && err.name === "AbortError") return
+        console.error(err)
+      })
+    })
   }
 }
 
 function listenNavigation(onNavigation: (url: string) => Promise<void>) {
-  const nav = getNavigation();
-  if (!nav) return () => {};
+  const nav = getNavigation()
+  if (!nav) return () => {}
   const handler = (event: NavigateEvent) => {
-    if (!event.canIntercept) return;
-    if (event.hashChange || event.downloadRequest !== null) return;
+    if (!event.canIntercept) return
+    if (event.hashChange || event.downloadRequest !== null) return
     // `formMethod` isn't on TS 6's NavigateEvent type but is in the
     // spec (and runtime). Reach it via a narrow cast to avoid a type
     // error without broadening `event`'s type everywhere else.
-    if ((event as { formMethod?: string | null }).formMethod === "POST") return;
+    if ((event as { formMethod?: string | null }).formMethod === "POST") return
     // `window.location.reload()` fires a navigate event with
     // `navigationType: "reload"` that the browser *can* intercept as
     // same-document. Intercepting defeats the whole point of a reload
     // (it re-runs against the existing module state). Pass it through
     // so the browser does a real cross-document reload.
-    if (event.navigationType === "reload") return;
+    if (event.navigationType === "reload") return
 
     // Framework-internal URL syncs stamp a branded `info` payload on
     // their `navigation.navigate(...)` call. Two variants:
@@ -170,8 +169,8 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
     // a filter that updates a frame URL, etc.) loses focus on every
     // keystroke.
     if (isFrameworkSilentInfo(event.info)) {
-      event.intercept({ focusReset: "manual" });
-      return;
+      event.intercept({ focusReset: "manual" })
+      return
     }
 
     // Browser back/forward. Two axes need handling on a traverse:
@@ -193,66 +192,58 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
     // If the URL didn't change and only frames changed, skip the full
     // render and fire targeted per-frame refetches instead.
     if (event.navigationType === "traverse") {
-      const destPaths = _collectFramePaths(
-        _readFramesSnapshot(event.destination.getState?.()),
-      );
+      const destPaths = _collectFramePaths(_readFramesSnapshot(event.destination.getState?.()))
       const currentPaths = _collectFramePaths(
         _readFramesSnapshot(nav.currentEntry?.getState() ?? null),
-      );
-      const names = new Set([
-        ...Object.keys(destPaths),
-        ...Object.keys(currentPaths),
-      ]);
+      )
+      const names = new Set([...Object.keys(destPaths), ...Object.keys(currentPaths)])
       // Each diff entry carries the dotted frame path and the destination URL.
-      const diffs: Array<{ key: string; url: string }> = [];
+      const diffs: Array<{ key: string; url: string }> = []
       for (const name of names) {
-        const dest = destPaths[name]?.url;
-        const cur = currentPaths[name]?.url;
-        if (dest && dest !== cur) diffs.push({ key: name, url: dest });
+        const dest = destPaths[name]?.url
+        const cur = currentPaths[name]?.url
+        if (dest && dest !== cur) diffs.push({ key: name, url: dest })
       }
-      const urlChanged = event.destination.url !== window.location.href;
+      const urlChanged = event.destination.url !== window.location.href
       if (urlChanged) {
         event.intercept({
           handler: () =>
             swallowNavigationAbort(async () => {
-              const url = new URL(event.destination.url);
+              const url = new URL(event.destination.url)
               for (const d of diffs) {
-                url.searchParams.append("__frame", d.key);
-                url.searchParams.append("__frameUrl", d.url);
+                url.searchParams.append("__frame", d.key)
+                url.searchParams.append("__frameUrl", d.url)
               }
               const handler = (
                 window as Window & {
-                  __rsc_partial_refetch?: (url: string) => Promise<void>;
+                  __rsc_partial_refetch?: (url: string) => Promise<void>
                 }
-              ).__rsc_partial_refetch;
-              if (handler) await handler(url.toString());
+              ).__rsc_partial_refetch
+              if (handler) await handler(url.toString())
             }),
-        });
-        return;
+        })
+        return
       }
       if (diffs.length > 0) {
         event.intercept({
           handler: () =>
             swallowNavigationAbort(() =>
-              Promise.all(
-                diffs.map((d) =>
-                  _dispatchFrameRefetch(d.key.split("."), d.url),
-                ),
-              ).then(() => undefined),
+              Promise.all(diffs.map((d) => _dispatchFrameRefetch(d.key.split("."), d.url))).then(
+                () => undefined,
+              ),
             ),
-        });
-        return;
+        })
+        return
       }
     }
 
     event.intercept({
-      handler: () =>
-        swallowNavigationAbort(() => onNavigation(event.destination.url)),
-    });
-  };
+      handler: () => swallowNavigationAbort(() => onNavigation(event.destination.url)),
+    })
+  }
 
-  nav.addEventListener("navigate", handler);
-  return () => nav.removeEventListener("navigate", handler);
+  nav.addEventListener("navigate", handler)
+  return () => nav.removeEventListener("navigate", handler)
 }
 
 // When a client-initiated navigation (or the in-flight refetch for the
@@ -264,27 +255,23 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
 function silenceTornStream(error: unknown): void {
   if (
     error instanceof Error &&
-    (error.message.includes(
-      "The server could not finish this Suspense boundary",
-    ) ||
+    (error.message.includes("The server could not finish this Suspense boundary") ||
       error.name === "AbortError")
   ) {
-    return;
+    return
   }
-  console.error(error);
+  console.error(error)
 }
 
 // Wrap a navigate-intercept handler so AbortError (newer navigation
 // supersedes an in-flight one) doesn't surface as an unhandled rejection.
-async function swallowNavigationAbort(
-  fn: () => Promise<void>,
-): Promise<void> {
+async function swallowNavigationAbort(fn: () => Promise<void>): Promise<void> {
   try {
-    await fn();
+    await fn()
   } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") return;
-    throw err;
+    if (err instanceof Error && err.name === "AbortError") return
+    throw err
   }
 }
 
-main();
+main()

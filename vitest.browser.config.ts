@@ -1,6 +1,6 @@
-import path from "node:path";
-import react from "@vitejs/plugin-react";
-import { defineProject } from "vitest/config";
+import path from "node:path"
+import react from "@vitejs/plugin-react"
+import { defineProject } from "vitest/config"
 
 /**
  * Vitest browser-mode project. Runs tests in real Chromium via the
@@ -35,4 +35,4 @@ export default defineProject({
       instances: [{ browser: "chromium" }],
     },
   },
-});
+})

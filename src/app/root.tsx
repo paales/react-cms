@@ -1,40 +1,28 @@
-import "./styles.css";
+import "./styles.css"
 // Side-effect import — binds block types to components so slots
 // (`<Children>` / `<Child>`) can resolve entries in the CMS store.
-import "./blocks/catalog.ts";
-import { PokemonPage } from "./pages/pokemon.tsx";
-import { MagentoPage } from "./pages/magento/product-list.tsx";
-import { BarePage } from "./pages/bare-stream.tsx";
-import { CacheDemoPage } from "./pages/cache-demo.tsx";
-import { DeferDemoPage } from "./pages/defer-demo.tsx";
-import { SelectorDemoPage } from "./pages/selector-demo.tsx";
-import { SentinelsDemoPage } from "./pages/sentinels-demo.tsx";
-import { FramesDemoPage } from "./pages/frames-demo.tsx";
-import { CmsDemoPage } from "./pages/cms-demo.tsx";
-import { NotFoundPage } from "./pages/not-found.tsx";
-import { EditorShell } from "../editor/shell.tsx";
-import { PartialRoot, Partial } from "../lib/partial.tsx";
-import { ROOT } from "../lib/partial-context.ts";
-import { pickRoute } from "../framework/router.ts";
-import {
-  NotFoundError,
-  RedirectError,
-  notFound,
-  redirect,
-} from "../framework/errors.ts";
-import {
-  getRequest,
-  setCookie,
-  setFrameworkControl,
-} from "../framework/context.ts";
-import {
-  EDITOR_COOKIE,
-  isEditorRequest,
-} from "../framework/cms-runtime.ts";
-import { Redirect } from "../framework/redirect-client.tsx";
-import { PartialsDebug } from "../lib/partial-debug.tsx";
-import { AppNav } from "./components/app-nav.tsx";
-import { ChatOverlay } from "./chat/chat-overlay.tsx";
+import "./blocks/catalog.ts"
+import { PokemonPage } from "./pages/pokemon.tsx"
+import { MagentoPage } from "./pages/magento/product-list.tsx"
+import { BarePage } from "./pages/bare-stream.tsx"
+import { CacheDemoPage } from "./pages/cache-demo.tsx"
+import { DeferDemoPage } from "./pages/defer-demo.tsx"
+import { SelectorDemoPage } from "./pages/selector-demo.tsx"
+import { SentinelsDemoPage } from "./pages/sentinels-demo.tsx"
+import { FramesDemoPage } from "./pages/frames-demo.tsx"
+import { CmsDemoPage } from "./pages/cms-demo.tsx"
+import { NotFoundPage } from "./pages/not-found.tsx"
+import { EditorShell } from "../editor/shell.tsx"
+import { PartialRoot, Partial } from "../lib/partial.tsx"
+import { ROOT } from "../lib/partial-context.ts"
+import { pickRoute } from "../framework/router.ts"
+import { NotFoundError, RedirectError, notFound, redirect } from "../framework/errors.ts"
+import { getRequest, setCookie, setFrameworkControl } from "../framework/context.ts"
+import { EDITOR_COOKIE, isEditorRequest } from "../framework/cms-runtime.ts"
+import { Redirect } from "../framework/redirect-client.tsx"
+import { PartialsDebug } from "../lib/partial-debug.tsx"
+import { AppNav } from "./components/app-nav.tsx"
+import { ChatOverlay } from "./chat/chat-overlay.tsx"
 
 function pickRoutedPage() {
   return pickRoute([
@@ -51,7 +39,7 @@ function pickRoutedPage() {
     ["/magento", MagentoPage],
     ["/magento/*", MagentoPage],
     ["/*", PokemonPage],
-  ]);
+  ])
 }
 
 /**
@@ -72,7 +60,7 @@ function pickRoutedPage() {
  * was caught.
  */
 export function RouteSwitch() {
-  return pickRoutedPage();
+  return pickRoutedPage()
 }
 
 /**
@@ -87,29 +75,26 @@ export function RouteSwitch() {
  * Set-Cookie header on every request.
  */
 function syncEditorCookie(): void {
-  const url = new URL(getRequest().url);
-  const flag = url.searchParams.get("editor");
+  const url = new URL(getRequest().url)
+  const flag = url.searchParams.get("editor")
   if (flag === "1") {
-    setCookie(EDITOR_COOKIE, "1");
+    setCookie(EDITOR_COOKIE, "1")
   } else if (flag === "0") {
-    setCookie(EDITOR_COOKIE, "", 0);
+    setCookie(EDITOR_COOKIE, "", 0)
   }
 }
 
 export function Root() {
   try {
-    syncEditorCookie();
-    const editorOn = isEditorRequest(getRequest());
+    syncEditorCookie()
+    const editorOn = isEditorRequest(getRequest())
     return (
       <PartialRoot>
         <html lang="en" className="light">
           <Partial parent={ROOT} selector="#head">
             <head>
               <meta charSet="UTF-8" />
-              <meta
-                name="viewport"
-                content="width=device-width, initial-scale=1.0"
-              />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
               <title>React Partials</title>
             </head>
           </Partial>
@@ -149,20 +134,20 @@ export function Root() {
           </body>
         </html>
       </PartialRoot>
-    );
+    )
   } catch (e) {
     if (e instanceof NotFoundError) {
-      setFrameworkControl({ notFound: true });
+      setFrameworkControl({ notFound: true })
       return (
         <html lang="en" className="light">
           <body>
             <NotFoundPage />
           </body>
         </html>
-      );
+      )
     }
     if (e instanceof RedirectError) {
-      setFrameworkControl({ redirect: { url: e.url, status: e.status } });
+      setFrameworkControl({ redirect: { url: e.url, status: e.status } })
       // HTML path: the entry handler catches this via the control
       // channel after `renderHTML` awaits and returns a 302 + Location
       // header before this component mounts on the client.
@@ -174,8 +159,8 @@ export function Root() {
             <Redirect url={e.url} />
           </body>
         </html>
-      );
+      )
     }
-    throw e;
+    throw e
   }
 }

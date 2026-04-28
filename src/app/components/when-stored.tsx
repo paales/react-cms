@@ -1,19 +1,19 @@
-"use client";
+"use client"
 
-import { useActivate, useNavigation } from "../../lib/partial-client.tsx";
-import type { ActivatorProps } from "../../lib/partial-component.tsx";
+import { useActivate, useNavigation } from "../../lib/partial-client.tsx"
+import type { ActivatorProps } from "../../lib/partial-component.tsx"
 
 export interface WhenStoredProps extends ActivatorProps {
   /** The storage key to watch. */
-  storageKey: string;
+  storageKey: string
   /** Which store to read from. Default `"local"`. */
-  store?: "local" | "session";
+  store?: "local" | "session"
   /**
    * Name of the URL search param to write the stored value into
    * before activating. The server reads it via `getSearchParam(as)`
    * on re-render. Default `"value"`.
    */
-  as?: string;
+  as?: string
 }
 
 /**
@@ -46,47 +46,39 @@ export interface WhenStoredProps extends ActivatorProps {
  * the value *before* mounting the Partial (e.g. on a preceding page)
  * or dispatch a custom event and use a different activator.
  */
-export function WhenStored({
-  partialId,
-  children,
-  storageKey,
-  store,
-  as,
-}: WhenStoredProps) {
+export function WhenStored({ partialId, children, storageKey, store, as }: WhenStoredProps) {
   if (!partialId) {
-    throw new Error(
-      "<WhenStored> requires `partialId`. Use it as the `defer` prop of a <Partial>.",
-    );
+    throw new Error("<WhenStored> requires `partialId`. Use it as the `defer` prop of a <Partial>.")
   }
-  const nav = useNavigation();
+  const nav = useNavigation()
 
   // `useActivate` captures `subscribe` via a ref, so returning a new
   // closure each render is fine — the ref holds the latest and the
   // underlying effect only re-registers on `[partialId, once]`.
   useActivate(partialId, (fire) => {
-    const storage = store === "session" ? sessionStorage : localStorage;
+    const storage = store === "session" ? sessionStorage : localStorage
     const tryActivate = () => {
-      const v = storage.getItem(storageKey);
-      if (v == null) return;
+      const v = storage.getItem(storageKey)
+      if (v == null) return
       if ("location" in globalThis) {
-        const url = new URL(window.location.href);
+        const url = new URL(window.location.href)
         if (url.searchParams.get(as ?? "value") !== v) {
-          url.searchParams.set(as ?? "value", v);
+          url.searchParams.set(as ?? "value", v)
           void nav.navigate(url.toString(), {
             history: "replace",
             silent: true,
-          });
+          })
         }
       }
-      fire();
-    };
-    tryActivate();
+      fire()
+    }
+    tryActivate()
     const onStorage = (e: StorageEvent) => {
-      if (e.storageArea !== storage) return;
-      if (e.key === storageKey && e.newValue != null) tryActivate();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  });
-  return <>{children}</>;
+      if (e.storageArea !== storage) return
+      if (e.key === storageKey && e.newValue != null) tryActivate()
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  })
+  return <>{children}</>
 }

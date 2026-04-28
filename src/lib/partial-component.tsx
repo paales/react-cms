@@ -1,10 +1,4 @@
-import {
-  Suspense,
-  cloneElement,
-  isValidElement,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import { Suspense, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react"
 // `cloneElement` is still used for the defer-activator injection path
 // below (cloning `<WhenVisible/>` with `{partialId}`). The Partial body
 // itself never clones content with prop overrides — there is no
@@ -17,32 +11,29 @@ import {
   setCurrentFrameScope,
   setCurrentPartialManifest,
   type ManifestScope,
-} from "../framework/context.ts";
-import {
-  cmsFingerprintContribution,
-  createCmsScope,
-} from "../framework/cms-runtime.ts";
-import { getSessionFrameUrl } from "../framework/session.ts";
+} from "../framework/context.ts"
+import { cmsFingerprintContribution, createCmsScope } from "../framework/cms-runtime.ts"
+import { getSessionFrameUrl } from "../framework/session.ts"
 import {
   getPreviousRouteSnapshots,
   invalidateSnapshot,
   registerPartial,
   type PartialSnapshot,
-} from "./partial-registry.ts";
-import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
-import { FrameNameProvider } from "./partial-client.tsx";
-import { requirePartialState } from "./partial-request-state.ts";
-import { djb2 as hashFingerprint } from "./hash.ts";
-import { Cache } from "./cache.tsx";
-import type { CacheOptions } from "./cache-options.ts";
+} from "./partial-registry.ts"
+import { PartialErrorBoundary } from "./partial-error-boundary.tsx"
+import { FrameNameProvider } from "./partial-client.tsx"
+import { requirePartialState } from "./partial-request-state.ts"
+import { djb2 as hashFingerprint } from "./hash.ts"
+import { Cache } from "./cache.tsx"
+import type { CacheOptions } from "./cache-options.ts"
 import {
   _childContext,
   _joinFrameChain,
   _setCurrentPartialContext,
   type PartialCtx,
-} from "./partial-context.ts";
+} from "./partial-context.ts"
 
-const EMPTY_PATH: readonly string[] = Object.freeze([]) as readonly string[];
+const EMPTY_PATH: readonly string[] = Object.freeze([]) as readonly string[]
 
 /**
  * Recognizable wrapper around a rendered Partial.
@@ -70,37 +61,37 @@ export function PartialBoundary({
   manifest,
   children,
 }: {
-  id: string;
+  id: string
   /** Outer-first chain of ancestor partial ids, from the `parent`
    *  prop. Recorded in the registry so the server knows the full
    *  hierarchy — see `src/lib/partial-context.ts`. */
-  parentPath: readonly string[];
+  parentPath: readonly string[]
   /** Original children of the `<Partial>` — stored in the registry so
    *  a refetch can render it directly. */
-  content: ReactNode;
-  fallback: ReactNode;
-  errorWith: ReactNode | undefined;
-  uniqueTokens: string[];
-  sharedTokens: string[];
-  cache?: CacheOptions;
+  content: ReactNode
+  fallback: ReactNode
+  errorWith: ReactNode | undefined
+  uniqueTokens: string[]
+  sharedTokens: string[]
+  cache?: CacheOptions
   /** Canonical dotted-path of every enclosing `<Partial frame>`
    *  ancestor plus this Partial's local `frame` name. Empty when
    *  this Partial doesn't open a frame. */
-  framePath: readonly string[];
-  frameUrl?: string;
+  framePath: readonly string[]
+  frameUrl?: string
   /** Stable CMS storage key, preserved so cache-mode refetches
    *  reconstruct the Partial with the same `cmsId` and descendant
    *  content accessors resolve against the same node. */
-  cmsId?: string;
+  cmsId?: string
   /** Live reference to this Partial's manifest scope's `current`
    *  set. Stored on the snapshot so the next render can resolve
    *  the recorded keys against the current request and fold them
    *  into the structural fingerprint. The set is mutated in place
    *  by tracked accessors during this render. */
-  manifest?: ReadonlySet<string>;
-  children: ReactNode;
+  manifest?: ReadonlySet<string>
+  children: ReactNode
 }): ReactNode {
-  const route = new URL(getRequest().url).pathname;
+  const route = new URL(getRequest().url).pathname
   registerPartial(route, id, {
     content,
     fallback,
@@ -113,8 +104,8 @@ export function PartialBoundary({
     parentPath,
     cmsId,
     manifest,
-  });
-  return children;
+  })
+  return children
 }
 
 /**
@@ -132,7 +123,7 @@ export function PartialBoundary({
  *   `src/app/components/when-visible.tsx` / `when-stored.tsx` in the
  *   demo app for reference implementations.
  */
-export type DeferSpec = true | ReactElement<ActivatorProps>;
+export type DeferSpec = true | ReactElement<ActivatorProps>
 
 /**
  * Contract every `defer={<Activator/>}` component must meet. Both props
@@ -142,12 +133,12 @@ export type DeferSpec = true | ReactElement<ActivatorProps>;
  */
 export interface ActivatorProps {
   /** The id of the enclosing `<Partial>`. Injected. */
-  partialId?: string;
+  partialId?: string
   /** The Partial's fallback, to render while dormant. Injected. */
-  children?: ReactNode;
+  children?: ReactNode
 }
 
-export type SelectorToken = `${"#" | "."}${string}`;
+export type SelectorToken = `${"#" | "."}${string}`
 
 export interface PartialProps {
   /**
@@ -170,7 +161,7 @@ export interface PartialProps {
    * See `src/lib/partial-context.ts` for the full pattern and the
    * async-hoisting discipline.
    */
-  parent: PartialCtx;
+  parent: PartialCtx
   /**
    * CSS-style selector identifying this Partial. A space-separated list
    * (or array) of tokens, each prefixed:
@@ -194,8 +185,8 @@ export interface PartialProps {
    * registry id; two id-less Partials with the same sorted classes
    * collide and throw — give them a distinguishing class or a `#`-token.
    */
-  selector: SelectorToken | SelectorToken[];
-  children?: ReactNode;
+  selector: SelectorToken | SelectorToken[]
+  children?: ReactNode
   /**
    * Server-side render-output caching. Shape follows HTTP
    * `Cache-Control`: `{maxAge, staleWhileRevalidate, vary?, bypass?}`.
@@ -206,7 +197,7 @@ export interface PartialProps {
    * `getSearchParam`, `getPathname`) plus any scalar values passed as
    * `cache.vary`. See `docs/cache.md`.
    */
-  cache?: CacheOptions;
+  cache?: CacheOptions
   /**
    * Framework-provided display when the Partial isn't showing its
    * real content. Two activation paths:
@@ -215,19 +206,19 @@ export interface PartialProps {
    *   2. Deferred content (`defer` prop): shown in place of children
    *      until the activator fires a refetch.
    */
-  fallback?: ReactNode;
+  fallback?: ReactNode
   /**
    * Error boundary fallback. Shown if the partial's rendering throws.
    * If omitted, a built-in red card with a retry button is used.
    */
-  errorWith?: ReactNode;
+  errorWith?: ReactNode
   /**
    * Opt into deferred rendering. See `DeferSpec` for the two forms.
    * When set AND this id wasn't explicitly requested on the current
    * refetch, the Partial emits the fallback (optionally wrapped by
    * the activator) instead of executing its children.
    */
-  defer?: DeferSpec;
+  defer?: DeferSpec
   /**
    * Open a new **frame** scope for this Partial's descendants. Frames
    * are "server iframes": everything inside the Partial resolves
@@ -246,7 +237,7 @@ export interface PartialProps {
    * not an ALS scope. The hoisting rule (read accessors before any
    * `await`) applies the same way it does for the cache manifest.
    */
-  frame?: string;
+  frame?: string
   /**
    * Initial URL for the frame. Used as the fallback when the session
    * has no entry for this frame. Ignored when `frame` is not set.
@@ -254,7 +245,7 @@ export interface PartialProps {
    * Accepts a full URL, a pathname, or a search string. Normalized
    * against the page's origin.
    */
-  frameUrl?: string;
+  frameUrl?: string
   /**
    * Stable storage key for this Partial's CMS-authored content. When
    * set, opens a **CMS scope** for descendant server components so
@@ -274,7 +265,7 @@ export interface PartialProps {
    * scope — content accessors inside an inner non-CMS Partial never
    * leak to its cmsId-bearing ancestor's node.
    */
-  cmsId?: string;
+  cmsId?: string
   /**
    * Ancestor-contributed context values made available to descendants
    * via `getClosest<T>(key)`. Merged with the parent Partial's
@@ -294,7 +285,7 @@ export interface PartialProps {
    * (e.g., `getReference("product", "product")` with a stored value)
    * rather than relying solely on `closest`.
    */
-  provides?: Readonly<Record<string, unknown>>;
+  provides?: Readonly<Record<string, unknown>>
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -306,35 +297,35 @@ export interface PartialProps {
  * changed hashes to the same value.
  */
 function fingerprintElement(node: ReactNode): string {
-  if (node == null || typeof node === "boolean") return "";
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(fingerprintElement).join(",");
-  if (!isValidElement(node)) return "";
+  if (node == null || typeof node === "boolean") return ""
+  if (typeof node === "string" || typeof node === "number") return String(node)
+  if (Array.isArray(node)) return node.map(fingerprintElement).join(",")
+  if (!isValidElement(node)) return ""
 
   const type =
     typeof node.type === "string"
       ? node.type
       : (node.type as { displayName?: string; name?: string }).displayName ||
         (node.type as { name?: string }).name ||
-        "Anonymous";
+        "Anonymous"
 
-  const props = node.props as Record<string, unknown>;
-  const parts: string[] = [type];
+  const props = node.props as Record<string, unknown>
+  const parts: string[] = [type]
 
-  if (node.key != null) parts.push(`k=${node.key}`);
+  if (node.key != null) parts.push(`k=${node.key}`)
 
   for (const [k, v] of Object.entries(props)) {
-    if (k === "children") continue;
-    if (typeof v === "function") continue;
-    if (typeof v === "object" && v !== null) continue;
-    parts.push(`${k}=${v}`);
+    if (k === "children") continue
+    if (typeof v === "function") continue
+    if (typeof v === "object" && v !== null) continue
+    parts.push(`${k}=${v}`)
   }
 
   if (props.children != null) {
-    parts.push(`(${fingerprintElement(props.children as ReactNode)})`);
+    parts.push(`(${fingerprintElement(props.children as ReactNode)})`)
   }
 
-  return parts.join("|");
+  return parts.join("|")
 }
 
 /**
@@ -346,8 +337,8 @@ function fingerprintElement(node: ReactNode): string {
  * Both arrays are de-duplicated and preserve first-seen order.
  */
 export interface ParsedSelector {
-  uniqueTokens: string[];
-  sharedTokens: string[];
+  uniqueTokens: string[]
+  sharedTokens: string[]
 }
 
 /**
@@ -360,9 +351,7 @@ export interface ParsedSelector {
  */
 export function parseSelector(input: string | string[]): ParsedSelector {
   if (input == null) {
-    throw new Error(
-      "<Partial> requires a `selector` prop with at least one `#` or `.` token.",
-    );
+    throw new Error("<Partial> requires a `selector` prop with at least one `#` or `.` token.")
   }
   // String form splits on whitespace (className-style).
   // Array form treats each element as one token (values with spaces
@@ -373,39 +362,37 @@ export function parseSelector(input: string | string[]): ParsedSelector {
     : input
         .split(/\s+/)
         .map((t) => t.trim())
-        .filter(Boolean);
+        .filter(Boolean)
   if (tokens.length === 0) {
-    throw new Error(
-      "<Partial selector> is empty. Provide at least one `#foo` or `.foo` token.",
-    );
+    throw new Error("<Partial selector> is empty. Provide at least one `#foo` or `.foo` token.")
   }
-  const uniqueTokens: string[] = [];
-  const sharedTokens: string[] = [];
+  const uniqueTokens: string[] = []
+  const sharedTokens: string[] = []
   for (const tok of tokens) {
     if (tok.startsWith("#")) {
-      const name = tok.slice(1);
+      const name = tok.slice(1)
       if (!name) {
         throw new Error(
           `Empty "#" token in <Partial selector>. Tokens must name something after the prefix.`,
-        );
+        )
       }
-      if (!uniqueTokens.includes(name)) uniqueTokens.push(name);
+      if (!uniqueTokens.includes(name)) uniqueTokens.push(name)
     } else if (tok.startsWith(".")) {
-      const name = tok.slice(1);
+      const name = tok.slice(1)
       if (!name) {
         throw new Error(
           `Empty "." token in <Partial selector>. Tokens must name something after the prefix.`,
-        );
+        )
       }
-      if (!sharedTokens.includes(name)) sharedTokens.push(name);
+      if (!sharedTokens.includes(name)) sharedTokens.push(name)
     } else {
       throw new Error(
         `Unprefixed token "${tok}" in <Partial selector>. Tokens must start ` +
           `with "#" (unique) or "." (shared). Did you mean "#${tok}" or ".${tok}"?`,
-      );
+      )
     }
   }
-  return { uniqueTokens, sharedTokens };
+  return { uniqueTokens, sharedTokens }
 }
 
 /**
@@ -420,10 +407,10 @@ export function parseSelector(input: string | string[]): ParsedSelector {
  * scan over snapshot `uniqueTokens`, not a direct lookup on this id.
  */
 function resolveEffectiveId(parsed: ParsedSelector): string {
-  const { uniqueTokens, sharedTokens } = parsed;
-  if (uniqueTokens.length === 1) return uniqueTokens[0];
-  if (uniqueTokens.length > 1) return [...uniqueTokens].sort().join(",");
-  return `__anon:${[...sharedTokens].sort().join(",")}`;
+  const { uniqueTokens, sharedTokens } = parsed
+  if (uniqueTokens.length === 1) return uniqueTokens[0]
+  if (uniqueTokens.length > 1) return [...uniqueTokens].sort().join(",")
+  return `__anon:${[...sharedTokens].sort().join(",")}`
 }
 
 /**
@@ -439,15 +426,15 @@ function resolveFrameRequest(
   framePath: readonly string[],
   initialUrl: string | undefined,
 ): Request {
-  const pageRequest = getRequest();
-  const sessionUrl = getSessionFrameUrl(framePath);
-  const effective = sessionUrl ?? initialUrl;
-  if (effective == null) return pageRequest;
-  const resolved = new URL(effective, pageRequest.url).toString();
+  const pageRequest = getRequest()
+  const sessionUrl = getSessionFrameUrl(framePath)
+  const effective = sessionUrl ?? initialUrl
+  if (effective == null) return pageRequest
+  const resolved = new URL(effective, pageRequest.url).toString()
   return new Request(resolved, {
     headers: pageRequest.headers,
     method: "GET",
-  });
+  })
 }
 
 /**
@@ -481,18 +468,18 @@ function FrameWrapper({
   request,
   children,
 }: {
-  path: readonly string[];
-  request: Request;
-  children: ReactNode;
+  path: readonly string[]
+  request: Request
+  children: ReactNode
 }): ReactNode {
-  setCurrentFrameScope({ path, request });
-  const url = new URL(request.url);
-  const initialUrl = url.pathname + url.search;
+  setCurrentFrameScope({ path, request })
+  const url = new URL(request.url)
+  const initialUrl = url.pathname + url.search
   return (
     <FrameNameProvider path={path} initialUrl={initialUrl}>
       {children}
     </FrameNameProvider>
-  );
+  )
 }
 
 function placeholderFor(id: string): ReactElement {
@@ -501,7 +488,7 @@ function placeholderFor(id: string): ReactElement {
   // with the element's own key into `"outer,inner"`, which would
   // break id-lookup by `String(node.key)` for placeholders emitted
   // inside a `.map()`-produced Partial.
-  return <i key={id} hidden data-partial data-partial-id={id} />;
+  return <i key={id} hidden data-partial data-partial-id={id} />
 }
 
 // ─── The Partial component ──────────────────────────────────────────────
@@ -534,13 +521,13 @@ export function Partial({
         `the tree or \`capturePartialContext()\` (in a sync code path) / ` +
         `the \`parent\` received from an ancestor (across any \`await\`). ` +
         `See src/lib/partial-context.ts.`,
-    );
+    )
   }
-  const state = requirePartialState();
+  const state = requirePartialState()
 
-  const parsed = parseSelector(selector);
-  const { uniqueTokens, sharedTokens } = parsed;
-  const id = resolveEffectiveId(parsed);
+  const parsed = parseSelector(selector)
+  const { uniqueTokens, sharedTokens } = parsed
+  const id = resolveEffectiveId(parsed)
 
   // Cross-Partial `#`-token uniqueness. A `#cart` on two Partials is an
   // error even if their full selectors differ — the whole point of `#`
@@ -550,9 +537,9 @@ export function Partial({
     if (state.seenUniqueTokens.has(tok)) {
       throw new Error(
         `Duplicate "#${tok}" selector. Tokens starting with "#" must be unique per page.`,
-      );
+      )
     }
-    state.seenUniqueTokens.add(tok);
+    state.seenUniqueTokens.add(tok)
   }
 
   // Effective-id duplicate — only reachable for anonymous Partials
@@ -566,16 +553,16 @@ export function Partial({
         : `Duplicate anonymous <Partial> with selector ".${sharedTokens.join(" .")}". ` +
             `Two id-less Partials synthesized the same internal id — add a distinguishing ` +
             `class token or a "#" token to at least one.`,
-    );
+    )
   }
-  state.seenIds.add(id);
+  state.seenIds.add(id)
 
   // Push our own context onto the per-request cell BEFORE rendering
   // children. Descendants in sync code paths can read it via
   // `capturePartialContext()`; descendants across an await must have
   // captured earlier and threaded `parent` explicitly (the cell is
   // unreliable post-await due to RSC sibling interleaving).
-  _setCurrentPartialContext(_childContext(parent, id, frame, provides));
+  _setCurrentPartialContext(_childContext(parent, id, frame, provides))
 
   // CMS scope: mutate the per-request cell so descendant server
   // components' content accessors (`getText` et al.) resolve against
@@ -584,12 +571,12 @@ export function Partial({
   // leak into this Partial's non-CMS descendants. Same
   // sibling-interleaving caveat as the partial-context and
   // frame-scope cells: descendants must read before any `await`.
-  _setCurrentCmsScope(cmsId != null ? createCmsScope(cmsId, id) : null);
+  _setCurrentCmsScope(cmsId != null ? createCmsScope(cmsId, id) : null)
 
-  const isExplicit = state.explicitIds.has(id);
-  const effectiveFallback = fallback ?? null;
+  const isExplicit = state.explicitIds.has(id)
+  const effectiveFallback = fallback ?? null
 
-  const rawContent = children;
+  const rawContent = children
 
   // Frame scope: if `frame` is set, wrap the children in a
   // `<FrameWrapper>` component. The full frame path is
@@ -610,10 +597,8 @@ export function Partial({
   // `createContext` in the react-server build), so the nested scope
   // has to be ALS-with-containment (Flight round-trip keeps the
   // scope from leaking to siblings).
-  const framePath: readonly string[] =
-    frame != null ? [...parent.frameChain, frame] : EMPTY_PATH;
-  const frameRequest =
-    frame != null ? resolveFrameRequest(framePath, frameUrl) : null;
+  const framePath: readonly string[] = frame != null ? [...parent.frameChain, frame] : EMPTY_PATH
+  const frameRequest = frame != null ? resolveFrameRequest(framePath, frameUrl) : null
 
   // Frame scope reset on every Partial entry. The per-request cell is
   // a singleton, so a sibling's `<Partial frame="X">` that ran before
@@ -642,19 +627,18 @@ export function Partial({
   //     against the page request.
   if (frame == null) {
     if (parent.frameChain.length > 0) {
-      const cell = getCurrentFrameScope();
-      const expected = _joinFrameChain(parent.frameChain);
-      const cellMatches =
-        cell != null && _joinFrameChain(cell.path) === expected;
+      const cell = getCurrentFrameScope()
+      const expected = _joinFrameChain(parent.frameChain)
+      const cellMatches = cell != null && _joinFrameChain(cell.path) === expected
       if (!cellMatches) {
-        const ambientReq = resolveFrameRequest(parent.frameChain, undefined);
+        const ambientReq = resolveFrameRequest(parent.frameChain, undefined)
         setCurrentFrameScope({
           path: parent.frameChain,
           request: ambientReq,
-        });
+        })
       }
     } else {
-      setCurrentFrameScope(null);
+      setCurrentFrameScope(null)
     }
   }
   const content: ReactNode =
@@ -664,7 +648,7 @@ export function Partial({
       </FrameWrapper>
     ) : (
       rawContent
-    );
+    )
 
   // Fingerprint captures the structural shape of the content tree —
   // used both for the client→server "did this change?" handshake and
@@ -682,9 +666,7 @@ export function Partial({
   //     whose URL changed would match its prior fp and skip, leaving
   //     the client with stale cached bytes.
   const ownFrameKey =
-    frame != null && frameRequest != null
-      ? `|frame=${framePath.join(".")}:${frameRequest.url}`
-      : "";
+    frame != null && frameRequest != null ? `|frame=${framePath.join(".")}:${frameRequest.url}` : ""
   // Only fold the ambient frame into the fp when this Partial does NOT
   // open its own frame. A framed Partial's content runs under its own
   // scope (via FrameWrapper); a sibling that mutated the per-request
@@ -697,11 +679,11 @@ export function Partial({
   // bearing for NESTED Partials inside a framed ancestor — those DO
   // inherit the ambient frame and need its URL in their fp so a
   // frame-URL change invalidates them.
-  const ambientScope = getCurrentFrameScope();
+  const ambientScope = getCurrentFrameScope()
   const ambientFrameKey =
     frame == null && ambientScope
       ? `|inFrame=${ambientScope.path.join(".")}:${ambientScope.request.url}`
-      : "";
+      : ""
   // CMS fingerprint contribution — if this Partial is CMS-aware
   // (`cmsId` set), fold the resolved content fields into the fp so a
   // content change (config match flipping, author edit) produces a
@@ -721,9 +703,8 @@ export function Partial({
   // contribution must use the same request — otherwise frame-URL
   // changes don't invalidate the fingerprint and the fp-skip protocol
   // serves stale cached bytes across preview navigations.
-  const cmsRequest = ambientScope?.request ?? getRequest();
-  const cmsKey =
-    cmsId != null ? cmsFingerprintContribution(cmsId, cmsRequest) : "";
+  const cmsRequest = ambientScope?.request ?? getRequest()
+  const cmsKey = cmsId != null ? cmsFingerprintContribution(cmsId, cmsRequest) : ""
   // ── Auto-collected manifest tracking ───────────────────────────────
   //
   // Open a per-Partial ManifestScope and install it on the per-
@@ -744,8 +725,8 @@ export function Partial({
   // reads) plus this Partial's varyOn — descendants' new reads in
   // the current render don't affect THIS render's fp (chicken-and-
   // egg), but they're recorded for the NEXT render.
-  const route = new URL(getRequest().url).pathname;
-  const previousSnap = getPreviousRouteSnapshots(route)?.get(id);
+  const route = new URL(getRequest().url).pathname
+  const previousSnap = getPreviousRouteSnapshots(route)?.get(id)
   const manifestScope: ManifestScope = {
     current: new Set(),
     stored: previousSnap?.manifest ?? null,
@@ -759,10 +740,10 @@ export function Partial({
       // throw still surfaces to the dev — they fix the underlying
       // post-await read or restructure — but the framework no longer
       // requires a server restart to recover.
-      invalidateSnapshot(route, id);
+      invalidateSnapshot(route, id)
     },
-  };
-  setCurrentPartialManifest(manifestScope);
+  }
+  setCurrentPartialManifest(manifestScope)
 
   // Resolve the previous render's manifest against the current
   // request to get a fingerprint contribution capturing every
@@ -780,7 +761,7 @@ export function Partial({
     frame != null ? frameRequest : null,
     parent.frameChain,
     frameUrl,
-  );
+  )
   // Transitive descendant manifests — the fp must capture
   // dependencies of descendants too, because fp-skip at an ancestor
   // short-circuits descendant rendering. Without this fold an
@@ -798,7 +779,7 @@ export function Partial({
     id,
     frame != null ? framePath : parent.frameChain,
     rawContent,
-  );
+  )
   // Structural fingerprint — stable across "am I inside a frame?"
   // readings, which can differ between full renders and cache-mode
   // refetches because `getCurrentFrameScope` reads a per-request
@@ -807,12 +788,8 @@ export function Partial({
   // baseKey so a Partial inside a Cache wrapping keeps the same
   // cache key between full and refetch modes.
   const structuralFp = hashFingerprint(
-    fingerprintElement(rawContent) +
-      ownFrameKey +
-      cmsKey +
-      ownManifestKey +
-      descendantManifestKey,
-  );
+    fingerprintElement(rawContent) + ownFrameKey + cmsKey + ownManifestKey + descendantManifestKey,
+  )
   // Full fingerprint — includes ambient frame URL so descendants of
   // a frame whose URL changed get a different fp on the next render
   // and skip the fingerprint-match path (see docs/frames-navigation.md).
@@ -823,7 +800,7 @@ export function Partial({
       cmsKey +
       ownManifestKey +
       descendantManifestKey,
-  );
+  )
 
   // ── Skip decisions ─────────────────────────────────────────────────
   //
@@ -843,10 +820,10 @@ export function Partial({
   // goes from `<SearchStage1 query="">` (A) to `<SearchStage1
   // query="pika">` (B) — fingerprint changes, content must not skip.
   // Skip only on an actual fingerprint match.
-  const cachedFp = state.cachedFingerprints.get(id);
-  const fingerprintMatches = cachedFp != null && cachedFp === fp;
+  const cachedFp = state.cachedFingerprints.get(id)
+  const fingerprintMatches = cachedFp != null && cachedFp === fp
 
-  const shouldSkip = isExplicit ? false : fingerprintMatches;
+  const shouldSkip = isExplicit ? false : fingerprintMatches
 
   if (shouldSkip) {
     // Register so tag refetches / subsequent lookups still find the
@@ -874,8 +851,8 @@ export function Partial({
       parentPath: parent.path,
       cmsId,
       manifest: manifestScope.stored ?? manifestScope.current,
-    });
-    return placeholderFor(id);
+    })
+    return placeholderFor(id)
   }
 
   // ── Defer branch ───────────────────────────────────────────────────
@@ -889,7 +866,7 @@ export function Partial({
               { partialId: id },
               effectiveFallback,
             )
-          : effectiveFallback;
+          : effectiveFallback
 
     return (
       <PartialBoundary
@@ -919,7 +896,7 @@ export function Partial({
           {dormant}
         </PartialErrorBoundary>
       </PartialBoundary>
-    );
+    )
   }
 
   // ── Cache (server-side render-output caching) ─────────────────────
@@ -939,7 +916,7 @@ export function Partial({
       </Cache>
     ) : (
       content
-    );
+    )
 
   // ── Render ─────────────────────────────────────────────────────────
   //
@@ -949,11 +926,7 @@ export function Partial({
       <Suspense
         key={id}
         fallback={
-          <PartialErrorBoundary
-            partialId={id}
-            partialFingerprint={fp}
-            fallback={errorWith}
-          >
+          <PartialErrorBoundary partialId={id} partialFingerprint={fp} fallback={errorWith}>
             {effectiveFallback}
           </PartialErrorBoundary>
         }
@@ -982,7 +955,7 @@ export function Partial({
       >
         {cachedContent}
       </PartialErrorBoundary>
-    );
+    )
 
   return (
     <PartialBoundary
@@ -1001,7 +974,7 @@ export function Partial({
     >
       {rendered}
     </PartialBoundary>
-  );
+  )
 }
 
 /**
@@ -1027,18 +1000,18 @@ function computeOwnManifestKey(
   ambientFrameChain: readonly string[],
   ownFrameUrl: string | undefined,
 ): string {
-  if (storedManifest == null || storedManifest.size === 0) return "";
+  if (storedManifest == null || storedManifest.size === 0) return ""
   const request: Request =
     ownFrameRequest != null
       ? ownFrameRequest
       : ambientFrameChain.length > 0
         ? resolveFrameRequest(ambientFrameChain, ownFrameUrl)
-        : getRequest();
-  const values = resolveManifest(new Set(storedManifest), request);
-  const sorted = [...storedManifest].sort();
-  const parts: string[] = [];
-  for (const k of sorted) parts.push(`${k}=${values[k]}`);
-  return `|own=${parts.join("&")}`;
+        : getRequest()
+  const values = resolveManifest(new Set(storedManifest), request)
+  const sorted = [...storedManifest].sort()
+  const parts: string[] = []
+  for (const k of sorted) parts.push(`${k}=${values[k]}`)
+  return `|own=${parts.join("&")}`
 }
 
 /**
@@ -1085,17 +1058,15 @@ function computeDescendantManifestKey(
   ownFrameChain: readonly string[],
   rawContent: ReactNode,
 ): string {
-  const contributions = new Map<string, string>();
+  const contributions = new Map<string, string>()
 
-  walkJsxForDescendantManifest(rawContent, ownFrameChain, contributions);
-  walkRegistryForDescendantManifest(ownId, ownFrameChain, contributions);
+  walkJsxForDescendantManifest(rawContent, ownFrameChain, contributions)
+  walkRegistryForDescendantManifest(ownId, ownFrameChain, contributions)
 
-  if (contributions.size === 0) return "";
-  const sorted = [...contributions.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
-  );
-  const parts = sorted.map(([id, sub]) => `${id}{${sub}}`);
-  return `|desc=${parts.join(",")}`;
+  if (contributions.size === 0) return ""
+  const sorted = [...contributions.entries()].sort(([a], [b]) => a.localeCompare(b))
+  const parts = sorted.map(([id, sub]) => `${id}{${sub}}`)
+  return `|desc=${parts.join(",")}`
 }
 
 function walkJsxForDescendantManifest(
@@ -1103,54 +1074,48 @@ function walkJsxForDescendantManifest(
   ancestorFrameChain: readonly string[],
   out: Map<string, string>,
 ): void {
-  if (node == null || typeof node === "boolean") return;
-  if (typeof node === "string" || typeof node === "number") return;
+  if (node == null || typeof node === "boolean") return
+  if (typeof node === "string" || typeof node === "number") return
   if (Array.isArray(node)) {
     for (const child of node) {
-      walkJsxForDescendantManifest(child, ancestorFrameChain, out);
+      walkJsxForDescendantManifest(child, ancestorFrameChain, out)
     }
-    return;
+    return
   }
-  if (!isValidElement(node)) return;
+  if (!isValidElement(node)) return
 
   if (node.type === Partial) {
-    const props = node.props as PartialProps;
-    const localFrame = props.frame;
+    const props = node.props as PartialProps
+    const localFrame = props.frame
     const childFrameChain =
-      localFrame != null
-        ? [...ancestorFrameChain, localFrame]
-        : ancestorFrameChain;
+      localFrame != null ? [...ancestorFrameChain, localFrame] : ancestorFrameChain
     // Look up this Partial's previous-render manifest from the
     // registry. If absent (first-render), it contributes nothing —
     // but we still recurse INTO its children to collect manifests
     // from grand-descendants that may have prior entries.
-    const parsed = parseSelector(props.selector);
-    const descId = resolveEffectiveId(parsed);
-    const route = new URL(getRequest().url).pathname;
-    const prev = getPreviousRouteSnapshots(route)?.get(descId);
-    const manifest = prev?.manifest;
+    const parsed = parseSelector(props.selector)
+    const descId = resolveEffectiveId(parsed)
+    const route = new URL(getRequest().url).pathname
+    const prev = getPreviousRouteSnapshots(route)?.get(descId)
+    const manifest = prev?.manifest
     if (manifest && manifest.size > 0) {
       const request: Request =
         childFrameChain.length > 0
           ? resolveFrameRequest(childFrameChain, props.frameUrl)
-          : getRequest();
-      const values = resolveManifest(new Set(manifest), request);
-      const sorted = [...manifest].sort();
-      const sub: string[] = [];
-      for (const k of sorted) sub.push(`${k}=${values[k]}`);
-      out.set(descId, sub.join("&"));
+          : getRequest()
+      const values = resolveManifest(new Set(manifest), request)
+      const sorted = [...manifest].sort()
+      const sub: string[] = []
+      for (const k of sorted) sub.push(`${k}=${values[k]}`)
+      out.set(descId, sub.join("&"))
     }
-    walkJsxForDescendantManifest(
-      props.children as ReactNode,
-      childFrameChain,
-      out,
-    );
-    return;
+    walkJsxForDescendantManifest(props.children as ReactNode, childFrameChain, out)
+    return
   }
 
-  const inner = (node.props as { children?: ReactNode })?.children;
+  const inner = (node.props as { children?: ReactNode })?.children
   if (inner != null) {
-    walkJsxForDescendantManifest(inner, ancestorFrameChain, out);
+    walkJsxForDescendantManifest(inner, ancestorFrameChain, out)
   }
 }
 
@@ -1159,32 +1124,29 @@ function walkRegistryForDescendantManifest(
   ownFrameChain: readonly string[],
   out: Map<string, string>,
 ): void {
-  const route = new URL(getRequest().url).pathname;
-  const prev = getPreviousRouteSnapshots(route);
-  if (!prev || prev.size === 0) return;
+  const route = new URL(getRequest().url).pathname
+  const prev = getPreviousRouteSnapshots(route)
+  if (!prev || prev.size === 0) return
 
   for (const [descId, snap] of prev) {
-    if (descId === ownId) continue;
-    if (out.has(descId)) continue;
-    if (!isDescendantSnapshot(snap, ownId)) continue;
-    if (!snap.manifest || snap.manifest.size === 0) continue;
-    const descRequest = descendantSnapshotRequest(snap, ownFrameChain);
-    const values = resolveManifest(new Set(snap.manifest), descRequest);
-    const sorted = [...snap.manifest].sort();
-    const sub: string[] = [];
-    for (const k of sorted) sub.push(`${k}=${values[k]}`);
-    out.set(descId, sub.join("&"));
+    if (descId === ownId) continue
+    if (out.has(descId)) continue
+    if (!isDescendantSnapshot(snap, ownId)) continue
+    if (!snap.manifest || snap.manifest.size === 0) continue
+    const descRequest = descendantSnapshotRequest(snap, ownFrameChain)
+    const values = resolveManifest(new Set(snap.manifest), descRequest)
+    const sorted = [...snap.manifest].sort()
+    const sub: string[] = []
+    for (const k of sorted) sub.push(`${k}=${values[k]}`)
+    out.set(descId, sub.join("&"))
   }
 }
 
-function isDescendantSnapshot(
-  snap: PartialSnapshot,
-  ancestorId: string,
-): boolean {
+function isDescendantSnapshot(snap: PartialSnapshot, ancestorId: string): boolean {
   for (const id of snap.parentPath) {
-    if (id === ancestorId) return true;
+    if (id === ancestorId) return true
   }
-  return false;
+  return false
 }
 
 function descendantSnapshotRequest(
@@ -1192,10 +1154,10 @@ function descendantSnapshotRequest(
   ancestorFrameChain: readonly string[],
 ): Request {
   if (snap.framePath.length > 0) {
-    return resolveFrameRequest(snap.framePath, snap.frameUrl);
+    return resolveFrameRequest(snap.framePath, snap.frameUrl)
   }
   if (ancestorFrameChain.length > 0) {
-    return resolveFrameRequest(ancestorFrameChain, undefined);
+    return resolveFrameRequest(ancestorFrameChain, undefined)
   }
-  return getRequest();
+  return getRequest()
 }

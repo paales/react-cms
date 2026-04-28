@@ -1,14 +1,8 @@
-"use client";
+"use client"
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type FormEvent,
-} from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
-import { cn } from "@/lib/utils";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
+import { cn } from "@/lib/utils"
 
 /**
  * Address bar for the editor's preview pane.
@@ -37,18 +31,18 @@ import { cn } from "@/lib/utils";
  * A `×` button clears the editor cookie via `?editor=0`.
  */
 
-const EDITOR_RESERVED_PARAMS = ["editor", "select", "config"] as const;
+const EDITOR_RESERVED_PARAMS = ["editor", "select", "config"] as const
 
 /** Strip editor-internal params for display in the URL bar — the
  *  bar should show the URL the *previewed page* sees, not the
  *  editor-state-decorated window URL. */
 function shortPreviewUrl(href: string): string {
   try {
-    const u = new URL(href, window.location.origin);
-    for (const p of EDITOR_RESERVED_PARAMS) u.searchParams.delete(p);
-    return u.pathname + (u.search ? u.search : "");
+    const u = new URL(href, window.location.origin)
+    for (const p of EDITOR_RESERVED_PARAMS) u.searchParams.delete(p)
+    return u.pathname + (u.search ? u.search : "")
   } catch {
-    return href;
+    return href
   }
 }
 
@@ -58,52 +52,52 @@ function shortPreviewUrl(href: string): string {
  * search params with what the user typed.
  */
 function withEditorState(target: string): string {
-  const current = new URL(window.location.href);
-  const next = new URL(target, window.location.origin);
+  const current = new URL(window.location.href)
+  const next = new URL(target, window.location.origin)
   // Drop any editor params the target carries — we'll re-attach
   // freshly from the current URL so what the user has selected
   // travels with the navigation.
-  for (const p of EDITOR_RESERVED_PARAMS) next.searchParams.delete(p);
+  for (const p of EDITOR_RESERVED_PARAMS) next.searchParams.delete(p)
   for (const p of EDITOR_RESERVED_PARAMS) {
-    if (p === "editor") continue; // cookie-driven; URL flag would just be noise
-    const v = current.searchParams.get(p);
-    if (v != null) next.searchParams.set(p, v);
+    if (p === "editor") continue // cookie-driven; URL flag would just be noise
+    const v = current.searchParams.get(p)
+    if (v != null) next.searchParams.set(p, v)
   }
-  return next.pathname + next.search;
+  return next.pathname + next.search
 }
 
 export function CmsEditAddressBar({ initialUrl }: { initialUrl: string }) {
-  const nav = useNavigation();
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const nav = useNavigation()
+  const inputRef = useRef<HTMLInputElement | null>(null)
   // The "draft" — what's in the input box right now. Starts at the
   // server-rendered URL; gets resynced to the live URL on external
   // navs unless the user is actively focused on the input (so a
   // mid-typing nav from elsewhere doesn't clobber their typing).
-  const [draft, setDraft] = useState(initialUrl);
+  const [draft, setDraft] = useState(initialUrl)
 
   const liveUrl = useSyncExternalStore(
     (cb) => {
-      nav.addEventListener("currententrychange", cb);
-      return () => nav.removeEventListener("currententrychange", cb);
+      nav.addEventListener("currententrychange", cb)
+      return () => nav.removeEventListener("currententrychange", cb)
     },
     () => nav.currentEntry?.url ?? null,
     () => null,
-  );
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  )
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   // Sync draft to live URL when navigation happens elsewhere — but
   // only if the user isn't actively editing (input not focused).
   useEffect(() => {
-    if (!mounted || !liveUrl) return;
-    if (document.activeElement === inputRef.current) return;
-    setDraft(shortPreviewUrl(liveUrl));
-  }, [mounted, liveUrl]);
+    if (!mounted || !liveUrl) return
+    if (document.activeElement === inputRef.current) return
+    setDraft(shortPreviewUrl(liveUrl))
+  }, [mounted, liveUrl])
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const target = draft.trim();
-    if (!target) return;
+    e.preventDefault()
+    const target = draft.trim()
+    if (!target) return
     void nav.navigate(withEditorState(target), {
       history: "push",
       // Force the editor's tree + field panels to refetch alongside
@@ -114,8 +108,8 @@ export function CmsEditAddressBar({ initialUrl }: { initialUrl: string }) {
       // recurses into its body so PokemonPage / CmsDemoPage / etc.
       // re-render normally.
       selector: "#preview #cms-edit-fields #cms-edit-tree",
-    });
-    inputRef.current?.blur();
+    })
+    inputRef.current?.blur()
   }
 
   return (
@@ -150,5 +144,5 @@ export function CmsEditAddressBar({ initialUrl }: { initialUrl: string }) {
         ×
       </a>
     </form>
-  );
+  )
 }

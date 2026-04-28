@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import type { ReactNode } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
+import type { ReactNode } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
 
 /**
  * Selector-targeted nav link for the CMS editor's tree sidebar.
@@ -26,31 +26,24 @@ export function CmsEditTreeLink({
   testId,
   selected,
 }: {
-  href: string;
-  className?: string;
-  children: ReactNode;
-  testId?: string;
-  selected: boolean;
+  href: string
+  className?: string
+  children: ReactNode
+  testId?: string
+  selected: boolean
 }) {
-  const nav = useNavigation();
+  const nav = useNavigation()
   function onClick(e: React.MouseEvent<HTMLAnchorElement>) {
     // Modifier-clicks (open in new tab, etc.) and middle-button
     // navigate as the browser would — don't intercept them.
-    if (
-      e.defaultPrevented ||
-      e.button !== 0 ||
-      e.metaKey ||
-      e.ctrlKey ||
-      e.shiftKey ||
-      e.altKey
-    ) {
-      return;
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return
     }
-    e.preventDefault();
+    e.preventDefault()
     void nav.navigate(href, {
       history: "push",
       selector: "#cms-edit-tree #cms-edit-fields",
-    });
+    })
   }
   return (
     <a
@@ -62,5 +55,5 @@ export function CmsEditTreeLink({
     >
       {children}
     </a>
-  );
+  )
 }

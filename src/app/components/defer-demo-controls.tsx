@@ -1,9 +1,9 @@
-"use client";
+"use client"
 
-import { useCallback, useEffect, useState } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useCallback, useEffect, useState } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 /**
  * Manual activator: a plain button that calls
@@ -17,26 +17,26 @@ export function ActivateButton({
   testId,
   disableTransition,
 }: {
-  partialId: string;
-  label?: string;
-  testId?: string;
+  partialId: string
+  label?: string
+  testId?: string
   /**
    * If true, the refetch bypasses React's `startTransition` wrapper —
    * each response commits on arrival rather than being held back
    * waiting for a newer transition.
    */
-  disableTransition?: boolean;
+  disableTransition?: boolean
 }) {
-  const nav = useNavigation();
-  const [isPending, setIsPending] = useState(false);
+  const nav = useNavigation()
+  const [isPending, setIsPending] = useState(false)
   const activate = async () => {
-    setIsPending(true);
+    setIsPending(true)
     try {
-      await nav.reload({ selector: `#${partialId}`, disableTransition }).finished;
+      await nav.reload({ selector: `#${partialId}`, disableTransition }).finished
     } finally {
-      setIsPending(false);
+      setIsPending(false)
     }
-  };
+  }
   return (
     <Button
       type="button"
@@ -46,36 +46,30 @@ export function ActivateButton({
       onClick={activate}
       disabled={isPending}
     >
-      {isPending ? "…" : label ?? "Activate"}
+      {isPending ? "…" : (label ?? "Activate")}
     </Button>
-  );
+  )
 }
 
 /**
  * Read / write a localStorage key.
  */
-export function StorageKeyEditor({
-  storageKey,
-  testId,
-}: {
-  storageKey: string;
-  testId?: string;
-}) {
-  const [value, setValue] = useState("");
-  const [stored, setStored] = useState<string | null>(null);
+export function StorageKeyEditor({ storageKey, testId }: { storageKey: string; testId?: string }) {
+  const [value, setValue] = useState("")
+  const [stored, setStored] = useState<string | null>(null)
 
   useEffect(() => {
-    setStored(localStorage.getItem(storageKey));
+    setStored(localStorage.getItem(storageKey))
     const onStorage = (e: StorageEvent) => {
-      if (e.key === storageKey) setStored(e.newValue);
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [storageKey]);
+      if (e.key === storageKey) setStored(e.newValue)
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [storageKey])
 
   const write = useCallback(() => {
-    const oldValue = localStorage.getItem(storageKey);
-    localStorage.setItem(storageKey, value);
+    const oldValue = localStorage.getItem(storageKey)
+    localStorage.setItem(storageKey, value)
     // Same-tab storage events don't fire natively — dispatch a synthetic one.
     window.dispatchEvent(
       new StorageEvent("storage", {
@@ -84,13 +78,13 @@ export function StorageKeyEditor({
         newValue: value,
         storageArea: localStorage,
       }),
-    );
-    setStored(value);
-  }, [storageKey, value]);
+    )
+    setStored(value)
+  }, [storageKey, value])
 
   const clear = useCallback(() => {
-    const oldValue = localStorage.getItem(storageKey);
-    localStorage.removeItem(storageKey);
+    const oldValue = localStorage.getItem(storageKey)
+    localStorage.removeItem(storageKey)
     window.dispatchEvent(
       new StorageEvent("storage", {
         key: storageKey,
@@ -98,9 +92,9 @@ export function StorageKeyEditor({
         newValue: null,
         storageArea: localStorage,
       }),
-    );
-    setStored(null);
-  }, [storageKey]);
+    )
+    setStored(null)
+  }, [storageKey])
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -133,5 +127,5 @@ export function StorageKeyEditor({
         current: {stored == null ? "∅" : JSON.stringify(stored)}
       </code>
     </div>
-  );
+  )
 }

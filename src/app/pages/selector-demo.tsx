@@ -1,7 +1,7 @@
-import { Partial } from "../../lib/partial.tsx";
-import { ROOT } from "../../lib/partial-context.ts";
-import { SelectorRefetchButton } from "../components/selector-demo-controls.tsx";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Partial } from "../../lib/partial.tsx"
+import { ROOT } from "../../lib/partial-context.ts"
+import { SelectorRefetchButton } from "../components/selector-demo-controls.tsx"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 /**
  * `/selector-demo` — exercises selector-based refetch.
@@ -24,15 +24,11 @@ function ServerTime({ label }: { label: string }) {
     <div data-testid={`time-${label}`} className="font-mono">
       <strong>{label}:</strong> {new Date().toISOString()}
     </div>
-  );
+  )
 }
 
 function InlineCode({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
-      {children}
-    </code>
-  );
+  return <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">{children}</code>
 }
 
 export function SelectorDemoPage() {
@@ -41,27 +37,23 @@ export function SelectorDemoPage() {
       <title>Selector Demo</title>
       <h1 className="mb-4 text-2xl font-semibold">Selector-based refetch</h1>
       <p className="mb-8 text-muted-foreground">
-        <InlineCode>
-          useNavigation().reload({'{selector: ".price"}'})
-        </InlineCode>{" "}
-        refetches every Partial carrying that class token. Multiple tokens
-        union: <InlineCode>{'{selector: ".price .featured"}'}</InlineCode> hits
-        any Partial with either label. <InlineCode>#foo</InlineCode> targets a
-        single Partial.
+        <InlineCode>useNavigation().reload({'{selector: ".price"}'})</InlineCode> refetches every
+        Partial carrying that class token. Multiple tokens union:{" "}
+        <InlineCode>{'{selector: ".price .featured"}'}</InlineCode> hits any Partial with either
+        label. <InlineCode>#foo</InlineCode> targets a single Partial.
       </p>
 
       <Card className="mb-6 p-5">
         <CardHeader className="px-0">
           <CardTitle className="text-base">
-            <InlineCode>&lt;Partial selector=".product"&gt;</InlineCode> —
-            anonymous
+            <InlineCode>&lt;Partial selector=".product"&gt;</InlineCode> — anonymous
           </CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <p className="mb-3 text-sm text-muted-foreground">
             No <InlineCode>#</InlineCode>-token. Synthesizes{" "}
-            <InlineCode>__anon:.product</InlineCode> internally. Only
-            addressable via <InlineCode>.product</InlineCode>.
+            <InlineCode>__anon:.product</InlineCode> internally. Only addressable via{" "}
+            <InlineCode>.product</InlineCode>.
           </p>
           <Partial parent={ROOT} selector=".product">
             <ServerTime label="product" />
@@ -77,9 +69,9 @@ export function SelectorDemoPage() {
         </CardHeader>
         <CardContent className="flex flex-col gap-2 px-0">
           <p className="text-sm text-muted-foreground">
-            Three siblings sharing <InlineCode>.price</InlineCode>; two also
-            carry <InlineCode>.featured</InlineCode>. Selector unions let you
-            refresh a subset without plumbing ids through props.
+            Three siblings sharing <InlineCode>.price</InlineCode>; two also carry{" "}
+            <InlineCode>.featured</InlineCode>. Selector unions let you refresh a subset without
+            plumbing ids through props.
           </p>
           <Partial parent={ROOT} selector="#price-a .price">
             <ServerTime label="price-a" />
@@ -121,5 +113,5 @@ export function SelectorDemoPage() {
         </CardContent>
       </Card>
     </main>
-  );
+  )
 }

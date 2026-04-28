@@ -1,23 +1,23 @@
-"use client";
+"use client"
 
-import { useState, useTransition } from "react";
-import { addToCart } from "./cart-actions.ts";
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useState, useTransition } from "react"
+import { addToCart } from "./cart-actions.ts"
+import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 
 export function AddToCartButton({ sku }: { sku: string }) {
-  const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
 
   function handleClick() {
-    setError(null);
+    setError(null)
     startTransition(async () => {
       try {
-        await addToCart(sku, 1);
+        await addToCart(sku, 1)
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(e instanceof Error ? e.message : String(e))
       }
-    });
+    })
   }
 
   return (
@@ -37,5 +37,5 @@ export function AddToCartButton({ sku }: { sku: string }) {
         </Alert>
       )}
     </div>
-  );
+  )
 }

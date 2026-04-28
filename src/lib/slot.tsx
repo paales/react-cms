@@ -33,30 +33,26 @@
  * See `docs/cms.md` § Slot accessors.
  */
 
-import React, { type ReactNode } from "react";
-import { Partial } from "./partial-component.tsx";
-import { capturePartialContext } from "./partial-context.ts";
-import { getCurrentCmsScope, getRequest } from "../framework/context.ts";
-import {
-  getBlockSpec,
-  lookupCmsNode,
-  type CmsNode,
-} from "../framework/cms-runtime.ts";
+import React, { type ReactNode } from "react"
+import { Partial } from "./partial-component.tsx"
+import { capturePartialContext } from "./partial-context.ts"
+import { getCurrentCmsScope, getRequest } from "../framework/context.ts"
+import { getBlockSpec, lookupCmsNode, type CmsNode } from "../framework/cms-runtime.ts"
 
 export interface ChildrenProps {
   /** Slot key — matches `node.slots[name]` in the store. */
-  name: string;
+  name: string
   /**
    * Selector grammar constraining which block types the editor should
    * allow into this slot. Not enforced at runtime; surfaced to the
    * editor via the CMS scope's `childSlots` metadata.
    */
-  allow: string;
+  allow: string
 }
 
 export interface ChildProps {
-  name: string;
-  allow: string;
+  name: string
+  allow: string
 }
 
 /**
@@ -67,12 +63,12 @@ export interface ChildProps {
  * `partial-component.tsx`, which the node-tier vitest project can't
  * resolve. The prerender keys off this brand symbol instead.
  */
-export const SLOT_KIND_BRAND = Symbol.for("cms.slotKind");
-export type SlotKind = "multi" | "single";
+export const SLOT_KIND_BRAND = Symbol.for("cms.slotKind")
+export type SlotKind = "multi" | "single"
 
 interface SlotComponent {
-  (props: ChildrenProps | ChildProps): ReactNode;
-  [SLOT_KIND_BRAND]?: SlotKind;
+  (props: ChildrenProps | ChildProps): ReactNode
+  [SLOT_KIND_BRAND]?: SlotKind
 }
 
 /**
@@ -85,65 +81,59 @@ export const Children: SlotComponent = function Children({
   name,
   allow,
 }: ChildrenProps): ReactNode {
-  const scope = getCurrentCmsScope();
-  if (!scope) return null;
-  scope.childSlots.set(name, { multi: true, allow });
+  const scope = getCurrentCmsScope()
+  if (!scope) return null
+  scope.childSlots.set(name, { multi: true, allow })
 
-  const node = lookupCmsNode(scope.cmsId, getRequest());
-  const entries = node?.slots?.[name] ?? [];
-  if (entries.length === 0) return null;
+  const node = lookupCmsNode(scope.cmsId, getRequest())
+  const entries = node?.slots?.[name] ?? []
+  if (entries.length === 0) return null
 
-  return renderSlotEntries(entries);
-};
-Children[SLOT_KIND_BRAND] = "multi";
+  return renderSlotEntries(entries)
+}
+Children[SLOT_KIND_BRAND] = "multi"
 
 /**
  * Singleton slot — renders at most one block. If the store has more
  * than one entry (author mistake, migration), only the first is
  * rendered; the editor is responsible for preventing accumulation.
  */
-export const Child: SlotComponent = function Child({
-  name,
-  allow,
-}: ChildProps): ReactNode {
-  const scope = getCurrentCmsScope();
-  if (!scope) return null;
-  scope.childSlots.set(name, { multi: false, allow });
+export const Child: SlotComponent = function Child({ name, allow }: ChildProps): ReactNode {
+  const scope = getCurrentCmsScope()
+  if (!scope) return null
+  scope.childSlots.set(name, { multi: false, allow })
 
-  const node = lookupCmsNode(scope.cmsId, getRequest());
-  const entries = node?.slots?.[name] ?? [];
-  const entry = entries[0];
-  if (!entry) return null;
+  const node = lookupCmsNode(scope.cmsId, getRequest())
+  const entries = node?.slots?.[name] ?? []
+  const entry = entries[0]
+  if (!entry) return null
 
-  return renderSlotEntries([entry]);
-};
-Child[SLOT_KIND_BRAND] = "single";
+  return renderSlotEntries([entry])
+}
+Child[SLOT_KIND_BRAND] = "single"
 
 function renderSlotEntries(entries: readonly CmsNode[]): ReactNode {
-  const parent = capturePartialContext();
+  const parent = capturePartialContext()
   return entries.map((entry) => {
-    const type = entry.type;
-    if (!type) return null;
-    const spec = getBlockSpec(type);
+    const type = entry.type
+    if (!type) return null
+    const spec = getBlockSpec(type)
     if (!spec) {
       if (import.meta.env?.DEV) {
         console.warn(
           `[cms] slot entry "${entry.id}" has type "${type}" which is not registered. ` +
             `Register with registerBlock("${type}", …) or remove the entry from content.json.`,
-        );
+        )
       }
-      return null;
+      return null
     }
-    const Component = spec.component;
+    const Component = spec.component
     // Selector: `#<cmsId>` unique-token + the block's registered
     // class-tokens. The `#`-token ensures uniqueness across the page
     // (the Partial runtime enforces `#`-token page-wide uniqueness;
     // `cmsId`s are author-controlled so they're already unique within
     // the store).
-    const selector = [
-      `#${entry.id}` as `#${string}`,
-      ...spec.tags,
-    ];
+    const selector = [`#${entry.id}` as `#${string}`, ...spec.tags]
     // Fragment-wrap so the array's `key` lives on a transparent
     // wrapper instead of the Partial. `<Partial key={entry.id}>`
     // would composite with the Partial's inner `<Suspense key={id}>`
@@ -157,6 +147,6 @@ function renderSlotEntries(entries: readonly CmsNode[]): ReactNode {
           <Component />
         </Partial>
       </React.Fragment>
-    );
-  });
+    )
+  })
 }

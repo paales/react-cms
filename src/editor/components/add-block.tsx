@@ -22,17 +22,17 @@
  * page navigates / refetches.
  */
 
-import type { ReactNode } from "react";
+import type { ReactNode } from "react"
 
 interface AddBlockOption {
-  type: string;
+  type: string
   /**
    * Pre-bound server action — `addBlockToSlot.bind(null,
    * parentCmsId, slotName, type)` from the server. Bound functions
    * pass through RSC's serialization layer unchanged so the form's
    * `action` prop fires the right server action when submitted.
    */
-  action: () => Promise<unknown>;
+  action: () => Promise<unknown>
 }
 
 export function CmsEditAddBlock({
@@ -40,11 +40,11 @@ export function CmsEditAddBlock({
   slotName,
   options,
 }: {
-  parentCmsId: string;
-  slotName: string;
-  options: ReadonlyArray<AddBlockOption>;
+  parentCmsId: string
+  slotName: string
+  options: ReadonlyArray<AddBlockOption>
 }): ReactNode {
-  if (options.length === 0) return null;
+  if (options.length === 0) return null
   return (
     <details className="relative inline-block">
       <summary
@@ -75,5 +75,5 @@ export function CmsEditAddBlock({
         ))}
       </div>
     </details>
-  );
+  )
 }

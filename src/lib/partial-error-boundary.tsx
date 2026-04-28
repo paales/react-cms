@@ -1,33 +1,33 @@
-"use client";
+"use client"
 
-import React from "react";
-import { _windowNav, registerClientPartial } from "./partial-client.tsx";
-import { registerDebugPartial } from "./partial-debug.tsx";
+import React from "react"
+import { _windowNav, registerClientPartial } from "./partial-client.tsx"
+import { registerDebugPartial } from "./partial-debug.tsx"
 
 interface Props {
-  partialId: string;
+  partialId: string
   /** Structural fingerprint of the partial's children. When present,
    *  gets registered into the client-side fingerprint map on render
    *  so subsequent navigations can send it back via `?cached=`. */
-  partialFingerprint?: string;
+  partialFingerprint?: string
   /** Parsed selector — populates the dev debugger's per-Partial pills. */
-  debugUniqueTokens?: readonly string[];
-  debugSharedTokens?: readonly string[];
-  debugFramePath?: readonly string[];
+  debugUniqueTokens?: readonly string[]
+  debugSharedTokens?: readonly string[]
+  debugFramePath?: readonly string[]
   /** Ancestor Partial-id chain (outer-first) — drives indentation in
    *  the debug panel so nested Partials visually sit under their
    *  parents. */
-  debugParentPath?: readonly string[];
-  children: React.ReactNode;
+  debugParentPath?: readonly string[]
+  children: React.ReactNode
   /**
    * Optional error fallback. Rendered when a descendant throws.
    * If omitted, the built-in red card with a retry button is used.
    */
-  fallback?: React.ReactNode;
+  fallback?: React.ReactNode
 }
 
 interface State {
-  error: Error | null;
+  error: Error | null
 }
 
 /**
@@ -44,7 +44,7 @@ interface State {
  * `getCachedPartialIds()` call picks it up.
  */
 export class PartialErrorBoundary extends React.Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null }
 
   static getDerivedStateFromError(error: Error): State {
     // Framework control-flow sentinels (notFound, redirect) must
@@ -53,24 +53,21 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
     // Detect by the `__framework` brand on the class — avoids an
     // `instanceof` that would force a cross-bundle import.
     if ((error as { __framework?: string }).__framework) {
-      throw error;
+      throw error
     }
-    return { error };
+    return { error }
   }
 
   retry = () => {
     React.startTransition(() => {
-      this.setState({ error: null });
-      void _windowNav().reload();
-    });
-  };
+      this.setState({ error: null })
+      void _windowNav().reload()
+    })
+  }
 
   render() {
     if (this.props.partialFingerprint) {
-      registerClientPartial(
-        this.props.partialId,
-        this.props.partialFingerprint,
-      );
+      registerClientPartial(this.props.partialId, this.props.partialFingerprint)
     }
     if (
       import.meta.env.DEV &&
@@ -82,11 +79,11 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
         sharedTokens: this.props.debugSharedTokens ?? [],
         framePath: this.props.debugFramePath ?? [],
         parentPath: this.props.debugParentPath ?? [],
-      });
+      })
     }
     if (this.state.error) {
       if (this.props.fallback !== undefined) {
-        return this.props.fallback;
+        return this.props.fallback
       }
       return (
         <div
@@ -98,7 +95,13 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
             marginBottom: "1rem",
           }}
         >
-          <div style={{ color: "#f56565", fontWeight: 600, marginBottom: "0.5rem" }}>
+          <div
+            style={{
+              color: "#f56565",
+              fontWeight: 600,
+              marginBottom: "0.5rem",
+            }}
+          >
             Partial "{this.props.partialId}" failed to render
           </div>
           {import.meta.env.DEV && (
@@ -129,8 +132,8 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
             Retry
           </button>
         </div>
-      );
+      )
     }
-    return this.props.children;
+    return this.props.children
   }
 }

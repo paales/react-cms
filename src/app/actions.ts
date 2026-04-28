@@ -1,4 +1,4 @@
-"use server";
+"use server"
 
 /**
  * Demo server actions for partial invalidation.
@@ -10,13 +10,13 @@
  */
 
 export async function refreshHero() {
-  return { invalidate: { selector: "#hero" } };
+  return { invalidate: { selector: "#hero" } }
 }
 
 export async function refreshStats() {
-  return { invalidate: { selector: "#stats" } };
+  return { invalidate: { selector: "#stats" } }
 }
 
 export async function refreshAll() {
-  return { invalidate: { selector: "#hero #stats #species" } };
+  return { invalidate: { selector: "#hero #stats #species" } }
 }

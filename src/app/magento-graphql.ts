@@ -1,13 +1,13 @@
-import { initGraphQLTada } from "gql.tada";
-import type { introspection } from "./magento-env.d.ts";
+import { initGraphQLTada } from "gql.tada"
+import type { introspection } from "./magento-env.d.ts"
 
 export const graphql = initGraphQLTada<{
-  introspection: introspection;
+  introspection: introspection
   scalars: {
-    DateTime: string;
-    Date: string;
-  };
-}>();
+    DateTime: string
+    Date: string
+  }
+}>()
 
-export { readFragment } from "gql.tada";
-export type { FragmentOf, ResultOf, VariablesOf } from "gql.tada";
+export { readFragment } from "gql.tada"
+export type { FragmentOf, ResultOf, VariablesOf } from "gql.tada"

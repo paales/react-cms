@@ -38,58 +38,49 @@
  * frame URLs), not props.
  */
 
-import React, { type ReactNode } from "react";
-import { PartialsClient } from "./partial-client.tsx";
-import {
-  Partial,
-  PartialBoundary,
-  type PartialProps,
-} from "./partial-component.tsx";
-import { PartialErrorBoundary } from "./partial-error-boundary.tsx";
-import { getRequest } from "../framework/context.ts";
+import React, { type ReactNode } from "react"
+import { PartialsClient } from "./partial-client.tsx"
+import { Partial, PartialBoundary, type PartialProps } from "./partial-component.tsx"
+import { PartialErrorBoundary } from "./partial-error-boundary.tsx"
+import { getRequest } from "../framework/context.ts"
 import {
   clearRoute,
   getRouteSnapshots,
   lookupPartial,
   type PartialSnapshot,
-} from "./partial-registry.ts";
-import {
-  enterPartialState,
-  type PartialRequestState,
-} from "./partial-request-state.ts";
-import { setSessionFrameUrl } from "../framework/session.ts";
+} from "./partial-registry.ts"
+import { enterPartialState, type PartialRequestState } from "./partial-request-state.ts"
+import { setSessionFrameUrl } from "../framework/session.ts"
 
-export { Partial, type PartialProps };
+export { Partial, type PartialProps }
 
 interface PartialRootProps {
-  children: ReactNode;
+  children: ReactNode
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-function parseCachedFingerprints(
-  raw: string | null,
-): Map<string, string | null> {
-  const out = new Map<string, string | null>();
-  if (!raw) return out;
+function parseCachedFingerprints(raw: string | null): Map<string, string | null> {
+  const out = new Map<string, string | null>()
+  if (!raw) return out
   for (const token of raw.split(",").map((s) => s.trim())) {
-    if (!token) continue;
-    const colonIdx = token.indexOf(":");
+    if (!token) continue
+    const colonIdx = token.indexOf(":")
     if (colonIdx > 0) {
-      out.set(token.slice(0, colonIdx), token.slice(colonIdx + 1));
+      out.set(token.slice(0, colonIdx), token.slice(colonIdx + 1))
     } else {
-      out.set(token, null);
+      out.set(token, null)
     }
   }
-  return out;
+  return out
 }
 
 function parseCsvTokens(raw: string | null): string[] {
-  if (!raw) return [];
+  if (!raw) return []
   return raw
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
 }
 
 /**
@@ -114,14 +105,14 @@ function resolveSelectorToIds(
   sharedParam: string | null,
   route: string,
 ): Set<string> | null {
-  const uniqueNames = parseCsvTokens(uniqueParam);
-  const sharedNames = parseCsvTokens(sharedParam);
-  if (uniqueNames.length === 0 && sharedNames.length === 0) return null;
+  const uniqueNames = parseCsvTokens(uniqueParam)
+  const sharedNames = parseCsvTokens(sharedParam)
+  if (uniqueNames.length === 0 && sharedNames.length === 0) return null
 
-  const snapshots = getRouteSnapshots(route);
-  if (!snapshots) return null;
+  const snapshots = getRouteSnapshots(route)
+  if (!snapshots) return null
 
-  const ids = new Set<string>();
+  const ids = new Set<string>()
 
   // Pass 1: direct effective-id lookup for each `partials=` token.
   // Covers activator refetches (`useActivate(partialId)` sends the
@@ -129,7 +120,7 @@ function resolveSelectorToIds(
   // case but is `__anon:…` for anonymous Partials and a comma-join
   // for multi-`#` Partials).
   for (const name of uniqueNames) {
-    if (snapshots.has(name)) ids.add(name);
+    if (snapshots.has(name)) ids.add(name)
   }
 
   // Pass 2: scan for `#`-token matches not caught by direct lookup.
@@ -137,11 +128,11 @@ function resolveSelectorToIds(
   // snapshot's effective id is `cart,primary-cart`.
   if (uniqueNames.length > 0) {
     for (const [id, snap] of snapshots) {
-      if (ids.has(id)) continue;
+      if (ids.has(id)) continue
       for (const u of snap.uniqueTokens) {
         if (uniqueNames.includes(u)) {
-          ids.add(id);
-          break;
+          ids.add(id)
+          break
         }
       }
     }
@@ -150,17 +141,17 @@ function resolveSelectorToIds(
   // Pass 3: scan for `.`-token (shared) matches.
   if (sharedNames.length > 0) {
     for (const [id, snap] of snapshots) {
-      if (ids.has(id)) continue;
+      if (ids.has(id)) continue
       for (const s of snap.sharedTokens) {
         if (sharedNames.includes(s)) {
-          ids.add(id);
-          break;
+          ids.add(id)
+          break
         }
       }
     }
   }
 
-  return ids.size > 0 ? ids : null;
+  return ids.size > 0 ? ids : null
 }
 
 /**
@@ -186,7 +177,7 @@ function partialFromSnapshot(_id: string, snap: PartialSnapshot): ReactNode {
   const selector = [
     ...snap.uniqueTokens.map((t): `#${string}` => `#${t}`),
     ...snap.sharedTokens.map((t): `.${string}` => `.${t}`),
-  ];
+  ]
   // Reconstruct the parent context from the stored path. The cell
   // can't be trusted for this call — we're rendering snapshots as
   // flat siblings in cache-mode, not through their original tree.
@@ -195,13 +186,9 @@ function partialFromSnapshot(_id: string, snap: PartialSnapshot): ReactNode {
   // re-computes the full dotted frame path identically to the
   // original render.
   const frameChain: readonly string[] =
-    snap.framePath.length > 0
-      ? snap.framePath.slice(0, snap.framePath.length - 1)
-      : [];
+    snap.framePath.length > 0 ? snap.framePath.slice(0, snap.framePath.length - 1) : []
   const frameLocalName: string | undefined =
-    snap.framePath.length > 0
-      ? snap.framePath[snap.framePath.length - 1]
-      : undefined;
+    snap.framePath.length > 0 ? snap.framePath[snap.framePath.length - 1] : undefined
   return React.createElement(
     Partial,
     {
@@ -221,32 +208,32 @@ function partialFromSnapshot(_id: string, snap: PartialSnapshot): ReactNode {
       cmsId: snap.cmsId,
     },
     snap.content,
-  );
+  )
 }
 
 // ─── PartialRoot ───────────────────────────────────────────────────────
 
 export async function PartialRoot({ children }: PartialRootProps) {
-  const requestUrl = new URL(getRequest().url);
-  const partialsParam = requestUrl.searchParams.get("partials");
-  const tagsParam = requestUrl.searchParams.get("tags");
-  const cachedParam = requestUrl.searchParams.get("cached");
-  const populateCache = requestUrl.searchParams.has("__populateCache");
+  const requestUrl = new URL(getRequest().url)
+  const partialsParam = requestUrl.searchParams.get("partials")
+  const tagsParam = requestUrl.searchParams.get("tags")
+  const cachedParam = requestUrl.searchParams.get("cached")
+  const populateCache = requestUrl.searchParams.has("__populateCache")
 
   // Frame navigation: `?__frame=a.b.c&__frameUrl=/path` carries the
   // next URL for a frame at a dotted path. Write it to the session
   // before any `<Partial frame=…>` runs — its `resolveFrameRequest`
   // will pick up the new URL from the session.
-  const frameNames = requestUrl.searchParams.getAll("__frame");
-  const frameUrls = requestUrl.searchParams.getAll("__frameUrl");
+  const frameNames = requestUrl.searchParams.getAll("__frame")
+  const frameUrls = requestUrl.searchParams.getAll("__frameUrl")
   if (frameNames.length > 0 && frameNames.length === frameUrls.length) {
     for (let i = 0; i < frameNames.length; i++) {
-      const path = frameNames[i].split(".").filter(Boolean);
-      if (path.length > 0) setSessionFrameUrl(path, frameUrls[i]);
+      const path = frameNames[i].split(".").filter(Boolean)
+      if (path.length > 0) setSessionFrameUrl(path, frameUrls[i])
     }
   }
 
-  const route = requestUrl.pathname;
+  const route = requestUrl.pathname
 
   // Selector resolution scans the registry populated by PRIOR requests.
   // `?partials=` carries `#`-token names (sans `#`); `?tags=` carries
@@ -258,14 +245,10 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // by the client: `_dispatchFrameRefetch` adds `partials=<name>` to
   // narrow (frame nav), while the `urlChanged` browser-traverse
   // handler omits it to get a full render with session updates.
-  const combinedRequestedIds = resolveSelectorToIds(
-    partialsParam,
-    tagsParam,
-    route,
-  );
+  const combinedRequestedIds = resolveSelectorToIds(partialsParam, tagsParam, route)
 
-  const hasGlobalFilter = partialsParam != null || tagsParam != null;
-  const isPartialRefetch = hasGlobalFilter || populateCache;
+  const hasGlobalFilter = partialsParam != null || tagsParam != null
+  const isPartialRefetch = hasGlobalFilter || populateCache
 
   // Explicit ids are never skipped on a fingerprint match or filter —
   // they're what the caller asked for. Seed from the resolver output
@@ -275,12 +258,12 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // whose effective id matches a raw name will take the explicit
   // path (e.g. render through a `defer` branch) even during the
   // streaming fallback.
-  const explicitIds = new Set<string>();
+  const explicitIds = new Set<string>()
   if (combinedRequestedIds) {
-    for (const id of combinedRequestedIds) explicitIds.add(id);
+    for (const id of combinedRequestedIds) explicitIds.add(id)
   }
   if (partialsParam) {
-    for (const name of parseCsvTokens(partialsParam)) explicitIds.add(name);
+    for (const name of parseCsvTokens(partialsParam)) explicitIds.add(name)
   }
 
   const state: PartialRequestState = {
@@ -291,7 +274,7 @@ export async function PartialRoot({ children }: PartialRootProps) {
     explicitIds,
     seenIds: new Set(),
     seenUniqueTokens: new Set(),
-  };
+  }
 
   // Registry-miss fallback: if any requested `#`-token doesn't match a
   // registered snapshot (either nothing matched at all, or a new
@@ -302,31 +285,26 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // a fresh tree. `.class` tokens don't participate in this check —
   // a selector that only resolves to a subset of known snapshots is
   // valid (that's how unions work).
-  const requestedUniqueNames = parseCsvTokens(partialsParam);
-  let registryMiss =
-    state.isPartialRefetch && hasGlobalFilter && !combinedRequestedIds;
-  if (
-    state.isPartialRefetch &&
-    !registryMiss &&
-    requestedUniqueNames.length > 0
-  ) {
-    const snapshots = getRouteSnapshots(route);
+  const requestedUniqueNames = parseCsvTokens(partialsParam)
+  let registryMiss = state.isPartialRefetch && hasGlobalFilter && !combinedRequestedIds
+  if (state.isPartialRefetch && !registryMiss && requestedUniqueNames.length > 0) {
+    const snapshots = getRouteSnapshots(route)
     for (const name of requestedUniqueNames) {
       // Direct lookup (effective id). If it's not a direct id match,
       // check whether any snapshot declares the name as a `#`-token.
-      if (snapshots?.has(name)) continue;
-      let foundAsToken = false;
+      if (snapshots?.has(name)) continue
+      let foundAsToken = false
       if (snapshots) {
         for (const snap of snapshots.values()) {
           if (snap.uniqueTokens.includes(name)) {
-            foundAsToken = true;
-            break;
+            foundAsToken = true
+            break
           }
         }
       }
       if (!foundAsToken) {
-        registryMiss = true;
-        break;
+        registryMiss = true
+        break
       }
     }
   }
@@ -340,16 +318,14 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // request (e.g. `page-2` after the URL dropped to `?end=1`) don't
   // leak into future tag/id lookups.
   if (!state.isPartialRefetch || registryMiss) {
-    clearRoute(route);
+    clearRoute(route)
     const streamState: PartialRequestState = {
       ...state,
       requestedIds: null,
       isPartialRefetch: false,
-    };
-    enterPartialState(streamState);
-    return (
-      <PartialsClient mode="streaming">{children}</PartialsClient>
-    );
+    }
+    enterPartialState(streamState)
+    return <PartialsClient mode="streaming">{children}</PartialsClient>
   }
 
   // ── Cache mode (partial refetch) ──────────────────────────────────
@@ -368,16 +344,16 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // new inputs because inputs don't live on the JSX at all. Closures
   // that would have been stale (sku from a `.map()` iteration, etc.)
   // stay stable-by-construction.
-  enterPartialState(state);
+  enterPartialState(state)
 
-  const activeIds = [...(state.requestedIds ?? [])];
+  const activeIds = [...(state.requestedIds ?? [])]
   const wrappedChildren = activeIds
     .map((id) => {
-      const snap = lookupPartial(route, id);
-      if (!snap) return null;
-      return partialFromSnapshot(id, snap);
+      const snap = lookupPartial(route, id)
+      if (!snap) return null
+      return partialFromSnapshot(id, snap)
     })
-    .filter((x): x is NonNullable<typeof x> => x != null);
+    .filter((x): x is NonNullable<typeof x> => x != null)
 
   // Pass wrappedChildren as positional args via `createElement` rather
   // than `{wrappedChildren}` in JSX. Passing an array as a child prop
@@ -391,17 +367,13 @@ export async function PartialRoot({ children }: PartialRootProps) {
   // mode, forcing a remount that wipes client state inside the
   // partial (e.g. the /cache-demo click counter). Positional children
   // sidestep both: no warning, no composite.
-  return React.createElement(
-    PartialsClient,
-    { mode: "cache" },
-    ...wrappedChildren,
-  );
+  return React.createElement(PartialsClient, { mode: "cache" }, ...wrappedChildren)
 }
 
 // Re-export PartialBoundary + PartialErrorBoundary so existing
 // imports elsewhere (notably cache.tsx, which walks for PartialBoundary
 // as a type marker) keep working.
-export { PartialBoundary };
+export { PartialBoundary }
 // PartialErrorBoundary is client-only but some server-only code paths
 // reference its type; re-export for convenience.
-export type { PartialErrorBoundary };
+export type { PartialErrorBoundary }

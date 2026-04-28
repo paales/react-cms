@@ -23,9 +23,9 @@
  * See `docs/cms.md`.
  */
 
-import { Children, Partial } from "../../lib";
-import { ROOT } from "../../lib/partial-context.ts";
-import { Card, CardContent } from "@/components/ui/card";
+import { Children, Partial } from "../../lib"
+import { ROOT } from "../../lib/partial-context.ts"
+import { Card, CardContent } from "@/components/ui/card"
 
 export function CmsDemoPage() {
   return (
@@ -36,9 +36,7 @@ export function CmsDemoPage() {
 
       <Card className="mt-8 p-5">
         <CardContent className="px-0 text-sm text-muted-foreground">
-          <p className="mb-2 font-semibold text-foreground">
-            What you're looking at
-          </p>
+          <p className="mb-2 font-semibold text-foreground">What you're looking at</p>
           <ul className="list-disc space-y-1 pl-5">
             <li>
               The page above is a single Partial (
@@ -49,9 +47,8 @@ export function CmsDemoPage() {
               <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
                 &lt;Children name="body" /&gt;
               </code>{" "}
-              slot. Every visible piece — hero, nav, greeting,
-              composed, multi-slot — is a slot child contributed via
-              the CMS store, not an explicit JSX declaration.
+              slot. Every visible piece — hero, nav, greeting, composed, multi-slot — is a slot
+              child contributed via the CMS store, not an explicit JSX declaration.
             </li>
             <li>
               The editor's tree (
@@ -62,23 +59,18 @@ export function CmsDemoPage() {
               <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
                 slot:cms-demo-root:body
               </code>{" "}
-              intermediary; the slot's `+ add` palette lists every
-              registered{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
-                page-*
-              </code>{" "}
+              intermediary; the slot's `+ add` palette lists every registered{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">page-*</code>{" "}
               block type.
             </li>
             <li>
-              Per-slug content (the greeting card) still works — match
-              clauses on the greeting's slot-child entry resolve
-              against the request URL exactly like any top-level
-              CMS-aware Partial. Visit /cms-demo/alpha vs /cms-demo
-              to see it.
+              Per-slug content (the greeting card) still works — match clauses on the greeting's
+              slot-child entry resolve against the request URL exactly like any top-level CMS-aware
+              Partial. Visit /cms-demo/alpha vs /cms-demo to see it.
             </li>
           </ul>
         </CardContent>
       </Card>
     </>
-  );
+  )
 }

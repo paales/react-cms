@@ -1,6 +1,6 @@
-import path from "node:path";
-import { vitePluginRscMinimal } from "@vitejs/plugin-rsc/plugin";
-import { defineProject } from "vitest/config";
+import path from "node:path"
+import { vitePluginRscMinimal } from "@vitejs/plugin-rsc/plugin"
+import { defineProject } from "vitest/config"
 
 /**
  * Dedicated Vitest project for tests that render React Server
@@ -48,12 +48,7 @@ export default defineProject({
     // condition must be enabled" in the runtime.
     server: {
       deps: {
-        inline: [
-          "react",
-          "react-dom",
-          "react-server-dom-webpack",
-          /@vitejs\/plugin-rsc/,
-        ],
+        inline: ["react", "react-dom", "react-server-dom-webpack", /@vitejs\/plugin-rsc/],
       },
     },
     // React's internal `require("react")` calls go through the plain
@@ -64,4 +59,4 @@ export default defineProject({
     // it via `poolOptions.forks.execArgv` here — Vitest 3 doesn't
     // appear to propagate execArgv from a project config.
   },
-});
+})

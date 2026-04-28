@@ -7,11 +7,11 @@
  * fleshes out the interface.
  */
 
-import "react/canary";
+import "react/canary"
 
 declare module "react" {
   interface FragmentInstance {
-    observeUsing(observer: IntersectionObserver | ResizeObserver): void;
-    unobserveUsing(observer: IntersectionObserver | ResizeObserver): void;
+    observeUsing(observer: IntersectionObserver | ResizeObserver): void
+    unobserveUsing(observer: IntersectionObserver | ResizeObserver): void
   }
 }

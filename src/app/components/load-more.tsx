@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { useEffect, useRef, useState } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
+import { useEffect, useRef, useState } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
 
 /**
  * Tracks which page partials are currently visible.
@@ -12,21 +12,19 @@ import { useNavigation } from "../../lib/partial-client.tsx";
  * `navigate(url, { silent: true })` replaces the URL without
  * any server round-trip.
  */
-const visiblePages = new Set<number>();
+const visiblePages = new Set<number>()
 
-function silentlyUpdatePages(
-  nav: ReturnType<typeof useNavigation>,
-) {
-  if (visiblePages.size === 0) return;
-  const maxVisible = Math.max(...visiblePages);
-  const url = new URL(window.location.href);
-  const current = Number(url.searchParams.get("pages")) || 1;
+function silentlyUpdatePages(nav: ReturnType<typeof useNavigation>) {
+  if (visiblePages.size === 0) return
+  const maxVisible = Math.max(...visiblePages)
+  const url = new URL(window.location.href)
+  const current = Number(url.searchParams.get("pages")) || 1
 
   if (maxVisible < current) {
     // Scrolling up — update URL for bookmarking/refresh without
     // triggering a refetch.
-    url.searchParams.set("pages", String(maxVisible));
-    void nav.navigate(url.toString(), { history: "replace", silent: true });
+    url.searchParams.set("pages", String(maxVisible))
+    void nav.navigate(url.toString(), { history: "replace", silent: true })
   }
 }
 
@@ -35,17 +33,17 @@ function silentlyUpdatePages(
  * Tracks visibility so ?pages= stays in sync with scroll position.
  */
 export function PageSentinel({ page }: { page: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const nav = useNavigation();
+  const ref = useRef<HTMLDivElement>(null)
+  const nav = useNavigation()
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const el = ref.current
+    if (!el) return
 
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) {
-        visiblePages.add(page);
-        return;
+        visiblePages.add(page)
+        return
       }
       // Only trigger the silent URL update when a page that *was* visible
       // leaves the viewport. Without this guard, a newly mounted page that
@@ -53,19 +51,19 @@ export function PageSentinel({ page }: { page: number }) {
       // event, which yanks the URL back down and races with LoadMore
       // bumping it up again — causing the URL to flip between N and N+1
       // on pageload.
-      if (!visiblePages.has(page)) return;
-      visiblePages.delete(page);
-      silentlyUpdatePages(nav);
-    });
+      if (!visiblePages.has(page)) return
+      visiblePages.delete(page)
+      silentlyUpdatePages(nav)
+    })
 
-    observer.observe(el);
+    observer.observe(el)
     return () => {
-      observer.disconnect();
-      visiblePages.delete(page);
-    };
-  }, [page, nav]);
+      observer.disconnect()
+      visiblePages.delete(page)
+    }
+  }, [page, nav])
 
-  return <div ref={ref} className="h-0" />;
+  return <div ref={ref} className="h-0" />
 }
 
 /**
@@ -79,18 +77,18 @@ export function PageSentinel({ page }: { page: number }) {
  * does any other unrelated partial (e.g. an open search overlay).
  */
 export function LoadMore({ nextPage }: { nextPage: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const triggered = useRef(false);
-  const nav = useNavigation();
-  const [isPending, setIsPending] = useState(false);
+  const ref = useRef<HTMLDivElement>(null)
+  const triggered = useRef(false)
+  const nav = useNavigation()
+  const [isPending, setIsPending] = useState(false)
 
   useEffect(() => {
-    triggered.current = false;
-  }, [nextPage]);
+    triggered.current = false
+  }, [nextPage])
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const el = ref.current
+    if (!el) return
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -99,27 +97,27 @@ export function LoadMore({ nextPage }: { nextPage: number }) {
         // "intersecting" the viewport — IntersectionObserver checks
         // geometry, not occlusion. Auto-firing here would race with
         // the user's keystroke dispatches into the search stages.
-        if (new URL(window.location.href).searchParams.has("search")) return;
+        if (new URL(window.location.href).searchParams.has("search")) return
 
         if (entry.isIntersecting && !triggered.current) {
-          triggered.current = true;
-          const url = new URL(window.location.href);
-          url.searchParams.set("pages", String(nextPage));
-          setIsPending(true);
+          triggered.current = true
+          const url = new URL(window.location.href)
+          url.searchParams.set("pages", String(nextPage))
+          setIsPending(true)
           nav
             .navigate(url.toString(), {
               history: "replace",
               selector: `#page-${nextPage} #load-more`,
             })
-            .finished.finally(() => setIsPending(false));
+            .finished.finally(() => setIsPending(false))
         }
       },
       { rootMargin: "200px" },
-    );
+    )
 
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [nextPage, nav]);
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [nextPage, nav])
 
   return (
     <div ref={ref} className="p-8 text-center">
@@ -127,5 +125,5 @@ export function LoadMore({ nextPage }: { nextPage: number }) {
         <span className="inline-block size-6 animate-spin rounded-full border-[3px] border-muted border-t-primary" />
       )}
     </div>
-  );
+  )
 }

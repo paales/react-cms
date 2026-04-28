@@ -1,6 +1,6 @@
-import { getRequest } from "./context.ts";
+import { getRequest } from "./context.ts"
 
-export type RouteParams = Record<string, string | undefined>;
+export type RouteParams = Record<string, string | undefined>
 
 /**
  * Top-level route match. Reads the current request's pathname from
@@ -10,23 +10,21 @@ export type RouteParams = Record<string, string | undefined>;
  * instead so the match participates in the cache manifest.
  */
 export function matchPath(pattern: string): RouteParams | null {
-  const url = new URL(getRequest().url);
+  const url = new URL(getRequest().url)
   const result = new URLPattern({ pathname: pattern }).exec({
     pathname: url.pathname,
-  });
-  return result ? (result.pathname.groups as RouteParams) : null;
+  })
+  return result ? (result.pathname.groups as RouteParams) : null
 }
 
 /**
  * Walk a pattern → handler list; invoke the first handler whose
  * pattern matches. Same ambient-URL behavior as `matchPath`.
  */
-export function pickRoute<T>(
-  routes: Array<[string, (params: RouteParams) => T]>,
-): T | null {
+export function pickRoute<T>(routes: Array<[string, (params: RouteParams) => T]>): T | null {
   for (const [pattern, handler] of routes) {
-    const params = matchPath(pattern);
-    if (params !== null) return handler(params);
+    const params = matchPath(pattern)
+    if (params !== null) return handler(params)
   }
-  return null;
+  return null
 }

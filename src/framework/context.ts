@@ -33,25 +33,25 @@
  * discipline (which we already enforce).
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
-import { cache } from "react";
+import { AsyncLocalStorage } from "node:async_hooks"
+import { cache } from "react"
 import {
   createCmsScope,
   resolveCmsScope,
   type CmsScope,
   type ContentFieldKind,
   type Reference,
-} from "./cms-runtime.ts";
-import { capturePartialContext } from "../lib/partial-context.ts";
+} from "./cms-runtime.ts"
+import { capturePartialContext } from "../lib/partial-context.ts"
 
 interface FrameworkControl {
-  notFound?: boolean;
-  redirect?: { url: string; status: number };
+  notFound?: boolean
+  redirect?: { url: string; status: number }
 }
 
 interface RequestStore {
-  request: Request;
-  cookies: string[];
+  request: Request
+  cookies: string[]
   /**
    * Per-request **scope token**. Production always sees `"default"`.
    * In dev, we honour an `x-test-scope` header — Playwright workers
@@ -60,16 +60,16 @@ interface RequestStore {
    * partial registry, session store, GraphQL cache). See
    * `getScope()` below and `docs-dev/server-isolation.md`.
    */
-  scope: string;
+  scope: string
   /**
    * Populated by `Root`'s framework-sentinel catch branch. Read by
    * the RSC entry after rendering to pick the right HTTP status /
    * `Location` header / payload marker.
    */
-  control?: FrameworkControl;
+  control?: FrameworkControl
 }
 
-const requestContext = new AsyncLocalStorage<RequestStore>();
+const requestContext = new AsyncLocalStorage<RequestStore>()
 
 /**
  * Per-Partial cache access manifest. Opened by `<Cache>` at the top of
@@ -91,9 +91,9 @@ const requestContext = new AsyncLocalStorage<RequestStore>();
  * failure (log + preserve the old entry).
  */
 export interface ManifestScope {
-  current: Set<string>;
-  stored: ReadonlySet<string> | null;
-  partialId: string;
+  current: Set<string>
+  stored: ReadonlySet<string> | null
+  partialId: string
   /**
    * Called by `trackAccess` immediately before throwing a
    * `HoistingViolationError`. The framework uses this to invalidate
@@ -112,10 +112,10 @@ export interface ManifestScope {
    * Partial, and the violation becomes unrecoverable without an
    * automatic clear.
    */
-  onViolation?: () => void;
+  onViolation?: () => void
 }
 
-const manifestContext = new AsyncLocalStorage<ManifestScope>();
+const manifestContext = new AsyncLocalStorage<ManifestScope>()
 
 // ─── Partial-level manifest (React.cache mutation cell) ──────────────
 //
@@ -147,18 +147,16 @@ const manifestContext = new AsyncLocalStorage<ManifestScope>();
 // past intermediate awaits hit the same drift sharp edge as frame
 // scope — see `docs-dev/frame-scope.md` and the limit documented on
 // the Partial body's `descendantManifestKey` computation.
-const partialManifestCell = cache(
-  (): { current: ManifestScope | null } => ({ current: null }),
-);
+const partialManifestCell = cache((): { current: ManifestScope | null } => ({
+  current: null,
+}))
 
-export function setCurrentPartialManifest(
-  scope: ManifestScope | null,
-): void {
-  partialManifestCell().current = scope;
+export function setCurrentPartialManifest(scope: ManifestScope | null): void {
+  partialManifestCell().current = scope
 }
 
 export function getCurrentPartialManifest(): ManifestScope | null {
-  return partialManifestCell().current;
+  return partialManifestCell().current
 }
 
 // ─── Frame scope (React.cache mutation cell) ──────────────────────
@@ -178,10 +176,10 @@ export function getCurrentPartialManifest(): ManifestScope | null {
  */
 export interface FrameScope {
   /** Synthetic Request this frame's accessors resolve against. */
-  request: Request;
+  request: Request
   /** Full frame path, outer-first (e.g. `["products", "list"]`).
    *  Dotted for logging / session lookup via `path.join(".")`. */
-  path: readonly string[];
+  path: readonly string[]
 }
 
 /**
@@ -192,7 +190,7 @@ export interface FrameScope {
  */
 const frameScopeCell = cache((): { current: FrameScope | null } => ({
   current: null,
-}));
+}))
 
 /**
  * Called by `FrameWrapper` before rendering a framed subtree. The
@@ -200,16 +198,16 @@ const frameScopeCell = cache((): { current: FrameScope | null } => ({
  * the new value.
  */
 export function setCurrentFrameScope(scope: FrameScope | null): void {
-  frameScopeCell().current = scope;
+  frameScopeCell().current = scope
 }
 
 /** Current frame scope, or `null` if no frame is active. */
 export function getCurrentFrameScope(): FrameScope | null {
-  return frameScopeCell().current;
+  return frameScopeCell().current
 }
 
 function frameRequest(): Request | null {
-  return frameScopeCell().current?.request ?? null;
+  return frameScopeCell().current?.request ?? null
 }
 
 // ─── CMS scope (React.cache mutation cell) ────────────────────────
@@ -234,7 +232,7 @@ function frameRequest(): Request | null {
  */
 const cmsScopeCell = cache((): { current: CmsScope | null } => ({
   current: null,
-}));
+}))
 
 /**
  * Called by `<Partial cmsId>` before rendering children. Passing
@@ -242,7 +240,7 @@ const cmsScopeCell = cache((): { current: CmsScope | null } => ({
  * `cmsId` should not inherit from an ancestor's CMS scope).
  */
 export function _setCurrentCmsScope(scope: CmsScope | null): void {
-  cmsScopeCell().current = scope;
+  cmsScopeCell().current = scope
 }
 
 /**
@@ -257,23 +255,23 @@ export function _setCurrentCmsScope(scope: CmsScope | null): void {
  * (it shouldn't be during a direct call, but the precedence is
  * explicit).
  */
-const cmsPrerenderContext = new AsyncLocalStorage<CmsScope>();
+const cmsPrerenderContext = new AsyncLocalStorage<CmsScope>()
 
 /** @internal Used by `src/framework/cms-prerender.ts`. */
 export function _runWithPrerenderCmsScope<T>(
   scope: CmsScope,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  return cmsPrerenderContext.run(scope, async () => fn());
+  return cmsPrerenderContext.run(scope, async () => fn())
 }
 
 function currentCmsScope(): CmsScope | null {
-  return cmsPrerenderContext.getStore() ?? cmsScopeCell().current;
+  return cmsPrerenderContext.getStore() ?? cmsScopeCell().current
 }
 
 /** Current CMS scope, or `null` if this render isn't inside a `<Partial cmsId>`. */
 export function getCurrentCmsScope(): CmsScope | null {
-  return currentCmsScope();
+  return currentCmsScope()
 }
 
 /**
@@ -284,13 +282,13 @@ export function getCurrentCmsScope(): CmsScope | null {
  * caller can't cause cache-miss amplification or state exfil by
  * spoofing scopes.
  */
-const DEFAULT_SCOPE = "default";
+const DEFAULT_SCOPE = "default"
 function deriveScope(request: Request): string {
   if (import.meta.env?.DEV) {
-    const h = request.headers.get("x-test-scope");
-    if (h) return h;
+    const h = request.headers.get("x-test-scope")
+    if (h) return h
   }
-  return DEFAULT_SCOPE;
+  return DEFAULT_SCOPE
 }
 
 /**
@@ -309,20 +307,17 @@ function deriveScope(request: Request): string {
  * resolved content) that breaks if you uniformly shrink them.
  */
 export function isTestMode(): boolean {
-  return getStore().scope !== DEFAULT_SCOPE;
+  return getStore().scope !== DEFAULT_SCOPE
 }
 
-export function runWithRequest<T>(
-  request: Request,
-  fn: () => T,
-): { result: T; cookies: string[] } {
+export function runWithRequest<T>(request: Request, fn: () => T): { result: T; cookies: string[] } {
   const store: RequestStore = {
     request,
     cookies: [],
     scope: deriveScope(request),
-  };
-  const result = requestContext.run(store, fn);
-  return { result, cookies: store.cookies };
+  }
+  const result = requestContext.run(store, fn)
+  return { result, cookies: store.cookies }
 }
 
 export async function runWithRequestAsync<T>(
@@ -333,26 +328,23 @@ export async function runWithRequestAsync<T>(
     request,
     cookies: [],
     scope: deriveScope(request),
-  };
-  const result = await requestContext.run(store, fn);
-  return { result, cookies: store.cookies };
+  }
+  const result = await requestContext.run(store, fn)
+  return { result, cookies: store.cookies }
 }
 
 function getStore(): RequestStore {
-  const store = requestContext.getStore();
-  if (!store)
-    throw new Error(
-      "No request context — are you inside a server component or action?",
-    );
-  return store;
+  const store = requestContext.getStore()
+  if (!store) throw new Error("No request context — are you inside a server component or action?")
+  return store
 }
 
 export function getRequest(): Request {
-  return getStore().request;
+  return getStore().request
 }
 
 export function setRequest(request: Request): void {
-  getStore().request = request;
+  getStore().request = request
 }
 
 /**
@@ -368,30 +360,27 @@ export function setRequest(request: Request): void {
  * live request.
  */
 export function getScope(): string {
-  return requestContext.getStore()?.scope ?? DEFAULT_SCOPE;
+  return requestContext.getStore()?.scope ?? DEFAULT_SCOPE
 }
 
 export function getDefaultScope(): string {
-  return DEFAULT_SCOPE;
+  return DEFAULT_SCOPE
 }
 
 // ─── Manifest tracking ─────────────────────────────────────────────────
 
-export function runWithCacheManifest<T>(
-  scope: ManifestScope,
-  fn: () => Promise<T>,
-): Promise<T> {
-  return manifestContext.run(scope, fn);
+export function runWithCacheManifest<T>(scope: ManifestScope, fn: () => Promise<T>): Promise<T> {
+  return manifestContext.run(scope, fn)
 }
 
 export function getCurrentCacheManifest(): ManifestScope | undefined {
-  return manifestContext.getStore();
+  return manifestContext.getStore()
 }
 
 export class HoistingViolationError extends Error {
-  readonly partialId: string;
-  readonly newKey: string;
-  readonly previousKeys: string[];
+  readonly partialId: string
+  readonly newKey: string
+  readonly previousKeys: string[]
   constructor(partialId: string, newKey: string, previousKeys: string[]) {
     super(
       `Partial "${partialId}"'s manifest captured a read of "${newKey}" on ` +
@@ -410,43 +399,43 @@ export class HoistingViolationError extends Error {
         `they happen at the synchronous top of a server component body.\n\n` +
         `If "${partialId}" really does need to vary by "${newKey}" ` +
         `conditionally, use \`cache.vary\` for <Cache> partials.`,
-    );
-    this.name = "HoistingViolationError";
-    this.partialId = partialId;
-    this.newKey = newKey;
-    this.previousKeys = previousKeys;
+    )
+    this.name = "HoistingViolationError"
+    this.partialId = partialId
+    this.newKey = newKey
+    this.previousKeys = previousKeys
   }
 }
 
 function trackAccess(kind: string, name: string): void {
-  const key = `${kind}:${name}`;
+  const key = `${kind}:${name}`
   // ALS scope (Cache via runWithCacheManifest). Innermost Cache wins
   // by ALS semantics, so a nested `<Cache>` inside a `<Cache>` lands
   // in the inner cache's manifest — same as before.
-  const alsScope = manifestContext.getStore();
-  if (alsScope) recordAccess(alsScope, key);
+  const alsScope = manifestContext.getStore()
+  if (alsScope) recordAccess(alsScope, key)
   // Per-request cell scope (Partial body). Distinct from the ALS
   // scope: a single accessor read attributes to BOTH the surrounding
   // Cache (if any) AND the surrounding Partial. Each layer folds its
   // own manifest into its own key derivation downstream — Cache into
   // the cache key, Partial into the structural fingerprint.
-  const cellScope = partialManifestCell().current;
-  if (cellScope && cellScope !== alsScope) recordAccess(cellScope, key);
+  const cellScope = partialManifestCell().current
+  if (cellScope && cellScope !== alsScope) recordAccess(cellScope, key)
 }
 
 function recordAccess(scope: ManifestScope, key: string): void {
-  if (scope.current.has(key)) return;
+  if (scope.current.has(key)) return
   if (scope.stored !== null && !scope.stored.has(key)) {
-    const prevKeys = [...scope.stored].sort();
+    const prevKeys = [...scope.stored].sort()
     // Capture the violation handler BEFORE clearing — see scope.onViolation
     // doc for why. Clearing stored locally also stops a chain of further
     // throws inside this same render (one violation surfaces, rest are
     // recorded as new keys until the render ends).
-    scope.onViolation?.();
-    scope.stored = null;
-    throw new HoistingViolationError(scope.partialId, key, prevKeys);
+    scope.onViolation?.()
+    scope.stored = null
+    throw new HoistingViolationError(scope.partialId, key, prevKeys)
   }
-  scope.current.add(key);
+  scope.current.add(key)
 }
 
 /**
@@ -463,47 +452,44 @@ function recordAccess(scope: ManifestScope, key: string): void {
  * Does NOT participate in tracking — we're reading on behalf of the
  * cache layer, not the user's component.
  */
-export function resolveManifest(
-  manifest: Set<string>,
-  request?: Request,
-): Record<string, string> {
-  const store = getStore();
-  const effectiveRequest = request ?? store.request;
-  const url = new URL(effectiveRequest.url);
-  const values: Record<string, string> = {};
+export function resolveManifest(manifest: Set<string>, request?: Request): Record<string, string> {
+  const store = getStore()
+  const effectiveRequest = request ?? store.request
+  const url = new URL(effectiveRequest.url)
+  const values: Record<string, string> = {}
   for (const spec of manifest) {
-    const colonIdx = spec.indexOf(":");
-    if (colonIdx < 0) continue;
-    const kind = spec.slice(0, colonIdx);
-    const name = spec.slice(colonIdx + 1);
+    const colonIdx = spec.indexOf(":")
+    if (colonIdx < 0) continue
+    const kind = spec.slice(0, colonIdx)
+    const name = spec.slice(colonIdx + 1)
     switch (kind) {
       case "cookie":
-        values[spec] = readCookieFromRequest(effectiveRequest, name) ?? "";
-        break;
+        values[spec] = readCookieFromRequest(effectiveRequest, name) ?? ""
+        break
       case "header":
-        values[spec] = effectiveRequest.headers.get(name) ?? "";
-        break;
+        values[spec] = effectiveRequest.headers.get(name) ?? ""
+        break
       case "url":
-        values[spec] = url.searchParams.get(name) ?? "";
-        break;
+        values[spec] = url.searchParams.get(name) ?? ""
+        break
       case "pathname": {
-        const matched = matchRoutePattern(url.pathname, name);
+        const matched = matchRoutePattern(url.pathname, name)
         if (!matched) {
-          values[spec] = "";
-          break;
+          values[spec] = ""
+          break
         }
         // Stable serialization: sort keys so manifest hashing is
         // deterministic regardless of JS object property order.
-        const sorted: Record<string, string> = {};
-        for (const k of Object.keys(matched).sort()) sorted[k] = matched[k];
-        values[spec] = JSON.stringify(sorted);
-        break;
+        const sorted: Record<string, string> = {}
+        for (const k of Object.keys(matched).sort()) sorted[k] = matched[k]
+        values[spec] = JSON.stringify(sorted)
+        break
       }
       default:
-        values[spec] = "";
+        values[spec] = ""
     }
   }
-  return values;
+  return values
 }
 
 /**
@@ -528,20 +514,20 @@ export function matchRoutePattern(
   pathname: string,
   pattern: string,
 ): Record<string, string> | null {
-  const pathSegs = pathname.split("/").filter(Boolean);
-  const patSegs = pattern.split("/").filter(Boolean);
-  if (pathSegs.length !== patSegs.length) return null;
-  const params: Record<string, string> = {};
+  const pathSegs = pathname.split("/").filter(Boolean)
+  const patSegs = pattern.split("/").filter(Boolean)
+  if (pathSegs.length !== patSegs.length) return null
+  const params: Record<string, string> = {}
   for (let i = 0; i < patSegs.length; i++) {
-    const pat = patSegs[i];
-    const seg = pathSegs[i];
+    const pat = patSegs[i]
+    const seg = pathSegs[i]
     if (pat.startsWith(":")) {
-      params[pat.slice(1)] = decodeURIComponent(seg);
+      params[pat.slice(1)] = decodeURIComponent(seg)
     } else if (pat !== seg) {
-      return null;
+      return null
     }
   }
-  return params;
+  return params
 }
 
 // ─── Tracked accessors ─────────────────────────────────────────────────
@@ -556,14 +542,14 @@ export function matchRoutePattern(
  * regardless of whether `request` is the page request or a frame's.
  */
 function readCookieFromRequest(request: Request, name: string): string | undefined {
-  const store = getStore();
+  const store = getStore()
   for (let i = store.cookies.length - 1; i >= 0; i--) {
-    const match = store.cookies[i].match(new RegExp(`^${name}=([^;]*)`));
-    if (match) return match[1];
+    const match = store.cookies[i].match(new RegExp(`^${name}=([^;]*)`))
+    if (match) return match[1]
   }
-  const header = request.headers.get("cookie") ?? "";
-  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match?.[1];
+  const header = request.headers.get("cookie") ?? ""
+  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))
+  return match?.[1]
 }
 
 /**
@@ -572,12 +558,12 @@ function readCookieFromRequest(request: Request, name: string): string | undefin
  * the top-level page Request.
  */
 function currentRequest(): Request {
-  return frameRequest() ?? getStore().request;
+  return frameRequest() ?? getStore().request
 }
 
 export function getCookie(name: string): string | undefined {
-  trackAccess("cookie", name);
-  return readCookieFromRequest(currentRequest(), name);
+  trackAccess("cookie", name)
+  return readCookieFromRequest(currentRequest(), name)
 }
 
 /**
@@ -596,17 +582,17 @@ export function getCookie(name: string): string | undefined {
  * cookies.
  */
 export function _readCookieUntracked(name: string): string | undefined {
-  return readCookieFromRequest(getStore().request, name);
+  return readCookieFromRequest(getStore().request, name)
 }
 
 export function getHeader(name: string): string | null {
-  trackAccess("header", name.toLowerCase());
-  return currentRequest().headers.get(name);
+  trackAccess("header", name.toLowerCase())
+  return currentRequest().headers.get(name)
 }
 
 export function getSearchParam(name: string): string | null {
-  trackAccess("url", name);
-  return new URL(currentRequest().url).searchParams.get(name);
+  trackAccess("url", name)
+  return new URL(currentRequest().url).searchParams.get(name)
 }
 
 /**
@@ -630,14 +616,9 @@ export function getSearchParam(name: string): string | null {
  * required steers authors away from caches that key on the full URL,
  * which blows up registry storage on high-cardinality routes.)
  */
-export function getPathname(
-  pattern: string,
-): Record<string, string> | null {
-  trackAccess("pathname", pattern);
-  return matchRoutePattern(
-    new URL(currentRequest().url).pathname,
-    pattern,
-  );
+export function getPathname(pattern: string): Record<string, string> | null {
+  trackAccess("pathname", pattern)
+  return matchRoutePattern(new URL(currentRequest().url).pathname, pattern)
 }
 
 // ─── Content-field accessors ───────────────────────────────────────────
@@ -663,23 +644,23 @@ export function getPathname(
  * inputs to render for this Partial.
  */
 function trackContentField(name: string, kind: ContentFieldKind): CmsScope | null {
-  const scope = currentCmsScope();
-  if (!scope) return null;
+  const scope = currentCmsScope()
+  if (!scope) return null
   if (!scope.contentFields.has(name)) {
-    scope.contentFields.set(name, kind);
+    scope.contentFields.set(name, kind)
   }
-  return scope;
+  return scope
 }
 
 function resolvedFields(scope: CmsScope): Record<string, unknown> | null {
-  return resolveCmsScope(scope, currentRequest());
+  return resolveCmsScope(scope, currentRequest())
 }
 
 export function getText(name: string): string {
-  const scope = trackContentField(name, "text");
-  if (!scope) return "";
-  const v = resolvedFields(scope)?.[name];
-  return typeof v === "string" ? v : "";
+  const scope = trackContentField(name, "text")
+  if (!scope) return ""
+  const v = resolvedFields(scope)?.[name]
+  return typeof v === "string" ? v : ""
 }
 
 export function getRichText(name: string): string {
@@ -687,56 +668,53 @@ export function getRichText(name: string): string {
   // structured value (portable-text-ish) without changing the accessor
   // surface — the editor decides whether to show a plain textarea or
   // a rich-text widget by inspecting `contentFields.get(name)`.
-  const scope = trackContentField(name, "richText");
-  if (!scope) return "";
-  const v = resolvedFields(scope)?.[name];
-  return typeof v === "string" ? v : "";
+  const scope = trackContentField(name, "richText")
+  if (!scope) return ""
+  const v = resolvedFields(scope)?.[name]
+  return typeof v === "string" ? v : ""
 }
 
 export function getNumber(name: string): number {
-  const scope = trackContentField(name, "number");
-  if (!scope) return 0;
-  const v = resolvedFields(scope)?.[name];
-  return typeof v === "number" ? v : 0;
+  const scope = trackContentField(name, "number")
+  if (!scope) return 0
+  const v = resolvedFields(scope)?.[name]
+  return typeof v === "number" ? v : 0
 }
 
 export function getBoolean(name: string): boolean {
-  const scope = trackContentField(name, "boolean");
-  if (!scope) return false;
-  const v = resolvedFields(scope)?.[name];
-  return typeof v === "boolean" ? v : false;
+  const scope = trackContentField(name, "boolean")
+  if (!scope) return false
+  const v = resolvedFields(scope)?.[name]
+  return typeof v === "boolean" ? v : false
 }
 
-export function getEnum<T extends string>(
-  name: string,
-  values: readonly T[],
-): T {
-  const scope = trackContentField(name, "enum");
-  if (!scope) return values[0];
-  const v = resolvedFields(scope)?.[name];
+export function getEnum<T extends string>(name: string, values: readonly T[]): T {
+  const scope = trackContentField(name, "enum")
+  if (!scope) return values[0]
+  const v = resolvedFields(scope)?.[name]
   if (typeof v === "string" && (values as readonly string[]).includes(v)) {
-    return v as T;
+    return v as T
   }
-  return values[0];
+  return values[0]
 }
 
 export interface ImageValue {
-  readonly src: string;
-  readonly alt: string;
+  readonly src: string
+  readonly alt: string
 }
 
-const EMPTY_IMAGE: ImageValue = Object.freeze({ src: "", alt: "" });
+const EMPTY_IMAGE: ImageValue = Object.freeze({ src: "", alt: "" })
 
 export function getImage(name: string): ImageValue {
-  const scope = trackContentField(name, "image");
-  if (!scope) return EMPTY_IMAGE;
-  const v = resolvedFields(scope)?.[name];
-  if (typeof v !== "object" || v === null) return EMPTY_IMAGE;
-  const obj = v as { src?: unknown; alt?: unknown };
+  const scope = trackContentField(name, "image")
+  if (!scope) return EMPTY_IMAGE
+  const v = resolvedFields(scope)?.[name]
+  if (typeof v !== "object" || v === null) return EMPTY_IMAGE
+  const obj = v as { src?: unknown; alt?: unknown }
   return {
     src: typeof obj.src === "string" ? obj.src : "",
     alt: typeof obj.alt === "string" ? obj.alt : "",
-  };
+  }
 }
 
 /**
@@ -758,25 +736,17 @@ export function getImage(name: string): ImageValue {
  *
  * See `docs/cms.md` § Reference accessors.
  */
-export function getReference<T extends string>(
-  name: string,
-  type: T,
-): Reference<T> {
-  const scope = currentCmsScope();
+export function getReference<T extends string>(name: string, type: T): Reference<T> {
+  const scope = currentCmsScope()
   if (!scope) {
-    return { type, value: null, fallback: "closest" };
+    return { type, value: null, fallback: "closest" }
   }
   if (!scope.references.has(name)) {
-    scope.references.set(name, type);
+    scope.references.set(name, type)
   }
-  const raw = resolveCmsScope(scope, currentRequest())?.[name];
-  const value =
-    typeof raw === "string"
-      ? raw
-      : typeof raw === "number"
-        ? String(raw)
-        : null;
-  return { type, value, fallback: "closest" };
+  const raw = resolveCmsScope(scope, currentRequest())?.[name]
+  const value = typeof raw === "string" ? raw : typeof raw === "number" ? String(raw) : null
+  return { type, value, fallback: "closest" }
 }
 
 /**
@@ -794,31 +764,25 @@ export function getReference<T extends string>(
  * in the same way tracked-accessor and frame-scope cells do.
  */
 export function getClosest<T>(key: string): T | null {
-  const scope = currentCmsScope();
+  const scope = currentCmsScope()
   if (scope) {
-    scope.contextConsumes.add(key);
+    scope.contextConsumes.add(key)
   }
-  const ctx = capturePartialContext();
-  const value = ctx.provides[key];
-  return value === undefined ? null : (value as T);
+  const ctx = capturePartialContext()
+  const value = ctx.provides[key]
+  return value === undefined ? null : (value as T)
 }
 
 export function setFrameworkControl(patch: FrameworkControl): void {
-  const store = getStore();
-  store.control = { ...store.control, ...patch };
+  const store = getStore()
+  store.control = { ...store.control, ...patch }
 }
 
 export function getFrameworkControl(): FrameworkControl | undefined {
-  return getStore().control;
+  return getStore().control
 }
 
-export function setCookie(
-  name: string,
-  value: string,
-  maxAge = 60 * 60 * 24 * 30,
-): void {
-  const store = getStore();
-  store.cookies.push(
-    `${name}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax`,
-  );
+export function setCookie(name: string, value: string, maxAge = 60 * 60 * 24 * 30): void {
+  const store = getStore()
+  store.cookies.push(`${name}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax`)
 }

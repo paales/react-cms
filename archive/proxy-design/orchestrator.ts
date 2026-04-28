@@ -8,46 +8,43 @@
  * 4. Returns data-backed proxies for the real render
  */
 
-import { AccessRecorder } from "./access-recorder.ts";
-import { createProxy } from "./proxy-node.ts";
-import { compileQuery } from "./query-compiler.ts";
-import type { SchemaGraph } from "./schema.ts";
+import { AccessRecorder } from "./access-recorder.ts"
+import { createProxy } from "./proxy-node.ts"
+import { compileQuery } from "./query-compiler.ts"
+import type { SchemaGraph } from "./schema.ts"
 
 export interface QueryConfig {
   /** The root GraphQL field (e.g., 'pokemon_v2_pokemon') */
-  rootField: string;
+  rootField: string
   /** Arguments for the root field */
-  rootArgs?: Record<string, unknown>;
+  rootArgs?: Record<string, unknown>
   /** The schema type name for the root (e.g., 'pokemon_v2_pokemon') */
-  typeName: string;
+  typeName: string
 }
 
 export interface OrchestratorResult<T> {
   /** The compiled GraphQL query */
-  query: string;
+  query: string
   /** The raw fetched data */
-  rawData: T;
+  rawData: T
   /** A data-backed proxy for the real render */
-  proxy: unknown;
+  proxy: unknown
   /** The access recorder (for inspection/debugging) */
-  recorder: AccessRecorder;
+  recorder: AccessRecorder
 }
 
 /**
  * Cache of discovered access patterns per component identity.
  * Maps component name → access tree, so subsequent renders skip discovery.
  */
-const patternCache = new Map<
-  string,
-  ReturnType<AccessRecorder["getAccessTree"]>
->();
+const patternCache = new Map<string, ReturnType<AccessRecorder["getAccessTree"]>>()
 
 export function clearPatternCache() {
-  patternCache.clear();
+  patternCache.clear()
 }
 
 export function getPatternCache() {
-  return new Map(patternCache);
+  return new Map(patternCache)
 }
 
 /**
@@ -66,60 +63,58 @@ export async function orchestrate<T = unknown>(
   renderFn: (proxy: unknown) => void,
   cacheKey?: string,
 ): Promise<OrchestratorResult<T>> {
-  const recorder = new AccessRecorder();
+  const recorder = new AccessRecorder()
 
   // Check pattern cache first
-  const cachedPatterns = cacheKey ? patternCache.get(cacheKey) : undefined;
+  const cachedPatterns = cacheKey ? patternCache.get(cacheKey) : undefined
 
   if (cachedPatterns) {
     // Skip discovery, use cached patterns to build query
     for (const path of flattenTree(cachedPatterns)) {
-      recorder.recordAccess(path);
+      recorder.recordAccess(path)
     }
   } else {
     // Phase 1: Discovery render — run the render function with phantom proxy
-    const phantom = createProxy(schema, config.typeName, recorder);
-    renderFn(phantom);
+    const phantom = createProxy(schema, config.typeName, recorder)
+    renderFn(phantom)
 
     // Cache the patterns if a key was provided
     if (cacheKey) {
-      patternCache.set(cacheKey, recorder.getAccessTree());
+      patternCache.set(cacheKey, recorder.getAccessTree())
     }
   }
 
   // Phase 2: Compile query
-  const tree = recorder.getAccessTree();
-  const query = compileQuery(tree, config.rootField, config.rootArgs);
+  const tree = recorder.getAccessTree()
+  const query = compileQuery(tree, config.rootField, config.rootArgs)
 
   // Phase 3: Fetch data
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
-  });
+  })
 
   if (!response.ok) {
-    throw new Error(`GraphQL fetch failed: ${response.status}`);
+    throw new Error(`GraphQL fetch failed: ${response.status}`)
   }
 
   const json = (await response.json()) as {
-    data: Record<string, T>;
-    errors?: Array<{ message: string }>;
-  };
-
-  if (json.errors?.length) {
-    throw new Error(
-      `GraphQL errors: ${json.errors.map((e) => e.message).join(", ")}`,
-    );
+    data: Record<string, T>
+    errors?: Array<{ message: string }>
   }
 
-  const rawData = json.data[config.rootField] as T;
+  if (json.errors?.length) {
+    throw new Error(`GraphQL errors: ${json.errors.map((e) => e.message).join(", ")}`)
+  }
+
+  const rawData = json.data[config.rootField] as T
 
   // Phase 4: Create data-backed proxy for real render
-  const dataRecorder = new AccessRecorder();
-  const proxy = createProxy(schema, config.typeName, dataRecorder, rawData);
+  const dataRecorder = new AccessRecorder()
+  const proxy = createProxy(schema, config.typeName, dataRecorder, rawData)
 
-  return { query, rawData, proxy, recorder: dataRecorder };
+  return { query, rawData, proxy, recorder: dataRecorder }
 }
 
 /**
@@ -135,24 +130,24 @@ export function createLazyProxy(
   cacheKey?: string,
 ): unknown {
   // Run discovery synchronously
-  const discoveryRecorder = new AccessRecorder();
+  const discoveryRecorder = new AccessRecorder()
 
-  const cachedPatterns = cacheKey ? patternCache.get(cacheKey) : undefined;
+  const cachedPatterns = cacheKey ? patternCache.get(cacheKey) : undefined
   if (cachedPatterns) {
     for (const path of flattenTree(cachedPatterns)) {
-      discoveryRecorder.recordAccess(path);
+      discoveryRecorder.recordAccess(path)
     }
   } else {
-    const phantom = createProxy(schema, config.typeName, discoveryRecorder);
-    renderFn(phantom);
+    const phantom = createProxy(schema, config.typeName, discoveryRecorder)
+    renderFn(phantom)
     if (cacheKey) {
-      patternCache.set(cacheKey, discoveryRecorder.getAccessTree());
+      patternCache.set(cacheKey, discoveryRecorder.getAccessTree())
     }
   }
 
   // Compile and start fetch
-  const tree = discoveryRecorder.getAccessTree();
-  const query = compileQuery(tree, config.rootField, config.rootArgs);
+  const tree = discoveryRecorder.getAccessTree()
+  const query = compileQuery(tree, config.rootField, config.rootArgs)
 
   const dataPromise = fetch(endpoint, {
     method: "POST",
@@ -160,24 +155,22 @@ export function createLazyProxy(
     body: JSON.stringify({ query }),
   })
     .then((res) => {
-      if (!res.ok) throw new Error(`GraphQL fetch failed: ${res.status}`);
+      if (!res.ok) throw new Error(`GraphQL fetch failed: ${res.status}`)
       return res.json() as Promise<{
-        data: Record<string, unknown>;
-        errors?: Array<{ message: string }>;
-      }>;
+        data: Record<string, unknown>
+        errors?: Array<{ message: string }>
+      }>
     })
     .then((json) => {
       if (json.errors?.length) {
-        throw new Error(
-          `GraphQL errors: ${json.errors.map((e) => e.message).join(", ")}`,
-        );
+        throw new Error(`GraphQL errors: ${json.errors.map((e) => e.message).join(", ")}`)
       }
-      return json.data[config.rootField];
-    });
+      return json.data[config.rootField]
+    })
 
   // Return a proxy that resolves data from the promise
-  const dataRecorder = new AccessRecorder();
-  return createAsyncProxy(schema, config.typeName, dataRecorder, dataPromise);
+  const dataRecorder = new AccessRecorder()
+  return createAsyncProxy(schema, config.typeName, dataRecorder, dataPromise)
 }
 
 /**
@@ -191,67 +184,56 @@ function createAsyncProxy(
   dataPromise: Promise<unknown>,
   path: string[] = [],
 ): unknown {
-  const target = Object.assign(() => {}, {});
+  const target = Object.assign(() => {}, {})
 
   return new Proxy(target, {
     get(_target, prop) {
       if (prop === "value") {
         // Record the access
-        if (path.length > 0) recorder.recordAccess(path);
+        if (path.length > 0) recorder.recordAccess(path)
         // Return a promise that resolves to the value at this path
-        return dataPromise.then((data) => resolvePath(data, path));
+        return dataPromise.then((data) => resolvePath(data, path))
       }
 
       if (prop === "then") {
-        if (path.length > 0) recorder.recordAccess(path);
-        return (
-          resolve: (v: unknown) => void,
-          reject: (e: unknown) => void,
-        ) => {
-          dataPromise
-            .then((data) => resolve(resolvePath(data, path)))
-            .catch(reject);
-        };
+        if (path.length > 0) recorder.recordAccess(path)
+        return (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
+          dataPromise.then((data) => resolve(resolvePath(data, path))).catch(reject)
+        }
       }
 
       if (prop === "map") {
         return (callback: (item: unknown, index: number) => unknown) => {
           return dataPromise.then((data) => {
-            const arr = resolvePath(data, path) as unknown[];
+            const arr = resolvePath(data, path) as unknown[]
             return arr.map((item, index) => {
-              const itemProxy = createProxy(schema, typeName, recorder, item);
-              return callback(itemProxy, index);
-            });
-          });
-        };
+              const itemProxy = createProxy(schema, typeName, recorder, item)
+              return callback(itemProxy, index)
+            })
+          })
+        }
       }
 
-      if (typeof prop === "symbol") return undefined;
+      if (typeof prop === "symbol") return undefined
 
-      const childPath = [...path, prop as string];
-      recorder.recordAccess(childPath);
+      const childPath = [...path, prop as string]
+      recorder.recordAccess(childPath)
 
-      const fieldType = schema.getFieldType(typeName, prop as string);
-      const childTypeName = fieldType?.name ?? typeName;
+      const fieldType = schema.getFieldType(typeName, prop as string)
+      const childTypeName = fieldType?.name ?? typeName
 
-      return createAsyncProxy(
-        schema,
-        childTypeName,
-        recorder,
-        dataPromise,
-        childPath,
-      );
+      return createAsyncProxy(schema, childTypeName, recorder, dataPromise, childPath)
     },
-  });
+  })
 }
 
 function resolvePath(data: unknown, path: string[]): unknown {
-  let current = data;
+  let current = data
   for (const key of path) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
+    if (current == null || typeof current !== "object") return undefined
+    current = (current as Record<string, unknown>)[key]
   }
-  return current;
+  return current
 }
 
 /** Flatten an access tree back into array paths for re-recording */
@@ -259,14 +241,14 @@ function flattenTree(
   tree: ReturnType<AccessRecorder["getAccessTree"]>,
   prefix: string[] = [],
 ): string[][] {
-  const paths: string[][] = [];
+  const paths: string[][] = []
   for (const node of tree) {
-    const current = [...prefix, node.field];
+    const current = [...prefix, node.field]
     if (node.children.length === 0) {
-      paths.push(current);
+      paths.push(current)
     } else {
-      paths.push(...flattenTree(node.children, current));
+      paths.push(...flattenTree(node.children, current))
     }
   }
-  return paths;
+  return paths
 }

@@ -23,25 +23,25 @@
  *   }
  */
 
-import { setFrameworkControl } from "./context.ts";
+import { setFrameworkControl } from "./context.ts"
 
 export class NotFoundError extends Error {
-  readonly __framework = "not-found" as const;
+  readonly __framework = "not-found" as const
   constructor(message = "Not Found") {
-    super(message);
-    this.name = "NotFoundError";
+    super(message)
+    this.name = "NotFoundError"
   }
 }
 
 export class RedirectError extends Error {
-  readonly __framework = "redirect" as const;
-  readonly url: string;
-  readonly status: number;
+  readonly __framework = "redirect" as const
+  readonly url: string
+  readonly status: number
   constructor(url: string, status = 302) {
-    super(`Redirect to ${url}`);
-    this.name = "RedirectError";
-    this.url = url;
-    this.status = status;
+    super(`Redirect to ${url}`)
+    this.name = "RedirectError"
+    this.url = url
+    this.status = status
   }
 }
 
@@ -50,24 +50,24 @@ export function notFound(): never {
   // reaches the RSC entry even if the error chunks out via Flight
   // instead of bubbling up to Root's sync catch.
   try {
-    setFrameworkControl({ notFound: true });
+    setFrameworkControl({ notFound: true })
   } catch {
     // Outside a request ALS scope — called from a test, a script,
     // etc. Fall through to the throw; whoever catches it owns the
     // behavior.
   }
-  throw new NotFoundError();
+  throw new NotFoundError()
 }
 
 export function redirect(url: string, status = 302): never {
   try {
-    setFrameworkControl({ redirect: { url, status } });
+    setFrameworkControl({ redirect: { url, status } })
   } catch {
     /* as above */
   }
-  throw new RedirectError(url, status);
+  throw new RedirectError(url, status)
 }
 
 export function isFrameworkSentinel(e: unknown): e is NotFoundError | RedirectError {
-  return e instanceof NotFoundError || e instanceof RedirectError;
+  return e instanceof NotFoundError || e instanceof RedirectError
 }

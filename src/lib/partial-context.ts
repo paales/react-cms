@@ -42,7 +42,7 @@
  * prop from the caller.
  */
 
-import { cache } from "react";
+import { cache } from "react"
 
 /**
  * Opaque handle representing a Partial's position in the server-side
@@ -67,14 +67,14 @@ export interface PartialCtx {
    * Effective ids of ancestor Partials, outer-first. Empty for the
    * root. `path[path.length - 1]` is the immediate parent id.
    */
-  readonly path: readonly string[];
+  readonly path: readonly string[]
   /**
    * Local frame names contributed by ancestor Partials that declared
    * `frame="…"`, outer-first. Empty when no enclosing frame. The
    * join on `.` is the frame's canonical path used in session
    * storage, navigation state, and the `__frame=` wire param.
    */
-  readonly frameChain: readonly string[];
+  readonly frameChain: readonly string[]
   /**
    * Ancestor-contributed context values. Built up by `<Partial
    * provides={{key: value}}>` — each Partial extends its parent's
@@ -86,7 +86,7 @@ export interface PartialCtx {
    * passed through unchanged. Keys are intentionally string-typed —
    * higher-level wrappers (entity loaders) can layer typing on top.
    */
-  readonly provides: Readonly<Record<string, unknown>>;
+  readonly provides: Readonly<Record<string, unknown>>
 }
 
 /**
@@ -94,13 +94,13 @@ export interface PartialCtx {
  * prop on the outermost `<Partial>`s (those not nested inside any
  * other Partial).
  */
-const EMPTY_PROVIDES: Readonly<Record<string, unknown>> = Object.freeze({});
+const EMPTY_PROVIDES: Readonly<Record<string, unknown>> = Object.freeze({})
 
 export const ROOT: PartialCtx = Object.freeze({
   path: Object.freeze([]) as readonly string[],
   frameChain: Object.freeze([]) as readonly string[],
   provides: EMPTY_PROVIDES,
-});
+})
 
 /**
  * React.cache-backed mutable cell carrying the current parent
@@ -110,7 +110,7 @@ export const ROOT: PartialCtx = Object.freeze({
  */
 const partialContextCell = cache((): { current: PartialCtx } => ({
   current: ROOT,
-}));
+}))
 
 /**
  * Internal — called by `<Partial>` before it renders children. Writes
@@ -123,7 +123,7 @@ const partialContextCell = cache((): { current: PartialCtx } => ({
  * @internal
  */
 export function _setCurrentPartialContext(ctx: PartialCtx): void {
-  partialContextCell().current = ctx;
+  partialContextCell().current = ctx
 }
 
 /**
@@ -134,7 +134,7 @@ export function _setCurrentPartialContext(ctx: PartialCtx): void {
  * sibling Partial's context. Returns `ROOT` at the top level.
  */
 export function capturePartialContext(): PartialCtx {
-  return partialContextCell().current;
+  return partialContextCell().current
 }
 
 /**
@@ -151,16 +151,16 @@ export function _childContext(
   frame: string | undefined,
   provides?: Readonly<Record<string, unknown>>,
 ): PartialCtx {
-  const path = Object.freeze([...parent.path, selfId]) as readonly string[];
+  const path = Object.freeze([...parent.path, selfId]) as readonly string[]
   const frameChain =
     frame != null
       ? (Object.freeze([...parent.frameChain, frame]) as readonly string[])
-      : parent.frameChain;
+      : parent.frameChain
   const mergedProvides =
     provides && Object.keys(provides).length > 0
       ? Object.freeze({ ...parent.provides, ...provides })
-      : parent.provides;
-  return { path, frameChain, provides: mergedProvides };
+      : parent.provides
+  return { path, frameChain, provides: mergedProvides }
 }
 
 /**
@@ -171,5 +171,5 @@ export function _childContext(
  * @internal
  */
 export function _joinFrameChain(chain: readonly string[]): string {
-  return chain.join(".");
+  return chain.join(".")
 }

@@ -14,21 +14,21 @@
  * they were.
  */
 
-import { Partial } from "../../lib/partial.tsx";
-import { ROOT } from "../../lib/partial-context.ts";
-import { NextObserver } from "../components/next-observer.tsx";
-import { ScrollRestore } from "../components/scroll-restore.tsx";
-import { getSearchParam } from "../../framework/context.ts";
+import { Partial } from "../../lib/partial.tsx"
+import { ROOT } from "../../lib/partial-context.ts"
+import { NextObserver } from "../components/next-observer.tsx"
+import { ScrollRestore } from "../components/scroll-restore.tsx"
+import { getSearchParam } from "../../framework/context.ts"
 
-const ITEMS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = 10
 
 function PageBlock({ page }: { page: number }) {
-  const offset = (page - 1) * ITEMS_PER_PAGE;
+  const offset = (page - 1) * ITEMS_PER_PAGE
   return (
     <section data-testid={`page-${page}`} data-page={page} className="mb-4">
       <h2 className="py-2 text-sm text-muted-foreground">Page {page}</h2>
       {Array.from({ length: ITEMS_PER_PAGE }, (_, i) => {
-        const itemId = offset + i + 1;
+        const itemId = offset + i + 1
         return (
           <div
             key={itemId}
@@ -37,23 +37,23 @@ function PageBlock({ page }: { page: number }) {
           >
             Item #{itemId}
           </div>
-        );
+        )
       })}
     </section>
-  );
+  )
 }
 
 export function BarePage() {
-  const end = Math.max(1, Number(getSearchParam("end")) || 1);
+  const end = Math.max(1, Number(getSearchParam("end")) || 1)
 
   const pages = Array.from({ length: end }, (_, i) => {
-    const page = i + 1;
+    const page = i + 1
     return (
       <Partial key={`page-${page}`} parent={ROOT} selector={`#page-${page}`}>
         <PageBlock page={page} />
       </Partial>
-    );
-  });
+    )
+  })
 
   return (
     <>
@@ -63,11 +63,7 @@ export function BarePage() {
         Infinite Scroll (renderOn-style singleton slot)
       </h1>
       <p className="mb-4 text-muted-foreground">
-        <a
-          href="/"
-          data-testid="link-home"
-          className="text-primary hover:underline"
-        >
+        <a href="/" data-testid="link-home" className="text-primary hover:underline">
           ← Home
         </a>
         {" · "}
@@ -78,5 +74,5 @@ export function BarePage() {
         <NextObserver currentEnd={end} />
       </Partial>
     </>
-  );
+  )
 }

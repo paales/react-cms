@@ -36,28 +36,28 @@
  * route maps so snapshots registered by worker A don't resolve for
  * worker B. Production uses the default scope for every request.
  */
-import type { ReactNode } from "react";
-import { getScope } from "../framework/context.ts";
-import type { CacheOptions } from "./cache-options.ts";
+import type { ReactNode } from "react"
+import { getScope } from "../framework/context.ts"
+import type { CacheOptions } from "./cache-options.ts"
 
 export interface PartialSnapshot {
   /** Content JSX as it appeared inside `<Partial>` at capture time. */
-  content: ReactNode;
+  content: ReactNode
   /** The fallback prop on the Partial (for Suspense wrapping). */
-  fallback: ReactNode;
+  fallback: ReactNode
   /** The errorWith prop on the Partial (for ErrorBoundary fallback). */
-  errorWith: ReactNode | undefined;
+  errorWith: ReactNode | undefined
   /** `#`-token names from the Partial's selector (without the `#` prefix).
    *  Used to resolve `?partials=X` refetches against dynamic Partials
    *  that the bootstrap walk can't see. A Partial's effective id is
    *  derived from these (single token → that name; multiple → sorted-join). */
-  uniqueTokens: string[];
+  uniqueTokens: string[]
   /** `.`-token names from the Partial's selector (without the `.` prefix).
    *  Used to resolve `?tags=X` refetches with union semantics. */
-  sharedTokens: string[];
+  sharedTokens: string[]
   /** Cache options if the Partial declared `cache={…}`. Stored so
    *  cache-mode refetches re-apply the same cache semantics. */
-  cache?: CacheOptions;
+  cache?: CacheOptions
   /** Canonical frame path if the Partial declared `frame="…"` — the
    *  dotted join of every enclosing `frame` ancestor plus this local
    *  name. Two `<Partial frame="list">`s under different parent
@@ -65,22 +65,22 @@ export interface PartialSnapshot {
    *  `"blog.list"`), which the session store, navigation state, and
    *  `?__frame=` wire param all key off. Empty array means the
    *  Partial doesn't open a frame. */
-  framePath: readonly string[];
+  framePath: readonly string[]
   /** The author-provided `frameUrl` fallback. Session overrides it
    *  when present; kept here as the cold-session default. */
-  frameUrl?: string;
+  frameUrl?: string
   /** Outer-first chain of ancestor partial ids, captured from the
    *  Partial's `parent` prop. `[]` for top-level Partials. Lets
    *  server-side logic reason about the full hierarchy (nested
    *  frames, selector scoping, invalidation cascades) without the
    *  client-side tree reconstruction that was necessary while the
    *  hierarchy could only be inferred post-render. */
-  parentPath: readonly string[];
+  parentPath: readonly string[]
   /** Stable storage key for CMS-authored content, from the Partial's
    *  `cmsId` prop. Preserved in the snapshot so cache-mode refetches
    *  re-open the same CMS scope when rendering from this snapshot.
    *  Absent on Partials that aren't CMS-aware. */
-  cmsId?: string;
+  cmsId?: string
   /** Auto-collected manifest of tracked-accessor reads the Partial's
    *  body + descendants performed during the previous render. Each
    *  entry is `"<kind>:<name>"` (e.g. `"url:config"`, `"cookie:user"`,
@@ -96,17 +96,17 @@ export interface PartialSnapshot {
    *  by reference — accessors mutate it in place during the render,
    *  so by the time the next render reads this snapshot, the set
    *  reflects the prior render's complete read pattern. */
-  manifest?: ReadonlySet<string>;
+  manifest?: ReadonlySet<string>
 }
 
-type RouteMap = Map<string, Map<string, PartialSnapshot>>;
+type RouteMap = Map<string, Map<string, PartialSnapshot>>
 
 // CATEGORY C (docs-dev/server-isolation.md) — route-scoped snapshot store,
 // outer key is the per-request `scope` (test-worker isolation; always
 // "default" in prod). Inner: route → partial id → snapshot. Rebuilt on
 // HMR / process restart; cleared on full streaming renders via
 // clearRoute(route).
-const scopes = new Map<string, RouteMap>();
+const scopes = new Map<string, RouteMap>()
 
 // Parallel "previous render" snapshot store. `clearRoute(route)` moves
 // the current entries here before wiping `scopes` so the NEW render
@@ -124,49 +124,42 @@ const scopes = new Map<string, RouteMap>();
 // That's safe — over-folding produces over-invalidation (more re-
 // renders than strictly needed), never under-invalidation. Empty on
 // first-render-of-a-route and after process restarts.
-const previousScopes = new Map<string, RouteMap>();
+const previousScopes = new Map<string, RouteMap>()
 
 function scopeMap(scope: string = getScope()): RouteMap {
-  let m = scopes.get(scope);
+  let m = scopes.get(scope)
   if (!m) {
-    m = new Map();
-    scopes.set(scope, m);
+    m = new Map()
+    scopes.set(scope, m)
   }
-  return m;
+  return m
 }
 
 function previousScopeMap(scope: string = getScope()): RouteMap {
-  let m = previousScopes.get(scope);
+  let m = previousScopes.get(scope)
   if (!m) {
-    m = new Map();
-    previousScopes.set(scope, m);
+    m = new Map()
+    previousScopes.set(scope, m)
   }
-  return m;
+  return m
 }
 
 function routeBucket(route: string): Map<string, PartialSnapshot> {
-  const m = scopeMap();
-  let bucket = m.get(route);
+  const m = scopeMap()
+  let bucket = m.get(route)
   if (!bucket) {
-    bucket = new Map();
-    m.set(route, bucket);
+    bucket = new Map()
+    m.set(route, bucket)
   }
-  return bucket;
+  return bucket
 }
 
-export function registerPartial(
-  route: string,
-  id: string,
-  snapshot: PartialSnapshot,
-): void {
-  routeBucket(route).set(id, snapshot);
+export function registerPartial(route: string, id: string, snapshot: PartialSnapshot): void {
+  routeBucket(route).set(id, snapshot)
 }
 
-export function lookupPartial(
-  route: string,
-  id: string,
-): PartialSnapshot | undefined {
-  return scopeMap().get(route)?.get(id);
+export function lookupPartial(route: string, id: string): PartialSnapshot | undefined {
+  return scopeMap().get(route)?.get(id)
 }
 
 /**
@@ -174,10 +167,8 @@ export function lookupPartial(
  * `PartialRoot` to augment its tag index with dynamic partials when
  * resolving `?tags=` refetches.
  */
-export function getRouteSnapshots(
-  route: string,
-): Map<string, PartialSnapshot> | undefined {
-  return scopeMap().get(route);
+export function getRouteSnapshots(route: string): Map<string, PartialSnapshot> | undefined {
+  return scopeMap().get(route)
 }
 
 /**
@@ -193,15 +184,15 @@ export function getRouteSnapshots(
  * declarations into ancestor fps.
  */
 export function clearRoute(route: string): void {
-  const sm = scopeMap();
-  const current = sm.get(route);
-  const psm = previousScopeMap();
+  const sm = scopeMap()
+  const current = sm.get(route)
+  const psm = previousScopeMap()
   if (current && current.size > 0) {
-    psm.set(route, current);
+    psm.set(route, current)
   } else {
-    psm.delete(route);
+    psm.delete(route)
   }
-  sm.delete(route);
+  sm.delete(route)
 }
 
 /**
@@ -222,10 +213,8 @@ export function clearRoute(route: string): void {
  * ancestor still contributes its varyOn) producing over-invalidation
  * rather than under.
  */
-export function getPreviousRouteSnapshots(
-  route: string,
-): Map<string, PartialSnapshot> | undefined {
-  return previousScopeMap().get(route);
+export function getPreviousRouteSnapshots(route: string): Map<string, PartialSnapshot> | undefined {
+  return previousScopeMap().get(route)
 }
 
 /**
@@ -238,13 +227,13 @@ export function getPreviousRouteSnapshots(
  * forever (HMR clears state, but a plain reload doesn't fire HMR).
  */
 export function invalidateSnapshot(route: string, partialId: string): void {
-  scopeMap().get(route)?.delete(partialId);
+  scopeMap().get(route)?.delete(partialId)
   // Also clear from previous: if the throw happened before the
   // current render had a chance to register a fresh snapshot, the
   // PREVIOUS map still holds the manifest that fed the violating
   // `stored` set. Clearing both halves guarantees the next render
   // starts with no `stored` for this Partial.
-  previousScopeMap().get(route)?.delete(partialId);
+  previousScopeMap().get(route)?.delete(partialId)
 }
 
 /**
@@ -254,33 +243,33 @@ export function invalidateSnapshot(route: string, partialId: string): void {
  */
 export function clearRegistry(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {
-    scopes.clear();
-    previousScopes.clear();
-    return;
+    scopes.clear()
+    previousScopes.clear()
+    return
   }
-  scopes.delete(scope);
-  previousScopes.delete(scope);
+  scopes.delete(scope)
+  previousScopes.delete(scope)
 }
 
 export function _registryStats(): {
-  routes: number;
-  partials: number;
-  byRoute: Record<string, string[]>;
+  routes: number
+  partials: number
+  byRoute: Record<string, string[]>
 } {
-  const byRoute: Record<string, string[]> = {};
-  let partials = 0;
-  const m = scopeMap();
+  const byRoute: Record<string, string[]> = {}
+  let partials = 0
+  const m = scopeMap()
   for (const [route, bucket] of m) {
-    byRoute[route] = [...bucket.keys()];
-    partials += bucket.size;
+    byRoute[route] = [...bucket.keys()]
+    partials += bucket.size
   }
-  return { routes: m.size, partials, byRoute };
+  return { routes: m.size, partials, byRoute }
 }
 
 // HMR: snapshotted React elements reference component functions whose
 // module identities change across edits. Clear everything (all scopes)
 // on update to prevent stale references from being re-rendered.
 if (import.meta.hot) {
-  import.meta.hot.on("vite:beforeUpdate", () => clearRegistry());
-  import.meta.hot.on("vite:beforeFullReload", () => clearRegistry());
+  import.meta.hot.on("vite:beforeUpdate", () => clearRegistry())
+  import.meta.hot.on("vite:beforeFullReload", () => clearRegistry())
 }

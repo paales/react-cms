@@ -1,15 +1,9 @@
-"use client";
+"use client"
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  useTransition,
-  type ReactNode,
-} from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 /**
  * Search toggle buttons for the header.
@@ -22,63 +16,56 @@ import { Input } from "@/components/ui/input";
  * decides where `?search=` is read from.
  */
 export function SearchToggle({ urlOpen }: { urlOpen: boolean }) {
-  const [isPending, startTransition] = useTransition();
-  const pageNav = useNavigation();
-  const frameNav = useNavigation("search");
-  const frameEntryUrl = frameNav.currentEntry?.url;
-  const frameOpen = frameEntryUrl
-    ? new URL(frameEntryUrl).searchParams.has("search")
-    : false;
+  const [isPending, startTransition] = useTransition()
+  const pageNav = useNavigation()
+  const frameNav = useNavigation("search")
+  const frameEntryUrl = frameNav.currentEntry?.url
+  const frameOpen = frameEntryUrl ? new URL(frameEntryUrl).searchParams.has("search") : false
 
   function openUrl() {
     startTransition(() => {
       void pageNav.navigate(
         (url) => {
-          url.searchParams.set("search", "1");
-          return url;
+          url.searchParams.set("search", "1")
+          return url
         },
         { history: "push", selector: "#search-page" },
-      );
-    });
+      )
+    })
   }
 
   function closeUrl() {
     startTransition(() => {
       void pageNav.navigate(
         (url) => {
-          url.searchParams.delete("search");
-          url.searchParams.delete("q");
-          return url;
+          url.searchParams.delete("search")
+          url.searchParams.delete("q")
+          return url
         },
         { history: "push", selector: "#search-page" },
-      );
-    });
+      )
+    })
   }
 
   function openFrame() {
-    void frameNav.navigate("/?search=1");
+    void frameNav.navigate("/?search=1")
   }
 
   function closeFrame() {
-    void frameNav.navigate("/");
+    void frameNav.navigate("/")
   }
 
   const Spinner = () => (
     <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-muted-foreground/60 border-t-foreground" />
-  );
+  )
 
   if (urlOpen) {
     return (
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        onClick={closeUrl}
-      >
+      <Button type="button" size="sm" variant="secondary" onClick={closeUrl}>
         {isPending ? <Spinner /> : <span>✕</span>}
         Close
       </Button>
-    );
+    )
   }
 
   if (frameOpen) {
@@ -93,7 +80,7 @@ export function SearchToggle({ urlOpen }: { urlOpen: boolean }) {
         <span>✕</span>
         Close
       </Button>
-    );
+    )
   }
 
   return (
@@ -113,45 +100,39 @@ export function SearchToggle({ urlOpen }: { urlOpen: boolean }) {
         Search (Frame)
       </Button>
     </div>
-  );
+  )
 }
 
 /**
  * Dialog wrapper for the search overlay. Uses the native <dialog>
  * element with showModal() for focus trap + backdrop + Escape.
  */
-export function SearchDialog({
-  open,
-  children,
-}: {
-  open: boolean;
-  children: ReactNode;
-}) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const nav = useNavigation();
+export function SearchDialog({ open, children }: { open: boolean; children: ReactNode }) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const nav = useNavigation()
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
+    const dialog = dialogRef.current
+    if (!dialog) return
     if (open && !dialog.open) {
-      dialog.showModal();
+      dialog.showModal()
     } else if (!open && dialog.open) {
-      dialog.close();
+      dialog.close()
     }
-  }, [open]);
+  }, [open])
 
   function handleClose() {
     void nav.navigate(
       (url) => {
-        url.searchParams.delete("search");
-        url.searchParams.delete("q");
-        return url;
+        url.searchParams.delete("search")
+        url.searchParams.delete("q")
+        return url
       },
       {
         history: "push",
         selector: nav.name === null ? "#search-page" : undefined,
       },
-    );
+    )
   }
 
   return (
@@ -159,61 +140,61 @@ export function SearchDialog({
       ref={dialogRef}
       onClose={handleClose}
       onClick={(e) => {
-        if (e.target === dialogRef.current) handleClose();
+        if (e.target === dialogRef.current) handleClose()
       }}
       className="top-[15vh] max-h-[80vh] w-[calc(100vw-2em)] max-w-[720px] justify-self-center overflow-auto rounded-xl border bg-card p-5 text-card-foreground backdrop:bg-black/60"
     >
       {children}
     </dialog>
-  );
+  )
 }
 
 /**
  * Search input with live partial refetch — scope-agnostic.
  */
 export function SearchInput({ query }: { query: string }) {
-  const nav = useNavigation();
-  const [value, setValue] = useState(query);
-  const [disableTransition, setDisableTransition] = useState(false);
-  const disableTransitionRef = useRef(disableTransition);
-  disableTransitionRef.current = disableTransition;
+  const nav = useNavigation()
+  const [value, setValue] = useState(query)
+  const [disableTransition, setDisableTransition] = useState(false)
+  const disableTransitionRef = useRef(disableTransition)
+  disableTransitionRef.current = disableTransition
 
-  const latestRef = useRef(query);
-  const dispatchedRef = useRef(query);
-  const inFlightRef = useRef(false);
+  const latestRef = useRef(query)
+  const dispatchedRef = useRef(query)
+  const inFlightRef = useRef(false)
 
   async function sendLatest() {
-    if (inFlightRef.current) return;
-    const q = latestRef.current;
-    if (q === dispatchedRef.current) return;
+    if (inFlightRef.current) return
+    const q = latestRef.current
+    if (q === dispatchedRef.current) return
 
-    inFlightRef.current = true;
-    dispatchedRef.current = q;
+    inFlightRef.current = true
+    dispatchedRef.current = q
 
     await nav.navigate(
       (url) => {
-        if (q) url.searchParams.set("q", q);
-        else url.searchParams.delete("q");
-        return url;
+        if (q) url.searchParams.set("q", q)
+        else url.searchParams.delete("q")
+        return url
       },
       {
         history: "replace",
         disableTransition: disableTransitionRef.current,
         selector: ".search-results",
       },
-    ).finished;
+    ).finished
 
-    inFlightRef.current = false;
-    sendLatest();
+    inFlightRef.current = false
+    sendLatest()
   }
 
   function handleChange(next: string) {
-    setValue(next);
-    latestRef.current = next;
-    sendLatest();
+    setValue(next)
+    latestRef.current = next
+    sendLatest()
   }
 
-  const isStale = value !== dispatchedRef.current || inFlightRef.current;
+  const isStale = value !== dispatchedRef.current || inFlightRef.current
 
   return (
     <div>
@@ -242,11 +223,7 @@ export function SearchInput({ query }: { query: string }) {
           />
           <span>
             disableTransition:{" "}
-            <code
-              className={
-                disableTransition ? "text-emerald-400" : "text-sky-400"
-              }
-            >
+            <code className={disableTransition ? "text-emerald-400" : "text-sky-400"}>
               {String(disableTransition)}
             </code>
           </span>
@@ -261,5 +238,5 @@ export function SearchInput({ query }: { query: string }) {
         </span>
       </div>
     </div>
-  );
+  )
 }

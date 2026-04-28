@@ -1,4 +1,4 @@
-"use client";
+"use client"
 
 /**
  * Fixture for rsc-project tests: a plain client component. When a
@@ -8,5 +8,5 @@
  * renderer encodes that as a `$L<n>` lazy ref in the Flight stream.
  */
 export function ClientButton({ label }: { label: string }) {
-  return <button type="button">{label}</button>;
+  return <button type="button">{label}</button>
 }

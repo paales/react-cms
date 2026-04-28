@@ -1,35 +1,32 @@
-import { Suspense } from "react";
-import { readLog, readLogPrefix } from "./log.ts";
-import { ResumeTail } from "./resume-tail.tsx";
-import { getSearchParam } from "../../framework/context.ts";
+import { Suspense } from "react"
+import { readLog, readLogPrefix } from "./log.ts"
+import { ResumeTail } from "./resume-tail.tsx"
+import { getSearchParam } from "../../framework/context.ts"
 
 /**
  * Bounded linear recursion that emits a streaming message.
  */
-const MAX_DEPTH = 12;
+const MAX_DEPTH = 12
 
 export async function Piece({
   fileId,
   cursor,
   depth,
 }: {
-  fileId: string;
-  cursor: number;
-  depth: number;
+  fileId: string
+  cursor: number
+  depth: number
 }) {
-  const read = await readLog(fileId, cursor);
+  const read = await readLog(fileId, cursor)
   if (read.done) {
     return (
-      <span
-        data-testid={`chat-done-${fileId}`}
-        className="mt-1 block text-xs text-emerald-500"
-      >
+      <span data-testid={`chat-done-${fileId}`} className="mt-1 block text-xs text-emerald-500">
         ✓ stream complete ({cursor} chunks)
       </span>
-    );
+    )
   }
-  const nextCursor = cursor + 1;
-  const nextDepth = depth + 1;
+  const nextCursor = cursor + 1
+  const nextDepth = depth + 1
   return (
     <>
       <ChunkText text={read.text} />
@@ -41,44 +38,35 @@ export async function Piece({
         </Suspense>
       )}
     </>
-  );
+  )
 }
 
 function ChunkText({ text }: { text: string }) {
   return (
-    <span
-      data-chunk
-      className="font-mono text-xs leading-relaxed whitespace-pre-wrap"
-    >
+    <span data-chunk className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
       {text}
     </span>
-  );
+  )
 }
 
 /**
  * Synchronously rendered prefix for a message resumed past cursor > 0.
  */
-export function FlatPrefix({
-  fileId,
-  cursor,
-}: {
-  fileId: string;
-  cursor: number;
-}) {
-  if (cursor <= 0) return null;
-  const chunks = readLogPrefix(fileId, cursor);
+export function FlatPrefix({ fileId, cursor }: { fileId: string; cursor: number }) {
+  if (cursor <= 0) return null
+  const chunks = readLogPrefix(fileId, cursor)
   return (
     <>
       {chunks.map((text, i) => (
         <ChunkText key={i} text={text} />
       ))}
     </>
-  );
+  )
 }
 
 export function ChatMessage({ fileId }: { fileId: string }) {
-  const cursorParam = getSearchParam(`cursor-${fileId}`);
-  const startCursor = Math.max(0, Number(cursorParam) || 0);
+  const cursorParam = getSearchParam(`cursor-${fileId}`)
+  const startCursor = Math.max(0, Number(cursorParam) || 0)
   return (
     <article
       data-testid={`chat-msg-${fileId}`}
@@ -104,5 +92,5 @@ export function ChatMessage({ fileId }: { fileId: string }) {
         </Suspense>
       </div>
     </article>
-  );
+  )
 }

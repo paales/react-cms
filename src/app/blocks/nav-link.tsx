@@ -7,18 +7,15 @@
  * (button-ghost) lives in code so the chrome stays consistent
  * regardless of what authors put in the fields.
  */
-import { getText } from "../../framework/context.ts";
-import { buttonVariants } from "@/components/ui/button";
+import { getText } from "../../framework/context.ts"
+import { buttonVariants } from "@/components/ui/button"
 
 export function NavLinkBlock() {
-  const href = getText("href");
-  const label = getText("label");
+  const href = getText("href")
+  const label = getText("label")
   return (
-    <a
-      href={href}
-      className={buttonVariants({ variant: "ghost", size: "sm" })}
-    >
+    <a href={href} className={buttonVariants({ variant: "ghost", size: "sm" })}>
       {label}
     </a>
-  );
+  )
 }

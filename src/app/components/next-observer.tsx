@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { useEffect, useRef } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
+import { useEffect, useRef } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
 
 /**
  * Sentinel rendered as the content of the singleton `<Partial selector="#next">`
@@ -17,12 +17,12 @@ import { useNavigation } from "../../lib/partial-client.tsx";
  * observer for page-N+2.
  */
 export function NextObserver({ currentEnd }: { currentEnd: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const nav = useNavigation();
+  const ref = useRef<HTMLDivElement>(null)
+  const nav = useNavigation()
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const el = ref.current
+    if (!el) return
     // Single-fire IntersectionObserver. Disconnects itself on the
     // first intersecting event so this observer can't re-fire. After
     // the partial refetch lands, the component re-renders with a new
@@ -32,19 +32,19 @@ export function NextObserver({ currentEnd }: { currentEnd: number }) {
     // inserted above it, so the new observer's first event is
     // not-intersecting and we don't get a runaway.
     const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return;
-      observer.disconnect();
-      const nextEnd = currentEnd + 1;
-      const url = new URL(window.location.href);
-      url.searchParams.set("end", String(nextEnd));
+      if (!entry.isIntersecting) return
+      observer.disconnect()
+      const nextEnd = currentEnd + 1
+      const url = new URL(window.location.href)
+      url.searchParams.set("end", String(nextEnd))
       void nav.navigate(url.toString(), {
         history: "replace",
         selector: `#page-${nextEnd} #next`,
-      });
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [currentEnd, nav]);
+      })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [currentEnd, nav])
 
   return (
     <div
@@ -60,5 +60,5 @@ export function NextObserver({ currentEnd }: { currentEnd: number }) {
     >
       Loading more…
     </div>
-  );
+  )
 }

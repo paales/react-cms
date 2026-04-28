@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect } from "./fixtures"
 
 /**
  * <Partial defer> + <VisibleTrigger> — the trivia card on
@@ -13,57 +13,52 @@ import { test, expect } from "./fixtures";
  *  2. Scrolling the trivia partial into view triggers exactly ONE
  *     RSC refetch, and the real content appears.
  */
-test("defer + VisibleTrigger activates the block when it enters the viewport", async ({
-  page,
-}) => {
-  const rscCalls: Array<{ url: string; partials: string | null }> = [];
+test("defer + VisibleTrigger activates the block when it enters the viewport", async ({ page }) => {
+  const rscCalls: Array<{ url: string; partials: string | null }> = []
   page.on("request", (req) => {
-    const url = req.url();
+    const url = req.url()
     if (url.includes("_.rsc")) {
-      const u = new URL(url);
-      rscCalls.push({ url, partials: u.searchParams.get("partials") });
+      const u = new URL(url)
+      rscCalls.push({ url, partials: u.searchParams.get("partials") })
     }
-  });
+  })
 
-  await page.goto("/pokemon/1");
+  await page.goto("/pokemon/1")
 
   // Hero/stats/species render immediately.
-  await page.waitForSelector('[data-testid="lazy-spacer"]', { timeout: 15000 });
+  await page.waitForSelector('[data-testid="lazy-spacer"]', { timeout: 15000 })
 
   // Before scroll: fallback is in the DOM, real content is not.
-  await expect(page.locator('[data-testid="trivia-fallback"]')).toBeVisible();
-  expect(await page.locator('[data-testid="trivia-content"]').count()).toBe(0);
+  await expect(page.locator('[data-testid="trivia-fallback"]')).toBeVisible()
+  expect(await page.locator('[data-testid="trivia-content"]').count()).toBe(0)
 
   // Reset the RSC counter before the scroll.
-  rscCalls.length = 0;
+  rscCalls.length = 0
 
   // Scroll the trivia partial into view.
-  await page.locator('[data-testid="trivia-fallback"]').scrollIntoViewIfNeeded();
+  await page.locator('[data-testid="trivia-fallback"]').scrollIntoViewIfNeeded()
 
   // Real content appears after the refetch round-trip.
   await page.waitForSelector('[data-testid="trivia-content"]', {
     timeout: 15000,
-  });
+  })
 
   // Tiny settling window to catch any extra calls.
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(500)
 
   const triviaCalls = rscCalls.filter(
     (c) => c.partials != null && c.partials.split(",").includes("trivia"),
-  );
+  )
   const otherCalls = rscCalls.filter(
     (c) => c.partials == null || !c.partials.split(",").includes("trivia"),
-  );
+  )
 
-  console.log(`\n=== RSC calls after scroll (${rscCalls.length}) ===`);
-  for (const c of rscCalls) console.log(`  partials=${c.partials}`);
+  console.log(`\n=== RSC calls after scroll (${rscCalls.length}) ===`)
+  for (const c of rscCalls) console.log(`  partials=${c.partials}`)
 
-  expect(
-    triviaCalls.length,
-    "expected exactly one RSC refetch for the trivia partial",
-  ).toBe(1);
+  expect(triviaCalls.length, "expected exactly one RSC refetch for the trivia partial").toBe(1)
   expect(
     otherCalls,
     `expected no unrelated RSC calls; got: ${JSON.stringify(otherCalls)}`,
-  ).toHaveLength(0);
-});
+  ).toHaveLength(0)
+})

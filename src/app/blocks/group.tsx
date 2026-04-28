@@ -23,19 +23,13 @@
  * future iteration — wildcard is the simplest answer that doesn't
  * pin Group to any single role.
  */
-import { getEnum, getNumber } from "../../framework/context.ts";
-import { Children } from "../../lib";
-import { cn } from "@/lib/utils";
+import { getEnum, getNumber } from "../../framework/context.ts"
+import { Children } from "../../lib"
+import { cn } from "@/lib/utils"
 
-const DIRECTIONS = ["column", "row"] as const;
-const ALIGN_VALUES = ["start", "center", "end", "stretch"] as const;
-const JUSTIFY_VALUES = [
-  "start",
-  "center",
-  "end",
-  "between",
-  "around",
-] as const;
+const DIRECTIONS = ["column", "row"] as const
+const ALIGN_VALUES = ["start", "center", "end", "stretch"] as const
+const JUSTIFY_VALUES = ["start", "center", "end", "between", "around"] as const
 
 // Tailwind doesn't see dynamic class names, so we map enum values
 // to literal class strings here. Each map is small enough to
@@ -44,28 +38,28 @@ const JUSTIFY_VALUES = [
 const FLEX_DIR: Record<(typeof DIRECTIONS)[number], string> = {
   column: "flex-col",
   row: "flex-row",
-};
+}
 const ALIGN_ITEMS: Record<(typeof ALIGN_VALUES)[number], string> = {
   start: "items-start",
   center: "items-center",
   end: "items-end",
   stretch: "items-stretch",
-};
+}
 const JUSTIFY_CONTENT: Record<(typeof JUSTIFY_VALUES)[number], string> = {
   start: "justify-start",
   center: "justify-center",
   end: "justify-end",
   between: "justify-between",
   around: "justify-around",
-};
+}
 
 export function GroupBlock() {
-  const direction = getEnum("direction", DIRECTIONS);
-  const align = getEnum("align", ALIGN_VALUES);
-  const justify = getEnum("justify", JUSTIFY_VALUES);
-  const gap = getNumber("gap");
-  const padding = getNumber("padding");
-  const wrap = getEnum("wrap", ["nowrap", "wrap"] as const);
+  const direction = getEnum("direction", DIRECTIONS)
+  const align = getEnum("align", ALIGN_VALUES)
+  const justify = getEnum("justify", JUSTIFY_VALUES)
+  const gap = getNumber("gap")
+  const padding = getNumber("padding")
+  const wrap = getEnum("wrap", ["nowrap", "wrap"] as const)
 
   return (
     <div
@@ -88,5 +82,5 @@ export function GroupBlock() {
     >
       <Children name="items" allow="*" />
     </div>
-  );
+  )
 }

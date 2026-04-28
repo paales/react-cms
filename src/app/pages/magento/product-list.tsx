@@ -1,13 +1,13 @@
-import { Partial } from "../../../lib/partial.tsx";
-import { client } from "../../magento-data.ts";
-import { graphql, type ResultOf } from "../../magento-graphql.ts";
-import { getCookie, getSearchParam } from "../../../framework/context.ts";
-import { AddToCartButton } from "./add-to-cart-button.tsx";
-import { CartBadge } from "./cart-badge.tsx";
-import { LivePrice, LivePriceFallback } from "./live-price.tsx";
-import { RefreshAllPricesButton } from "./refresh-all-prices-button.tsx";
-import { Card, CardContent } from "@/components/ui/card";
-import { ROOT, capturePartialContext, type PartialCtx } from "@/lib/partial-context.ts";
+import { Partial } from "../../../lib/partial.tsx"
+import { client } from "../../magento-data.ts"
+import { graphql, type ResultOf } from "../../magento-graphql.ts"
+import { getCookie, getSearchParam } from "../../../framework/context.ts"
+import { AddToCartButton } from "./add-to-cart-button.tsx"
+import { CartBadge } from "./cart-badge.tsx"
+import { LivePrice, LivePriceFallback } from "./live-price.tsx"
+import { RefreshAllPricesButton } from "./refresh-all-prices-button.tsx"
+import { Card, CardContent } from "@/components/ui/card"
+import { ROOT, capturePartialContext, type PartialCtx } from "@/lib/partial-context.ts"
 
 const CartQuery = graphql(`
   query Cart($cartId: String!) {
@@ -15,7 +15,7 @@ const CartQuery = graphql(`
       total_quantity
     }
   }
-`);
+`)
 
 const ProductsQuery = graphql(`
   query Products($pageSize: Int!) {
@@ -39,11 +39,11 @@ const ProductsQuery = graphql(`
       }
     }
   }
-`);
+`)
 
 type ProductItem = NonNullable<
   NonNullable<NonNullable<ResultOf<typeof ProductsQuery>["products"]>["items"]>[number]
->;
+>
 
 export function MagentoPage() {
   return (
@@ -67,7 +67,7 @@ export function MagentoPage() {
         </Partial>
       </main>
     </>
-  );
+  )
 }
 
 async function CartPartial() {
@@ -78,16 +78,16 @@ async function CartPartial() {
   // `HoistingViolationError` on the second render. Same discipline
   // the framework enforces for `<Cache>` — see
   // `docs/cache.md`.
-  const cartId = getCookie("cart_id");
+  const cartId = getCookie("cart_id")
 
   // Simulate slow cart API
-  await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 100))
 
-  if (!cartId) return <CartBadge quantity={0} />;
+  if (!cartId) return <CartBadge quantity={0} />
 
-  const data = await client.request(CartQuery, { cartId });
+  const data = await client.request(CartQuery, { cartId })
 
-  return <CartBadge quantity={data.cart?.total_quantity ?? 0} />;
+  return <CartBadge quantity={data.cart?.total_quantity ?? 0} />
 }
 
 async function ProductGrid() {
@@ -103,10 +103,10 @@ async function ProductGrid() {
   //     `MagentoPage` (outside any Partial) leaks into a sibling
   //     Partial's manifest under editor mode, where AppNav's nav-link
   //     Partials run before the page handler.
-  const parent = capturePartialContext();
-  const search = getSearchParam("q") ?? "";
-  const data = await client.request(ProductsQuery, { pageSize: 12 });
-  const items = (data.products?.items ?? []).filter((item): item is ProductItem => item != null);
+  const parent = capturePartialContext()
+  const search = getSearchParam("q") ?? ""
+  const data = await client.request(ProductsQuery, { pageSize: 12 })
+  const items = (data.products?.items ?? []).filter((item): item is ProductItem => item != null)
 
   return (
     <div>
@@ -125,16 +125,16 @@ async function ProductGrid() {
         ))}
       </div>
     </div>
-  );
+  )
 }
 
 function ProductCard({ product, parent }: { product: ProductItem; parent: PartialCtx }) {
-  const { name, sku, id } = product;
-  const imageUrl = product.small_image?.url;
-  const imageLabel = product.small_image?.label;
-  const rawPrice = product.price_range.minimum_price.regular_price.value;
-  const currency = product.price_range.minimum_price.regular_price.currency ?? "USD";
-  const price = typeof rawPrice === "number" ? rawPrice : 0;
+  const { name, sku, id } = product
+  const imageUrl = product.small_image?.url
+  const imageLabel = product.small_image?.label
+  const rawPrice = product.price_range.minimum_price.regular_price.value
+  const currency = product.price_range.minimum_price.regular_price.currency ?? "USD"
+  const price = typeof rawPrice === "number" ? rawPrice : 0
 
   return (
     <Card className="p-5">
@@ -166,5 +166,5 @@ function ProductCard({ product, parent }: { product: ProductItem; parent: Partia
         <div className="mt-2">{sku && <AddToCartButton sku={sku} />}</div>
       </CardContent>
     </Card>
-  );
+  )
 }

@@ -1,8 +1,8 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
-import { Button } from "@/components/ui/button";
+import { useState } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
+import { Button } from "@/components/ui/button"
 
 /**
  * Button that fires a targeted reload via `useNavigation().reload()`.
@@ -12,19 +12,19 @@ export function SelectorRefetchButton({
   label,
   testId,
 }: {
-  selector: string;
-  label: string;
-  testId: string;
+  selector: string
+  label: string
+  testId: string
 }) {
-  const nav = useNavigation();
-  const [isPending, setIsPending] = useState(false);
+  const nav = useNavigation()
+  const [isPending, setIsPending] = useState(false)
 
   async function fire() {
-    setIsPending(true);
+    setIsPending(true)
     try {
-      await nav.reload({ selector }).finished;
+      await nav.reload({ selector }).finished
     } finally {
-      setIsPending(false);
+      setIsPending(false)
     }
   }
 
@@ -39,5 +39,5 @@ export function SelectorRefetchButton({
     >
       {isPending ? "…" : label}
     </Button>
-  );
+  )
 }

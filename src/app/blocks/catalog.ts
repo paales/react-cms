@@ -10,31 +10,31 @@
  * via content accessors and dropping a `registerBlock(…)` line
  * here. HMR-friendly — re-imports replace the prior spec.
  */
-import { registerBlock } from "../../framework/cms-runtime.ts";
-import { HeroBlock } from "./hero.tsx";
-import { RichTextBlock } from "./rich-text.tsx";
-import { PageHeroBlock } from "./page-hero.tsx";
-import { PageGreetingBlock } from "./page-greeting.tsx";
-import { PageSlugNavBlock } from "./page-slug-nav.tsx";
-import { PageComposedBlock } from "./page-composed.tsx";
-import { PageMultiSlotBlock } from "./page-multi-slot.tsx";
-import { GroupBlock } from "./group.tsx";
-import { ProductCardBlock } from "./product-card.tsx";
-import { PageRootBlock } from "./page-root.tsx";
-import { NavRootBlock } from "./nav-root.tsx";
-import { NavLinkBlock } from "./nav-link.tsx";
+import { registerBlock } from "../../framework/cms-runtime.ts"
+import { HeroBlock } from "./hero.tsx"
+import { RichTextBlock } from "./rich-text.tsx"
+import { PageHeroBlock } from "./page-hero.tsx"
+import { PageGreetingBlock } from "./page-greeting.tsx"
+import { PageSlugNavBlock } from "./page-slug-nav.tsx"
+import { PageComposedBlock } from "./page-composed.tsx"
+import { PageMultiSlotBlock } from "./page-multi-slot.tsx"
+import { GroupBlock } from "./group.tsx"
+import { ProductCardBlock } from "./product-card.tsx"
+import { PageRootBlock } from "./page-root.tsx"
+import { NavRootBlock } from "./nav-root.tsx"
+import { NavLinkBlock } from "./nav-link.tsx"
 
 // Slot-level blocks (used inside `<Children>` slots within page-level
 // blocks like the composed section).
 registerBlock("hero", {
   tags: [".demo-block", ".composed-hero"],
   component: HeroBlock,
-});
+})
 
 registerBlock("rich-text", {
   tags: [".demo-block", ".composed-rich-text"],
   component: RichTextBlock,
-});
+})
 
 // Page root — registered so the catalog manifest knows the slot's
 // `allow` value, which the editor's slot palette uses to filter the
@@ -43,7 +43,7 @@ registerBlock("rich-text", {
 registerBlock("page-root", {
   tags: [],
   component: PageRootBlock,
-});
+})
 
 // App nav root — the styled `<nav>` chrome around the global links
 // list. Same role as `page-root`: surfaces the `links` slot's
@@ -52,14 +52,14 @@ registerBlock("page-root", {
 registerBlock("nav-root", {
   tags: [],
   component: NavRootBlock,
-});
+})
 
 // Nav link — single anchor with editable `href` / `label`. Tagged
 // `.nav-item` so it satisfies `nav-root`'s links slot allow filter.
 registerBlock("nav-link", {
   tags: [".nav-item"],
   component: NavLinkBlock,
-});
+})
 
 // Page-level blocks (slot children of the page root, `cms-demo-root`).
 // The `.page-block` shared tag is what the page root's
@@ -68,27 +68,27 @@ registerBlock("nav-link", {
 registerBlock("page-hero", {
   tags: [".page-block"],
   component: PageHeroBlock,
-});
+})
 
 registerBlock("page-slug-nav", {
   tags: [".page-block"],
   component: PageSlugNavBlock,
-});
+})
 
 registerBlock("page-greeting", {
   tags: [".page-block"],
   component: PageGreetingBlock,
-});
+})
 
 registerBlock("page-composed", {
   tags: [".page-block"],
   component: PageComposedBlock,
-});
+})
 
 registerBlock("page-multi-slot", {
   tags: [".page-block"],
   component: PageMultiSlotBlock,
-});
+})
 
 // Layout primitive — `.page-block` so it can sit at the page level,
 // `.group-item` so it can also nest inside another Group (recursive
@@ -97,7 +97,7 @@ registerBlock("page-multi-slot", {
 registerBlock("group", {
   tags: [".page-block", ".group-item"],
   component: GroupBlock,
-});
+})
 
 // Product card — `.group-item` so it slots into a Group's items
 // slot. Not tagged `.page-block` because a card on its own at the
@@ -106,4 +106,4 @@ registerBlock("group", {
 registerBlock("product-card", {
   tags: [".group-item"],
   component: ProductCardBlock,
-});
+})

@@ -1,4 +1,4 @@
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card"
 
 /**
  * Default 404 page. Rendered by `Root` when a page component throws
@@ -18,5 +18,5 @@ export function NotFoundPage() {
         </CardContent>
       </Card>
     </main>
-  );
+  )
 }

@@ -1,8 +1,8 @@
-"use client";
+"use client"
 
-import { useMemo } from "react";
-import { useActivate } from "../../lib/partial-client.tsx";
-import type { ActivatorProps } from "../../lib/partial-component.tsx";
+import { useMemo } from "react"
+import { useActivate } from "../../lib/partial-client.tsx"
+import type { ActivatorProps } from "../../lib/partial-component.tsx"
 
 /**
  * Activator: fires immediately when the enclosing Partial mounts.
@@ -24,15 +24,14 @@ export function WhenMounted({ partialId, children }: ActivatorProps) {
   if (!partialId) {
     throw new Error(
       "<WhenMounted> requires `partialId`. Use it as the `defer` prop of a <Partial>.",
-    );
+    )
   }
   const subscribe = useMemo(
-    () =>
-      (fire: (inputs?: Record<string, unknown>) => void) => {
-        fire();
-      },
+    () => (fire: (inputs?: Record<string, unknown>) => void) => {
+      fire()
+    },
     [],
-  );
-  useActivate(partialId, subscribe);
-  return <>{children}</>;
+  )
+  useActivate(partialId, subscribe)
+  return <>{children}</>
 }

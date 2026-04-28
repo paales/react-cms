@@ -1,6 +1,3 @@
 {
-  "editor.codeActionsOnSave": {
-    "source.fixAll.biome": "explicit"
-  },
   "js/ts.tsdk.path": "node_modules/typescript/lib"
 }

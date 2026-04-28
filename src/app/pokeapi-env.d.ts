@@ -4446,11 +4446,11 @@ export type introspection_types = {
  * instead save to a .ts instead of a .d.ts file.
  */
 export type introspection = {
-  name: 'pokeapi';
-  query: 'query_root';
-  mutation: never;
-  subscription: 'subscription_root';
-  types: introspection_types;
-};
+  name: "pokeapi"
+  query: "query_root"
+  mutation: never
+  subscription: "subscription_root"
+  types: introspection_types
+}
 
-import * as gqlTada from 'gql.tada';
+import * as gqlTada from "gql.tada"

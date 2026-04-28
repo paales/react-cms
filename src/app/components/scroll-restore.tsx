@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { useEffect } from "react";
-import { getNavigation } from "../../framework/navigation-api.ts";
+import { useEffect } from "react"
+import { getNavigation } from "../../framework/navigation-api.ts"
 
 /**
  * Save and restore window.scrollY across navigations using the
@@ -36,33 +36,30 @@ import { getNavigation } from "../../framework/navigation-api.ts";
  */
 export function ScrollRestore() {
   useEffect(() => {
-    const nav = getNavigation();
-    if (!nav) return;
+    const nav = getNavigation()
+    if (!nav) return
     if ("scrollRestoration" in history) {
-      history.scrollRestoration = "manual";
+      history.scrollRestoration = "manual"
     }
 
-    const state = nav.currentEntry?.getState() as
-      | { scrollY?: number }
-      | null;
+    const state = nav.currentEntry?.getState() as { scrollY?: number } | null
     if (state && typeof state.scrollY === "number") {
-      const targetY = state.scrollY;
+      const targetY = state.scrollY
       // The document height may not be final on mount — pages with
       // streamed Suspense or async content grow after the first
       // paint. Retry scroll for a few frames until the target is
       // reachable.
-      let attempts = 0;
+      let attempts = 0
       const tryScroll = () => {
-        const max =
-          document.documentElement.scrollHeight - window.innerHeight;
+        const max = document.documentElement.scrollHeight - window.innerHeight
         if (max >= targetY || attempts > 30) {
-          window.scrollTo(0, targetY);
-          return;
+          window.scrollTo(0, targetY)
+          return
         }
-        attempts++;
-        requestAnimationFrame(tryScroll);
-      };
-      requestAnimationFrame(tryScroll);
+        attempts++
+        requestAnimationFrame(tryScroll)
+      }
+      requestAnimationFrame(tryScroll)
     }
 
     // Track the most recent scroll position. We persist this rather
@@ -70,29 +67,29 @@ export function ScrollRestore() {
     // (e.g. `element.scrollIntoView()` invoked when a link is clicked
     // at the top of a long page) can reset scroll to 0 before the
     // navigate event fires — saving live would persist the 0.
-    let lastScrollY = window.scrollY;
+    let lastScrollY = window.scrollY
 
     const save = () => {
-      const entry = nav.currentEntry;
-      if (!entry) return;
-      const prev = (entry.getState() as Record<string, unknown> | null) ?? {};
+      const entry = nav.currentEntry
+      if (!entry) return
+      const prev = (entry.getState() as Record<string, unknown> | null) ?? {}
       nav.updateCurrentEntry({
         state: { ...prev, scrollY: lastScrollY },
-      });
-    };
+      })
+    }
 
     // Update lastScrollY on every scroll (cheap, passive) but only
     // persist to nav state on a debounce. lastScrollY is what `save`
     // reads — so a later save() call (on navigate, pagehide, etc.)
     // always picks up the most recent user scroll, even if no
     // debounce-flush has fired yet.
-    let scrollDebounce: ReturnType<typeof setTimeout> | null = null;
+    let scrollDebounce: ReturnType<typeof setTimeout> | null = null
     const onScroll = () => {
-      lastScrollY = window.scrollY;
-      if (scrollDebounce) clearTimeout(scrollDebounce);
-      scrollDebounce = setTimeout(save, 150);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
+      lastScrollY = window.scrollY
+      if (scrollDebounce) clearTimeout(scrollDebounce)
+      scrollDebounce = setTimeout(save, 150)
+    }
+    window.addEventListener("scroll", onScroll, { passive: true })
 
     // For push/traverse: save in the navigate handler so the outgoing
     //   entry (currentEntry at that moment) gets the scroll position
@@ -103,25 +100,25 @@ export function ScrollRestore() {
     //   our updateCurrentEntry call. After commit, currentEntry has
     //   the replaced URL — that's the entry we want to track.
     const onNavigate = (e: NavigateEvent) => {
-      if (e.navigationType !== "replace") save();
-    };
-    const onSuccess = () => save();
+      if (e.navigationType !== "replace") save()
+    }
+    const onSuccess = () => save()
     const onVis = () => {
-      if (document.visibilityState === "hidden") save();
-    };
-    nav.addEventListener("navigate", onNavigate);
-    nav.addEventListener("navigatesuccess", onSuccess);
-    window.addEventListener("pagehide", save);
-    document.addEventListener("visibilitychange", onVis);
+      if (document.visibilityState === "hidden") save()
+    }
+    nav.addEventListener("navigate", onNavigate)
+    nav.addEventListener("navigatesuccess", onSuccess)
+    window.addEventListener("pagehide", save)
+    document.addEventListener("visibilitychange", onVis)
     return () => {
-      nav.removeEventListener("navigate", onNavigate);
-      nav.removeEventListener("navigatesuccess", onSuccess);
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("pagehide", save);
-      document.removeEventListener("visibilitychange", onVis);
-      if (scrollDebounce) clearTimeout(scrollDebounce);
-    };
-  }, []);
+      nav.removeEventListener("navigate", onNavigate)
+      nav.removeEventListener("navigatesuccess", onSuccess)
+      window.removeEventListener("scroll", onScroll)
+      window.removeEventListener("pagehide", save)
+      document.removeEventListener("visibilitychange", onVis)
+      if (scrollDebounce) clearTimeout(scrollDebounce)
+    }
+  }, [])
 
-  return null;
+  return null
 }

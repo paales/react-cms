@@ -25,56 +25,48 @@
  *      Fix: key the form by `${selected}:${effectiveIndex}` so a
  *      config switch (or selection switch) remounts every input.
  */
-import { expect, test, request as apiRequest } from "./fixtures.ts";
+import { expect, test, request as apiRequest } from "./fixtures.ts"
 
 test.beforeEach(async ({ baseURL }) => {
-  const ctx = await apiRequest.newContext({ baseURL });
-  await ctx.get("/__test/clear-caches");
-  await ctx.dispose();
-});
+  const ctx = await apiRequest.newContext({ baseURL })
+  await ctx.get("/__test/clear-caches")
+  await ctx.dispose()
+})
 
 test("click greeting → click slug=alpha config tab — form reflects alpha config", async ({
   page,
 }) => {
-  await page.goto("/cms-demo?editor=1");
-  await page.waitForLoadState("networkidle");
+  await page.goto("/cms-demo?editor=1")
+  await page.waitForLoadState("networkidle")
 
-  await page.getByTestId("cms-edit-tree-entry-cms-demo-greeting").click();
-  await expect(page).toHaveURL(/select=cms-demo-greeting/);
-  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue(
-    "Default greeting",
-  );
+  await page.getByTestId("cms-edit-tree-entry-cms-demo-greeting").click()
+  await expect(page).toHaveURL(/select=cms-demo-greeting/)
+  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue("Default greeting")
 
-  const alphaTab = page.getByTestId("cms-edit-config-tab-0");
-  await expect(alphaTab).toContainText("slug=alpha");
-  await alphaTab.click();
+  const alphaTab = page.getByTestId("cms-edit-config-tab-0")
+  await expect(alphaTab).toContainText("slug=alpha")
+  await alphaTab.click()
 
-  await expect(page).toHaveURL(/select=cms-demo-greeting&config=0/);
+  await expect(page).toHaveURL(/select=cms-demo-greeting&config=0/)
   // `toHaveValue` reads the live `.value` property — distinguishes
   // the "server returned fresh markup but uncontrolled input kept
   // its old value" case from a true full update.
-  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue(
-    "Hello, Alpha!",
-    { timeout: 3000 },
-  );
-});
+  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue("Hello, Alpha!", {
+    timeout: 3000,
+  })
+})
 
-test("switching back to default config restores default fields", async ({
-  page,
-}) => {
-  await page.goto("/cms-demo?editor=1&select=cms-demo-greeting&config=0");
-  await page.waitForLoadState("networkidle");
+test("switching back to default config restores default fields", async ({ page }) => {
+  await page.goto("/cms-demo?editor=1&select=cms-demo-greeting&config=0")
+  await page.waitForLoadState("networkidle")
 
-  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue(
-    "Hello, Alpha!",
-  );
+  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue("Hello, Alpha!")
 
   // Default config is the third entry (index 2): match {} → headline
   // "Default greeting".
-  await page.getByTestId("cms-edit-config-tab-2").click();
-  await expect(page).toHaveURL(/config=2/);
-  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue(
-    "Default greeting",
-    { timeout: 3000 },
-  );
-});
+  await page.getByTestId("cms-edit-config-tab-2").click()
+  await expect(page).toHaveURL(/config=2/)
+  await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue("Default greeting", {
+    timeout: 3000,
+  })
+})

@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { useEffect, useRef } from "react";
-import { useNavigation } from "../../lib/partial-client.tsx";
+import { useEffect, useRef } from "react"
+import { useNavigation } from "../../lib/partial-client.tsx"
 
 /**
  * Sentinel rendered at the bottom of a bounded `<Piece>` chain once it hits
@@ -18,14 +18,8 @@ import { useNavigation } from "../../lib/partial-client.tsx";
  * streaming shape. With transitions disabled, each Piece's chunk reveals as
  * its Flight payload arrives.
  */
-export function ResumeTail({
-  fileId,
-  cursor,
-}: {
-  fileId: string;
-  cursor: number;
-}) {
-  const nav = useNavigation();
+export function ResumeTail({ fileId, cursor }: { fileId: string; cursor: number }) {
+  const nav = useNavigation()
   // After the first compaction the refetch payload reuses the same
   // ResumeTail fiber (same type, different cursor prop) — React updates
   // rather than remounts. An "already fired" ref would block the second
@@ -33,32 +27,26 @@ export function ResumeTail({
   // exactly once per unique cursor. The comparison also absorbs
   // StrictMode's double-invoked setup in dev (second invocation sees
   // the ref already equals the current cursor).
-  const lastFiredCursor = useRef<number | null>(null);
+  const lastFiredCursor = useRef<number | null>(null)
 
   useEffect(() => {
-    if (lastFiredCursor.current === cursor) return;
-    lastFiredCursor.current = cursor;
+    if (lastFiredCursor.current === cursor) return
+    lastFiredCursor.current = cursor
     void nav.navigate(
       (url) => {
-        url.searchParams.set(`cursor-${fileId}`, String(cursor));
-        return url;
+        url.searchParams.set(`cursor-${fileId}`, String(cursor))
+        return url
       },
       {
         history: "replace",
         selector: `#chat-msg-${fileId}`,
         disableTransition: true,
       },
-    );
-  }, [fileId, cursor, nav]);
+    )
+  }, [fileId, cursor, nav])
 
   // Render an empty marker so the DOM can observe "a compact boundary lived
   // here" — useful for tests and for ruling out the case where depth-bound
   // firing gets swallowed silently.
-  return (
-    <span
-      data-testid={`resume-tail-${fileId}`}
-      data-cursor={cursor}
-      hidden
-    />
-  );
+  return <span data-testid={`resume-tail-${fileId}`} data-cursor={cursor} hidden />
 }

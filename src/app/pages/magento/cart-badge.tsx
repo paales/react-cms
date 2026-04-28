@@ -1,4 +1,4 @@
-"use client";
+"use client"
 
 export function CartBadge({ quantity = 0 }: { quantity?: number | string }) {
   return (
@@ -19,5 +19,5 @@ export function CartBadge({ quantity = 0 }: { quantity?: number | string }) {
       </svg>
       <span className="min-w-[18px] text-center font-semibold">{quantity}</span>
     </div>
-  );
+  )
 }

@@ -42,11 +42,8 @@
  *   - Draft isolation per author/session.
  */
 
-import type { ReactNode } from "react";
-import {
-  getRequest,
-  getSearchParam,
-} from "../framework/context.ts";
+import type { ReactNode } from "react"
+import { getRequest, getSearchParam } from "../framework/context.ts"
 import {
   listAllCmsNodes,
   listBlockTypes,
@@ -56,25 +53,19 @@ import {
   type CmsConfig,
   type ContentFieldKind,
   type MatchClause,
-} from "../framework/cms-runtime.ts";
-import {
-  getCatalogManifest,
-  type BlockManifest,
-} from "../framework/cms-prerender.ts";
-import {
-  getPreviousRouteSnapshots,
-  getRouteSnapshots,
-} from "../lib/partial-registry.ts";
-import { setSessionFrameUrl } from "../framework/session.ts";
-import { Partial } from "../lib/index.ts";
-import { ROOT } from "../lib/partial-context.ts";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-import { CmsEditTreeLink } from "./components/tree-link.tsx";
-import { CmsEditAddBlock } from "./components/add-block.tsx";
-import { CmsEditAddressBar } from "./components/address-bar.tsx";
+} from "../framework/cms-runtime.ts"
+import { getCatalogManifest, type BlockManifest } from "../framework/cms-prerender.ts"
+import { getPreviousRouteSnapshots, getRouteSnapshots } from "../lib/partial-registry.ts"
+import { setSessionFrameUrl } from "../framework/session.ts"
+import { Partial } from "../lib/index.ts"
+import { ROOT } from "../lib/partial-context.ts"
+import { Card, CardContent } from "@/components/ui/card"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
+import { CmsEditTreeLink } from "./components/tree-link.tsx"
+import { CmsEditAddBlock } from "./components/add-block.tsx"
+import { CmsEditAddressBar } from "./components/address-bar.tsx"
 import {
   addBlockToSlot,
   moveBlockInSlot,
@@ -82,7 +73,7 @@ import {
   removeBlockFromSlot,
   resetCmsDraft,
   saveCmsFields,
-} from "./actions.ts";
+} from "./actions.ts"
 
 /**
  * Query-string params that belong to the editor (not the previewed
@@ -92,7 +83,7 @@ import {
  * before the cookie has round-tripped, and we don't want it leaking
  * into accessor reads inside the previewed page.
  */
-const EDITOR_RESERVED_PARAMS = ["editor", "select", "config"] as const;
+const EDITOR_RESERVED_PARAMS = ["editor", "select", "config"] as const
 
 /**
  * Tree scope: every cmsId that rendered for the previewed page,
@@ -122,18 +113,15 @@ const EDITOR_RESERVED_PARAMS = ["editor", "select", "config"] as const;
  * fills in.
  */
 function rootCmsIdsForPreviewedPage(): readonly string[] {
-  const route = new URL(getRequest().url).pathname;
-  const ids = new Set<string>();
-  for (const bucket of [
-    getRouteSnapshots(route),
-    getPreviousRouteSnapshots(route),
-  ]) {
-    if (!bucket) continue;
+  const route = new URL(getRequest().url).pathname
+  const ids = new Set<string>()
+  for (const bucket of [getRouteSnapshots(route), getPreviousRouteSnapshots(route)]) {
+    if (!bucket) continue
     for (const snap of bucket.values()) {
-      if (snap.cmsId != null) ids.add(snap.cmsId);
+      if (snap.cmsId != null) ids.add(snap.cmsId)
     }
   }
-  return [...ids];
+  return [...ids]
 }
 
 /**
@@ -150,7 +138,7 @@ const FRAMEWORK_INTERNAL_PARAMS = [
   "__frame",
   "__frameUrl",
   "disableTransition",
-] as const;
+] as const
 
 /**
  * Strip editor- AND framework-internal params from the page URL to
@@ -160,9 +148,9 @@ const FRAMEWORK_INTERNAL_PARAMS = [
  * previewed page, not the full editor-state URL).
  */
 function derivePreviewUrl(): string {
-  const url = new URL(getRequest().url);
-  stripEditorAndInternalParams(url);
-  return url.pathname + (url.search ? url.search : "");
+  const url = new URL(getRequest().url)
+  stripEditorAndInternalParams(url)
+  return url.pathname + (url.search ? url.search : "")
 }
 
 /**
@@ -172,15 +160,15 @@ function derivePreviewUrl(): string {
  * `?select=…&config=…` editor state riding along on the URL.
  */
 function previewRequest(): Request {
-  const page = getRequest();
-  const url = new URL(page.url);
-  stripEditorAndInternalParams(url);
-  return new Request(url, { headers: page.headers, method: "GET" });
+  const page = getRequest()
+  const url = new URL(page.url)
+  stripEditorAndInternalParams(url)
+  return new Request(url, { headers: page.headers, method: "GET" })
 }
 
 function stripEditorAndInternalParams(url: URL): void {
-  for (const p of EDITOR_RESERVED_PARAMS) url.searchParams.delete(p);
-  for (const p of FRAMEWORK_INTERNAL_PARAMS) url.searchParams.delete(p);
+  for (const p of EDITOR_RESERVED_PARAMS) url.searchParams.delete(p)
+  for (const p of FRAMEWORK_INTERNAL_PARAMS) url.searchParams.delete(p)
 }
 
 export function EditorShell({ children }: { children: ReactNode }) {
@@ -208,7 +196,7 @@ export function EditorShell({ children }: { children: ReactNode }) {
   // `useNavigation()` (window-scoped) which goes through normal
   // page navigation. If a future component wants frame-isolated
   // navigation, this sync needs to be relaxed.
-  const previewUrl = derivePreviewUrl();
+  const previewUrl = derivePreviewUrl()
   // Sync the preview frame's session URL to the window URL — but
   // ONLY when this isn't itself a frame refetch. A frame refetch
   // arrives with `?__frame=preview&__frameUrl=…` query params;
@@ -218,12 +206,10 @@ export function EditorShell({ children }: { children: ReactNode }) {
   // round-trip but the session URL would snap back to `/` and the
   // server would render against the unchanged URL — infinite scroll
   // appears broken).
-  const incomingUrl = new URL(getRequest().url);
-  const isPreviewFrameRefetch = incomingUrl.searchParams
-    .getAll("__frame")
-    .includes("preview");
+  const incomingUrl = new URL(getRequest().url)
+  const isPreviewFrameRefetch = incomingUrl.searchParams.getAll("__frame").includes("preview")
   if (!isPreviewFrameRefetch) {
-    setSessionFrameUrl(["preview"], previewUrl);
+    setSessionFrameUrl(["preview"], previewUrl)
   }
 
   // Layout: 3-column grid where the LEFT and RIGHT columns are
@@ -262,18 +248,12 @@ export function EditorShell({ children }: { children: ReactNode }) {
         </Partial>
       </aside>
     </div>
-  );
+  )
 }
 
 // ─── Preview ───────────────────────────────────────────────────────────
 
-function PreviewPanel({
-  previewUrl,
-  children,
-}: {
-  previewUrl: string;
-  children: ReactNode;
-}) {
+function PreviewPanel({ previewUrl, children }: { previewUrl: string; children: ReactNode }) {
   return (
     <>
       {/* Sticky address bar pins to the top of the preview column
@@ -302,17 +282,12 @@ function PreviewPanel({
             entry and `select` appears for the first time.
             Selector token `#preview` matches the `frame="preview"`
             name so frame refetches dispatch through it correctly. */}
-        <Partial
-          parent={ROOT}
-          selector="#preview"
-          frame="preview"
-          frameUrl={previewUrl}
-        >
+        <Partial parent={ROOT} selector="#preview" frame="preview" frameUrl={previewUrl}>
           {children}
         </Partial>
       </div>
     </>
-  );
+  )
 }
 
 // ─── Tree ──────────────────────────────────────────────────────────────
@@ -321,13 +296,11 @@ function TreePanel() {
   return (
     <Partial parent={ROOT} selector="#cms-edit-tree">
       <div>
-        <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-          Content tree
-        </p>
+        <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Content tree</p>
         <TreeContents />
       </div>
     </Partial>
-  );
+  )
 }
 
 async function TreeContents() {
@@ -337,48 +310,45 @@ async function TreeContents() {
   // so the structural fingerprint captures `?select=` automatically:
   // a same-route nav that changes the param differs the fp and the
   // fp-skip protocol re-renders correctly.
-  const selected = getSearchParam("select");
+  const selected = getSearchParam("select")
   // Tree shows what `<Partial cmsId>` rendered for this page —
   // derived from the route-scoped partial registry, not a hardcoded
   // map. Chrome (app-nav) appears on every page because it renders
   // on every page; per-page roots only appear on their pages.
-  const rootIds = rootCmsIdsForPreviewedPage();
-  const entries = listAllCmsNodes(rootIds);
-  const blockTypes = listBlockTypes();
-  const catalog = await getCatalogManifest();
+  const rootIds = rootCmsIdsForPreviewedPage()
+  const entries = listAllCmsNodes(rootIds)
+  const blockTypes = listBlockTypes()
+  const catalog = await getCatalogManifest()
 
   // Build parentId → parentType map so we can look up each slot
   // intermediary's parent block type (and from there, the slot's
   // `allow` declaration in the manifest).
-  const parentTypeById = new Map<string, string | undefined>();
+  const parentTypeById = new Map<string, string | undefined>()
   for (const entry of entries) {
-    if (entry.kind === "node") parentTypeById.set(entry.id, entry.type);
+    if (entry.kind === "node") parentTypeById.set(entry.id, entry.type)
   }
 
   if (entries.length === 0) {
     return (
-      <p
-        className="text-sm text-muted-foreground"
-        data-testid="cms-edit-tree-empty"
-      >
+      <p className="text-sm text-muted-foreground" data-testid="cms-edit-tree-empty">
         {rootIds.length === 0
           ? "Loading content tree… the registry is cold for this route. Refresh once to populate."
           : "The CMS store is empty. Partials appear here once they're saved to the draft or committed to content.json."}
       </p>
-    );
+    )
   }
 
   // Per-row slot index (for ↑ / ↓ disable state). Single pass: walk
   // entries in order and assign each slot child its position within
   // its slot.
-  const rowIndex = new Map<string, number>();
-  const slotCounts = new Map<string, number>();
+  const rowIndex = new Map<string, number>()
+  const slotCounts = new Map<string, number>()
   for (const entry of entries) {
     if (entry.kind === "node" && entry.parentId && entry.slotName) {
-      const slotKey = `${entry.parentId}:${entry.slotName}`;
-      const next = slotCounts.get(slotKey) ?? 0;
-      rowIndex.set(entry.id, next);
-      slotCounts.set(slotKey, next + 1);
+      const slotKey = `${entry.parentId}:${entry.slotName}`
+      const next = slotCounts.get(slotKey) ?? 0
+      rowIndex.set(entry.id, next)
+      slotCounts.set(slotKey, next + 1)
     }
   }
 
@@ -393,7 +363,7 @@ async function TreeContents() {
               slotName={entry.slotName!}
               depth={entry.depth}
             />
-          );
+          )
         }
         if (entry.kind === "slot-add") {
           // Filter the +add palette by the slot's `allow` selector —
@@ -405,18 +375,17 @@ async function TreeContents() {
           // palette falls back to the full block-type list (better
           // to show too many options than zero on an unrecognized
           // parent).
-          const parentType = parentTypeById.get(entry.parentId!);
-          const parentManifest = parentType ? catalog[parentType] : undefined;
-          const allow =
-            parentManifest?.childSlots[entry.slotName!]?.allow ?? null;
+          const parentType = parentTypeById.get(entry.parentId!)
+          const parentManifest = parentType ? catalog[parentType] : undefined
+          const allow = parentManifest?.childSlots[entry.slotName!]?.allow ?? null
           const filteredTypes =
             allow == null || isWildcardAllow(allow)
               ? blockTypes
               : blockTypes.filter((type) => {
-                  const m = catalog[type];
-                  if (!m) return false;
-                  return blockTagsSatisfyAllow(m.tags, allow);
-                });
+                  const m = catalog[type]
+                  if (!m) return false
+                  return blockTagsSatisfyAllow(m.tags, allow)
+                })
           return (
             <SlotAddRow
               key={entry.id}
@@ -425,17 +394,15 @@ async function TreeContents() {
               depth={entry.depth}
               blockTypes={filteredTypes}
             />
-          );
+          )
         }
-        const isSelected = entry.id === selected;
-        const label = entry.displayName ?? `#${entry.id}`;
+        const isSelected = entry.id === selected
+        const label = entry.displayName ?? `#${entry.id}`
         const slotKey =
-          entry.parentId && entry.slotName
-            ? `${entry.parentId}:${entry.slotName}`
-            : null;
-        const idx = slotKey != null ? (rowIndex.get(entry.id) ?? 0) : 0;
-        const total = slotKey != null ? (slotCounts.get(slotKey) ?? 1) : 1;
-        const inSlot = entry.parentId && entry.slotName;
+          entry.parentId && entry.slotName ? `${entry.parentId}:${entry.slotName}` : null
+        const idx = slotKey != null ? (rowIndex.get(entry.id) ?? 0) : 0
+        const total = slotKey != null ? (slotCounts.get(slotKey) ?? 1) : 1
+        const inSlot = entry.parentId && entry.slotName
         return (
           <li
             key={entry.id}
@@ -455,10 +422,7 @@ async function TreeContents() {
                 {label}
               </span>
               {entry.type && (
-                <Badge
-                  variant="secondary"
-                  className="px-1.5 py-0 text-[0.7rem]"
-                >
+                <Badge variant="secondary" className="px-1.5 py-0 text-[0.7rem]">
                   {entry.type}
                 </Badge>
               )}
@@ -490,10 +454,10 @@ async function TreeContents() {
               />
             )}
           </li>
-        );
+        )
       })}
     </ul>
-  );
+  )
 }
 
 /**
@@ -508,11 +472,11 @@ function SlotHeaderRow({
   slotName,
   depth,
 }: {
-  parentCmsId: string;
-  slotName: string;
-  depth: number;
+  parentCmsId: string
+  slotName: string
+  depth: number
 }) {
-  const id = `slot:${parentCmsId}:${slotName}`;
+  const id = `slot:${parentCmsId}:${slotName}`
   return (
     <li
       style={{ paddingLeft: `${depth * 12}px` }}
@@ -529,7 +493,7 @@ function SlotHeaderRow({
         <span className="flex-1 truncate">{slotName}</span>
       </span>
     </li>
-  );
+  )
 }
 
 /**
@@ -550,32 +514,28 @@ function SlotAddRow({
   depth,
   blockTypes,
 }: {
-  parentCmsId: string;
-  slotName: string;
-  depth: number;
-  blockTypes: string[];
+  parentCmsId: string
+  slotName: string
+  depth: number
+  blockTypes: string[]
 }) {
-  const id = `slot-add:${parentCmsId}:${slotName}`;
+  const id = `slot-add:${parentCmsId}:${slotName}`
   // Bind one action per block type on the server, then pass the
   // bound references to the client dropdown. Bound server actions
   // are RSC-serializable across the boundary.
   const options = blockTypes.map((type) => ({
     type,
     action: addBlockToSlot.bind(null, parentCmsId, slotName, type),
-  }));
+  }))
   return (
     <li
       style={{ paddingLeft: `${depth * 12}px` }}
       className="flex items-center gap-1"
       data-testid={`cms-edit-tree-entry-${id}`}
     >
-      <CmsEditAddBlock
-        parentCmsId={parentCmsId}
-        slotName={slotName}
-        options={options}
-      />
+      <CmsEditAddBlock parentCmsId={parentCmsId} slotName={slotName} options={options} />
     </li>
-  );
+  )
 }
 
 /**
@@ -588,22 +548,16 @@ function SlotChildControls({
   index,
   total,
 }: {
-  parentCmsId: string;
-  slotName: string;
-  childCmsId: string;
-  index: number;
-  total: number;
+  parentCmsId: string
+  slotName: string
+  childCmsId: string
+  index: number
+  total: number
 }) {
   return (
     <span className="flex shrink-0 items-center">
       <form
-        action={moveBlockInSlot.bind(
-          null,
-          parentCmsId,
-          slotName,
-          childCmsId,
-          "up",
-        )}
+        action={moveBlockInSlot.bind(null, parentCmsId, slotName, childCmsId, "up")}
         className="contents"
       >
         <button
@@ -617,13 +571,7 @@ function SlotChildControls({
         </button>
       </form>
       <form
-        action={moveBlockInSlot.bind(
-          null,
-          parentCmsId,
-          slotName,
-          childCmsId,
-          "down",
-        )}
+        action={moveBlockInSlot.bind(null, parentCmsId, slotName, childCmsId, "down")}
         className="contents"
       >
         <button
@@ -637,12 +585,7 @@ function SlotChildControls({
         </button>
       </form>
       <form
-        action={removeBlockFromSlot.bind(
-          null,
-          parentCmsId,
-          slotName,
-          childCmsId,
-        )}
+        action={removeBlockFromSlot.bind(null, parentCmsId, slotName, childCmsId)}
         className="contents"
       >
         <button
@@ -656,7 +599,7 @@ function SlotChildControls({
         </button>
       </form>
     </span>
-  );
+  )
 }
 
 // ─── Field form ────────────────────────────────────────────────────────
@@ -667,15 +610,15 @@ async function FieldPanel() {
   // fingerprint differs when either param changes — a plain-anchor
   // nav (config tab, browser URL bar, refresh) invalidates fp-skip
   // correctly.
-  const selected = getSearchParam("select");
-  const configIndexRaw = getSearchParam("config");
-  const configIndex = configIndexRaw != null ? Number(configIndexRaw) : null;
+  const selected = getSearchParam("select")
+  const configIndexRaw = getSearchParam("config")
+  const configIndex = configIndexRaw != null ? Number(configIndexRaw) : null
   if (!selected) {
     return (
       <div className="text-sm text-muted-foreground">
         Select a Partial from the tree to edit its fields.
       </div>
-    );
+    )
   }
 
   // Slot intermediaries are non-selectable in the tree (rendered as
@@ -688,31 +631,27 @@ async function FieldPanel() {
   if (parseSlotEntryId(selected)) {
     return (
       <div className="text-sm text-muted-foreground">
-        Slots aren't selectable. Use the inline buttons in the tree to add,
-        reorder, or remove blocks; click a block to edit its fields here.
+        Slots aren't selectable. Use the inline buttons in the tree to add, reorder, or remove
+        blocks; click a block to edit its fields here.
       </div>
-    );
+    )
   }
 
-  const node = lookupDraftNode(selected);
-  const catalog = await getCatalogManifest();
-  const manifest = node?.type ? catalog[node.type] : undefined;
+  const node = lookupDraftNode(selected)
+  const catalog = await getCatalogManifest()
+  const manifest = node?.type ? catalog[node.type] : undefined
   // Detect "this id has unpublished changes" — the same condition
   // that drives the tree's modified badge.
-  const hasDraft = listAllCmsNodes().some(
-    (e) => e.id === selected && e.hasDraft,
-  );
-  const configs = node?.configs ?? [];
-  const effectiveIndex = pickEffectiveConfig(configs, configIndex);
-  const currentConfig = effectiveIndex >= 0 ? configs[effectiveIndex] : null;
-  const fieldMap = buildFieldMap(currentConfig, manifest);
+  const hasDraft = listAllCmsNodes().some((e) => e.id === selected && e.hasDraft)
+  const configs = node?.configs ?? []
+  const effectiveIndex = pickEffectiveConfig(configs, configIndex)
+  const currentConfig = effectiveIndex >= 0 ? configs[effectiveIndex] : null
+  const fieldMap = buildFieldMap(currentConfig, manifest)
 
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">
-          Selected
-        </p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Selected</p>
         <p className="text-sm font-medium" data-testid="cms-edit-selected-id">
           {node?.displayName ?? `#${selected}`}
         </p>
@@ -734,19 +673,15 @@ async function FieldPanel() {
       )}
 
       {configs.length > 0 && (
-        <ConfigTabs
-          selected={selected}
-          configs={configs}
-          activeIndex={effectiveIndex}
-        />
+        <ConfigTabs selected={selected} configs={configs} activeIndex={effectiveIndex} />
       )}
 
       {Object.keys(fieldMap).length === 0 ? (
         <Card className="p-4">
           <CardContent className="px-0 text-sm text-muted-foreground">
-            No fields on this configuration yet. For block-typed entries the
-            catalog seeds the field list from the block's accessor reads; for
-            code-declared Partials, saved fields appear here once written.
+            No fields on this configuration yet. For block-typed entries the catalog seeds the field
+            list from the block's accessor reads; for code-declared Partials, saved fields appear
+            here once written.
           </CardContent>
         </Card>
       ) : (
@@ -763,12 +698,7 @@ async function FieldPanel() {
           data-testid="cms-edit-field-form"
         >
           {Object.entries(fieldMap).map(([name, spec]) => (
-            <FieldInput
-              key={name}
-              name={name}
-              kind={spec.kind}
-              value={spec.value}
-            />
+            <FieldInput key={name} name={name} kind={spec.kind} value={spec.value} />
           ))}
           <BooleanSidecar
             fields={Object.entries(fieldMap)
@@ -789,7 +719,7 @@ async function FieldPanel() {
         </form>
       )}
     </div>
-  );
+  )
 }
 
 // ─── Config tabs ──────────────────────────────────────────────────────
@@ -806,20 +736,15 @@ async function FieldPanel() {
  *   4. Index 0 — falls back to whatever's there for empty-config
  *      nodes that the author is just starting on.
  */
-function pickEffectiveConfig(
-  configs: readonly CmsConfig[],
-  requested: number | null,
-): number {
-  if (configs.length === 0) return -1;
+function pickEffectiveConfig(configs: readonly CmsConfig[], requested: number | null): number {
+  if (configs.length === 0) return -1
   if (requested != null && requested >= 0 && requested < configs.length) {
-    return requested;
+    return requested
   }
-  const best = pickBestConfigIndex(configs, previewRequest());
-  if (best != null) return best;
-  const defaultIdx = configs.findIndex(
-    (c) => Object.keys(c.match).length === 0,
-  );
-  return defaultIdx >= 0 ? defaultIdx : 0;
+  const best = pickBestConfigIndex(configs, previewRequest())
+  if (best != null) return best
+  const defaultIdx = configs.findIndex((c) => Object.keys(c.match).length === 0)
+  return defaultIdx >= 0 ? defaultIdx : 0
 }
 
 function ConfigTabs({
@@ -827,19 +752,17 @@ function ConfigTabs({
   configs,
   activeIndex,
 }: {
-  selected: string;
-  configs: readonly CmsConfig[];
-  activeIndex: number;
+  selected: string
+  configs: readonly CmsConfig[]
+  activeIndex: number
 }) {
   return (
     <div data-testid="cms-edit-config-tabs">
-      <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">
-        Configuration
-      </p>
+      <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Configuration</p>
       <div className="flex flex-wrap gap-1">
         {configs.map((cfg, idx) => {
-          const isActive = idx === activeIndex;
-          const label = formatMatchLabel(cfg.match);
+          const isActive = idx === activeIndex
+          const label = formatMatchLabel(cfg.match)
           return (
             <a
               key={idx}
@@ -855,15 +778,15 @@ function ConfigTabs({
             >
               {label}
             </a>
-          );
+          )
         })}
       </div>
       <p className="mt-1 text-[0.7rem] text-muted-foreground">
-        Editing this configuration writes only to its field set. Other
-        configurations (and the cascade fallback) stay untouched.
+        Editing this configuration writes only to its field set. Other configurations (and the
+        cascade fallback) stay untouched.
       </p>
     </div>
-  );
+  )
 }
 
 /**
@@ -877,48 +800,40 @@ function ConfigTabs({
  *   two or more keys                           → join with " · "
  */
 export function formatMatchLabel(match: Record<string, MatchClause>): string {
-  const entries = Object.entries(match);
-  if (entries.length === 0) return "Default";
-  const parts = entries.map(([key, clause]) => formatClause(key, clause));
-  return parts.join(" · ");
+  const entries = Object.entries(match)
+  if (entries.length === 0) return "Default"
+  const parts = entries.map(([key, clause]) => formatClause(key, clause))
+  return parts.join(" · ")
 }
 
 function formatClause(key: string, clause: MatchClause): string {
-  const colonIdx = key.indexOf(":");
-  const kind = colonIdx > 0 ? key.slice(0, colonIdx) : key;
-  const name = colonIdx > 0 ? key.slice(colonIdx + 1) : "";
+  const colonIdx = key.indexOf(":")
+  const kind = colonIdx > 0 ? key.slice(0, colonIdx) : key
+  const name = colonIdx > 0 ? key.slice(colonIdx + 1) : ""
 
   if (kind === "pathname") {
-    if (
-      typeof clause === "object" &&
-      clause !== null &&
-      !Array.isArray(clause)
-    ) {
-      if ("in" in clause) return `${shortKey(name)}∈…`;
-      const paramParts = Object.entries(
-        clause as Record<string, ScalarOrIn>,
-      ).map(([p, c]) => formatScalar(p, c));
-      return paramParts.join(", ");
+    if (typeof clause === "object" && clause !== null && !Array.isArray(clause)) {
+      if ("in" in clause) return `${shortKey(name)}∈…`
+      const paramParts = Object.entries(clause as Record<string, ScalarOrIn>).map(([p, c]) =>
+        formatScalar(p, c),
+      )
+      return paramParts.join(", ")
     }
-    return shortKey(name);
+    return shortKey(name)
   }
-  return formatScalar(name, clause as ScalarOrIn);
+  return formatScalar(name, clause as ScalarOrIn)
 }
 
-type ScalarOrIn =
-  | string
-  | number
-  | boolean
-  | { in: ReadonlyArray<string | number> };
+type ScalarOrIn = string | number | boolean | { in: ReadonlyArray<string | number> }
 
 function formatScalar(name: string, clause: ScalarOrIn): string {
-  if (typeof clause === "string") return `${name}=${clause}`;
-  if (typeof clause === "number") return `${name}=${clause}`;
-  if (typeof clause === "boolean") return `${name}=${clause}`;
+  if (typeof clause === "string") return `${name}=${clause}`
+  if (typeof clause === "number") return `${name}=${clause}`
+  if (typeof clause === "boolean") return `${name}=${clause}`
   if (clause && typeof clause === "object" && "in" in clause) {
-    return `${name}∈${clause.in.join(",")}`;
+    return `${name}∈${clause.in.join(",")}`
   }
-  return name;
+  return name
 }
 
 /**
@@ -928,7 +843,7 @@ function formatScalar(name: string, clause: ScalarOrIn): string {
  * `<Children allow="*">` declares the same intent).
  */
 function isWildcardAllow(allow: string): boolean {
-  return allow.split(/\s+/).some((t) => t.trim() === "*");
+  return allow.split(/\s+/).some((t) => t.trim() === "*")
 }
 
 /**
@@ -945,27 +860,24 @@ function isWildcardAllow(allow: string): boolean {
  * Multiple tokens combine as union — a block matches if it satisfies
  * ANY of the allow tokens.
  */
-function blockTagsSatisfyAllow(
-  tags: readonly `.${string}`[],
-  allow: string,
-): boolean {
+function blockTagsSatisfyAllow(tags: readonly `.${string}`[], allow: string): boolean {
   const tokens = allow
     .split(/\s+/)
     .map((t) => t.trim())
-    .filter(Boolean);
+    .filter(Boolean)
   for (const token of tokens) {
     if (token.startsWith(".") && tags.includes(token as `.${string}`)) {
-      return true;
+      return true
     }
   }
-  return false;
+  return false
 }
 
 function shortKey(key: string): string {
   // For `pathname:/p/:slug` the full pattern is too verbose on a
   // tab. Strip everything but the last `:param` segment.
-  const match = key.match(/:([^/]+)$/);
-  return match ? match[1] : key;
+  const match = key.match(/:([^/]+)$/)
+  return match ? match[1] : key
 }
 
 /**
@@ -986,31 +898,31 @@ function shortKey(key: string): string {
  * stale fingerprint hints.
  */
 function cmsEditHref(opts: { select: string; config?: number }): string {
-  const url = new URL(getRequest().url);
-  url.searchParams.set("select", opts.select);
+  const url = new URL(getRequest().url)
+  url.searchParams.set("select", opts.select)
   if (opts.config != null && opts.config >= 0) {
-    url.searchParams.set("config", String(opts.config));
+    url.searchParams.set("config", String(opts.config))
   } else {
-    url.searchParams.delete("config");
+    url.searchParams.delete("config")
   }
   // The cookie keeps editor mode on; URL flag would just be noise.
-  url.searchParams.delete("editor");
+  url.searchParams.delete("editor")
   for (const p of FRAMEWORK_INTERNAL_PARAMS) {
-    url.searchParams.delete(p);
+    url.searchParams.delete(p)
   }
-  return url.pathname + url.search;
+  return url.pathname + url.search
 }
 
 interface FieldSpec {
-  kind: ContentFieldKind;
-  value: unknown;
+  kind: ContentFieldKind
+  value: unknown
 }
 
 function buildFieldMap(
   config: CmsConfig | null,
   manifest: BlockManifest | undefined,
 ): Record<string, FieldSpec> {
-  const out: Record<string, FieldSpec> = {};
+  const out: Record<string, FieldSpec> = {}
   // Seed from the catalog so every field the block declares shows
   // up as an input, even when the current config hasn't set it yet
   // (cascade fallback will apply from a less-specific config).
@@ -1019,7 +931,7 @@ function buildFieldMap(
       out[name] = {
         kind,
         value: config?.fields[name],
-      };
+      }
     }
   }
   // Union currently-stored fields (covers code-declared Partials that
@@ -1027,17 +939,17 @@ function buildFieldMap(
   // about them).
   if (config) {
     for (const [name, value] of Object.entries(config.fields)) {
-      if (name in out) continue;
-      out[name] = { kind: inferKind(value), value };
+      if (name in out) continue
+      out[name] = { kind: inferKind(value), value }
     }
   }
-  return out;
+  return out
 }
 
 function inferKind(value: unknown): ContentFieldKind {
-  if (typeof value === "number") return "number";
-  if (typeof value === "boolean") return "boolean";
-  return "text";
+  if (typeof value === "number") return "number"
+  if (typeof value === "boolean") return "boolean"
+  return "text"
 }
 
 function FieldInput({
@@ -1045,9 +957,9 @@ function FieldInput({
   kind,
   value,
 }: {
-  name: string;
-  kind: ContentFieldKind;
-  value: unknown;
+  name: string
+  kind: ContentFieldKind
+  value: unknown
 }) {
   const label = (
     <label
@@ -1057,9 +969,9 @@ function FieldInput({
       {name}
       <span className="ml-2 text-[0.65rem] uppercase opacity-60">{kind}</span>
     </label>
-  );
+  )
   const commonClass =
-    "w-full rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+    "w-full rounded-md border border-input bg-background px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 
   switch (kind) {
     case "number":
@@ -1076,7 +988,7 @@ function FieldInput({
           />
           <input type="hidden" name={`__kind:${name}`} value="number" />
         </div>
-      );
+      )
     case "boolean":
       return (
         <div className="flex items-center gap-2">
@@ -1095,7 +1007,7 @@ function FieldInput({
           </label>
           <input type="hidden" name={`__kind:${name}`} value="boolean" />
         </div>
-      );
+      )
     case "richText":
       return (
         <div>
@@ -1109,7 +1021,7 @@ function FieldInput({
             data-testid={`cms-edit-field-input-${name}`}
           />
         </div>
-      );
+      )
     case "enum":
     case "image":
     case "text":
@@ -1126,13 +1038,11 @@ function FieldInput({
             data-testid={`cms-edit-field-input-${name}`}
           />
         </div>
-      );
+      )
   }
 }
 
 function BooleanSidecar({ fields }: { fields: string[] }) {
-  if (fields.length === 0) return null;
-  return (
-    <input type="hidden" name="__boolean-fields" value={fields.join(",")} />
-  );
+  if (fields.length === 0) return null
+  return <input type="hidden" name="__boolean-fields" value={fields.join(",")} />
 }

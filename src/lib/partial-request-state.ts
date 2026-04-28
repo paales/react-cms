@@ -12,26 +12,26 @@
  * `<PartialRoot>` parses the request, seeds the store, and runs its
  * children inside it; each `<Partial>` reads from it during render.
  */
-import { AsyncLocalStorage } from "node:async_hooks";
+import { AsyncLocalStorage } from "node:async_hooks"
 
 export interface PartialRequestState {
   /** Effective ids explicitly requested via `?partials=` + `?tags=` (union, resolved from selector tokens). Null = no filter. */
-  requestedIds: Set<string> | null;
+  requestedIds: Set<string> | null
   /** Whether the request is a partial-refetch (cache mode) vs a full render (streaming mode). */
-  isPartialRefetch: boolean;
+  isPartialRefetch: boolean
   /** `?__populateCache=1` — server-action flow that repopulates the client cache on first post-action render. */
-  populateCache: boolean;
+  populateCache: boolean
   /** `?cached=id:fp,…` — fingerprints the client already has in `_cache`. */
-  cachedFingerprints: Map<string, string | null>;
+  cachedFingerprints: Map<string, string | null>
   /** Effective ids explicitly targeted this request (resolved from `?partials=`+`?tags=`). Never skipped. */
-  explicitIds: Set<string>;
+  explicitIds: Set<string>
   /** Effective ids seen this request (catches duplicate anonymous Partials via `__anon:` collision and debug). */
-  seenIds: Set<string>;
+  seenIds: Set<string>
   /** `#`-token names seen this request (for cross-Partial uniqueness enforcement). */
-  seenUniqueTokens: Set<string>;
+  seenUniqueTokens: Set<string>
 }
 
-const als = new AsyncLocalStorage<PartialRequestState>();
+const als = new AsyncLocalStorage<PartialRequestState>()
 
 /**
  * Enter the partial-state context for the remainder of the current
@@ -47,27 +47,24 @@ const als = new AsyncLocalStorage<PartialRequestState>();
  * current async context itself, which React's render inherits.
  */
 export function enterPartialState(state: PartialRequestState): void {
-  als.enterWith(state);
+  als.enterWith(state)
 }
 
-export function runWithPartialState<T>(
-  state: PartialRequestState,
-  fn: () => T,
-): T {
-  return als.run(state, fn);
+export function runWithPartialState<T>(state: PartialRequestState, fn: () => T): T {
+  return als.run(state, fn)
 }
 
 export function getPartialState(): PartialRequestState | undefined {
-  return als.getStore();
+  return als.getStore()
 }
 
 export function requirePartialState(): PartialRequestState {
-  const state = als.getStore();
+  const state = als.getStore()
   if (!state) {
     throw new Error(
       "<Partial> must be rendered inside <PartialRoot>. " +
         "The enclosing PartialRoot sets up the request-scoped state the Partial needs.",
-    );
+    )
   }
-  return state;
+  return state
 }

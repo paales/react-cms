@@ -2,7 +2,7 @@ import {
   request as pwRequest,
   test as base,
   type APIRequestNewContextOptions,
-} from "@playwright/test";
+} from "@playwright/test"
 
 /**
  * Playwright fixtures layer. Every e2e spec imports `test` / `expect`
@@ -25,13 +25,13 @@ import {
  */
 
 type WorkerFixtures = {
-  testScope: string;
-};
+  testScope: string
+}
 
 export const test = base.extend<object, WorkerFixtures>({
   testScope: [
     async ({}, use, workerInfo) => {
-      await use(`worker-${workerInfo.workerIndex}`);
+      await use(`worker-${workerInfo.workerIndex}`)
     },
     { scope: "worker" },
   ],
@@ -41,8 +41,8 @@ export const test = base.extend<object, WorkerFixtures>({
   page: async ({ page, testScope }, use) => {
     await page.context().setExtraHTTPHeaders({
       "x-test-scope": testScope,
-    });
-    await use(page);
+    })
+    await use(page)
   },
 
   // Override the built-in `request` fixture (Playwright's standalone
@@ -53,14 +53,14 @@ export const test = base.extend<object, WorkerFixtures>({
   request: async ({ testScope }, use) => {
     const ctx = await pwRequest.newContext({
       extraHTTPHeaders: { "x-test-scope": testScope },
-    });
-    await use(ctx);
-    await ctx.dispose();
+    })
+    await use(ctx)
+    await ctx.dispose()
   },
-});
+})
 
-export { expect } from "@playwright/test";
-export type { Page, APIRequestContext, Locator } from "@playwright/test";
+export { expect } from "@playwright/test"
+export type { Page, APIRequestContext, Locator } from "@playwright/test"
 
 /**
  * Drop-in replacement for `request` from `@playwright/test`. Any
@@ -73,13 +73,13 @@ export type { Page, APIRequestContext, Locator } from "@playwright/test";
  */
 export const request = {
   newContext: (options: APIRequestNewContextOptions = {}) => {
-    const info = base.info();
+    const info = base.info()
     return pwRequest.newContext({
       ...options,
       extraHTTPHeaders: {
         ...options.extraHTTPHeaders,
         "x-test-scope": `worker-${info.workerIndex}`,
       },
-    });
+    })
   },
-};
+}

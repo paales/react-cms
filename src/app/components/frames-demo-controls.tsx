@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { useNavigation } from "../../lib/partial-client.tsx";
-import { Button } from "@/components/ui/button";
+import { useNavigation } from "../../lib/partial-client.tsx"
+import { Button } from "@/components/ui/button"
 
 /**
  * Button that navigates a named frame to a URL. Used from INSIDE a
@@ -14,12 +14,12 @@ export function FrameNavigateButton({
   label,
   testId,
 }: {
-  frame?: string;
-  url: string;
-  label: string;
-  testId?: string;
+  frame?: string
+  url: string
+  label: string
+  testId?: string
 }) {
-  const nav = useNavigation(frameName);
+  const nav = useNavigation(frameName)
   return (
     <Button
       type="button"
@@ -30,7 +30,7 @@ export function FrameNavigateButton({
     >
       {label}
     </Button>
-  );
+  )
 }
 
 /**
@@ -43,12 +43,12 @@ export function UpdateEntryStateButton({
   label,
   testId,
 }: {
-  frame?: string;
-  patch: Record<string, unknown>;
-  label: string;
-  testId?: string;
+  frame?: string
+  patch: Record<string, unknown>
+  label: string
+  testId?: string
 }) {
-  const nav = useNavigation(frameName);
+  const nav = useNavigation(frameName)
   return (
     <Button
       type="button"
@@ -59,5 +59,5 @@ export function UpdateEntryStateButton({
     >
       {label}
     </Button>
-  );
+  )
 }

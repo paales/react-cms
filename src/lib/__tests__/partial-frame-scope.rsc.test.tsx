@@ -23,7 +23,7 @@
  * ancestor, still folds the ancestor's frame URL into its fp so a
  * frame-URL change produces a distinct fp.
  */
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest"
 
 // `cache.tsx` imports `@vitejs/plugin-rsc/rsc` which pulls in virtual:
 // module references the Node ESM loader can't resolve. We don't
@@ -34,16 +34,16 @@ vi.mock("../cache.tsx", () => ({
   Cache: ({ children }: { children: React.ReactNode }) => children,
   _cacheStats: async () => ({ size: 0, keys: [] }),
   _clearCache: async () => {},
-}));
+}))
 
-import { renderWithRequest } from "../../test/rsc-server.ts";
-import { PartialRoot, Partial } from "../partial.tsx";
-import { ROOT, capturePartialContext } from "../partial-context.ts";
-import { clearRegistry } from "../partial-registry.ts";
+import { renderWithRequest } from "../../test/rsc-server.ts"
+import { PartialRoot, Partial } from "../partial.tsx"
+import { ROOT, capturePartialContext } from "../partial-context.ts"
+import { clearRegistry } from "../partial-registry.ts"
 
 beforeEach(() => {
-  clearRegistry();
-});
+  clearRegistry()
+})
 
 /**
  * Pull a Partial's `partialFingerprint` prop out of the encoded Flight
@@ -56,11 +56,11 @@ function extractFingerprint(text: string, partialId: string): string | null {
   // Props can appear in either order — try both.
   const forward = new RegExp(
     `"partialId"\\s*:\\s*"${partialId}"[^{}]*?"partialFingerprint"\\s*:\\s*"([^"]+)"`,
-  );
+  )
   const reverse = new RegExp(
     `"partialFingerprint"\\s*:\\s*"([^"]+)"[^{}]*?"partialId"\\s*:\\s*"${partialId}"`,
-  );
-  return text.match(forward)?.[1] ?? text.match(reverse)?.[1] ?? null;
+  )
+  return text.match(forward)?.[1] ?? text.match(reverse)?.[1] ?? null
 }
 
 async function renderFp(
@@ -68,9 +68,9 @@ async function renderFp(
   node: React.ReactNode,
   partialId: string,
 ): Promise<string | null> {
-  const { stream } = await renderWithRequest(url, node);
-  const text = await new Response(stream).text();
-  return extractFingerprint(text, partialId);
+  const { stream } = await renderWithRequest(url, node)
+  const text = await new Response(stream).text()
+  return extractFingerprint(text, partialId)
 }
 
 describe("Partial fingerprint — frame scope isolation", () => {
@@ -84,14 +84,14 @@ describe("Partial fingerprint — frame scope isolation", () => {
           <span>chat body</span>
         </Partial>
       </PartialRoot>
-    );
+    )
     const withoutSibling = (
       <PartialRoot>
         <Partial parent={ROOT} selector="#chat" frame="chat">
           <span>chat body</span>
         </Partial>
       </PartialRoot>
-    );
+    )
 
     // Same URL in both renders — the only variable is the presence of
     // a sibling `<Partial frame="search">`. Mirrors the real-world
@@ -99,15 +99,15 @@ describe("Partial fingerprint — frame scope isolation", () => {
     // the session URL not the page URL; both renders agree on it).
     // Here we just use the same page URL to take session out of the
     // picture and pin "sibling frame" as the only axis of change.
-    const url = "http://localhost/";
-    const fpWith = await renderFp(url, withSibling, "chat");
-    clearRegistry();
-    const fpWithout = await renderFp(url, withoutSibling, "chat");
+    const url = "http://localhost/"
+    const fpWith = await renderFp(url, withSibling, "chat")
+    clearRegistry()
+    const fpWithout = await renderFp(url, withoutSibling, "chat")
 
-    expect(fpWith).toBeTruthy();
-    expect(fpWithout).toBeTruthy();
-    expect(fpWith).toBe(fpWithout);
-  });
+    expect(fpWith).toBeTruthy()
+    expect(fpWithout).toBeTruthy()
+    expect(fpWith).toBe(fpWithout)
+  })
 
   it("legitimate ambient fold still works for a nested Partial inside a frame", async () => {
     // A plain (non-framed) `<Partial>` inside a `<Partial frame="outer">`
@@ -126,12 +126,12 @@ describe("Partial fingerprint — frame scope isolation", () => {
     // function-component wrapper is the canonical way to capture
     // the ancestor's context inside its render scope.
     function Inner() {
-      const parent = capturePartialContext();
+      const parent = capturePartialContext()
       return (
         <Partial parent={parent} selector="#inner">
           <span>inner body</span>
         </Partial>
-      );
+      )
     }
     const withFrameA = (
       <PartialRoot>
@@ -139,29 +139,21 @@ describe("Partial fingerprint — frame scope isolation", () => {
           <Inner />
         </Partial>
       </PartialRoot>
-    );
+    )
     const withFrameB = (
       <PartialRoot>
         <Partial parent={ROOT} selector="#outer" frame="outer" frameUrl="/b">
           <Inner />
         </Partial>
       </PartialRoot>
-    );
+    )
 
-    const fpA = await renderFp(
-      "http://localhost/",
-      withFrameA,
-      "inner",
-    );
-    clearRegistry();
-    const fpB = await renderFp(
-      "http://localhost/",
-      withFrameB,
-      "inner",
-    );
+    const fpA = await renderFp("http://localhost/", withFrameA, "inner")
+    clearRegistry()
+    const fpB = await renderFp("http://localhost/", withFrameB, "inner")
 
-    expect(fpA).toBeTruthy();
-    expect(fpB).toBeTruthy();
-    expect(fpA).not.toBe(fpB);
-  });
-});
+    expect(fpA).toBeTruthy()
+    expect(fpB).toBeTruthy()
+    expect(fpA).not.toBe(fpB)
+  })
+})

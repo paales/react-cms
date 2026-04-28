@@ -1,20 +1,14 @@
-"use client";
+"use client"
 
-import {
-  Fragment,
-  useCallback,
-  useRef,
-  type FragmentInstance,
-  type ReactNode,
-} from "react";
-import { useActivate } from "../../lib/partial-client.tsx";
-import type { ActivatorProps } from "../../lib/partial-component.tsx";
+import { Fragment, useCallback, useRef, type FragmentInstance, type ReactNode } from "react"
+import { useActivate } from "../../lib/partial-client.tsx"
+import type { ActivatorProps } from "../../lib/partial-component.tsx"
 
 export interface WhenVisibleProps extends ActivatorProps {
   /** `IntersectionObserver.rootMargin`. Default `"0px"`. */
-  rootMargin?: string;
+  rootMargin?: string
   /** `IntersectionObserver.threshold`. */
-  threshold?: number;
+  threshold?: number
 }
 
 /**
@@ -44,27 +38,27 @@ export function WhenVisible({
       "<WhenVisible> requires `partialId`. Use it as the `defer` prop " +
         "of a <Partial> (framework injects the id) or pass `partialId` " +
         "explicitly.",
-    );
+    )
   }
-  const ref = useRef<FragmentInstance | null>(null);
+  const ref = useRef<FragmentInstance | null>(null)
   const subscribe = useCallback(
     (fire: () => void) => {
-      const instance = ref.current;
-      if (!instance) return;
+      const instance = ref.current
+      if (!instance) return
       const observer = new IntersectionObserver(
         (entries) => {
-          if (entries.some((e) => e.isIntersecting)) fire();
+          if (entries.some((e) => e.isIntersecting)) fire()
         },
         { rootMargin, threshold },
-      );
-      instance.observeUsing(observer);
+      )
+      instance.observeUsing(observer)
       return () => {
-        instance.unobserveUsing(observer);
-        observer.disconnect();
-      };
+        instance.unobserveUsing(observer)
+        observer.disconnect()
+      }
     },
     [rootMargin, threshold],
-  );
-  useActivate(partialId, subscribe);
-  return <Fragment ref={ref}>{children}</Fragment>;
+  )
+  useActivate(partialId, subscribe)
+  return <Fragment ref={ref}>{children}</Fragment>
 }

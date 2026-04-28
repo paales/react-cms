@@ -1,19 +1,19 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { useNavigation } from "../../../lib/partial-client.tsx";
-import { Button } from "@/components/ui/button";
+import { useState } from "react"
+import { useNavigation } from "../../../lib/partial-client.tsx"
+import { Button } from "@/components/ui/button"
 
 export function RefreshAllPricesButton() {
-  const nav = useNavigation();
-  const [isPending, setIsPending] = useState(false);
+  const nav = useNavigation()
+  const [isPending, setIsPending] = useState(false)
 
   async function refreshAll() {
-    setIsPending(true);
+    setIsPending(true)
     try {
-      await nav.reload({ selector: ".price" }).finished;
+      await nav.reload({ selector: ".price" }).finished
     } finally {
-      setIsPending(false);
+      setIsPending(false)
     }
   }
 
@@ -29,5 +29,5 @@ export function RefreshAllPricesButton() {
     >
       {isPending ? "Refreshing all prices…" : "Refresh all prices"}
     </Button>
-  );
+  )
 }

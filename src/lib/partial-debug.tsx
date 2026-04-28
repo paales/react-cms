@@ -1,12 +1,7 @@
-"use client";
+"use client"
 
-import {
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type CSSProperties,
-} from "react";
-import { useNavigation } from "./partial-client.tsx";
+import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react"
+import { useNavigation } from "./partial-client.tsx"
 
 /**
  * Partial+Frame debugger.
@@ -34,42 +29,42 @@ import { useNavigation } from "./partial-client.tsx";
  */
 
 interface DebugInfo {
-  uniqueTokens: readonly string[];
-  sharedTokens: readonly string[];
-  framePath: readonly string[];
+  uniqueTokens: readonly string[]
+  sharedTokens: readonly string[]
+  framePath: readonly string[]
   /** Outer-first chain of ancestor Partial ids. Drives row indent. */
-  parentPath: readonly string[];
+  parentPath: readonly string[]
 }
 
 interface DebugEntry extends DebugInfo {
-  id: string;
+  id: string
 }
 
 // ─── Module-level registry populated by PartialErrorBoundary ───────────
 
-const entries = new Map<string, DebugInfo>();
-const listeners = new Set<() => void>();
-let cachedSnapshot: DebugEntry[] = [];
+const entries = new Map<string, DebugInfo>()
+const listeners = new Set<() => void>()
+let cachedSnapshot: DebugEntry[] = []
 
 function rebuildSnapshot(): void {
   cachedSnapshot = Array.from(entries.entries())
     .map(([id, info]) => ({ id, ...info }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => a.id.localeCompare(b.id))
 }
 
-let publishScheduled = false;
+let publishScheduled = false
 function schedulePublish(): void {
-  if (publishScheduled) return;
-  publishScheduled = true;
+  if (publishScheduled) return
+  publishScheduled = true
   queueMicrotask(() => {
-    publishScheduled = false;
-    rebuildSnapshot();
-    for (const l of listeners) l();
-  });
+    publishScheduled = false
+    rebuildSnapshot()
+    for (const l of listeners) l()
+  })
 }
 
 export function registerDebugPartial(id: string, info: DebugInfo): void {
-  const prev = entries.get(id);
+  const prev = entries.get(id)
   if (
     prev &&
     sameStrings(prev.uniqueTokens, info.uniqueTokens) &&
@@ -77,32 +72,32 @@ export function registerDebugPartial(id: string, info: DebugInfo): void {
     sameStrings(prev.framePath, info.framePath) &&
     sameStrings(prev.parentPath, info.parentPath)
   ) {
-    return;
+    return
   }
-  entries.set(id, info);
-  schedulePublish();
+  entries.set(id, info)
+  schedulePublish()
 }
 
 function sameStrings(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
+  listeners.add(cb)
   return () => {
-    listeners.delete(cb);
-  };
+    listeners.delete(cb)
+  }
 }
 
 function getSnapshot(): DebugEntry[] {
-  return cachedSnapshot;
+  return cachedSnapshot
 }
 
-const EMPTY_ENTRIES: DebugEntry[] = [];
+const EMPTY_ENTRIES: DebugEntry[] = []
 function getServerSnapshot(): DebugEntry[] {
-  return EMPTY_ENTRIES;
+  return EMPTY_ENTRIES
 }
 
 // ─── Top-level panel ───────────────────────────────────────────────────
@@ -110,17 +105,17 @@ function getServerSnapshot(): DebugEntry[] {
 export function PartialsDebug() {
   // Gate subscription + rendering behind a post-hydration mount so the
   // initial client render matches SSR's empty output.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  if (!mounted) return null;
-  return <PartialsDebugMounted />;
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  if (!mounted) return null
+  return <PartialsDebugMounted />
 }
 
 function PartialsDebugMounted() {
-  const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const [collapsed, setCollapsed] = useState(true);
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  const [collapsed, setCollapsed] = useState(true)
 
-  if (snap.length === 0) return null;
+  if (snap.length === 0) return null
 
   return (
     <div
@@ -180,17 +175,17 @@ function PartialsDebugMounted() {
         ))}
       </div>
     </div>
-  );
+  )
 }
 
 // ─── Synthetic root row (represents the window scope) ─────────────────
 
 function RootDebugRow() {
-  const nav = useNavigation();
-  const url = formatUrl(nav.currentEntry?.url);
-  const rawState = nav.currentEntry?.getState();
-  const displayState = stripFramesKey(rawState);
-  const stateText = displayState == null ? "{}" : safeStringify(displayState);
+  const nav = useNavigation()
+  const url = formatUrl(nav.currentEntry?.url)
+  const rawState = nav.currentEntry?.getState()
+  const displayState = stripFramesKey(rawState)
+  const stateText = displayState == null ? "{}" : safeStringify(displayState)
 
   return (
     <div
@@ -204,11 +199,7 @@ function RootDebugRow() {
         whiteSpace: "nowrap",
       }}
     >
-      <span
-        style={{ ...pillStyle(tokenColor("#root"), false), cursor: "default" }}
-      >
-        #root
-      </span>
+      <span style={{ ...pillStyle(tokenColor("#root"), false), cursor: "default" }}>#root</span>
       <span style={sepStyle}>|</span>
       <span data-testid="partial-debug-root-url" style={infoStyle}>
         {url}
@@ -226,45 +217,44 @@ function RootDebugRow() {
         {stateText}
       </span>
     </div>
-  );
+  )
 }
 
 // ─── Per-Partial row ───────────────────────────────────────────────────
 
 function PartialDebugRow({ entry }: { entry: DebugEntry }) {
-  const [loadingToken, setLoadingToken] = useState<string | null>(null);
+  const [loadingToken, setLoadingToken] = useState<string | null>(null)
 
-  const frameName =
-    entry.framePath.length > 0 ? entry.framePath.join(".") : undefined;
+  const frameName = entry.framePath.length > 0 ? entry.framePath.join(".") : undefined
   // Frame handle for URL / back / forward / state. Falls back to the
   // window handle for non-frame Partials.
-  const nav = useNavigation(frameName);
+  const nav = useNavigation(frameName)
   // Selector-based reloads must dispatch on the page handle — frame
   // handles ignore `selector` and always refetch their whole subtree.
-  const pageNav = useNavigation();
+  const pageNav = useNavigation()
 
   async function reload(token: string) {
-    setLoadingToken(token);
+    setLoadingToken(token)
     try {
-      await pageNav.reload({ selector: token }).finished;
+      await pageNav.reload({ selector: token }).finished
     } catch {
       // swallow
     } finally {
-      setLoadingToken((cur) => (cur === token ? null : cur));
+      setLoadingToken((cur) => (cur === token ? null : cur))
     }
   }
 
-  const isWindowHandle = nav.name == null;
-  const url = formatUrl(nav.currentEntry?.url);
-  const rawState = nav.currentEntry?.getState();
-  const displayState = stripFramesKey(rawState);
-  const stateText = displayState == null ? "{}" : safeStringify(displayState);
+  const isWindowHandle = nav.name == null
+  const url = formatUrl(nav.currentEntry?.url)
+  const rawState = nav.currentEntry?.getState()
+  const displayState = stripFramesKey(rawState)
+  const stateText = displayState == null ? "{}" : safeStringify(displayState)
   // URL + state are only per-Partial on a frame handle — for a window-
   // scoped Partial they'd duplicate the synthetic #root row, which is
   // both redundant and (for state like window-level `scrollY`)
   // misleading ("looks like this Partial has state, but it's the page's").
-  const showUrlState = !isWindowHandle;
-  const indent = entry.parentPath.length * 16;
+  const showUrlState = !isWindowHandle
+  const indent = entry.parentPath.length * 16
 
   return (
     <div
@@ -292,8 +282,8 @@ function PartialDebugRow({ entry }: { entry: DebugEntry }) {
         />
       )}
       {entry.uniqueTokens.map((tok) => {
-        const sel = `#${tok}`;
-        const dim = loadingToken === sel;
+        const sel = `#${tok}`
+        const dim = loadingToken === sel
         return (
           <button
             key={`u-${tok}`}
@@ -305,11 +295,11 @@ function PartialDebugRow({ entry }: { entry: DebugEntry }) {
           >
             #{tok}
           </button>
-        );
+        )
       })}
       {entry.sharedTokens.map((tok) => {
-        const sel = `.${tok}`;
-        const dim = loadingToken === sel;
+        const sel = `.${tok}`
+        const dim = loadingToken === sel
         return (
           <button
             key={`s-${tok}`}
@@ -321,7 +311,7 @@ function PartialDebugRow({ entry }: { entry: DebugEntry }) {
           >
             .{tok}
           </button>
-        );
+        )
       })}
       {!isWindowHandle && (
         <>
@@ -367,7 +357,7 @@ function PartialDebugRow({ entry }: { entry: DebugEntry }) {
         </>
       )}
     </div>
-  );
+  )
 }
 
 // ─── Styles ────────────────────────────────────────────────────────────
@@ -385,7 +375,7 @@ function pillStyle(color: string, dim: boolean): CSSProperties {
     cursor: dim ? "default" : "pointer",
     opacity: dim ? 0.35 : 1,
     transition: "opacity 0.1s",
-  };
+  }
 }
 
 function navBtnStyle(disabled: boolean): CSSProperties {
@@ -400,7 +390,7 @@ function navBtnStyle(disabled: boolean): CSSProperties {
     lineHeight: "16px",
     cursor: disabled ? "default" : "pointer",
     opacity: disabled ? 0.35 : 1,
-  };
+  }
 }
 
 const infoStyle: CSSProperties = {
@@ -408,31 +398,31 @@ const infoStyle: CSSProperties = {
   color: "#eee",
   padding: "0 4px",
   borderRight: "1px solid #000",
-};
+}
 
 const sepStyle: CSSProperties = {
   background: "#000",
   color: "#000",
   width: 1,
-};
+}
 
 // ─── Formatting ────────────────────────────────────────────────────────
 
 function formatUrl(u: string | undefined | null): string {
-  if (!u) return "—";
+  if (!u) return "—"
   try {
-    const parsed = new URL(u);
-    return parsed.pathname + parsed.search;
+    const parsed = new URL(u)
+    return parsed.pathname + parsed.search
   } catch {
-    return u;
+    return u
   }
 }
 
 function safeStringify(v: unknown): string {
   try {
-    return JSON.stringify(v);
+    return JSON.stringify(v)
   } catch {
-    return "{}";
+    return "{}"
   }
 }
 
@@ -441,24 +431,24 @@ function safeStringify(v: unknown): string {
 // the debug panel only shows user-written state.
 function stripFramesKey(state: unknown): unknown {
   if (state == null || typeof state !== "object" || Array.isArray(state)) {
-    return state;
+    return state
   }
-  const copy: Record<string, unknown> = {};
-  let any = false;
+  const copy: Record<string, unknown> = {}
+  let any = false
   for (const [k, v] of Object.entries(state as Record<string, unknown>)) {
-    if (k === "__frames" || k === "__frameHistory") continue;
-    copy[k] = v;
-    any = true;
+    if (k === "__frames" || k === "__frameHistory") continue
+    copy[k] = v
+    any = true
   }
-  return any ? copy : null;
+  return any ? copy : null
 }
 
 // Hash a string to an HSL color. Same input → same color.
 function tokenColor(token: string): string {
-  let h = 0;
+  let h = 0
   for (let i = 0; i < token.length; i++) {
-    h = (Math.imul(h, 31) + token.charCodeAt(i)) | 0;
+    h = (Math.imul(h, 31) + token.charCodeAt(i)) | 0
   }
-  const hue = Math.abs(h) % 360;
-  return `hsl(${hue} 75% 65%)`;
+  const hue = Math.abs(h) % 360
+  return `hsl(${hue} 75% 65%)`
 }

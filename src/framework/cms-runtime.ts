@@ -29,8 +29,8 @@
  * See `docs/cms.md` for the full design context.
  */
 
-import type { ReactNode } from "react";
-import { getCmsStorage, type CmsStorage, type LoadedStore } from "./cms-storage.ts";
+import type { ReactNode } from "react"
+import { getCmsStorage, type CmsStorage, type LoadedStore } from "./cms-storage.ts"
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -39,18 +39,12 @@ import { getCmsStorage, type CmsStorage, type LoadedStore } from "./cms-storage.
  * `CmsScope` for future editor introspection (the editor renders a
  * form whose field types come from this map).
  */
-export type ContentFieldKind =
-  | "text"
-  | "richText"
-  | "number"
-  | "enum"
-  | "image"
-  | "boolean";
+export type ContentFieldKind = "text" | "richText" | "number" | "enum" | "image" | "boolean"
 
 /** Declaration for a `<Children>` / `<Child>` slot; not wired yet. */
 export interface SlotSpec {
-  multi: boolean;
-  allow?: string;
+  multi: boolean
+  allow?: string
 }
 
 /**
@@ -69,9 +63,9 @@ export interface SlotSpec {
  *     explicitly wants a specific value or nothing."
  */
 export interface Reference<T extends string = string> {
-  readonly type: T;
-  readonly value: string | null;
-  readonly fallback: "closest" | null;
+  readonly type: T
+  readonly value: string | null
+  readonly fallback: "closest" | null
 }
 
 /**
@@ -83,23 +77,23 @@ export interface Reference<T extends string = string> {
  */
 export interface CmsScope {
   /** Stable storage key for this Partial instance. */
-  readonly cmsId: string;
+  readonly cmsId: string
   /** Effective Partial id (from selector) — for error messages. */
-  readonly partialId: string;
+  readonly partialId: string
   /** Content fields read during render, keyed by field name. For the
    *  editor to know which form fields to show. */
-  readonly contentFields: Map<string, ContentFieldKind>;
+  readonly contentFields: Map<string, ContentFieldKind>
   /** Entity references read during render, keyed by ref name → type tag. */
-  readonly references: Map<string, string>;
+  readonly references: Map<string, string>
   /** Named child slots declared during render. */
-  readonly childSlots: Map<string, SlotSpec>;
+  readonly childSlots: Map<string, SlotSpec>
   /** `getClosest(key)` reads, for ancestry-lint. */
-  readonly contextConsumes: Set<string>;
+  readonly contextConsumes: Set<string>
   /** Lazy-resolved config fields.
    *    undefined → not yet resolved
    *    null      → resolved; no CMS node / no matching configs
    *    object    → resolved; merged fields from matching configs */
-  resolvedConfig: Record<string, unknown> | null | undefined;
+  resolvedConfig: Record<string, unknown> | null | undefined
 }
 
 export function createCmsScope(cmsId: string, partialId: string): CmsScope {
@@ -111,7 +105,7 @@ export function createCmsScope(cmsId: string, partialId: string): CmsScope {
     childSlots: new Map(),
     contextConsumes: new Set(),
     resolvedConfig: undefined,
-  };
+  }
 }
 
 // ─── Store schema ──────────────────────────────────────────────────────
@@ -130,39 +124,39 @@ export type MatchClause =
   | number
   | boolean
   | { in: ReadonlyArray<string | number> }
-  | Record<string, ScalarOrIn>;
+  | Record<string, ScalarOrIn>
 
-type ScalarOrIn = string | number | boolean | { in: ReadonlyArray<string | number> };
+type ScalarOrIn = string | number | boolean | { in: ReadonlyArray<string | number> }
 
 export interface CmsConfig {
   /** Map of manifest key → clause. Empty object = default (always matches). */
-  match: Record<string, MatchClause>;
-  fields: Record<string, unknown>;
+  match: Record<string, MatchClause>
+  fields: Record<string, unknown>
 }
 
 export interface CmsNode {
   /** Storage anchor — matches the Partial's `cmsId` prop. */
-  id: string;
+  id: string
   /** Component identifier for blocks contributed into slots. Omitted
    *  for code-declared Partials. */
-  type?: string;
+  type?: string
   /** Human-readable name shown in the editor; typically the selector. */
-  displayName?: string;
+  displayName?: string
   /** Configurations ordered by the author; the resolver re-sorts by
    *  computed specificity but uses array order as the tie-break. */
-  configs: CmsConfig[];
+  configs: CmsConfig[]
   /** Recursive child-block storage; not consumed by v1. */
-  slots?: Record<string, CmsNode[]>;
+  slots?: Record<string, CmsNode[]>
 }
 
 export interface CmsStore {
-  partials: Record<string, CmsNode>;
+  partials: Record<string, CmsNode>
 }
 
 // ─── Store loader ──────────────────────────────────────────────────────
 
 function emptyStore(): CmsStore {
-  return { partials: {} };
+  return { partials: {} }
 }
 
 /**
@@ -171,7 +165,7 @@ function emptyStore(): CmsStore {
  * draft store first and falls back to published. The editor sets
  * this cookie on its preview frame; real visitors never see it.
  */
-export const CMS_DRAFT_COOKIE = "cms-draft";
+export const CMS_DRAFT_COOKIE = "cms-draft"
 
 /**
  * Name of the cookie that flips the runtime into editor mode — i.e.
@@ -183,26 +177,26 @@ export const CMS_DRAFT_COOKIE = "cms-draft";
  * unpublished changes in the preview), so `isDraftRequest` treats
  * the editor cookie as draft-on.
  */
-export const EDITOR_COOKIE = "__editor";
+export const EDITOR_COOKIE = "__editor"
 
 interface CacheSlot {
-  store: CmsStore;
+  store: CmsStore
   /** Flat `cmsId → node` index covering root entries AND recursive
    *  slot children. Built once per reload; lookups are O(1). */
-  index: Map<string, CmsNode>;
-  mtime: number;
+  index: Map<string, CmsNode>
+  mtime: number
 }
-let publishedSlot: CacheSlot | null = null;
-let draftSlot: CacheSlot | null = null;
+let publishedSlot: CacheSlot | null = null
+let draftSlot: CacheSlot | null = null
 
 function buildIndex(store: CmsStore): Map<string, CmsNode> {
-  const index = new Map<string, CmsNode>();
+  const index = new Map<string, CmsNode>()
   // Pass 1: every top-level entry. These are the "authoritative"
   // versions — a draft write of a slot child goes here, so we want
   // it to take precedence over any stale nested copy that still
   // lives inside a parent's `slots` array.
   for (const node of Object.values(store.partials)) {
-    index.set(node.id, node);
+    index.set(node.id, node)
   }
   // Pass 2: recurse into slots and register nested children that
   // DON'T already have a top-level entry. This covers the published
@@ -210,20 +204,24 @@ function buildIndex(store: CmsStore): Map<string, CmsNode> {
   // level) without letting stale inline copies shadow a fresh
   // top-level edit in the draft store.
   const walk = (node: CmsNode): void => {
-    if (!node.slots) return;
+    if (!node.slots) return
     for (const entries of Object.values(node.slots)) {
       for (const child of entries) {
-        if (!index.has(child.id)) index.set(child.id, child);
-        walk(child);
+        if (!index.has(child.id)) index.set(child.id, child)
+        walk(child)
       }
     }
-  };
-  for (const node of Object.values(store.partials)) walk(node);
-  return index;
+  }
+  for (const node of Object.values(store.partials)) walk(node)
+  return index
 }
 
 function loadedToSlot(loaded: LoadedStore): CacheSlot {
-  return { store: loaded.store, index: buildIndex(loaded.store), mtime: loaded.mtime };
+  return {
+    store: loaded.store,
+    index: buildIndex(loaded.store),
+    mtime: loaded.mtime,
+  }
 }
 
 /**
@@ -235,27 +233,30 @@ function loadedToSlot(loaded: LoadedStore): CacheSlot {
  * this fallback is what saves us on cold start (test setup, first
  * request before any warm-up has run).
  */
-function loadPublishedStore(): { store: CmsStore; index: Map<string, CmsNode> } {
-  if (publishedSlot) return publishedSlot;
-  const loaded = getCmsStorage().loadPublishedSync();
+function loadPublishedStore(): {
+  store: CmsStore
+  index: Map<string, CmsNode>
+} {
+  if (publishedSlot) return publishedSlot
+  const loaded = getCmsStorage().loadPublishedSync()
   if (loaded) {
-    publishedSlot = loadedToSlot(loaded);
-    return publishedSlot;
+    publishedSlot = loadedToSlot(loaded)
+    return publishedSlot
   }
   // No file. Empty-store fallback — fresh Map each call so a writer
   // can't accidentally mutate a shared singleton and leak entries
   // between unrelated writes.
-  return { store: emptyStore(), index: new Map() };
+  return { store: emptyStore(), index: new Map() }
 }
 
 function loadDraftStore(): { store: CmsStore; index: Map<string, CmsNode> } {
-  if (draftSlot) return draftSlot;
-  const loaded = getCmsStorage().loadDraftSync();
+  if (draftSlot) return draftSlot
+  const loaded = getCmsStorage().loadDraftSync()
   if (loaded) {
-    draftSlot = loadedToSlot(loaded);
-    return draftSlot;
+    draftSlot = loadedToSlot(loaded)
+    return draftSlot
   }
-  return { store: emptyStore(), index: new Map() };
+  return { store: emptyStore(), index: new Map() }
 }
 
 /**
@@ -269,49 +270,46 @@ function loadDraftStore(): { store: CmsStore; index: Map<string, CmsNode> } {
  * `_invalidateCmsStoreCache()` to force a re-read.
  */
 export async function warmCmsCache(): Promise<void> {
-  const backend = getCmsStorage();
-  const [pub, draft] = await Promise.all([
-    backend.loadPublished(),
-    backend.loadDraft(),
-  ]);
+  const backend = getCmsStorage()
+  const [pub, draft] = await Promise.all([backend.loadPublished(), backend.loadDraft()])
   if (pub) {
     if (!publishedSlot || publishedSlot.mtime !== pub.mtime) {
-      publishedSlot = loadedToSlot(pub);
+      publishedSlot = loadedToSlot(pub)
     }
   } else {
     // Backend has no published store — clear cache so the sync
     // path returns the empty fallback on next read.
-    publishedSlot = null;
+    publishedSlot = null
   }
   if (draft) {
     if (!draftSlot || draftSlot.mtime !== draft.mtime) {
-      draftSlot = loadedToSlot(draft);
+      draftSlot = loadedToSlot(draft)
     }
   } else {
-    draftSlot = null;
+    draftSlot = null
   }
 }
 
 function readCookieFromRequest(request: Request, name: string): string | null {
-  const header = request.headers.get("cookie") ?? "";
-  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match?.[1] ?? null;
+  const header = request.headers.get("cookie") ?? ""
+  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))
+  return match?.[1] ?? null
 }
 
 function isDraftRequest(request: Request | undefined): boolean {
-  if (!request) return false;
+  if (!request) return false
   // Query-param form wins over cookie so the editor's preview frame
   // can opt in via `?cms-draft=1` on the frame URL (survives frame
   // navigation inherited from the page's cookies without needing to
   // mutate Set-Cookie inside the request).
-  const url = new URL(request.url);
-  if (url.searchParams.get("cms-draft") === "1") return true;
-  if (url.searchParams.get("editor") === "1") return true;
-  if (readCookieFromRequest(request, CMS_DRAFT_COOKIE) === "1") return true;
+  const url = new URL(request.url)
+  if (url.searchParams.get("cms-draft") === "1") return true
+  if (url.searchParams.get("editor") === "1") return true
+  if (readCookieFromRequest(request, CMS_DRAFT_COOKIE) === "1") return true
   // Editor cookie implies draft visibility — authors want to see
   // unpublished changes in the preview without managing a separate
   // draft toggle.
-  return readCookieFromRequest(request, EDITOR_COOKIE) === "1";
+  return readCookieFromRequest(request, EDITOR_COOKIE) === "1"
 }
 
 /**
@@ -324,11 +322,11 @@ function isDraftRequest(request: Request | undefined): boolean {
  * — it's a routing-level decision, not per-Partial cache state.
  */
 export function isEditorRequest(request: Request): boolean {
-  const url = new URL(request.url);
-  const flag = url.searchParams.get("editor");
-  if (flag === "1") return true;
-  if (flag === "0") return false;
-  return readCookieFromRequest(request, EDITOR_COOKIE) === "1";
+  const url = new URL(request.url)
+  const flag = url.searchParams.get("editor")
+  if (flag === "1") return true
+  if (flag === "0") return false
+  return readCookieFromRequest(request, EDITOR_COOKIE) === "1"
 }
 
 /**
@@ -347,57 +345,55 @@ export function isEditorRequest(request: Request): boolean {
  *     palette (add/reorder/remove). `slotName` and `parentId` are
  *     filled in.
  */
-export type CmsTreeEntryKind = "node" | "slot" | "slot-add";
+export type CmsTreeEntryKind = "node" | "slot" | "slot-add"
 
 export interface CmsTreeEntry {
-  id: string;
-  kind: CmsTreeEntryKind;
-  type?: string;
-  displayName?: string;
-  depth: number;
+  id: string
+  kind: CmsTreeEntryKind
+  type?: string
+  displayName?: string
+  depth: number
   /** For `"node"` entries: the slot of the parent this node hangs in
    *  (undefined for top-level nodes). For `"slot"` / `"slot-add"`
    *  entries: the slot name. */
-  slotName?: string;
+  slotName?: string
   /** For `"node"` entries: the `cmsId` of the parent node (undefined
    *  at top level). For `"slot"` / `"slot-add"` entries: the parent
    *  node's `cmsId`. */
-  parentId?: string;
+  parentId?: string
   /** `true` when this id only exists in draft (no published
    *  counterpart yet) — added by the editor, never published. */
-  draftOnly: boolean;
+  draftOnly: boolean
   /** `true` when this id has a top-level draft entry, regardless of
    *  whether published also has it. Covers both "new" (draftOnly is
    *  true) and "modified" (draftOnly is false but draft exists)
    *  cases. The editor uses it for a "modified" badge so authors
    *  can see at a glance which entries have unpublished edits. */
-  hasDraft: boolean;
+  hasDraft: boolean
 }
 
 /** Synthetic id for a slot header tree entry. */
 export function slotEntryId(parentId: string, slotName: string): string {
-  return `slot:${parentId}:${slotName}`;
+  return `slot:${parentId}:${slotName}`
 }
 
 /** Synthetic id for the slot-add tree entry (the `+ <type>` palette
  *  rendered AT THE END of a slot's children). */
 export function slotAddEntryId(parentId: string, slotName: string): string {
-  return `slot-add:${parentId}:${slotName}`;
+  return `slot-add:${parentId}:${slotName}`
 }
 
 /** Parse a slot entry id (either header `slot:` or footer `slot-add:`)
  *  back into its `{parentId, slotName}` parts, or `null` if the id
  *  isn't a slot entry. */
-export function parseSlotEntryId(
-  id: string,
-): { parentId: string; slotName: string } | null {
-  let rest: string;
-  if (id.startsWith("slot-add:")) rest = id.slice("slot-add:".length);
-  else if (id.startsWith("slot:")) rest = id.slice("slot:".length);
-  else return null;
-  const colon = rest.lastIndexOf(":");
-  if (colon < 0) return null;
-  return { parentId: rest.slice(0, colon), slotName: rest.slice(colon + 1) };
+export function parseSlotEntryId(id: string): { parentId: string; slotName: string } | null {
+  let rest: string
+  if (id.startsWith("slot-add:")) rest = id.slice("slot-add:".length)
+  else if (id.startsWith("slot:")) rest = id.slice("slot:".length)
+  else return null
+  const colon = rest.lastIndexOf(":")
+  if (colon < 0) return null
+  return { parentId: rest.slice(0, colon), slotName: rest.slice(colon + 1) }
 }
 
 /**
@@ -420,9 +416,9 @@ export function buildCmsTreeEntries(
    */
   rootIds?: ReadonlyArray<string>,
 ): CmsTreeEntry[] {
-  const merged: Record<string, CmsNode> = { ...published };
+  const merged: Record<string, CmsNode> = { ...published }
   for (const [id, node] of Object.entries(draft)) {
-    merged[id] = node;
+    merged[id] = node
   }
   // Collect every id reachable in the published forest (top-level or
   // nested as a slot child). Drives the `draftOnly` flag — an id is
@@ -431,15 +427,15 @@ export function buildCmsTreeEntries(
   // misfire for slot children (which only ever live nested in
   // published), giving them a misleading amber "draft" badge after
   // any edit.
-  const publishedIds = new Set<string>();
+  const publishedIds = new Set<string>()
   const collectPublishedIds = (node: CmsNode): void => {
-    publishedIds.add(node.id);
-    if (!node.slots) return;
+    publishedIds.add(node.id)
+    if (!node.slots) return
     for (const children of Object.values(node.slots)) {
-      for (const child of children) collectPublishedIds(child);
+      for (const child of children) collectPublishedIds(child)
     }
-  };
-  for (const node of Object.values(published)) collectPublishedIds(node);
+  }
+  for (const node of Object.values(published)) collectPublishedIds(node)
 
   // Pre-pass: every id that lives as a slot child somewhere in the
   // merged forest. `saveCmsFields` writes top-level draft entries
@@ -448,26 +444,26 @@ export function buildCmsTreeEntries(
   // those edited children would surface in the tree twice — once
   // nested under their parent's slot walk, and once as a fake root
   // entry.
-  const slotChildIds = new Set<string>();
+  const slotChildIds = new Set<string>()
   const collectSlotChildren = (node: CmsNode): void => {
-    if (!node.slots) return;
+    if (!node.slots) return
     for (const children of Object.values(node.slots)) {
       for (const child of children) {
-        slotChildIds.add(child.id);
-        collectSlotChildren(child);
+        slotChildIds.add(child.id)
+        collectSlotChildren(child)
       }
     }
-  };
-  for (const node of Object.values(merged)) collectSlotChildren(node);
+  }
+  for (const node of Object.values(merged)) collectSlotChildren(node)
 
-  const entries: CmsTreeEntry[] = [];
+  const entries: CmsTreeEntry[] = []
   const walk = (
     node: CmsNode,
     depth: number,
     slotName: string | undefined,
     parentId: string | undefined,
   ): void => {
-    const hasDraft = draft[node.id] != null;
+    const hasDraft = draft[node.id] != null
     entries.push({
       id: node.id,
       kind: "node",
@@ -491,9 +487,9 @@ export function buildCmsTreeEntries(
       // a draft override don't get misflagged as brand-new.
       draftOnly: hasDraft && !publishedIds.has(node.id),
       hasDraft,
-    });
-    if (!node.slots) return;
-    const slotEntries = Object.entries(node.slots);
+    })
+    if (!node.slots) return
+    const slotEntries = Object.entries(node.slots)
     // When a node declares ONE slot, the slot label (`▸ body`) adds
     // no information — there's no other slot to disambiguate it from
     // — and just costs a row of vertical space + an indent level for
@@ -504,7 +500,7 @@ export function buildCmsTreeEntries(
     // 2+ slots still emit the header so authors can tell which slot
     // a given child belongs to (e.g. the multi-slot demo with `body`
     // + `sidebar`).
-    const collapseHeader = slotEntries.length === 1;
+    const collapseHeader = slotEntries.length === 1
     // Every slot a parent declares gets two synthetic entries:
     //
     //   1. `slot:<parent>:<name>` — header at the top of the slot's
@@ -523,7 +519,7 @@ export function buildCmsTreeEntries(
     // name. See the issue report (2026-04-25) for the visual breakage
     // before this split.
     for (const [name, children] of slotEntries) {
-      const childDepth = collapseHeader ? depth + 1 : depth + 2;
+      const childDepth = collapseHeader ? depth + 1 : depth + 2
       if (!collapseHeader) {
         entries.push({
           id: slotEntryId(node.id, name),
@@ -533,15 +529,15 @@ export function buildCmsTreeEntries(
           parentId: node.id,
           draftOnly: false,
           hasDraft: false,
-        });
+        })
       }
       // Prefer the merged top-level version of each slot child when
       // available — that's the post-edit state. Fall back to the
       // inline copy for ids the author hasn't edited yet (or that
       // never had a top-level entry, i.e. published slot children).
       for (const child of children) {
-        const effective = merged[child.id] ?? child;
-        walk(effective, childDepth, name, node.id);
+        const effective = merged[child.id] ?? child
+        walk(effective, childDepth, name, node.id)
       }
       entries.push({
         id: slotAddEntryId(node.id, name),
@@ -551,21 +547,21 @@ export function buildCmsTreeEntries(
         parentId: node.id,
         draftOnly: false,
         hasDraft: false,
-      });
+      })
     }
-  };
-  const rootFilter = rootIds ? new Set(rootIds) : null;
+  }
+  const rootFilter = rootIds ? new Set(rootIds) : null
   for (const node of Object.values(merged)) {
     // Skip ids that show up as a slot child of some other node —
     // they are emitted by the parent's slot walk above.
-    if (slotChildIds.has(node.id)) continue;
+    if (slotChildIds.has(node.id)) continue
     // Page-scope filter: skip top-level nodes the caller didn't
     // include in `rootIds`. Slot descendants of an included root
     // still appear via the recursive walk.
-    if (rootFilter && !rootFilter.has(node.id)) continue;
-    walk(node, 0, undefined, undefined);
+    if (rootFilter && !rootFilter.has(node.id)) continue
+    walk(node, 0, undefined, undefined)
   }
-  return entries;
+  return entries
 }
 
 /**
@@ -576,24 +572,21 @@ export function buildCmsTreeEntries(
  * if nothing useful is set — caller falls back to `#${id}`.
  */
 function deriveLabelFromConfigs(configs: readonly CmsConfig[]): string | undefined {
-  if (configs.length === 0) return undefined;
-  const defaultConfig =
-    configs.find((c) => Object.keys(c.match).length === 0) ?? configs[0];
+  if (configs.length === 0) return undefined
+  const defaultConfig = configs.find((c) => Object.keys(c.match).length === 0) ?? configs[0]
   for (const field of ["title", "headline", "name", "label"] as const) {
-    const v = defaultConfig.fields[field];
-    if (typeof v === "string" && v.trim() !== "") return v;
+    const v = defaultConfig.fields[field]
+    if (typeof v === "string" && v.trim() !== "") return v
   }
-  return undefined;
+  return undefined
 }
 
-export function listAllCmsNodes(
-  rootIds?: ReadonlyArray<string>,
-): CmsTreeEntry[] {
+export function listAllCmsNodes(rootIds?: ReadonlyArray<string>): CmsTreeEntry[] {
   return buildCmsTreeEntries(
     loadPublishedStore().store.partials,
     loadDraftStore().store.partials,
     rootIds,
-  );
+  )
 }
 
 /**
@@ -612,15 +605,12 @@ export function listAllCmsNodes(
  * different stringified fields ⇒ different fp), so cached bytes
  * never leak across modes.
  */
-export function lookupCmsNode(
-  cmsId: string,
-  request?: Request,
-): CmsNode | null {
+export function lookupCmsNode(cmsId: string, request?: Request): CmsNode | null {
   if (isDraftRequest(request)) {
-    const draftHit = loadDraftStore().index.get(cmsId);
-    if (draftHit) return draftHit;
+    const draftHit = loadDraftStore().index.get(cmsId)
+    if (draftHit) return draftHit
   }
-  return loadPublishedStore().index.get(cmsId) ?? null;
+  return loadPublishedStore().index.get(cmsId) ?? null
 }
 
 /**
@@ -635,9 +625,9 @@ export function lookupCmsNode(
  * authoritatively keyed off the `cms-draft=1` cookie / query param.
  */
 export function lookupDraftNode(cmsId: string): CmsNode | null {
-  const draftHit = loadDraftStore().index.get(cmsId);
-  if (draftHit) return draftHit;
-  return loadPublishedStore().index.get(cmsId) ?? null;
+  const draftHit = loadDraftStore().index.get(cmsId)
+  if (draftHit) return draftHit
+  return loadPublishedStore().index.get(cmsId) ?? null
 }
 
 /**
@@ -657,11 +647,11 @@ export async function writeDraftNode(cmsId: string, node: CmsNode): Promise<void
   // file outside `cms-runtime` between writes, and the sync cache
   // could be stale. The async backend read picks up disk-side
   // changes the cache hasn't seen yet.
-  const backend = getCmsStorage();
-  const current = (await backend.loadDraft())?.store ?? emptyStore();
-  current.partials[cmsId] = { ...node, id: cmsId };
-  await backend.saveDraft(current);
-  _invalidateCmsStoreCache();
+  const backend = getCmsStorage()
+  const current = (await backend.loadDraft())?.store ?? emptyStore()
+  current.partials[cmsId] = { ...node, id: cmsId }
+  await backend.saveDraft(current)
+  _invalidateCmsStoreCache()
 }
 
 /**
@@ -672,19 +662,16 @@ export async function writeDraftNode(cmsId: string, node: CmsNode): Promise<void
  * copy. Authors can re-publish; no data loss.
  */
 export async function publishDraft(): Promise<void> {
-  const backend = getCmsStorage();
-  const [draft, published] = await Promise.all([
-    backend.loadDraft(),
-    backend.loadPublished(),
-  ]);
-  const draftStore = draft?.store ?? emptyStore();
-  const publishedStore = published?.store ?? emptyStore();
+  const backend = getCmsStorage()
+  const [draft, published] = await Promise.all([backend.loadDraft(), backend.loadPublished()])
+  const draftStore = draft?.store ?? emptyStore()
+  const publishedStore = published?.store ?? emptyStore()
   for (const [id, node] of Object.entries(draftStore.partials)) {
-    publishedStore.partials[id] = node;
+    publishedStore.partials[id] = node
   }
-  await backend.savePublished(publishedStore);
-  await backend.saveDraft(emptyStore());
-  _invalidateCmsStoreCache();
+  await backend.savePublished(publishedStore)
+  await backend.saveDraft(emptyStore())
+  _invalidateCmsStoreCache()
 }
 
 /**
@@ -699,16 +686,16 @@ export async function publishDraft(): Promise<void> {
  * "no draft" state.
  */
 export async function revertDraftNode(cmsId: string): Promise<void> {
-  const backend = getCmsStorage();
-  const current = (await backend.loadDraft())?.store;
-  if (!current || !(cmsId in current.partials)) return;
-  delete current.partials[cmsId];
+  const backend = getCmsStorage()
+  const current = (await backend.loadDraft())?.store
+  if (!current || !(cmsId in current.partials)) return
+  delete current.partials[cmsId]
   if (Object.keys(current.partials).length === 0) {
-    await backend.deleteDraft();
+    await backend.deleteDraft()
   } else {
-    await backend.saveDraft(current);
+    await backend.saveDraft(current)
   }
-  _invalidateCmsStoreCache();
+  _invalidateCmsStoreCache()
 }
 
 /**
@@ -718,8 +705,8 @@ export async function revertDraftNode(cmsId: string): Promise<void> {
  * swap the file contents within one process.
  */
 export function _invalidateCmsStoreCache(): void {
-  publishedSlot = null;
-  draftSlot = null;
+  publishedSlot = null
+  draftSlot = null
 }
 
 /**
@@ -728,8 +715,8 @@ export function _invalidateCmsStoreCache(): void {
  * on `beforeEach`, and usable from a debug button.
  */
 export async function _clearCmsDraft(): Promise<void> {
-  await getCmsStorage().deleteDraft();
-  _invalidateCmsStoreCache();
+  await getCmsStorage().deleteDraft()
+  _invalidateCmsStoreCache()
 }
 
 // ─── Block registry ────────────────────────────────────────────────────
@@ -755,14 +742,14 @@ export interface BlockSpec {
    * every block Partial has a unique unique-token for addressing,
    * plus the registered class-tokens for selector-based refetch.
    */
-  readonly tags: ReadonlyArray<`.${string}`>;
+  readonly tags: ReadonlyArray<`.${string}`>
   /** The block's server component — renders inside a CMS scope keyed
    *  to the block's `cmsId`. The component reads its fields via
    *  `getText` / `getEnum` / … accessors. */
-  readonly component: () => ReactNode | Promise<ReactNode>;
+  readonly component: () => ReactNode | Promise<ReactNode>
 }
 
-const blockRegistry = new Map<string, BlockSpec>();
+const blockRegistry = new Map<string, BlockSpec>()
 
 /**
  * Register a block component under its type tag. Call in a module
@@ -773,7 +760,7 @@ const blockRegistry = new Map<string, BlockSpec>();
  * module wins.
  */
 export function registerBlock(type: string, spec: BlockSpec): void {
-  blockRegistry.set(type, spec);
+  blockRegistry.set(type, spec)
 }
 
 /**
@@ -783,17 +770,17 @@ export function registerBlock(type: string, spec: BlockSpec): void {
  * but not fatal.
  */
 export function getBlockSpec(type: string): BlockSpec | undefined {
-  return blockRegistry.get(type);
+  return blockRegistry.get(type)
 }
 
 /** Dev / test reset — drops every registered block. */
 export function _clearBlockRegistry(): void {
-  blockRegistry.clear();
+  blockRegistry.clear()
 }
 
 /** All registered block type tags — used by the future editor's palette. */
 export function listBlockTypes(): string[] {
-  return [...blockRegistry.keys()];
+  return [...blockRegistry.keys()]
 }
 
 // ─── Resolver ──────────────────────────────────────────────────────────
@@ -803,30 +790,24 @@ export function listBlockTypes(): string[] {
  * current request. Memoized on the scope — subsequent calls in the
  * same render return the same object.
  */
-export function resolveCmsScope(
-  scope: CmsScope,
-  request: Request,
-): Record<string, unknown> | null {
-  if (scope.resolvedConfig !== undefined) return scope.resolvedConfig;
-  const node = lookupCmsNode(scope.cmsId, request);
+export function resolveCmsScope(scope: CmsScope, request: Request): Record<string, unknown> | null {
+  if (scope.resolvedConfig !== undefined) return scope.resolvedConfig
+  const node = lookupCmsNode(scope.cmsId, request)
   if (!node) {
-    scope.resolvedConfig = null;
-    return null;
+    scope.resolvedConfig = null
+    return null
   }
-  const merged = mergeMatchingConfigs(node.configs, request);
-  scope.resolvedConfig = merged;
-  return merged;
+  const merged = mergeMatchingConfigs(node.configs, request)
+  scope.resolvedConfig = merged
+  return merged
 }
 
 /**
  * For tests / the editor: compute the resolved field map without
  * touching a scope. Pure.
  */
-export function resolveCmsNode(
-  node: CmsNode,
-  request: Request,
-): Record<string, unknown> {
-  return mergeMatchingConfigs(node.configs, request);
+export function resolveCmsNode(node: CmsNode, request: Request): Record<string, unknown> {
+  return mergeMatchingConfigs(node.configs, request)
 }
 
 /**
@@ -848,17 +829,17 @@ export function pickBestConfigIndex(
   configs: readonly CmsConfig[],
   request: Request,
 ): number | null {
-  let bestIdx = -1;
-  let bestLen = -1;
+  let bestIdx = -1
+  let bestLen = -1
   for (let i = 0; i < configs.length; i++) {
-    const score = evaluateMatch(configs[i].match, request);
-    if (score === null) continue;
+    const score = evaluateMatch(configs[i].match, request)
+    if (score === null) continue
     if (score.length > bestLen) {
-      bestLen = score.length;
-      bestIdx = i;
+      bestLen = score.length
+      bestIdx = i
     }
   }
-  return bestIdx >= 0 ? bestIdx : null;
+  return bestIdx >= 0 ? bestIdx : null
 }
 
 /**
@@ -892,71 +873,61 @@ export function pickBestConfigIndex(
  * return a stable-but-distinct string so "no CMS entry yet" doesn't
  * collide with "CMS entry with empty fields".
  */
-export function cmsFingerprintContribution(
-  cmsId: string,
-  request: Request,
-): string {
-  const node = lookupCmsNode(cmsId, request);
-  if (!node) return `|cms=${cmsId}:miss`;
-  return `|cms=${cmsId}:${contributionForNode(node, request)}`;
+export function cmsFingerprintContribution(cmsId: string, request: Request): string {
+  const node = lookupCmsNode(cmsId, request)
+  if (!node) return `|cms=${cmsId}:miss`
+  return `|cms=${cmsId}:${contributionForNode(node, request)}`
 }
 
 function contributionForNode(node: CmsNode, request: Request): string {
-  const fields = mergeMatchingConfigs(node.configs, request);
-  const base = stableStringify(fields);
-  if (!node.slots) return base;
-  const slotParts: string[] = [];
+  const fields = mergeMatchingConfigs(node.configs, request)
+  const base = stableStringify(fields)
+  if (!node.slots) return base
+  const slotParts: string[] = []
   for (const name of Object.keys(node.slots).sort()) {
-    const children = node.slots[name];
-    const childParts = children.map(
-      (child) => `${child.id}=${contributionForNode(child, request)}`,
-    );
-    slotParts.push(`${name}:[${childParts.join(",")}]`);
+    const children = node.slots[name]
+    const childParts = children.map((child) => `${child.id}=${contributionForNode(child, request)}`)
+    slotParts.push(`${name}:[${childParts.join(",")}]`)
   }
-  return `${base}|slots={${slotParts.join(";")}}`;
+  return `${base}|slots={${slotParts.join(";")}}`
 }
 
 function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
   if (Array.isArray(value)) {
-    return "[" + value.map(stableStringify).join(",") + "]";
+    return "[" + value.map(stableStringify).join(",") + "]"
   }
-  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const keys = Object.keys(value as Record<string, unknown>).sort()
   return (
     "{" +
     keys
-      .map(
-        (k) =>
-          JSON.stringify(k) +
-          ":" +
-          stableStringify((value as Record<string, unknown>)[k]),
-      )
+      .map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k]))
       .join(",") +
     "}"
-  );
+  )
 }
 
 function mergeMatchingConfigs(
   configs: readonly CmsConfig[],
   request: Request,
 ): Record<string, unknown> {
-  const matched: Array<{ cfg: CmsConfig; idx: number; score: number[] }> = [];
+  const matched: Array<{ cfg: CmsConfig; idx: number; score: number[] }> = []
   for (let i = 0; i < configs.length; i++) {
-    const cfg = configs[i];
-    const score = evaluateMatch(cfg.match, request);
-    if (score !== null) matched.push({ cfg, idx: i, score });
+    const cfg = configs[i]
+    const score = evaluateMatch(cfg.match, request)
+    if (score !== null) matched.push({ cfg, idx: i, score })
   }
   matched.sort((a, b) => {
-    const cmp = compareSpecificity(a.score, b.score);
-    if (cmp !== 0) return cmp;
-    return a.idx - b.idx;
-  });
+    const cmp = compareSpecificity(a.score, b.score)
+    if (cmp !== 0) return cmp
+    return a.idx - b.idx
+  })
   // Cascade: apply least-specific first so more-specific overrides win.
-  const merged: Record<string, unknown> = {};
+  const merged: Record<string, unknown> = {}
   for (let i = matched.length - 1; i >= 0; i--) {
-    Object.assign(merged, matched[i].cfg.fields);
+    Object.assign(merged, matched[i].cfg.fields)
   }
-  return merged;
+  return merged
 }
 
 /**
@@ -967,62 +938,52 @@ function mergeMatchingConfigs(
  * V1: each matched dimension contributes 1 to the score; longer score
  * beats shorter; ties tie-break by config-array order.
  */
-function evaluateMatch(
-  match: Record<string, MatchClause>,
-  request: Request,
-): number[] | null {
-  const url = new URL(request.url);
-  const scores: number[] = [];
+function evaluateMatch(match: Record<string, MatchClause>, request: Request): number[] | null {
+  const url = new URL(request.url)
+  const scores: number[] = []
   for (const [key, clause] of Object.entries(match)) {
-    if (!matchKey(key, clause, url, request)) return null;
-    scores.push(1);
+    if (!matchKey(key, clause, url, request)) return null
+    scores.push(1)
   }
-  return scores;
+  return scores
 }
 
-function matchKey(
-  key: string,
-  clause: MatchClause,
-  url: URL,
-  request: Request,
-): boolean {
-  const colonIdx = key.indexOf(":");
-  if (colonIdx < 0) return false;
-  const kind = key.slice(0, colonIdx);
-  const name = key.slice(colonIdx + 1);
+function matchKey(key: string, clause: MatchClause, url: URL, request: Request): boolean {
+  const colonIdx = key.indexOf(":")
+  if (colonIdx < 0) return false
+  const kind = key.slice(0, colonIdx)
+  const name = key.slice(colonIdx + 1)
 
   switch (kind) {
     case "url":
-      return scalarClauseMatches(clause, url.searchParams.get(name) ?? "");
+      return scalarClauseMatches(clause, url.searchParams.get(name) ?? "")
     case "cookie":
-      return scalarClauseMatches(clause, readCookie(request, name) ?? "");
+      return scalarClauseMatches(clause, readCookie(request, name) ?? "")
     case "header":
-      return scalarClauseMatches(clause, request.headers.get(name) ?? "");
+      return scalarClauseMatches(clause, request.headers.get(name) ?? "")
     case "pathname": {
-      const params = matchRoutePatternLocal(url.pathname, name);
-      if (!params) return false;
+      const params = matchRoutePatternLocal(url.pathname, name)
+      if (!params) return false
       if (typeof clause !== "object" || clause === null || Array.isArray(clause)) {
-        return false;
+        return false
       }
-      if ("in" in clause) return false; // `in` at the top of a pathname clause is malformed
-      for (const [paramName, paramClause] of Object.entries(
-        clause as Record<string, ScalarOrIn>,
-      )) {
+      if ("in" in clause) return false // `in` at the top of a pathname clause is malformed
+      for (const [paramName, paramClause] of Object.entries(clause as Record<string, ScalarOrIn>)) {
         if (!scalarClauseMatches(paramClause, params[paramName] ?? "")) {
-          return false;
+          return false
         }
       }
-      return true;
+      return true
     }
     default:
-      return false;
+      return false
   }
 }
 
 function scalarClauseMatches(clause: MatchClause, value: string): boolean {
-  if (typeof clause === "string") return clause === value;
-  if (typeof clause === "number") return String(clause) === value;
-  if (typeof clause === "boolean") return String(clause) === value;
+  if (typeof clause === "string") return clause === value
+  if (typeof clause === "number") return String(clause) === value
+  if (typeof clause === "boolean") return String(clause) === value
   if (
     typeof clause === "object" &&
     clause !== null &&
@@ -1030,15 +991,15 @@ function scalarClauseMatches(clause: MatchClause, value: string): boolean {
     "in" in clause &&
     Array.isArray((clause as { in: unknown }).in)
   ) {
-    const list = (clause as { in: ReadonlyArray<string | number> }).in;
-    return list.some((v) => String(v) === value);
+    const list = (clause as { in: ReadonlyArray<string | number> }).in
+    return list.some((v) => String(v) === value)
   }
-  return false;
+  return false
 }
 
 function compareSpecificity(a: number[], b: number[]): number {
   // Longer array → more dimensions matched → higher specificity.
-  return b.length - a.length;
+  return b.length - a.length
 }
 
 // ─── Local copies of request helpers ───────────────────────────────────
@@ -1047,27 +1008,24 @@ function compareSpecificity(a: number[], b: number[]): number {
 // module dependency-free. Both functions are tiny and pure.
 
 function readCookie(request: Request, name: string): string | undefined {
-  const header = request.headers.get("cookie") ?? "";
-  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match?.[1];
+  const header = request.headers.get("cookie") ?? ""
+  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))
+  return match?.[1]
 }
 
-function matchRoutePatternLocal(
-  pathname: string,
-  pattern: string,
-): Record<string, string> | null {
-  const pathSegs = pathname.split("/").filter(Boolean);
-  const patSegs = pattern.split("/").filter(Boolean);
-  if (pathSegs.length !== patSegs.length) return null;
-  const params: Record<string, string> = {};
+function matchRoutePatternLocal(pathname: string, pattern: string): Record<string, string> | null {
+  const pathSegs = pathname.split("/").filter(Boolean)
+  const patSegs = pattern.split("/").filter(Boolean)
+  if (pathSegs.length !== patSegs.length) return null
+  const params: Record<string, string> = {}
   for (let i = 0; i < patSegs.length; i++) {
-    const pat = patSegs[i];
-    const seg = pathSegs[i];
+    const pat = patSegs[i]
+    const seg = pathSegs[i]
     if (pat.startsWith(":")) {
-      params[pat.slice(1)] = decodeURIComponent(seg);
+      params[pat.slice(1)] = decodeURIComponent(seg)
     } else if (pat !== seg) {
-      return null;
+      return null
     }
   }
-  return params;
+  return params
 }
