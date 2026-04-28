@@ -37,8 +37,8 @@ Page = template + regions; modules contribute blocks; per-block
 caching with named invalidation tags.
 
 What this framework borrows: the unit of composition is the
-*block*; the unit of caching is the same *block*; the unit of
-invalidation is the same *block*. One mental model, three reuses.
+_block_; the unit of caching is the same _block_; the unit of
+invalidation is the same _block_. One mental model, three reuses.
 
 What this framework doesn't have yet: a contribution mechanism that
 lets module A insert a block into module B's slot without module B
@@ -72,7 +72,7 @@ a click inside a frame stays inside that frame. The differences:
   not a DOM element.
 - Turbo Frames have one URL axis (the frame's own); browser
   back/forward operates across frame URLs uniformly. `<Partial
-  frame>` has two axes — browser history (page URLs) and per-entry
+frame>` has two axes — browser history (page URLs) and per-entry
   `__frameHistory` (frame URLs scoped to each browser entry) — so
   drawer-shape frames don't pollute browser back.
 - Turbo doesn't have a built-in invalidation graph. `<Partial>` does
@@ -108,7 +108,7 @@ a single child slot per layout, structurally one position; you
 can't have a layout declare three named regions and let a different
 module fill each.
 
-**Hotwire / Stimulus.** Not React. Closest *behaviorally* to what
+**Hotwire / Stimulus.** Not React. Closest _behaviorally_ to what
 this framework does (Turbo Frames + Turbo Streams as the
 invalidation channel). Missing the in-process render pipeline (its
 fragments cross HTTP boundaries) and the strongly-typed manifest.

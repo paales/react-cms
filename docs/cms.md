@@ -45,12 +45,12 @@ Both `content.json` and `draft.json` share one shape:
 
 Keys you'll see in `match`:
 
-| Key | Source | Example |
-|---|---|---|
-| `url:<param>` | `getSearchParam` | `"url:variant": "A"` |
-| `cookie:<name>` | `getCookie` | `"cookie:locale": "fr"` |
-| `header:<name>` | `getHeader` | `"header:x-region": "eu"` |
-| `pathname:<pattern>` | `getPathname` | `"pathname:/p/:slug": { "slug": "alpha" }` |
+| Key                  | Source           | Example                                    |
+| -------------------- | ---------------- | ------------------------------------------ |
+| `url:<param>`        | `getSearchParam` | `"url:variant": "A"`                       |
+| `cookie:<name>`      | `getCookie`      | `"cookie:locale": "fr"`                    |
+| `header:<name>`      | `getHeader`      | `"header:x-region": "eu"`                  |
+| `pathname:<pattern>` | `getPathname`    | `"pathname:/p/:slug": { "slug": "alpha" }` |
 
 A match clause value is one of:
 
@@ -160,9 +160,9 @@ Either edit `content.json` directly:
     "homepage-promo": {
       "id": "homepage-promo",
       "type": "promo",
-      "configs": [{ "match": {}, "fields": { "headline": "Welcome", "tone": "info" } }]
-    }
-  }
+      "configs": [{ "match": {}, "fields": { "headline": "Welcome", "tone": "info" } }],
+    },
+  },
 }
 ```
 
@@ -171,14 +171,14 @@ palette.
 
 ## Content-field accessors
 
-| Accessor | Returns | Empty value |
-|---|---|---|
-| `getText(name)` | `string` | `""` |
-| `getRichText(name)` | `string` | `""` (v1; structured value reserved) |
-| `getNumber(name)` | `number` | `0` |
-| `getBoolean(name)` | `boolean` | `false` |
-| `getEnum(name, values)` | `T extends string` | `values[0]` |
-| `getImage(name)` | `{src: string; alt: string}` | `{src: "", alt: ""}` |
+| Accessor                | Returns                      | Empty value                          |
+| ----------------------- | ---------------------------- | ------------------------------------ |
+| `getText(name)`         | `string`                     | `""`                                 |
+| `getRichText(name)`     | `string`                     | `""` (v1; structured value reserved) |
+| `getNumber(name)`       | `number`                     | `0`                                  |
+| `getBoolean(name)`      | `boolean`                    | `false`                              |
+| `getEnum(name, values)` | `T extends string`           | `values[0]`                          |
+| `getImage(name)`        | `{src: string; alt: string}` | `{src: "", alt: ""}`                 |
 
 Each accessor records its `(name, kind)` into the active CMS
 scope's `contentFields` map — the catalog prerender uses that
@@ -207,10 +207,10 @@ export function PageRoot() {
 }
 ```
 
-| Component | Renders |
-|---|---|
+| Component               | Renders                                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------------------------- |
 | `<Children name allow>` | Every entry in `node.slots[name]` in stored order, each wrapped in its own `<Partial cmsId={entry.id}>`. |
-| `<Child name allow>` | At most one entry from `node.slots[name]`. |
+| `<Child name allow>`    | At most one entry from `node.slots[name]`.                                                               |
 
 `allow` is a selector grammar (same as `<Partial selector>`)
 controlling which block types the editor's `+ Block` palette offers
@@ -250,9 +250,9 @@ export async function ProductHero() {
 
 ```ts
 interface Reference<T extends string> {
-  readonly type: T;                      // "product", "collection", …
-  readonly value: string | null;          // concrete id from the store
-  readonly fallback: "closest" | null;    // default "closest"
+  readonly type: T; // "product", "collection", …
+  readonly value: string | null; // concrete id from the store
+  readonly fallback: "closest" | null; // default "closest"
 }
 ```
 
@@ -296,6 +296,7 @@ X" badge.
 provides. A Partial running from its snapshot in cache mode reads
 `null` for any key that came from an ancestor. Blocks that must
 survive cache-mode refetches should either:
+
 1. Carry a concrete `getReference` value alongside the closest
    fallback, or
 2. Branch on the missing closest and short-circuit.
@@ -305,11 +306,11 @@ survive cache-mode refetches should either:
 Two stores share one schema. The runtime prefers draft when the
 request signals draft mode:
 
-| Signal | Where |
-|---|---|
-| `?cms-draft=1` query param | The editor's preview frame URL stamps it for first load. |
-| `Cookie: cms-draft=1` | The editor sets it on first response; covers subsequent requests including action POSTs. |
-| `?editor=1` query param OR `Cookie: __editor=1` | Editor mode implies draft visibility. |
+| Signal                                          | Where                                                                                    |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `?cms-draft=1` query param                      | The editor's preview frame URL stamps it for first load.                                 |
+| `Cookie: cms-draft=1`                           | The editor sets it on first response; covers subsequent requests including action POSTs. |
+| `?editor=1` query param OR `Cookie: __editor=1` | Editor mode implies draft visibility.                                                    |
 
 `lookupCmsNode(cmsId, request)` checks draft first when any of these
 hold, else falls back to published. The draft cookie also folds into
@@ -362,10 +363,10 @@ Visitors without the cookie pay no editor cost.
 
 ### Three panes
 
-| Pane | Role |
-|---|---|
-| Left (sticky, 320px) | Tree of CMS nodes for the previewed page (filtered by `PAGE_CMS_ROOTS` in `shell.tsx`). Click to select; selection drives `?select=<cmsId>`. |
-| Center | Address bar pinned to top, previewed page below. The address bar drives `useNavigation()` (window-scoped) — typing a path navigates the browser, browser back/forward walks preview history. |
+| Pane                  | Role                                                                                                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Left (sticky, 320px)  | Tree of CMS nodes for the previewed page (filtered by `PAGE_CMS_ROOTS` in `shell.tsx`). Click to select; selection drives `?select=<cmsId>`.                                                        |
+| Center                | Address bar pinned to top, previewed page below. The address bar drives `useNavigation()` (window-scoped) — typing a path navigates the browser, browser back/forward walks preview history.        |
 | Right (sticky, 360px) | Field form for the selected node. One tab per `CmsConfig`; the matching tab auto-selects from the previewed page URL. Inputs derive from the catalog manifest unioned with currently-stored fields. |
 
 The previewed page renders inside a `<Partial frame="preview">` so
@@ -384,11 +385,11 @@ editor-state pollution into page Partials).
 
 ### Editor-state params
 
-| Param | Purpose |
-|---|---|
-| `?editor=1` / `?editor=0` | Sticky toggle (sets / clears cookie). |
-| `?select=<cmsId>` | Currently-selected node. Preserved across address-bar navs; dropped by preview-internal `<a>` clicks. |
-| `?config=<index>` | Active config tab. Defaults to the highest-scoring tab for the previewed page URL via `pickBestConfigIndex`; explicit override wins. |
+| Param                     | Purpose                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `?editor=1` / `?editor=0` | Sticky toggle (sets / clears cookie).                                                                                                |
+| `?select=<cmsId>`         | Currently-selected node. Preserved across address-bar navs; dropped by preview-internal `<a>` clicks.                                |
+| `?config=<index>`         | Active config tab. Defaults to the highest-scoring tab for the previewed page URL via `pickBestConfigIndex`; explicit override wins. |
 
 The shell does **not** wrap itself in a `<Partial>`. The inner page
 Partial needs to fp-differ when its CMS-resolved bytes change, and
@@ -415,14 +416,14 @@ In `src/editor/actions.ts` — every action returns
 `{invalidate: {selector: "#<cmsId> #cms-edit-tree #cms-edit-fields"}}`
 so the preview, tree, and form all refetch in sync.
 
-| Action | Behavior |
-|---|---|
-| `saveCmsFields(cmsId, configIndex, formData)` | Merge form entries into the targeted config (or create the default config if `configIndex < 0`), write to draft. Edits never bleed across configs. |
-| `publishCmsDraft()` | Copy draft → published, clear draft. Invalidates `#cms-edit-tree` (broad — refines as a follow-up). |
-| `resetCmsDraft(cmsId)` | Drop a single id's draft override. |
-| `addBlockToSlot(parentCmsId, slotName, blockType)` | Append a new block instance to the slot. Throws if the type isn't registered. |
-| `removeBlockFromSlot(parentCmsId, slotName, childCmsId)` | Remove. Idempotent. |
-| `moveBlockInSlot(parentCmsId, slotName, childCmsId, "up" \| "down")` | Swap with sibling. No-op at boundaries. |
+| Action                                                               | Behavior                                                                                                                                           |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `saveCmsFields(cmsId, configIndex, formData)`                        | Merge form entries into the targeted config (or create the default config if `configIndex < 0`), write to draft. Edits never bleed across configs. |
+| `publishCmsDraft()`                                                  | Copy draft → published, clear draft. Invalidates `#cms-edit-tree` (broad — refines as a follow-up).                                                |
+| `resetCmsDraft(cmsId)`                                               | Drop a single id's draft override.                                                                                                                 |
+| `addBlockToSlot(parentCmsId, slotName, blockType)`                   | Append a new block instance to the slot. Throws if the type isn't registered.                                                                      |
+| `removeBlockFromSlot(parentCmsId, slotName, childCmsId)`             | Remove. Idempotent.                                                                                                                                |
+| `moveBlockInSlot(parentCmsId, slotName, childCmsId, "up" \| "down")` | Swap with sibling. No-op at boundaries.                                                                                                            |
 
 Actions clone the node (deep) before mutating — never write back the
 cached object that `lookupCmsNode` returned, since concurrent reads

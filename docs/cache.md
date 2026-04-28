@@ -20,8 +20,8 @@ request.
 
 ```ts
 interface CacheOptions {
-  maxAge?: number;                  // seconds
-  staleWhileRevalidate?: number;    // seconds
+  maxAge?: number; // seconds
+  staleWhileRevalidate?: number; // seconds
   vary?: Readonly<Record<string, VaryScalar>>;
   bypass?: boolean;
 }
@@ -29,12 +29,12 @@ interface CacheOptions {
 type VaryScalar = string | number | boolean | null | undefined;
 ```
 
-| Field | Meaning |
-|---|---|
-| `maxAge` | Fresh window, mirrors HTTP `Cache-Control: max-age=N`. |
-| `staleWhileRevalidate` | Window after `maxAge` where the entry is served stale and a background refresh runs. Mirrors the HTTP directive. |
-| `vary` | Scalar values that identify *which snapshot of the content this is*. For inputs the tracker can't see — typically route params resolved before render. Scalar-only by TS so `{vary: {product: productObj}}` is a type error and authors have to extract the identifying field (`{vary: {sku: product.sku}}`). |
-| `bypass` | Skip caching for this render only. Dev/preview escape hatch. |
+| Field                  | Meaning                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxAge`               | Fresh window, mirrors HTTP `Cache-Control: max-age=N`.                                                                                                                                                                                                                                                        |
+| `staleWhileRevalidate` | Window after `maxAge` where the entry is served stale and a background refresh runs. Mirrors the HTTP directive.                                                                                                                                                                                              |
+| `vary`                 | Scalar values that identify _which snapshot of the content this is_. For inputs the tracker can't see — typically route params resolved before render. Scalar-only by TS so `{vary: {product: productObj}}` is a type error and authors have to extract the identifying field (`{vary: {sku: product.sku}}`). |
+| `bypass`               | Skip caching for this render only. Dev/preview escape hatch.                                                                                                                                                                                                                                                  |
 
 `maxAge` and `staleWhileRevalidate` don't participate in the cache
 key — they're entry metadata. Changing them doesn't invalidate
@@ -46,12 +46,12 @@ The cache key surface is the **access manifest** — the set of
 `(kind, name)` pairs the Partial body and its descendants record
 when they call:
 
-| Accessor | Manifest key | Returns |
-|---|---|---|
-| `getCookie(name)` | `cookie:<name>` | `string \| undefined` |
-| `getHeader(name)` | `header:<name>` (lowercased) | `string \| null` |
-| `getSearchParam(name)` | `url:<name>` | `string \| null` |
-| `getPathname(pattern)` | `pathname:<pattern>` | `Record<string, string> \| null` |
+| Accessor               | Manifest key                 | Returns                          |
+| ---------------------- | ---------------------------- | -------------------------------- |
+| `getCookie(name)`      | `cookie:<name>`              | `string \| undefined`            |
+| `getHeader(name)`      | `header:<name>` (lowercased) | `string \| null`                 |
+| `getSearchParam(name)` | `url:<name>`                 | `string \| null`                 |
+| `getPathname(pattern)` | `pathname:<pattern>`         | `Record<string, string> \| null` |
 
 Each accessor performs the underlying read AND records the manifest
 key. The runtime resolves the manifest against the current request
@@ -107,7 +107,11 @@ async function FieldPanel() {
   const config = getSearchParam("config");
   const select = getSearchParam("select");
   await fetchSomething();
-  return <div>{config} / {select}</div>;
+  return (
+    <div>
+      {config} / {select}
+    </div>
+  );
 }
 
 // ✗ Conditional — throws on first render that takes the false branch
@@ -133,11 +137,11 @@ Partial may not be the one actually doing the read:
 1. **Conditional read** — accessor inside an `if` / loop / early
    return. Move the call to the top of the body.
 
-2. **Cell drift** — accessor called after an `await` in a *different*
+2. **Cell drift** — accessor called after an `await` in a _different_
    Partial. By then the per-request manifest cell has been
    overwritten by whatever Partial body ran most recently. The read
    gets attributed to the wrong Partial; if the attribution
-   *changes* across renders, this Partial's manifest grows and
+   _changes_ across renders, this Partial's manifest grows and
    throws.
 
    Fix: find the actual Partial doing the post-await read and hoist
@@ -177,11 +181,11 @@ key = <effectiveId>:<structuralFp>:<innerIdsHash>:<hash([resolvedManifest, vary]
 State lives in three places. The cache prop interacts with all
 three.
 
-| Tier | Where | Keyed by | Cross-request? |
-|---|---|---|---|
-| **`<Partial cache>` bytes** | `src/lib/cache.tsx` — `MemoryCacheStore` (per-scope) | `<effectiveId>:<fp>:<idsHash>:<hashOfManifestAndVary>` | **Yes, global.** No route in the key. The same `#cart` on `/shop` and `/checkout` shares an entry if its inputs hash the same. |
-| **Route-scoped registry** | `src/lib/partial-registry.ts` | `(scope, pathname, effectiveId)` | Yes, partitioned by pathname. Holds snapshots for cache-mode refetches. |
-| **Client `_cache` + `_fingerprints` + `_template`** | `src/lib/partial-client.tsx` | id (cache, fingerprints) / route (template) | No — per browser tab. Pruned on every full streaming render to live ids only. |
+| Tier                                                | Where                                                | Keyed by                                               | Cross-request?                                                                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| **`<Partial cache>` bytes**                         | `src/lib/cache.tsx` — `MemoryCacheStore` (per-scope) | `<effectiveId>:<fp>:<idsHash>:<hashOfManifestAndVary>` | **Yes, global.** No route in the key. The same `#cart` on `/shop` and `/checkout` shares an entry if its inputs hash the same. |
+| **Route-scoped registry**                           | `src/lib/partial-registry.ts`                        | `(scope, pathname, effectiveId)`                       | Yes, partitioned by pathname. Holds snapshots for cache-mode refetches.                                                        |
+| **Client `_cache` + `_fingerprints` + `_template`** | `src/lib/partial-client.tsx`                         | id (cache, fingerprints) / route (template)            | No — per browser tab. Pruned on every full streaming render to live ids only.                                                  |
 
 What counts as "the route" differs per tier:
 
@@ -211,7 +215,7 @@ What counts as "the route" differs per tier:
 The in-flight refresh is gated by a `refreshing: Set<string>` flag.
 A benign race (two concurrent requests both miss the flag, both
 kick off refreshes) costs extra refresh work in a millisecond
-window; correctness is preserved (cache *reads* return the stale
+window; correctness is preserved (cache _reads_ return the stale
 bytes either way). See [`docs-dev/server-isolation.md`](../docs-dev/server-isolation.md);
 don't "fix" with a mutex.
 
@@ -223,7 +227,7 @@ store, reinject on return** in `cache.tsx`:
 
 1. Before encoding bytes, every `<PartialBoundary>` inside the
    subtree is replaced with a placeholder `<i hidden data-partial
-   data-partial-id={id}>`. The bytes go to disk without baked-in
+data-partial-id={id}>`. The bytes go to disk without baked-in
    Partial content.
 2. On a hit, the bytes decode to a tree with placeholders. The
    reinject pass swaps each placeholder back for a fresh
@@ -259,7 +263,7 @@ store for the next request to hit normally.
     const q = getSearchParam("q");
     return (
       <Partial selector="#stage" cache={{ maxAge: 60 }}>
-        <Stage query={q ?? ""} />   {/* prop participates in fp */}
+        <Stage query={q ?? ""} /> {/* prop participates in fp */}
       </Partial>
     );
   }
@@ -289,7 +293,7 @@ store for the next request to hit normally.
   `<Partial cache>` on `/p/:slug` with a closure-captured `sku`
   prop produces one snapshot per SKU in the registry. 50k products
   × N Partials per page is gigabytes of heap. `getPathname("/p/:slug")`
-  inside the body keys the snapshot on the *pattern*, so one
+  inside the body keys the snapshot on the _pattern_, so one
   registry entry serves the family — the cache key still varies
   per slug because the resolved manifest values differ.
 

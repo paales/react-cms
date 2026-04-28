@@ -18,16 +18,16 @@ whole scene.
 ```ts
 import { useNavigation } from "./lib";
 
-const nav = useNavigation();              // window-scoped, or ambient frame
-const cart = useNavigation("cart");       // explicit frame by name
-const list = useNavigation("products.list");  // nested frame, dotted path
+const nav = useNavigation(); // window-scoped, or ambient frame
+const cart = useNavigation("cart"); // explicit frame by name
+const list = useNavigation("products.list"); // nested frame, dotted path
 ```
 
-| Argument | Returns |
-|---|---|
-| omitted, outside any frame | window handle (binds to `window.navigation`) |
+| Argument                              | Returns                                                        |
+| ------------------------------------- | -------------------------------------------------------------- |
+| omitted, outside any frame            | window handle (binds to `window.navigation`)                   |
 | omitted, inside `<Partial frame="X">` | handle for the innermost ambient frame, via `FrameNameContext` |
-| explicit dotted path | handle for that frame, regardless of context |
+| explicit dotted path                  | handle for that frame, regardless of context                   |
 
 The handle's reactive getters (`currentEntry`, `canGoBack`,
 `canGoForward`) re-read after every navigation and frame state
@@ -50,7 +50,10 @@ function ReloadButton() {
 ```ts
 nav.navigate("/products?sort=price");
 nav.navigate(new URL("/checkout", location.href));
-nav.navigate(u => { u.searchParams.set("q", q); return u });
+nav.navigate((u) => {
+  u.searchParams.set("q", q);
+  return u;
+});
 
 nav.navigate(url, { history: "replace" });
 nav.navigate(url, { history: "replace", silent: true });
@@ -67,22 +70,22 @@ normal cross-origin behavior.
 
 ### Options
 
-| Field | Meaning |
-|---|---|
-| `history` | `"push"` (default), `"replace"`, or `"auto"`. From the browser `NavigationNavigateOptions`. Frame handles default to `"auto"` — see §Two history axes below. |
-| `state` | State to write onto the resulting entry. From `NavigationNavigateOptions`. |
-| `info` | Forwarded to the `navigate` event. Window handle only — frame handles stamp their own framework-internal `info` to suppress the page-level intercept. |
-| `selector` | CSS-style selector (string or array). `#unique` tokens target single Partials; `.shared` tokens union across every Partial with the label. Resolved server-side against the route registry. **Page handle only**; frame handles ignore it (frames refetch their whole subtree). |
-| `silent` | Update the URL only. No refetch. Useful for bookmarkability-only URL sync. |
-| `disableTransition` | Commit without `startTransition`. See §Refetch commit behavior below. |
+| Field               | Meaning                                                                                                                                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `history`           | `"push"` (default), `"replace"`, or `"auto"`. From the browser `NavigationNavigateOptions`. Frame handles default to `"auto"` — see §Two history axes below.                                                                                                                    |
+| `state`             | State to write onto the resulting entry. From `NavigationNavigateOptions`.                                                                                                                                                                                                      |
+| `info`              | Forwarded to the `navigate` event. Window handle only — frame handles stamp their own framework-internal `info` to suppress the page-level intercept.                                                                                                                           |
+| `selector`          | CSS-style selector (string or array). `#unique` tokens target single Partials; `.shared` tokens union across every Partial with the label. Resolved server-side against the route registry. **Page handle only**; frame handles ignore it (frames refetch their whole subtree). |
+| `silent`            | Update the URL only. No refetch. Useful for bookmarkability-only URL sync.                                                                                                                                                                                                      |
+| `disableTransition` | Commit without `startTransition`. See §Refetch commit behavior below.                                                                                                                                                                                                           |
 
 ### Decision matrix (window handle)
 
-| `silent` | `selector` | Behavior |
-|---|---|---|
-| `true` | — | URL update only, no refetch. |
-| `false` | set | URL update + targeted refetch (microtask-batched). Page-level intercept skipped. |
-| `false` | unset | Default page nav. Browser fires `navigate`; the framework's intercept fetches the new URL with `?cached=` and commits the response. |
+| `silent` | `selector` | Behavior                                                                                                                            |
+| -------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `true`   | —          | URL update only, no refetch.                                                                                                        |
+| `false`  | set        | URL update + targeted refetch (microtask-batched). Page-level intercept skipped.                                                    |
+| `false`  | unset      | Default page nav. Browser fires `navigate`; the framework's intercept fetches the new URL with `?cached=` and commits the response. |
 
 ### Result
 
@@ -106,10 +109,10 @@ surface as an unhandled rejection.
 Refetch the current URL without changing it.
 
 ```ts
-nav.reload();                                // full-page refetch
-nav.reload({ selector: "#cart" });           // single Partial
-nav.reload({ selector: ".price" });          // every Partial with .price
-nav.reload({ selector: "#cart .price" });    // both — union
+nav.reload(); // full-page refetch
+nav.reload({ selector: "#cart" }); // single Partial
+nav.reload({ selector: ".price" }); // every Partial with .price
+nav.reload({ selector: "#cart .price" }); // both — union
 ```
 
 Options are the same as `navigate` minus `silent` (reload has no URL
@@ -197,7 +200,7 @@ which authors thread via `parent={capturePartialContext()}`:
 ```tsx
 <Partial parent={ROOT} selector="#products" frame="products">
   <Partial parent={capturePartialContext()} selector="#list" frame="list">
-    <ProductList />   {/* frame URL = session["products.list"] */}
+    <ProductList /> {/* frame URL = session["products.list"] */}
   </Partial>
 </Partial>
 ```
@@ -215,7 +218,7 @@ the "render only the frame" optimization.
 
 ```tsx
 function CartControls() {
-  const cart = useNavigation();   // ambient inside <Partial frame="cart">
+  const cart = useNavigation(); // ambient inside <Partial frame="cart">
   return <button onClick={() => cart.navigate("/cart/checkout")}>Checkout</button>;
 }
 ```
@@ -243,11 +246,11 @@ Frames have their own back/forward stack, separate from the
 browser's. Per-frame stacks live in
 `state.__frameHistory[<dottedPath>]` on every navigation entry.
 
-| `history` mode | Window handle | Frame handle (default: `"auto"`) |
-|---|---|---|
-| `"auto"` | Browser default — push on URL change, replace on identical URL. | `updateCurrentEntry` — patches state in place, no new browser entry. Pushes prior frame URL onto `__frameHistory[path].past`. **Drawer-shape default.** |
-| `"push"` | New browser entry. | New browser entry AND push on per-frame stack. Use when the user should be able to bookmark / share the frame URL. |
-| `"replace"` | Replace current entry. | Replace current entry. **No** per-frame stack mutation — pure URL sync (search-as-you-type). |
+| `history` mode | Window handle                                                   | Frame handle (default: `"auto"`)                                                                                                                        |
+| -------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"auto"`       | Browser default — push on URL change, replace on identical URL. | `updateCurrentEntry` — patches state in place, no new browser entry. Pushes prior frame URL onto `__frameHistory[path].past`. **Drawer-shape default.** |
+| `"push"`       | New browser entry.                                              | New browser entry AND push on per-frame stack. Use when the user should be able to bookmark / share the frame URL.                                      |
+| `"replace"`    | Replace current entry.                                          | Replace current entry. **No** per-frame stack mutation — pure URL sync (search-as-you-type).                                                            |
 
 `frame.canGoBack` / `canGoForward` read from `__frameHistory`, not
 from `navigation.entries()`. Browser back/forward stays attached to
@@ -343,7 +346,7 @@ keys for display).
   rule applies the same way for the same reason.
 
 - **Frame name / `#`-token can drift.** `<Partial selector="#cart"
-  frame="basket">` is legal but mismatched. The frame's session key
+frame="basket">` is legal but mismatched. The frame's session key
   is `basket`, the Partial's effective id is `cart`.
   `reload({ selector: "#cart" })` targets the Partial;
   `useNavigation("basket").navigate(...)` targets the frame URL.

@@ -11,23 +11,23 @@ import { Partial, ROOT, capturePartialContext } from "./lib";
 
 <Partial parent={ROOT} selector="#cart" fallback={<CartSkeleton />}>
   <Cart />
-</Partial>
+</Partial>;
 ```
 
 ## Props
 
 ```ts
 interface PartialProps {
-  parent: PartialCtx;                    // required
-  selector: SelectorToken | SelectorToken[];  // required
+  parent: PartialCtx; // required
+  selector: SelectorToken | SelectorToken[]; // required
   children?: ReactNode;
   fallback?: ReactNode;
   errorWith?: ReactNode;
   defer?: true | ReactElement<ActivatorProps>;
-  cache?: CacheOptions;                   // see cache.md
-  frame?: string;                         // see frames-navigation.md
+  cache?: CacheOptions; // see cache.md
+  frame?: string; // see frames-navigation.md
   frameUrl?: string;
-  cmsId?: string;                         // see cms.md
+  cmsId?: string; // see cms.md
   provides?: Readonly<Record<string, unknown>>;
 }
 ```
@@ -59,12 +59,12 @@ distinguishing class or a `#`-token.
 Effective id derivation (see `resolveEffectiveId` in
 `partial-component.tsx`):
 
-| Selector | Effective id |
-|---|---|
-| `#cart` | `cart` |
+| Selector              | Effective id                      |
+| --------------------- | --------------------------------- |
+| `#cart`               | `cart`                            |
 | `#cart #primary-cart` | `cart,primary-cart` (sorted-join) |
-| `.price .product` | `__anon:price,product` |
-| `#cart .price` | `cart` |
+| `.price .product`     | `__anon:price,product`            |
+| `#cart .price`        | `cart`                            |
 
 The effective id is what the registry, client cache, and cache base
 key are keyed on. Refetch addressing scans `uniqueTokens` /
@@ -124,14 +124,22 @@ explicitly. Inside a synchronous body the per-request cell is fine —
 ```tsx
 async function Wrong() {
   await something();
-  const parent = capturePartialContext();   // cell may have drifted
-  return <Partial parent={parent} selector="#x"><X/></Partial>;
+  const parent = capturePartialContext(); // cell may have drifted
+  return (
+    <Partial parent={parent} selector="#x">
+      <X />
+    </Partial>
+  );
 }
 
 async function Right() {
-  const parent = capturePartialContext();   // captured at sync top
+  const parent = capturePartialContext(); // captured at sync top
   await something();
-  return <Partial parent={parent} selector="#x"><X/></Partial>;
+  return (
+    <Partial parent={parent} selector="#x">
+      <X />
+    </Partial>
+  );
 }
 ```
 
@@ -139,8 +147,8 @@ async function Right() {
 
 ```ts
 interface PartialCtx {
-  readonly path: readonly string[];          // ancestor effective ids, outer-first
-  readonly frameChain: readonly string[];    // ancestor frame names, outer-first
+  readonly path: readonly string[]; // ancestor effective ids, outer-first
+  readonly frameChain: readonly string[]; // ancestor frame names, outer-first
   readonly provides: Readonly<Record<string, unknown>>;
 }
 ```
@@ -160,7 +168,7 @@ tree root.
 ## `children` — content
 
 Must render in the RSC environment. Client components are allowed
-*inside* a Partial for interactivity, but the Partial body itself
+_inside_ a Partial for interactivity, but the Partial body itself
 runs server-side. The content can be async; any unresolved promises
 block the Partial's Suspense boundary, the rest of the page streams
 around them.
@@ -173,14 +181,14 @@ and the parent's reveal blocks on it.
 ## `fallback` and `errorWith`
 
 ```tsx
-<Partial selector="#cart" fallback={<CartSkeleton/>} errorWith={<CartError/>}>
-  <Cart/>
+<Partial selector="#cart" fallback={<CartSkeleton />} errorWith={<CartError />}>
+  <Cart />
 </Partial>
 ```
 
-| Prop | Used for |
-|---|---|
-| `fallback` | Suspense fallback while async content resolves. Also the dormant display when `defer` is active. |
+| Prop        | Used for                                                                                                             |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `fallback`  | Suspense fallback while async content resolves. Also the dormant display when `defer` is active.                     |
 | `errorWith` | Error-boundary fallback when the body or any descendant throws. Defaults to a built-in red card with a retry button. |
 
 `PartialErrorBoundary` re-throws framework sentinels (`notFound()`,
@@ -228,22 +236,18 @@ match — they're what the caller asked for.
 ## `defer` — dormant rendering
 
 ```tsx
-<Partial
-  selector="#feed"
-  fallback={<FeedSkeleton/>}
-  defer={<WhenVisible rootMargin="200px"/>}
->
-  <Feed/>
+<Partial selector="#feed" fallback={<FeedSkeleton />} defer={<WhenVisible rootMargin="200px" />}>
+  <Feed />
 </Partial>
 ```
 
 Three modes:
 
-| Value | Behavior |
-|---|---|
-| unset / `false` | Eager render. |
-| `true` | Emit fallback only; no automatic trigger. App calls `useNavigation().reload({ selector: "#feed" })` somewhere. |
-| `ReactElement` | The framework `cloneElement`s with `{partialId, children: fallback}`. Activator renders the fallback and installs its own trigger via `useActivate`. |
+| Value           | Behavior                                                                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| unset / `false` | Eager render.                                                                                                                                        |
+| `true`          | Emit fallback only; no automatic trigger. App calls `useNavigation().reload({ selector: "#feed" })` somewhere.                                       |
+| `ReactElement`  | The framework `cloneElement`s with `{partialId, children: fallback}`. Activator renders the fallback and installs its own trigger via `useActivate`. |
 
 ### `useActivate(partialId, subscribe, opts?)`
 
@@ -304,7 +308,7 @@ Adding a new trigger type (`<WhenIdle>`, `<WhenMediaQuery>`,
 
 ```tsx
 <Partial parent={ROOT} selector="#pdp" provides={{ product: await fetchProduct(slug) }}>
-  <ProductDetail/>
+  <ProductDetail />
 </Partial>
 ```
 
@@ -335,11 +339,11 @@ on the missing closest.
 
 Pointer-only here:
 
-| Prop | Doc |
-|---|---|
+| Prop                 | Doc                    |
+| -------------------- | ---------------------- |
 | `frame` / `frameUrl` | `frames-navigation.md` |
-| `cache` | `cache.md` |
-| `cmsId` | `cms.md` |
+| `cache`              | `cache.md`             |
+| `cmsId`              | `cms.md`               |
 
 ## Authoring rules
 
@@ -363,13 +367,15 @@ Pointer-only here:
    keyed `<Fragment>` if you need an array key:
 
    ```tsx
-   {items.map(item => (
-     <Fragment key={item.id}>
-       <Partial parent={parent} selector={`#item-${item.id}`}>
-         <Item item={item}/>
-       </Partial>
-     </Fragment>
-   ))}
+   {
+     items.map((item) => (
+       <Fragment key={item.id}>
+         <Partial parent={parent} selector={`#item-${item.id}`}>
+           <Item item={item} />
+         </Partial>
+       </Fragment>
+     ));
+   }
    ```
 
    The `<Children>` slot primitive (`src/lib/slot.tsx`) does this
