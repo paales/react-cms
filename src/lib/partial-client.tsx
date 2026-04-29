@@ -1110,13 +1110,6 @@ function parseOptionsSelector(
   return parseSelectorClient(options.selector)
 }
 
-function hasRefetchFilter(
-  options: FrameworkNavigateOptions | FrameworkReloadOptions | undefined,
-): boolean {
-  const parsed = parseOptionsSelector(options)
-  return parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0
-}
-
 // ─── Frame entry projection ───────────────────────────────────────
 
 /**
@@ -1447,7 +1440,7 @@ function buildFrameHandle(path: readonly string[]): FrameworkNavigation {
   }
 
   return new Proxy(nav, {
-    get(target, prop, receiver) {
+    get(target, prop) {
       if (prop === "name") return key
       if (prop === "navigate") return frameNavigate
       if (prop === "reload") return frameReload
@@ -1636,22 +1629,25 @@ export function useActivate(
   const firedRef = useRef(false)
   const subscribeRef = useRef(subscribe)
   subscribeRef.current = subscribe
+  const nav = useNavigation()
 
   useEffect(() => {
     const cleanup = subscribeRef.current((payload) => {
       if (once && firedRef.current) return
       firedRef.current = true
-      void enqueueRefetch({
-        uniqueTokens: [partialId],
-        sharedTokens: [],
-        disableTransition: false,
+      // Funnel activator-driven refetches through the same public
+      // `nav.reload` surface that `<CacheControls>` etc. use — one
+      // path for "refetch this partial with these props", batched
+      // by the same microtask coalescer.
+      void nav.reload({
+        selector: [`#${partialId}`],
         props: payload?.props ? { [partialId]: payload.props } : undefined,
       })
     })
     return () => {
       if (typeof cleanup === "function") cleanup()
     }
-  }, [partialId, once])
+  }, [partialId, once, nav])
 }
 
 export function PartialsClient({ mode = "cache", children }: PartialsClientProps) {
