@@ -170,3 +170,26 @@ test("client component inside cached subtree remains clickable after cache hit",
   await button.click()
   await expect(button).toHaveText(/clicked 1/)
 })
+
+test("Toggle flavor: cached spec re-renders with new flavor on URL change", async ({ page }) => {
+  // Cached specs read their deps via `vary` rather than parent-passed
+  // JSX props. The `Toggle flavor` button calls
+  // `nav.navigate(url, { selector: "#slow" })` — a partial-refetch
+  // for `#slow` against the new URL. Slow's vary derives `flavor`
+  // from the URL search param, so the cache key shifts and the new
+  // body lands in the DOM.
+  const flavor = `toggle-${Date.now()}`
+  await page.goto(`/cache-demo?flavor=${flavor}`)
+  await expect(page.locator('[data-testid="slow-content"]')).toContainText(`flavor: ${flavor}`)
+
+  await page.locator('[data-testid="toggle-flavor"]').click()
+  // Toggle goes vanilla → chocolate when the current flavor isn't
+  // exactly "vanilla", the demo flips to "vanilla". Either way, the
+  // URL search param changes, the slow body should reflect it.
+  const newFlavor = "vanilla"
+  await expect(page.locator('[data-testid="slow-content"]')).toContainText(
+    `flavor: ${newFlavor}`,
+    { timeout: 10000 },
+  )
+  expect(new URL(page.url()).searchParams.get("flavor")).toBe(newFlavor)
+})
