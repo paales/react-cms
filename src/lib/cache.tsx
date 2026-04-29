@@ -30,8 +30,9 @@ import {
 } from "react"
 import { createFromReadableStream, renderToReadableStream } from "./flight-runtime.ts"
 import { djb2 } from "./hash.ts"
+import { stableStringify } from "./stable-stringify.ts"
 import { PartialBoundary, getSpecComponentById } from "./partial.tsx"
-import { getRequest, getScope } from "../framework/context.ts"
+import { getScope } from "../framework/context.ts"
 import { lookupPartial, registerPartial, type PartialSnapshot } from "./partial-registry.ts"
 import type { CacheOptions } from "./cache-options.ts"
 
@@ -129,19 +130,6 @@ function setSnapshots(key: string, snaps: Map<string, PartialSnapshot>): void {
   }
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? ""
-  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]"
-  const keys = Object.keys(value as Record<string, unknown>).sort()
-  return (
-    "{" +
-    keys
-      .map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k]))
-      .join(",") +
-    "}"
-  )
-}
-
 function hashParts(...parts: unknown[]): string {
   return djb2(stableStringify(parts))
 }
@@ -230,12 +218,12 @@ function placeholderIdOf(node: ReactElement): string | null {
   return node.key != null ? String(node.key) : null
 }
 
-function partialIdOf(node: ReactElement, route: string): string | null {
+function partialIdOf(node: ReactElement): string | null {
   if (node.key == null) return null
   const keyStr = String(node.key)
   const hashIdx = keyStr.indexOf("#")
   const candidate = hashIdx >= 0 ? keyStr.slice(0, hashIdx) : keyStr
-  return lookupPartial(route, candidate) ? candidate : null
+  return lookupPartial(candidate) ? candidate : null
 }
 
 function stripPartials(node: ReactNode): {
@@ -244,7 +232,6 @@ function stripPartials(node: ReactNode): {
   ids: string[]
 } {
   const partials = new Map<string, ReactElement>()
-  const route = new URL(getRequest().url).pathname
 
   const walk = (n: ReactNode): ReactNode => {
     if (n == null || typeof n === "boolean") return n
@@ -271,7 +258,7 @@ function stripPartials(node: ReactNode): {
       return n
     }
 
-    const partialId = partialIdOf(n, route)
+    const partialId = partialIdOf(n)
     if (partialId != null && !partials.has(partialId)) {
       partials.set(partialId, n)
       return placeholderFor(partialId)
@@ -333,7 +320,6 @@ function stripDynamicWrappers(
   skipIds: Set<string>,
 ): { stripped: ReactNode; snapshots: Map<string, PartialSnapshot> } {
   const snapshots = new Map<string, PartialSnapshot>()
-  const route = new URL(getRequest().url).pathname
 
   const walk = (n: ReactNode): ReactNode => {
     if (n == null || typeof n === "boolean") return n
@@ -351,7 +337,7 @@ function stripDynamicWrappers(
 
     const wid = renderedWrapperId(n)
     if (wid && !skipIds.has(wid)) {
-      const snap = lookupPartial(route, wid)
+      const snap = lookupPartial(wid)
       if (snap) {
         snapshots.set(wid, snap)
         return placeholderFor(wid)
@@ -391,9 +377,7 @@ function reinjectDynamic(node: ReactNode, snapshots: Map<string, PartialSnapshot
         // Use the spec component registry to reconstruct.
         const Component = getSpecComponentById(id)
         if (Component) {
-          const frameChain: readonly string[] =
-            snap.framePath.length > 0 ? snap.framePath.slice(0, -1) : []
-          const parent = { path: snap.parentPath, frameChain }
+          const parent = { path: snap.parentPath, frameChain: snap.parentFrameChain }
           return createElement(Fragment, { key: node.key ?? id }, createElement(Component, { parent }))
         }
       }
@@ -408,8 +392,8 @@ function reinjectDynamic(node: ReactNode, snapshots: Map<string, PartialSnapshot
   return Array.isArray(nk) ? cloneElement(node, {}, ...nk) : cloneElement(node, {}, nk)
 }
 
-function registerDynamicSnapshots(route: string, snapshots: Map<string, PartialSnapshot>): void {
-  for (const [sId, snap] of snapshots) registerPartial(route, sId, snap)
+function registerDynamicSnapshots(snapshots: Map<string, PartialSnapshot>): void {
+  for (const [sId, snap] of snapshots) registerPartial(sId, snap)
 }
 
 // ─── Cache component ────────────────────────────────────────────────────
@@ -480,14 +464,13 @@ async function cacheImpl(
   const baseKey = `${id}:${fingerprint}:${djb2(ids.join(","))}`
   const key = `${baseKey}:${hashParts(varyResult, options.vary ?? null)}`
   const now = Date.now()
-  const route = new URL(getRequest().url).pathname
 
   // ── Hit path ──
   const existing = await store.get(key)
   const existingSnapshots = existing ? snapshotIndex.get(key) : undefined
   if (existing && existingSnapshots) {
     if (existing.expiresAt > now || existing.staleUntil > now) {
-      registerDynamicSnapshots(route, existingSnapshots)
+      registerDynamicSnapshots(existingSnapshots)
       if (existing.expiresAt <= now && !refreshing.has(key)) {
         refreshing.add(key)
         void refreshEntry(baseKey, key, stripped, ids, options, varyResult)

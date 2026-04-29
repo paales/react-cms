@@ -14,7 +14,7 @@ workflow. For framework architecture and APIs, read the docs.
 | Folder | For |
 |---|---|
 | [`docs/`](./docs/) | Framework reference. `intro` · `partial` · `frames-navigation` · `cache` · `cms` · `prior-art`. Read these to use the framework. |
-| [`docs-dev/`](./docs-dev/) | Framework internals. `testing` · `render-pipeline` · `cache-internals` · `frame-scope` · `manifest-internals` · `server-isolation` · `flight-gotchas`. Read these to modify the framework. |
+| [`docs-dev/`](./docs-dev/) | Framework internals. `testing` · `render-pipeline` · `cache-internals` · `registry-internals` · `frame-scope` · `manifest-internals` · `server-isolation` · `flight-gotchas`. Read these to modify the framework. |
 | [`notes/`](./notes/) | Active research. Forward-looking backlog (`IDEAS.md`); chat overlay's demo content. |
 | [`archive/`](./archive/) | Superseded designs and debugging logs. Reference only. |
 

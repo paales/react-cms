@@ -26,6 +26,7 @@ import React, {
   type ReactNode,
 } from "react"
 import { djb2 } from "./hash.ts"
+import { stableStringify } from "./stable-stringify.ts"
 import { _childContext, ROOT, type PartialCtx } from "./partial-context.ts"
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx"
 import { FrameNameProvider, PartialsClient } from "./partial-client.tsx"
@@ -189,21 +190,6 @@ function resolveFrameRequest(
   return new Request(resolved, { headers: pageRequest.headers, method: "GET" })
 }
 
-// ─── Stable hash helpers ──────────────────────────────────────────────
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? ""
-  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]"
-  const keys = Object.keys(value as Record<string, unknown>).sort()
-  return (
-    "{" +
-    keys
-      .map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k]))
-      .join(",") +
-    "}"
-  )
-}
-
 // ─── PartialBoundary — registers + passes children through ────────────
 
 interface PartialBoundaryProps {
@@ -213,12 +199,12 @@ interface PartialBoundaryProps {
   uniqueTokens: string[]
   sharedTokens: string[]
   framePath: readonly string[]
+  parentFrameChain: readonly string[]
   frameUrl?: string
   cmsId?: string
   cache?: CacheOptions
   fallback: ReactNode
   errorWith: ReactNode | undefined
-  varyResult: unknown
   children: ReactNode
 }
 
@@ -229,27 +215,26 @@ export function PartialBoundary({
   uniqueTokens,
   sharedTokens,
   framePath,
+  parentFrameChain,
   frameUrl,
   cmsId,
   cache,
   fallback,
   errorWith,
-  varyResult,
   children,
 }: PartialBoundaryProps): ReactNode {
-  const route = new URL(getRequest().url).pathname
-  registerPartial(route, id, {
+  registerPartial(id, {
     type,
     fallback,
     errorWith,
     uniqueTokens,
     sharedTokens,
     framePath,
+    parentFrameChain,
     frameUrl,
     parentPath,
     cmsId,
     cache,
-    varyResult,
   })
   return children
 }
@@ -408,12 +393,12 @@ function createSpecComponent<V>(spec: InternalSpec<V>): FC<PartialComponentProps
           uniqueTokens={parsed.uniqueTokens}
           sharedTokens={parsed.sharedTokens}
           framePath={ourFrameChain}
+          parentFrameChain={parent.frameChain}
           frameUrl={opts.frameUrl}
           cmsId={effectiveCmsId}
           cache={opts.cache}
           fallback={fallback}
           errorWith={opts.errorWith}
-          varyResult={varyResult}
         >
           {placeholderFor(id)}
         </PartialBoundary>
@@ -440,12 +425,12 @@ function createSpecComponent<V>(spec: InternalSpec<V>): FC<PartialComponentProps
           uniqueTokens={parsed.uniqueTokens}
           sharedTokens={parsed.sharedTokens}
           framePath={ourFrameChain}
+          parentFrameChain={parent.frameChain}
           frameUrl={opts.frameUrl}
           cmsId={effectiveCmsId}
           cache={opts.cache}
           fallback={fallback}
           errorWith={opts.errorWith}
-          varyResult={varyResult}
         >
           <PartialErrorBoundary
             key={id}
@@ -541,12 +526,12 @@ function createSpecComponent<V>(spec: InternalSpec<V>): FC<PartialComponentProps
         uniqueTokens={parsed.uniqueTokens}
         sharedTokens={parsed.sharedTokens}
         framePath={ourFrameChain}
+        parentFrameChain={parent.frameChain}
         frameUrl={opts.frameUrl}
         cmsId={effectiveCmsId}
         cache={opts.cache}
         fallback={fallback}
         errorWith={opts.errorWith}
-        varyResult={varyResult}
       >
         {body}
       </PartialBoundary>
@@ -645,13 +630,12 @@ function parseCsvTokens(raw: string | null): string[] {
 function resolveSelectorToIds(
   uniqueParam: string | null,
   sharedParam: string | null,
-  route: string,
 ): Set<string> | null {
   const uniqueNames = parseCsvTokens(uniqueParam)
   const sharedNames = parseCsvTokens(sharedParam)
   if (uniqueNames.length === 0 && sharedNames.length === 0) return null
 
-  const snapshots = getRouteSnapshots(route)
+  const snapshots = getRouteSnapshots()
   if (!snapshots) return null
 
   const ids = new Set<string>()
@@ -696,9 +680,10 @@ function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNode {
     }
   }
   if (!Component) return null
-  const frameChain: readonly string[] =
-    snap.framePath.length > 0 ? snap.framePath.slice(0, -1) : []
-  const parent: PartialCtx = { path: snap.parentPath, frameChain }
+  const parent: PartialCtx = {
+    path: snap.parentPath,
+    frameChain: snap.parentFrameChain,
+  }
   return <Component parent={parent} cmsId={cmsIdOverride} />
 }
 
@@ -719,7 +704,7 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   }
 
   const route = requestUrl.pathname
-  const combinedRequestedIds = resolveSelectorToIds(partialsParam, tagsParam, route)
+  const combinedRequestedIds = resolveSelectorToIds(partialsParam, tagsParam)
   const hasGlobalFilter = partialsParam != null || tagsParam != null
   const isPartialRefetch = hasGlobalFilter || populateCache
 
@@ -740,7 +725,7 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   const requestedUniqueNames = parseCsvTokens(partialsParam)
   let registryMiss = state.isPartialRefetch && hasGlobalFilter && !combinedRequestedIds
   if (state.isPartialRefetch && !registryMiss && requestedUniqueNames.length > 0) {
-    const snapshots = getRouteSnapshots(route)
+    const snapshots = getRouteSnapshots()
     for (const name of requestedUniqueNames) {
       if (snapshots?.has(name)) continue
       let foundAsToken = false
@@ -776,7 +761,7 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   const activeIds = [...(state.requestedIds ?? [])]
   const wrappedChildren = activeIds
     .map((id) => {
-      const snap = lookupPartial(route, id)
+      const snap = lookupPartial(id)
       if (!snap) return null
       return partialFromSnapshot(id, snap)
     })

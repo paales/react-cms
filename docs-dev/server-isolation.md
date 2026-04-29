@@ -6,7 +6,7 @@ parallel test workers don't contend on the same state:
 | State | Module |
 |---|---|
 | `<Cache>` render-output store | `src/lib/cache.tsx` |
-| Partial registry (snapshots) | `src/lib/partial-registry.ts` |
+| Partial registry (variant store + per-route hint LRU) | `src/lib/partial-registry.ts` |
 | GraphQL response cache | `src/lib/partial-cache.ts` |
 | Session store (frame URLs) | `src/framework/session.ts` |
 | Chat log producer | `src/app/chat/log.ts` |
