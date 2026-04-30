@@ -12,10 +12,12 @@
     "docs"
   ],
   "scripts": {
-    "dev": "vite",
-    "dev:clean": "vite --mode clean",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "yarn workspace @react-cms/e2e-testing dev",
+    "dev:clean": "yarn workspace @react-cms/e2e-testing dev --mode clean",
+    "dev:magento": "yarn workspace @react-cms/e2e-magento dev",
+    "build": "yarn workspace @react-cms/e2e-testing build",
+    "build:magento": "yarn workspace @react-cms/e2e-magento build",
+    "preview": "yarn workspace @react-cms/e2e-testing preview",
     "test": "yarn test:node && yarn test:rsc",
     "test:node": "vitest run --project=node",
     "test:rsc": "NODE_OPTIONS='--conditions=react-server' vitest run --project=rsc",
@@ -24,7 +26,7 @@
     "test:watch": "vitest --project=node",
     "test:watch:rsc": "NODE_OPTIONS='--conditions=react-server' vitest --project=rsc",
     "test:e2e": "playwright test",
-    "gql:generate": "gql.tada generate-output"
+    "gql:generate": "yarn workspace @react-cms/e2e-testing gql:generate"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

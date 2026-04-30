@@ -1,32 +1,9 @@
 {
+  // Root tsconfig is a placeholder — actual compilation is per-workspace
+  // via each package's tsconfig.json. Each workspace extends
+  // ./tsconfig.base.json and declares its own paths. The IDE picks up
+  // each workspace independently when its files are opened.
   "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "paths": {
-      "@/*": ["./src/*"],
-      "@react-cms/framework": ["./framework/index.ts"],
-      "@react-cms/framework/*": ["./framework/src/*"],
-      "@react-cms/cms": ["./cms/index.ts"],
-      "@react-cms/cms/*": ["./cms/src/*"],
-      "@react-cms/copies": ["./copies/index.ts"],
-      "@react-cms/copies/*": ["./copies/src/*"]
-    },
-    "plugins": [
-      {
-        "name": "gql.tada/ts-plugin",
-        "schemas": [
-          {
-            "name": "pokeapi",
-            "schema": "https://beta.pokeapi.co/graphql/v1beta",
-            "tadaOutputLocation": "./src/app/pokeapi-env.d.ts"
-          },
-          {
-            "name": "magento",
-            "schema": "https://graphcommerce.vercel.app/api/graphql",
-            "tadaOutputLocation": "./src/app/magento-env.d.ts"
-          }
-        ]
-      }
-    ]
-  },
-  "include": ["src"]
+  "files": [],
+  "include": []
 }

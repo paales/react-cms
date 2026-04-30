@@ -7,8 +7,8 @@ import {
   decodeFormState,
 } from "@vitejs/plugin-rsc/rsc"
 import type { ReactFormState } from "react-dom/client"
-import { Root } from "../app/root.tsx"
-import { NotFoundPage } from "../app/pages/not-found.tsx"
+import { Root } from "./app/root.tsx"
+import { NotFoundPage } from "./app/pages/not-found.tsx"
 import { parseRenderRequest } from "@react-cms/framework/framework/request.tsx"
 import {
   _captureCommitHandle,

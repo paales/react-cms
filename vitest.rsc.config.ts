@@ -50,7 +50,7 @@ export default defineProject({
         find: /^@react-cms\/copies$/,
         replacement: path.resolve(import.meta.dirname, "copies/index.ts"),
       },
-      { find: "@", replacement: path.resolve(import.meta.dirname, "src") },
+      { find: "@", replacement: path.resolve(import.meta.dirname, "e2e-testing/src") },
     ],
   },
   // SSR config mirrors `resolve` — Vitest runs tests through Vite's
@@ -64,7 +64,6 @@ export default defineProject({
   test: {
     name: "rsc",
     include: [
-      "src/**/*.rsc.test.?(c|m)[jt]s?(x)",
       "{framework,cms,copies,e2e-testing,e2e-magento}/**/*.rsc.test.?(c|m)[jt]s?(x)",
     ],
     environment: "node",

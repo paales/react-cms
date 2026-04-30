@@ -45,13 +45,12 @@ export default defineProject({
         find: /^@react-cms\/copies$/,
         replacement: path.resolve(import.meta.dirname, "copies/index.ts"),
       },
-      { find: "@", replacement: path.resolve(import.meta.dirname, "src") },
+      { find: "@", replacement: path.resolve(import.meta.dirname, "e2e-testing/src") },
     ],
   },
   test: {
     name: "browser",
     include: [
-      "src/**/*.browser.test.?(c|m)[jt]s?(x)",
       "{framework,cms,copies,e2e-testing,e2e-magento}/**/*.browser.test.?(c|m)[jt]s?(x)",
     ],
     setupFiles: ["./vitest.browser.setup.ts"],
