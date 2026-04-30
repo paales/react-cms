@@ -8,7 +8,7 @@ parallel test workers don't contend on the same state:
 | `<Cache>` render-output store | `framework/src/lib/cache.tsx` |
 | Partial registry (variant store + per-route hint LRU) | `framework/src/lib/partial-registry.ts` |
 | GraphQL response cache | `framework/src/lib/partial-cache.ts` |
-| Session store (frame URLs) | `framework/src/framework/session.ts` |
+| Session store (frame URLs) | `framework/src/runtime/session.ts` |
 | Chat log producer | `e2e-testing/src/app/chat/log.ts` |
 
 Each one keys its top-level map by `getScope()`:
@@ -25,7 +25,7 @@ function bucket(scope: string = getScope()): ScopeState {
 
 ## Scope derivation
 
-`framework/src/framework/context.ts::deriveScope`:
+`framework/src/runtime/context.ts::deriveScope`:
 
 - Production: every request → `"default"`.
 - Dev with `x-test-scope: <value>` header → `<value>`.

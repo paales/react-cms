@@ -5,7 +5,7 @@ Three Vitest projects:
 | Project | Where | Runs |
 |---|---|---|
 | `node` | `framework/src/lib/__tests__/*.test.ts(x)` (jsdom-safe), `cms/src/editor/__tests__/*` | Plain TS / DOM-safe units. |
-| `rsc` | `framework/src/lib/__tests__/*.rsc.test.tsx`, `framework/src/framework/__tests__/*` | In-process Flight render via `framework/src/test/rsc-server.ts`. |
+| `rsc` | `framework/src/lib/__tests__/*.rsc.test.tsx`, `framework/src/runtime/__tests__/*` | In-process Flight render via `framework/src/test/rsc-server.ts`. |
 | `browser` | `framework/src/lib/__tests__/*.browser.test.ts(x)` | Real Chromium via Vitest browser mode. |
 
 Plus Playwright:

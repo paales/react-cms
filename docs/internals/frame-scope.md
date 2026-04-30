@@ -45,7 +45,7 @@ Frame navigation drops `?__frame=<dotted-path>&__frameUrl=<url>` on
 the URL. `PartialRoot` reads them on every request and writes the
 URL into the session before any spec runs. The session is
 cookie-backed (`__frame_sid`); state lives in
-`framework/src/framework/session.ts`.
+`framework/src/runtime/session.ts`.
 
 ## Client-side handle
 
