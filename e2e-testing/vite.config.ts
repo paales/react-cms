@@ -55,6 +55,19 @@ const workspaceAliases = [
 // interleaved with HMR pings and rsc:update messages. Intended for
 // observing actual payload shape in DevTools — not for iterating
 // on code. Edit and refresh the page manually.
+
+// Hook-calling node_modules need to be bundled with React in every
+// environment (rsc, ssr, client) — never externalised — or their
+// `import "react"` resolves through Node and gets a different React
+// instance than vite's pre-bundled renderer. The symptom is "Cannot
+// read properties of null (reading 'useRef')" on every <Button>.
+// Pre-migration this was a non-issue because there was only one src/
+// tree; with workspaces, vite's per-env optimizer can miss deps that
+// only show up via cross-package aliases (copies/ → @base-ui/react).
+// `dedupe: ["react"]` is necessary but not sufficient: dedupe applies
+// only to imports vite resolves, externalised packages bypass it.
+const HOOK_CALLING_DEPS = [/^@base-ui\//, /^@radix-ui\//, /^@phosphor-icons\//]
+
 export default defineConfig(({ mode }) => ({
   plugins: isTest ? [react(), tailwindcss()] : [rsc(), react(), tailwindcss()],
   server: mode === "clean" ? { port: 5174, strictPort: true, hmr: false, ws: false } : undefined,
@@ -65,12 +78,18 @@ export default defineConfig(({ mode }) => ({
           input: { index: "./src/entry.rsc.tsx" },
         },
       },
+      resolve: {
+        noExternal: HOOK_CALLING_DEPS,
+      },
     },
     ssr: {
       build: {
         rollupOptions: {
           input: { index: "./src/entry.ssr.tsx" },
         },
+      },
+      resolve: {
+        noExternal: HOOK_CALLING_DEPS,
       },
     },
     client: {
@@ -84,5 +103,10 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: workspaceAliases,
+  },
+  // SSR-environment fallback for vite versions that read top-level
+  // `ssr.noExternal` rather than per-env `environments.ssr.resolve.noExternal`.
+  ssr: {
+    noExternal: HOOK_CALLING_DEPS,
   },
 }))
