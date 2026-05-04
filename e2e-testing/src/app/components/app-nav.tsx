@@ -13,6 +13,7 @@ const LINKS = [
   { href: "/selector-demo", label: "Selector Demo" },
   { href: "/sentinels-demo", label: "Sentinels Demo" },
   { href: "/frames-demo", label: "Frames Demo" },
+  { href: "/inspect", label: "Inspect (Stacked Drawers)" },
   { href: "/cms-demo", label: "CMS Demo" },
   { href: "/magento", label: "Magento" },
   { href: "/bare", label: "Bare" },

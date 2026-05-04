@@ -66,7 +66,7 @@ const workspaceAliases = [
 // only show up via cross-package aliases (copies/ → @base-ui/react).
 // `dedupe: ["react"]` is necessary but not sufficient: dedupe applies
 // only to imports vite resolves, externalised packages bypass it.
-const HOOK_CALLING_DEPS = [/^@base-ui\//, /^@radix-ui\//, /^@phosphor-icons\//]
+const HOOK_CALLING_DEPS = [/^@base-ui\//, /^@radix-ui\//, /^@phosphor-icons\//, /^vaul$/]
 
 export default defineConfig(({ mode }) => ({
   plugins: isTest ? [react(), tailwindcss()] : [rsc(), react(), tailwindcss()],

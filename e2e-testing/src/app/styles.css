@@ -6,6 +6,7 @@
 @import "@fontsource-variable/geist";
 
 @source "../../node_modules/streamdown/dist/*.js";
+@source "../../../copies/src/**/*.{ts,tsx}";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -131,5 +132,76 @@
   }
   html {
     @apply font-sans;
+  }
+}
+/* View transitions for in-drawer navigation.
+ *
+ * Drawer 2 swaps between two "pages" (moves list and move detail) inside
+ * the same vaul Drawer. The `<ViewTransition name="drawer-2-page">` wrapper
+ * pairs the old/new subtrees by name; the framework's navigate-event
+ * handler auto-stamps `addTransitionType("forward" | "back")` based on
+ * navigation direction (`entry.browser.tsx` § listenNavigation).
+ */
+::view-transition-group(drawer-2-page) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Clip the slide animation so the incoming/outgoing snapshots don't
+   * paint past the drawer's edge. The view-transition pseudos are
+   * children of a top-level `::view-transition` host at root, so an
+   * `overflow: hidden` on the group is what bounds the snapshot pair.
+   * The wrapper element with `view-transition-name` must also have
+   * `overflow: hidden` + a constrained height so the snapshots
+   * themselves are bounded to the drawer body's visible area. */
+  overflow: hidden;
+}
+::view-transition-image-pair(drawer-2-page) {
+  overflow: hidden;
+  isolation: isolate;
+}
+/* Drop default `mix-blend-mode: plus-lighter` so old + new render as
+ * solid layers — combined with the wrapper's solid `bg-popover` this
+ * gives a clean slide instead of a cross-fade between transparencies. */
+::view-transition-old(drawer-2-page),
+::view-transition-new(drawer-2-page) {
+  mix-blend-mode: normal;
+}
+
+@keyframes drawer-page-slide-in-from-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes drawer-page-slide-out-to-left {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(-30%); opacity: 0; }
+}
+@keyframes drawer-page-slide-in-from-left {
+  from { transform: translateX(-30%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes drawer-page-slide-out-to-right {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+
+/* Framework auto-emits these types from the navigate-event handler:
+ * `forward` for push + traverse-forward, `back` for traverse-back. */
+
+/* Forward (push or traverse forward) */
+:root:active-view-transition-type(forward) {
+  &::view-transition-old(drawer-2-page) {
+    animation-name: drawer-page-slide-out-to-left;
+  }
+  &::view-transition-new(drawer-2-page) {
+    animation-name: drawer-page-slide-in-from-right;
+  }
+}
+
+/* Back (traverse back — browser back button or in-drawer back link) */
+:root:active-view-transition-type(back) {
+  &::view-transition-old(drawer-2-page) {
+    animation-name: drawer-page-slide-out-to-right;
+  }
+  &::view-transition-new(drawer-2-page) {
+    animation-name: drawer-page-slide-in-from-left;
   }
 }

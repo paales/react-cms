@@ -23,6 +23,11 @@ import { BarePage } from "./pages/bare-stream.tsx"
 import { ChatNotesPage } from "./pages/chat-notes.tsx"
 import { MagentoPage } from "./pages/magento/product-list.tsx"
 import { NotFoundFallback } from "./pages/not-found-fallback.tsx"
+import {
+  InspectBasePage,
+  InspectDrawer1,
+  InspectDrawer2,
+} from "./pages/inspect-stack.tsx"
 
 export function Root() {
   try {
@@ -50,6 +55,9 @@ export function Root() {
               <BarePage parent={ROOT} />
               <ChatNotesPage parent={ROOT} />
               <MagentoPage parent={ROOT} />
+              <InspectBasePage parent={ROOT} />
+              <InspectDrawer1 parent={ROOT} />
+              <InspectDrawer2 parent={ROOT} />
               <NotFoundFallback parent={ROOT} />{" "}
             </EditorShell>
             <ChatOverlay parent={ROOT} />

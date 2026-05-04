@@ -33,10 +33,12 @@ import React, {
   Suspense,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   useRef,
   type ReactNode,
+  type RefObject,
 } from "react"
 import {
   getNavigation,
@@ -1648,6 +1650,111 @@ export function useActivate(
       if (typeof cleanup === "function") cleanup()
     }
   }, [partialId, once, nav])
+}
+
+// ─── Scroll restoration for non-window scroll containers ───────────────
+
+interface ScrollPositionsState {
+  __scrollPositions?: Record<string, number>
+}
+
+/**
+ * Restore scroll position of a custom scroll container across browser
+ * back / forward / refresh, persisted on the Navigation API entry
+ * state. Browser-native scroll restoration only covers `window` —
+ * nested scrollable elements (drawer bodies, modal contents, virtual
+ * lists) need explicit save/restore.
+ *
+ * Returns a `RefObject` to attach to the scroll container. Restore
+ * happens in a layout effect so the scroll position is in place before
+ * the next paint — this matters for view transitions, where the
+ * snapshot is captured pre-paint and would otherwise show the list
+ * scrolled to the top during the slide-in.
+ *
+ * Save policy: a `scrollend` listener (with a debounced `scroll`
+ * fallback for browsers without `scrollend`) writes the current
+ * `scrollTop` onto the entry's state under `__scrollPositions[key]`.
+ * A `navigate`-event handler also flushes the latest position before
+ * the navigation commits, so a click that pushes a new entry doesn't
+ * lose the in-flight scroll position.
+ *
+ *   const ref = useScrollRestore<HTMLDivElement>("drawer-2-list")
+ *   <div ref={ref} className="overflow-y-auto h-full">…</div>
+ *
+ * `key` should be stable per logical scroll context. Different
+ * containers on the same entry must use distinct keys.
+ */
+export function useScrollRestore<T extends HTMLElement = HTMLElement>(
+  key: string,
+): RefObject<T | null> {
+  const ref = useRef<T | null>(null)
+
+  // Restore synchronously after commit, before paint — so the
+  // view-transition snapshot taken on the next frame already shows
+  // the restored scroll.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const nav = getNavigation()
+    if (!nav) return
+    const state = nav.currentEntry?.getState() as ScrollPositionsState | null
+    const saved = state?.__scrollPositions?.[key]
+    if (typeof saved === "number") el.scrollTop = saved
+  }, [key])
+
+  // Persist scroll on the current entry. Two writers:
+  //
+  //  1. `scrollend` (or debounced `scroll` fallback) catches the user
+  //     pausing — keeps the entry state warm for refresh.
+  //  2. The `navigate` event fires before a commit. We capture the
+  //     latest scrollTop synchronously so a click that pushes a new
+  //     entry saves the position onto the entry we're leaving (not
+  //     the new one).
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const nav = getNavigation()
+    if (!nav) return
+
+    const writePosition = () => {
+      const current = (nav.currentEntry?.getState() as ScrollPositionsState | null) ?? {}
+      const positions = { ...(current.__scrollPositions ?? {}) }
+      const next = el.scrollTop
+      if (positions[key] === next) return
+      positions[key] = next
+      try {
+        nav.updateCurrentEntry({ state: { ...current, __scrollPositions: positions } })
+      } catch {
+        // updateCurrentEntry can throw on detached entries — ignore.
+      }
+    }
+
+    // Prefer scrollend (Chrome 114+, Firefox 109+). Fall back to a
+    // 120 ms debounced scroll handler for older engines.
+    const supportsScrollend = "onscrollend" in el
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null
+    const onScroll = () => {
+      if (supportsScrollend) return
+      if (scrollTimer) clearTimeout(scrollTimer)
+      scrollTimer = setTimeout(writePosition, 120)
+    }
+    const onScrollend = () => writePosition()
+
+    el.addEventListener("scroll", onScroll, { passive: true })
+    if (supportsScrollend) {
+      el.addEventListener("scrollend", onScrollend, { passive: true })
+    }
+    nav.addEventListener("navigate", writePosition)
+
+    return () => {
+      el.removeEventListener("scroll", onScroll)
+      if (supportsScrollend) el.removeEventListener("scrollend", onScrollend)
+      nav.removeEventListener("navigate", writePosition)
+      if (scrollTimer) clearTimeout(scrollTimer)
+    }
+  }, [key])
+
+  return ref
 }
 
 export function PartialsClient({ mode = "cache", children }: PartialsClientProps) {

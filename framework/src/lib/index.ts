@@ -34,6 +34,7 @@ export {
   getCachedPartialIds,
   useActivate,
   useNavigation,
+  useScrollRestore,
   type ActivatorFire,
 } from "./partial-client.tsx"
 

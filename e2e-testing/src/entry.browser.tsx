@@ -24,18 +24,43 @@ async function main() {
   let setPayload: (v: RscPayload) => void
   let setPayloadRaw: (v: RscPayload) => void
 
+  // Pending view-transition types — set synchronously by the navigate-
+  // event handler when the navigation direction is known (push/forward
+  // → "forward"; traverse-back → "back"), consumed by `setPayload` on
+  // the very next commit. Keyed by no token because navigations on the
+  // window are serialised — the next commit IS this navigation. Reset
+  // even on no-types calls so a previous nav's type doesn't leak.
+  let _pendingTransitionTypes: string[] = []
+  function setPendingTransitionTypes(types: string[]) {
+    _pendingTransitionTypes = types
+  }
+
   const initialPayload = await createFromReadableStream<RscPayload>(rscStream)
 
   function BrowserRoot() {
     const [payload, setPayload_] = React.useState(initialPayload)
 
     React.useEffect(() => {
-      setPayload = (v) => React.startTransition(() => setPayload_(v))
+      setPayload = (v) =>
+        React.startTransition(() => {
+          // Drain pending types into THIS transition so any
+          // `<ViewTransition>` in the tree fires `document.startViewTransition`
+          // with `types: [...]` matching the navigation direction.
+          const types = _pendingTransitionTypes
+          _pendingTransitionTypes = []
+          for (const t of types) React.addTransitionType(t)
+          setPayload_(v)
+        })
       setPayloadRaw = setPayload_
     }, [setPayload_])
 
     React.useEffect(() => {
-      return listenNavigation((url) => fetchRscPayload(url))
+      return listenNavigation(
+        (url, types) => {
+          setPendingTransitionTypes(types ?? [])
+          return fetchRscPayload(url)
+        },
+      )
     }, [])
 
     return payload.root
@@ -137,9 +162,33 @@ async function main() {
   }
 }
 
-function listenNavigation(onNavigation: (url: string) => Promise<void>) {
+function listenNavigation(
+  onNavigation: (url: string, transitionTypes?: string[]) => Promise<void>,
+) {
   const nav = getNavigation()
   if (!nav) return () => {}
+
+  // Map a NavigateEvent to a directional transition type. `push` is
+  // always treated as forward; `traverse` looks up the destination
+  // entry's index in `nav.entries()` (NavigationDestination only
+  // exposes `key`, not `index`) and compares to the current entry's
+  // index to discriminate forward vs back; `replace` carries no
+  // direction signal.
+  const directionFor = (event: NavigateEvent): string[] => {
+    if (event.navigationType === "push") return ["forward"]
+    if (event.navigationType === "traverse") {
+      const destKey = event.destination.key
+      const entries = nav.entries()
+      const destIdx = entries.findIndex((e) => e.key === destKey)
+      const curIdx = nav.currentEntry?.index ?? -1
+      if (destIdx >= 0 && curIdx >= 0) {
+        if (destIdx > curIdx) return ["forward"]
+        if (destIdx < curIdx) return ["back"]
+      }
+    }
+    return []
+  }
+
   const handler = (event: NavigateEvent) => {
     if (!event.canIntercept) return
     if (event.hashChange || event.downloadRequest !== null) return
@@ -206,6 +255,11 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
       }
       const urlChanged = event.destination.url !== window.location.href
       if (urlChanged) {
+        // Route through `onNavigation` so the framework's transition-
+        // type detection runs (forward / back). If frame snapshots
+        // also differ, append `__frame=…&__frameUrl=…` so the server
+        // session catches up in the same request.
+        const types = directionFor(event)
         event.intercept({
           handler: () =>
             swallowNavigationAbort(async () => {
@@ -214,12 +268,7 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
                 url.searchParams.append("__frame", d.key)
                 url.searchParams.append("__frameUrl", d.url)
               }
-              const handler = (
-                window as Window & {
-                  __rsc_partial_refetch?: (url: string) => Promise<void>
-                }
-              ).__rsc_partial_refetch
-              if (handler) await handler(url.toString())
+              await onNavigation(url.toString(), types)
             }),
         })
         return
@@ -238,7 +287,10 @@ function listenNavigation(onNavigation: (url: string) => Promise<void>) {
     }
 
     event.intercept({
-      handler: () => swallowNavigationAbort(() => onNavigation(event.destination.url)),
+      handler: () =>
+        swallowNavigationAbort(() =>
+          onNavigation(event.destination.url, directionFor(event)),
+        ),
     })
   }
 
