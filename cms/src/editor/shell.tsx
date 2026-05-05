@@ -20,6 +20,7 @@ import {
   type MatchClause,
 } from "@react-cms/framework/runtime/cms-runtime.ts"
 import { getCatalogManifest, type BlockManifest } from "@react-cms/framework/runtime/cms-prerender.ts"
+import { getRouteSnapshots } from "@react-cms/framework/lib/partial-registry.ts"
 import { setSessionFrameUrl } from "@react-cms/framework/runtime/session.ts"
 import { getRequest, setCookie } from "@react-cms/framework/runtime/context.ts"
 import { Card, CardContent } from "@react-cms/copies/components/ui/card"
@@ -69,6 +70,32 @@ function derivePreviewUrl(): string {
   return url.pathname + url.search
 }
 
+/**
+ * CmsIds that rendered for the previewed page, taken from the
+ * route-scoped partial registry. Each `ReactCms.partial(...)` call
+ * site self-registers its `cmsId` at render time, so "what cmsIds
+ * belong on this page" is a runtime fact the framework already
+ * tracks. The editor tree reads it and walks each as a tree root —
+ * `buildCmsTreeEntries` filters slot-children-of-other-roots out
+ * automatically, so passing the full set (roots + descendants) is
+ * idempotent.
+ *
+ * Cold-start: an empty registry produces an empty tree. The next
+ * full render of this route warms the canonical store and the tree
+ * fills in. Inside cache-mode refetches the canonical store carries
+ * the previous full render, so the tree stays populated.
+ */
+function renderedCmsIdsForPreviewedPage(): string[] {
+  const ids = new Set<string>()
+  const snapshots = getRouteSnapshots()
+  if (snapshots) {
+    for (const snap of snapshots.values()) {
+      if (snap.cmsId != null) ids.add(snap.cmsId)
+    }
+  }
+  return [...ids]
+}
+
 function previewRequest(): Request {
   const page = getRequest()
   const url = new URL(page.url)
@@ -96,12 +123,16 @@ export const EditorTreePartial = ReactCms.partial(
     selected,
   }: {
     selected: string | null
+    previewPath: string
   } & RenderArgs) {
-    // Tree is the global content workspace — every CMS root shows
-    // up regardless of the previewed page. Authors browse to a page
-    // via the address bar but can edit any CMS root from anywhere.
+    // Tree shows what `<Spec cmsId>` rendered for the previewed page —
+    // the registry maps "this page's tree" without a hardcoded route
+    // table. The `await` below also yields long enough for sibling
+    // partials (page roots + their slot children) to synchronously
+    // register before we read the registry.
     const catalog = await getCatalogManifest()
-    const entries = listAllCmsNodes()
+    const rootIds = renderedCmsIdsForPreviewedPage()
+    const entries = listAllCmsNodes(rootIds)
     const blockTypes = listSpecTypes()
 
     const parentTypeById = new Map<string, string | undefined>()
@@ -112,7 +143,9 @@ export const EditorTreePartial = ReactCms.partial(
     if (entries.length === 0) {
       return (
         <p className="text-sm text-muted-foreground" data-testid="cms-edit-tree-empty">
-          The CMS store is empty.
+          {rootIds.length === 0
+            ? "No CMS-aware partials rendered on this page yet. Navigate to a page that mounts a CMS root, or refresh once to warm the registry."
+            : "The CMS store is empty for this page's roots."}
         </p>
       )
     }
@@ -305,7 +338,15 @@ export const EditorTreePartial = ReactCms.partial(
   },
   {
     selector: "#cms-edit-tree",
-    vary: ({ search: { select: selected = null } }) => ({ selected }),
+    // Fold the previewed pathname into the fp so cross-page
+    // navigation invalidates the tree even though `?select=` is
+    // unchanged. The previewed pathname == the request pathname
+    // (editor toggle / select live in `?search`, never the path),
+    // so reading `pathname` directly is correct.
+    vary: ({ search: { select: selected = null }, pathname }) => ({
+      selected,
+      previewPath: pathname,
+    }),
   },
 )
 

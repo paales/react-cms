@@ -420,7 +420,18 @@ function contributionForNode(node: CmsNode, request: Request): string {
   const slotParts: string[] = []
   for (const name of Object.keys(node.slots).sort()) {
     const children = node.slots[name]
-    const childParts = children.map((child) => `${child.id}=${contributionForNode(child, request)}`)
+    const childParts = children.map((child) => {
+      // Resolve each child through `lookupCmsNode` so a top-level
+      // draft override on the slot-child id (saveCmsFields writes
+      // edits to `partials[childId]`, not into the parent's slot
+      // tree) flows into the parent's contribution. Without this,
+      // editing a nav-link's label leaves `app-nav`'s fingerprint
+      // unchanged — the parent fp-skips, the cached subtree wins,
+      // and the preview keeps showing the old label until the next
+      // full page render.
+      const effective = lookupCmsNode(child.id, request) ?? child
+      return `${child.id}=${contributionForNode(effective, request)}`
+    })
     slotParts.push(`${name}:[${childParts.join(",")}]`)
   }
   return `${base}|slots={${slotParts.join(";")}}`

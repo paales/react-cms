@@ -183,8 +183,16 @@ modes because `cms.text/...` reads return different values.
 `/?editor=1` sets `__editor=1` cookie; subsequent requests render
 inside `<EditorShell>`. Three panes:
 
-- Tree (`#cms-edit-tree`) — list of CMS nodes for the previewed
-  page. Click to select.
+- Tree (`#cms-edit-tree`) — registry-driven view of the cmsIds that
+  rendered for the previewed page. The tree reads
+  `getRouteSnapshots()` (every `<Spec cmsId>` self-registers at
+  render time) and walks each snapshot's id as a tree root through
+  `listAllCmsNodes(rootIds)`; slot-children-of-other-roots are
+  filtered out automatically. Chrome that renders on every page
+  (e.g. `<NavRootBlock cmsId="app-nav">` placed at the page root)
+  appears on every page; per-page roots only appear where their
+  partial mounts. Folds the previewed `pathname` into its `vary`
+  so cross-page navigation invalidates the tree fp.
 - Preview — the page itself, rendered inline inside the editor's
   middle pane. Page placements receive `parent={ROOT}`; their `vary`
   callbacks see the window URL with editor-internal params present

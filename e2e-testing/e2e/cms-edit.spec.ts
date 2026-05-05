@@ -295,6 +295,35 @@ test.describe("CMS editor — smoke", () => {
     // work.)
   })
 
+  test("editing a slot child updates the parent's preview without a page reload", async ({
+    page,
+  }) => {
+    // Regression: when the editor saves a slot-child edit it writes a
+    // top-level draft node for the child id, NOT into the parent's
+    // slot tree. The parent's CMS contribution must follow that
+    // override (via `lookupCmsNode`) so its fingerprint moves and the
+    // preview re-renders. Without that, `app-nav` (or any slot-host)
+    // fp-skips the post-save refetch, the cached subtree wins, and
+    // the preview keeps showing the old label until a full page nav
+    // re-warms the cache.
+    await page.goto("/cms-demo?editor=1&select=app-nav-link-pokemon")
+    await page.waitForLoadState("networkidle")
+
+    const preview = page.getByTestId("cms-edit-preview-pane")
+    await expect(preview.locator('a[href="/"]').first()).toContainText("Pokemon")
+
+    await page.getByTestId("cms-edit-field-input-label").fill("Pokédex (live)")
+    const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+      timeout: 5000,
+    })
+    await page.getByRole("button", { name: "Save to draft" }).click()
+    await responseP
+
+    await expect(preview.locator('a[href="/"]').first()).toContainText("Pokédex (live)", {
+      timeout: 10000,
+    })
+  })
+
   // Regression: tree-click selection routes through
   // `nav.navigate(href, { selector: "#cms-edit-tree #cms-edit-fields"
   // })` (see `<CmsEditTreeLink>`). That keeps the URL in sync but
@@ -554,22 +583,23 @@ test.describe("CMS editor — smoke", () => {
       await expect(page.getByTestId("cms-edit-tree-pane")).toHaveCount(0)
     })
 
-    test("tree shows every CMS root regardless of the previewed page", async ({ page }) => {
-      // Every page is a CMS page: the tree is the global content
-      // workspace, not a per-route filter. Both `app-nav` (chrome)
-      // and `cms-demo-root` (page) appear in the tree on every
-      // route — authors browse to a page via the address bar, but
-      // can edit any CMS root from any page.
+    test("tree reflects what's rendered on the previewed page", async ({ page }) => {
+      // Discovery is registry-driven: the tree shows the cmsIds that
+      // self-registered for the previewed route. Chrome that renders
+      // on every page (`app-nav`) appears everywhere; per-page roots
+      // (`cms-demo-root`) appear only where their partial mounts.
       await page.goto("/cms-demo?editor=1")
       await page.waitForLoadState("networkidle")
       await expect(page.getByTestId("cms-edit-tree-entry-cms-demo-root")).toBeVisible()
       await expect(page.getByTestId("cms-edit-tree-entry-app-nav")).toBeVisible()
 
-      // Same tree on / — neither root drops out.
+      // On / the cms-demo root drops out — nothing on the homepage
+      // mounts `<CmsDemoRootPartial>`. `app-nav` stays because the
+      // app shell mounts it on every page.
       await page.goto("/?editor=1")
       await page.waitForLoadState("networkidle")
-      await expect(page.getByTestId("cms-edit-tree-entry-cms-demo-root")).toBeVisible()
       await expect(page.getByTestId("cms-edit-tree-entry-app-nav")).toBeVisible()
+      await expect(page.getByTestId("cms-edit-tree-entry-cms-demo-root")).toHaveCount(0)
     })
 
     test("greeting config tab + form fields follow the previewed page slug", async ({ page }) => {
