@@ -217,7 +217,7 @@ export const InspectBasePage = ReactCms.partial(
   },
   {
     selector: "#inspect-base",
-    match: "/inspect/*",
+    match: "/inspect{/*}?",
   },
 )
 

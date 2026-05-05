@@ -291,6 +291,38 @@ function autoSelector(render: (...args: never[]) => unknown): SelectorTokens {
 
 // ─── Frame request resolution ─────────────────────────────────────────
 
+/**
+ * Extract NAMED match params from a URLPattern result.
+ *
+ * URLPattern populates `pathname.groups` / `search.groups` / etc. for
+ * every part of the URL, including parts the author didn't pin. Any
+ * unspecified part defaults to `*`, which captures into a numeric key
+ * (`"0"`, `"1"`, …). Those captures are not deliberate dependencies
+ * the author asked for — `match: "/inspect/*"` only specifies a
+ * pathname wildcard, but URLPattern still produces a `search.groups[0]`
+ * that captures the entire query string. Folding those numeric
+ * captures into the default `varyResult` makes spec fingerprints
+ * change whenever the URL's search/hash/etc. moves, which silently
+ * defeats fp-skip on every navigation that carries framework-internal
+ * params (`?cached=…`, `?partials=…`).
+ *
+ * Drop numeric keys here so only the author's named `:foo` groups
+ * flow through. Authors who genuinely need a wildcard tail in their
+ * dependency surface declare an explicit `vary` and read `pathname`
+ * (or any other field) off the scope directly — that path is opt-in
+ * and unaffected.
+ */
+function extractNamedParams(result: URLPatternResult): Record<string, string> {
+  const groups = { ...result.pathname.groups, ...result.search.groups }
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(groups)) {
+    if (typeof v !== "string") continue
+    if (/^\d+$/.test(k)) continue
+    out[k] = v
+  }
+  return out
+}
+
 function resolveFrameRequest(
   framePath: readonly string[],
   initialUrl: string | undefined,
@@ -425,10 +457,7 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   if (spec.matchPattern) {
     const result = spec.matchPattern.exec(request.url)
     if (result === null) return `${descId}:nomatch`
-    const groups = { ...result.pathname.groups, ...result.search.groups }
-    params = Object.fromEntries(
-      Object.entries(groups).filter(([_k, v]) => typeof v === "string"),
-    ) as Record<string, string>
+    params = extractNamedParams(result)
   }
 
   if (!spec.vary) {
@@ -472,25 +501,18 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
 const registeredMatchPatterns: URLPattern[] = []
 
 /**
- * Normalize a `MatchPattern` (string shorthand or URLPatternInit
- * dict) into a URLPattern. The string form is interpreted as a
- * pathname pattern, with one ergonomic concession: a trailing `/*`
- * is treated as optional so `"/cms-demo/*"` matches both
- * `/cms-demo` and `/cms-demo/anything`. Authors who want strict
- * URLPattern semantics use the URLPatternInit form.
+ * Compile a `MatchPattern` into a URLPattern with strict semantics:
+ * the string form is the pathname pattern verbatim, no rewriting.
+ * `match: "/inspect/*"` matches `/inspect/...` and NOT bare
+ * `/inspect`; authors who want both write the URLPattern modifier
+ * form `match: "/inspect{/*}?"` (or the URLPatternInit dict). This
+ * keeps wildcard semantics aligned with URLPattern itself — there's
+ * no implicit "optional trailing slash" magic the author has to know
+ * about.
  */
-function normalizePathnamePattern(pattern: string): string {
-  // `/x/*` → `/x{/*}?` — wraps the trailing wildcard in an optional
-  // group so the slash is also optional.
-  return pattern.replace(/\/\*$/, "{/*}?")
-}
-
 function compileMatchPattern(pattern: MatchPattern): URLPattern {
   if (typeof pattern === "string") {
-    return new URLPattern({ pathname: normalizePathnamePattern(pattern) })
-  }
-  if (typeof pattern.pathname === "string") {
-    return new URLPattern({ ...pattern, pathname: normalizePathnamePattern(pattern.pathname) })
+    return new URLPattern({ pathname: pattern })
   }
   return new URLPattern(pattern)
 }
@@ -566,10 +588,7 @@ function createSpecComponent<V>(
     if (spec.matchPattern) {
       const result = spec.matchPattern.exec(getRequest().url)
       if (result === null) return null
-      const groups = { ...result.pathname.groups, ...result.search.groups }
-      params = Object.fromEntries(
-        Object.entries(groups).filter(([_k, v]) => typeof v === "string"),
-      ) as Record<string, string>
+      params = extractNamedParams(result)
     }
 
     // ── Frame phase ──

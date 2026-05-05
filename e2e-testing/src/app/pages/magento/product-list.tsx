@@ -158,5 +158,5 @@ export const MagentoPage = ReactCms.partial(
       </>
     )
   },
-  { match: "/magento/*" },
+  { match: "/magento{/*}?" },
 )

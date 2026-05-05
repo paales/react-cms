@@ -78,7 +78,7 @@ interface PartialOptions<V> {
 
 | Option | Notes |
 |---|---|
-| `match` | `/p/:slug` / `/p/:slug/reviews/:page` / `/anything/*`. Pattern miss → spec emits nothing. |
+| `match` | URLPattern pathname (or full `URLPatternInit`). `/p/:slug`, `/p/:slug/reviews/:page`, `/inspect/*` (descendants only), `/inspect{/*}?` (bare + descendants). Pattern miss → spec emits nothing. Anonymous `*` captures don't flow into the default fingerprint — only named groups (`:foo`) do. |
 | `vary` | Sync function. Receives `{ request, params, cms }`. Returns the dependency surface or `null`. |
 | `selector` | Defaults to `#<kebab-cased Render.name minus Page/Block/Render/Partial suffix>`. |
 | `cmsId` | Defaults to the effective id (selector minus `#`). |

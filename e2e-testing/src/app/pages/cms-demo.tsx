@@ -2,7 +2,7 @@
  * /cms-demo — root-as-page-slot.
  *
  * One spec matches both `/cms-demo` and `/cms-demo/:slug` via the
- * tail catch-all pattern `/cms-demo/*`. The render is a
+ * `/cms-demo{/*}?` URLPattern (optional `/*` tail). The render is a
  * `<Children name="body">` slot whose entries (registered as `page-*`
  * blocks in the catalog) compose the page.
  */
@@ -48,5 +48,5 @@ export const CmsDemoPage = ReactCms.partial(
       </>
     )
   },
-  { match: "/cms-demo/*" },
+  { match: "/cms-demo{/*}?" },
 )

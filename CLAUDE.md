@@ -127,10 +127,16 @@ restart is rarely needed during dev.
   loaders run in `render`.
 - **Wrapper specs need a `vary` that captures their descendants'
   URL deps**, otherwise fp-skip on the wrapper blocks descendant
-  re-renders. The default behavior (no `vary`) folds the request
-  URL search string into the dependency surface — leaf specs that
-  legitimately don't depend on the URL can declare an explicit
-  `vary` returning a stable shape.
+  re-renders. With no `vary`, only NAMED `match` params (`:id`)
+  flow into the default dependency surface — anonymous `*` captures
+  and unspecified URL parts (search/hash) do NOT. So `match:
+  "/inspect{/*}?"` produces a stable fingerprint across `/inspect`
+  and `/inspect/p/3`; specs that genuinely depend on the wildcard
+  tail or query string declare `vary` and read `pathname` /
+  `search` off the scope explicitly.
+- **`match` is strict URLPattern** — no auto-suffixing. `match:
+  "/inspect/*"` means `/inspect/<rest>` and does NOT match bare
+  `/inspect`. To match both, use `match: "/inspect{/*}?"`.
 - **Slot blocks** (specs with `tags: [".x"]`) are catalog-registered
   by `type` so slots can look them up. Page specs (with `selector`
   or auto-derived from Render name) are not slot-listable.
