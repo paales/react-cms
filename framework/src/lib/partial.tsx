@@ -49,7 +49,12 @@ import {
   type CmsReadSurface,
 } from "../runtime/cms-runtime.ts"
 import { getRequest, parseCookies } from "../runtime/context.ts"
-import { getSessionFrameUrl, setSessionFrameUrl } from "../runtime/session.ts"
+import {
+  createSessionReadSurface,
+  getSessionFrameUrl,
+  setSessionFrameUrl,
+  type SessionReadSurface,
+} from "../runtime/session.ts"
 
 export { ROOT, type PartialCtx } from "./partial-context.ts"
 
@@ -91,6 +96,13 @@ export interface VaryScope {
   params: Record<string, string>
   /** CMS read surface bound to the spec's effective cmsId. */
   cms: CmsReadSurface
+  /** Per-session read surface. Each `session.<type>(name, …)` call
+   *  records `name` as a dependency on this spec — server actions
+   *  that mutate the same name (`setSessionValue`) walk every
+   *  registered snapshot and refetch the specs whose vary touched it.
+   *  Sync; values are stored in the framework session store, written
+   *  by the `setSessionValue` action. */
+  session: SessionReadSurface
 }
 
 /** Build a plain `{key: value}` object from a URLSearchParams. */
@@ -358,6 +370,11 @@ interface PartialBoundaryProps {
   /** Hash of the spec's varyResult — feeds the descendant fold so
    *  ancestors' fps reflect descendants' deps. */
   varyKey?: string
+  /** Session keys this spec's `vary` read via the `session.*` surface.
+   *  Server-action invalidations (`setSessionValue`) walk every
+   *  registered snapshot and refetch the specs that recorded the
+   *  mutated key. */
+  sessionDeps?: readonly string[]
   children: ReactNode
 }
 
@@ -376,6 +393,7 @@ export function PartialBoundary({
   errorWith,
   props,
   varyKey,
+  sessionDeps,
   children,
 }: PartialBoundaryProps): ReactNode {
   registerPartial(id, {
@@ -392,6 +410,7 @@ export function PartialBoundary({
     cache,
     props,
     varyKey,
+    sessionDeps,
   })
   return children
 }
@@ -491,6 +510,11 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
       headers: headersToRecord(request.headers),
       params,
       cms: createCmsReadSurface(snap.cmsId ?? "", request),
+      // Discard the deps set — the descendant fold consumes the
+      // resolved `result` only (it's folded into the ancestor's fp).
+      // Snapshot dep recording happens during the descendant's own
+      // render pass, not here.
+      session: createSessionReadSurface(new Set()),
     })
   } catch {
     // A vary that throws on the synthetic scope (e.g. relies on a
@@ -663,6 +687,8 @@ function createSpecComponent<V>(
 
     // ── Vary phase ──
     const cms = createCmsReadSurface(effectiveCmsId, ourRequest)
+    const sessionDepsSet = new Set<string>()
+    const session = createSessionReadSurface(sessionDepsSet)
     let varyResult: unknown
     if (opts.vary) {
       const ourUrl = new URL(ourRequest.url)
@@ -674,6 +700,7 @@ function createSpecComponent<V>(
         headers: headersToRecord(ourRequest.headers),
         params,
         cms,
+        session,
       })
       if (v === null) return null
       varyResult = v
@@ -771,6 +798,8 @@ function createSpecComponent<V>(
       children: outerChildren,
     } as V & RenderArgs
     const fallback = opts.fallback ?? null
+    const sessionDeps =
+      sessionDepsSet.size > 0 ? Array.from(sessionDepsSet).sort() : undefined
 
     if (shouldSkip) {
       return (
@@ -789,6 +818,7 @@ function createSpecComponent<V>(
           errorWith={opts.errorWith}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           varyKey={varyKey}
+          sessionDeps={sessionDeps}
         >
           {placeholderFor(id)}
         </PartialBoundary>
@@ -823,6 +853,7 @@ function createSpecComponent<V>(
           errorWith={opts.errorWith}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           varyKey={varyKey}
+          sessionDeps={sessionDeps}
         >
           <PartialErrorBoundary
             key={id}
@@ -925,6 +956,8 @@ function createSpecComponent<V>(
         fallback={fallback}
         errorWith={opts.errorWith}
         props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
+        varyKey={varyKey}
+        sessionDeps={sessionDeps}
       >
         {body}
       </PartialBoundary>

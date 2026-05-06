@@ -10,16 +10,21 @@
 // (`@react-cms/framework/runtime/cms-runtime.ts`) remain available for the
 // RSC adapter entry, which legitimately needs framework internals.
 //
-// ── "use client" caveat ────────────────────────────────────────────────
-// A `"use client"` file that needs `useNavigation` / `useActivate` /
-// `useScrollRestore` (anything originating in `lib/partial-client.tsx`,
-// itself a `"use client"` file) MUST import from the deep path
-// (`@react-cms/framework/lib/partial-client.tsx`). Pulling those hooks
-// through this server-side barrel mis-resolves the Flight client
+// ── Cross-`"use *"` re-export caveat ───────────────────────────────────
+// A `"use client"` file that needs symbols originating in another file
+// with a directive (`"use client"` hooks like `useNavigation`, OR
+// `"use server"` actions like `setSessionValue`) MUST import from the
+// deep path, not through this server-side barrel. Pulling those
+// symbols through the barrel mis-resolves the Flight client/server
 // reference and surfaces at runtime as
 // `chunk.reason.enqueueModel is not a function`.
-// Symbols exported from non-`"use client"` modules (e.g. `getNavigation`
-// from `navigation-api.ts`) re-export through the barrel cleanly.
+//   ✗ import { useNavigation } from "@react-cms/framework"            (in "use client")
+//   ✓ import { useNavigation } from "@react-cms/framework/lib/partial-client.tsx"
+//   ✗ import { setSessionValue } from "@react-cms/framework"          (in "use client")
+//   ✓ import { setSessionValue } from "@react-cms/framework/runtime/session-actions.ts"
+// Symbols from plain server modules (`getNavigation` from
+// `navigation-api.ts`, `notFound` from `errors.ts`) re-export through
+// this barrel cleanly.
 
 // ── Partial spec API (lib/) ─────────────────────────────────────────────
 export * from "./src/lib/index.ts"
@@ -90,5 +95,13 @@ export { getRouteSnapshots } from "./src/lib/partial-registry.ts"
 // ── Dev-only debug overlay ─────────────────────────────────────────────
 export { PartialsDebug } from "./src/lib/partial-debug.tsx"
 
-// ── Session (frame URLs, scopes) ────────────────────────────────────────
-export { setSessionFrameUrl } from "./src/runtime/session.ts"
+// ── Session (frame URLs, per-key values, read surface) ─────────────────
+export {
+  setSessionFrameUrl,
+  type SessionReadSurface,
+} from "./src/runtime/session.ts"
+
+// `setSessionValue` (a server action) is deliberately NOT re-exported
+// here. `"use client"` files calling it must deep-import from
+// `@react-cms/framework/runtime/session-actions.ts` — see the
+// cross-`"use *"` caveat above.

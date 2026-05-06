@@ -40,6 +40,7 @@ import { CmsEditAddBlock } from "./components/add-block.tsx"
 import { Icon, SixDot } from "./components/icon.tsx"
 import { PanelTabBar, type PanelTab } from "./components/panel-tab-bar.tsx"
 import { PageNavigator } from "./components/page-navigator.tsx"
+import { SessionToggleLink } from "./components/session-toggle.tsx"
 import { StatusPill } from "./components/status-pill.tsx"
 import { EditorChromeStyles } from "./editor-styles.tsx"
 import {
@@ -60,17 +61,17 @@ const removeBlockFromSlot = _removeBlockFromSlot
 const resetCmsDraft = _resetCmsDraft
 const saveCmsFields = _saveCmsFields
 
+// URL-bound editor params (shareable / browser-history). Tweaks
+// (palette / surface / attachment / device / tree style / left tab)
+// are session-backed via the `session.*` vary surface — see the
+// session.enum reads in each vary block below. `editor` keeps its
+// URL toggle so `?editor=1` opens the chrome and stamps the cookie
+// for sticky reload.
 const EDITOR_RESERVED_PARAMS = [
   "editor",
   "select",
   "config",
-  "tab",
-  "tree",
   "tabs",
-  "palette",
-  "surface",
-  "attachment",
-  "device",
 ] as const
 const FRAMEWORK_INTERNAL_PARAMS = [
   "partials",
@@ -124,13 +125,7 @@ function headersFromRecord(record: Partial<Record<string, string>>): Headers {
 interface HrefOpts {
   select?: string | null
   config?: number | null
-  tab?: "layers" | "settings"
-  tree?: "jsx" | "plain"
   tabs?: string | null
-  palette?: Palette
-  surface?: Surface
-  attachment?: Attachment
-  device?: Device
   clearSelect?: boolean
 }
 
@@ -144,16 +139,10 @@ function cmsEditHref(currentUrl: URL, opts: HrefOpts): string {
   } else if (opts.config != null) {
     url.searchParams.delete("config")
   }
-  if (opts.tab) url.searchParams.set("tab", opts.tab)
-  if (opts.tree) url.searchParams.set("tree", opts.tree)
   if (opts.tabs != null) {
     if (opts.tabs === "") url.searchParams.delete("tabs")
     else url.searchParams.set("tabs", opts.tabs)
   }
-  if (opts.palette) url.searchParams.set("palette", opts.palette)
-  if (opts.surface) url.searchParams.set("surface", opts.surface)
-  if (opts.attachment) url.searchParams.set("attachment", opts.attachment)
-  if (opts.device) url.searchParams.set("device", opts.device)
 
   url.searchParams.delete("editor")
   for (const p of FRAMEWORK_INTERNAL_PARAMS) url.searchParams.delete(p)
@@ -460,9 +449,9 @@ export const EditorTreePartial = ReactCms.partial(
   },
   {
     selector: "#cms-edit-tree",
-    vary: ({ url, search: { select = null, tree = null } }) => ({
+    vary: ({ url, search: { select = null }, session }) => ({
       selected: select,
-      treeStyle: tree === "jsx" ? "jsx" : "plain",
+      treeStyle: session.enum("editor-tree-style", ["jsx", "plain"], "plain"),
       currentUrl: url.toString(),
     }),
   },
@@ -976,35 +965,19 @@ function SpacingVisualizer() {
 
 function EditorToolbar({
   treeStyle,
-  selected,
   palette,
   attachment,
   device,
   previewUrl,
   homeLabel,
-  currentUrl,
 }: {
   treeStyle: "jsx" | "plain"
-  selected: string | null
   palette: Palette
   attachment: Attachment
   device: Device
   previewUrl: string
   homeLabel: string
-  currentUrl: URL
 }) {
-  const toggleTreeStyle = cmsEditHref(currentUrl, {
-    tree: treeStyle === "jsx" ? "plain" : "jsx",
-    select: selected ?? undefined,
-  })
-  const toggleAttachment = cmsEditHref(currentUrl, {
-    attachment: attachment === "docked" ? "floating" : "docked",
-  })
-  const togglePalette = cmsEditHref(currentUrl, {
-    palette: palette === "dark" ? "light" : "dark",
-    surface: "translucent",
-  })
-
   return (
     <div className="cms-toolbar" data-topbar>
       {attachment !== "docked" && (
@@ -1031,15 +1004,16 @@ function EditorToolbar({
       <Sep />
       <div style={{ display: "flex", gap: 2 }}>
         {(["desktop", "tablet", "mobile"] as const).map((d) => (
-          <a
+          <SessionToggleLink
             key={d}
-            href={cmsEditHref(currentUrl, { device: d })}
+            name="editor-device"
+            value={d}
             className="cms-toolbar-icon"
-            data-active={device === d || undefined}
+            active={device === d}
             title={d.charAt(0).toUpperCase() + d.slice(1)}
           >
             <Icon name={d} size={16} />
-          </a>
+          </SessionToggleLink>
         ))}
       </div>
       <Sep />
@@ -1050,34 +1024,30 @@ function EditorToolbar({
         <Icon name="redo" size={16} />
       </span>
       <Sep />
-      <a
-        href={toggleAttachment}
+      <SessionToggleLink
+        name="editor-attachment"
+        value={attachment === "docked" ? "floating" : "docked"}
         className="cms-toolbar-icon"
-        data-active={attachment === "docked" || undefined}
+        active={attachment === "docked"}
         title={attachment === "docked" ? "Floating panels" : "Dock panels"}
       >
-        <Icon
-          name={attachment === "docked" ? "floatPanels" : "dockPanels"}
-          size={16}
-        />
-      </a>
-      <a
-        href={togglePalette}
+        <Icon name={attachment === "docked" ? "floatPanels" : "dockPanels"} size={16} />
+      </SessionToggleLink>
+      <SessionToggleLink
+        name="editor-palette"
+        value={palette === "dark" ? "light" : "dark"}
         className="cms-toolbar-icon"
         title={palette === "dark" ? "Switch to light" : "Switch to dark"}
       >
         <Icon name={palette === "dark" ? "sun" : "moon"} size={14} />
-      </a>
+      </SessionToggleLink>
       <Sep />
-      {/* Plain <a> (full page nav) so EditorShell re-evaluates and the
-          toolbar's treeStyle prop reflects the new state — selector-
-          targeted refetch would only re-run #cms-edit-tree, leaving the
-          toolbar's toggle href stale. */}
-      <a
-        href={toggleTreeStyle}
+      <SessionToggleLink
+        name="editor-tree-style"
+        value={treeStyle === "jsx" ? "plain" : "jsx"}
         className="cms-toolbar-icon"
-        data-testid="cms-edit-tree-style-toggle"
-        data-active={treeStyle === "jsx" ? "true" : undefined}
+        testId="cms-edit-tree-style-toggle"
+        active={treeStyle === "jsx"}
         title={treeStyle === "jsx" ? "Switch to plain names" : "Switch to JSX tags"}
       >
         <span
@@ -1089,7 +1059,7 @@ function EditorToolbar({
         >
           &lt;/&gt;
         </span>
-      </a>
+      </SessionToggleLink>
       <Sep />
       <StatusPill />
       <Sep />
@@ -1202,9 +1172,6 @@ export const EditorShell = ReactCms.partial(
     const currentUrl = new URL(currentUrlRaw)
     if (!isPreviewFrameRefetch) setSessionFrameUrl(["preview"], previewUrl)
 
-    const layersHref = cmsEditHref(currentUrl, { tab: "layers" })
-    const settingsHref = cmsEditHref(currentUrl, { tab: "settings", clearSelect: true })
-
     const selectedNode: CmsNode | null = selected ? lookupDraftNode(selected) : null
     const selectedLabel = selectedNode?.displayName ?? (selected ? `#${selected}` : null)
 
@@ -1250,13 +1217,11 @@ export const EditorShell = ReactCms.partial(
         >
           <EditorToolbar
             treeStyle={treeStyle}
-            selected={selected}
             palette={palette}
             attachment={attachment}
             device={device}
             previewUrl={previewUrl}
             homeLabel="Home page"
-            currentUrl={currentUrl}
           />
 
           {/* Left panel — Layers / Settings */}
@@ -1270,14 +1235,14 @@ export const EditorShell = ReactCms.partial(
                   label: "Layers",
                   icon: <Icon name="layers" size={14} />,
                   active: leftTab === "layers",
-                  href: layersHref,
+                  sessionToggle: { name: "editor-left-tab", value: "layers" },
                 },
                 {
                   id: "settings",
                   label: "Settings",
                   icon: <Icon name="settings" size={14} />,
                   active: leftTab === "settings",
-                  href: settingsHref,
+                  sessionToggle: { name: "editor-left-tab", value: "settings" },
                 },
               ]}
             />
@@ -1328,44 +1293,28 @@ export const EditorShell = ReactCms.partial(
   {
     vary: ({
       url,
-      search: {
-        editor: editorParam = null,
-        tab: tabParam = null,
-        tree: treeParam = null,
-        select: selectedParam = null,
-        palette: paletteParam = null,
-        surface: surfaceParam = null,
-        attachment: attachmentParam = null,
-        device: deviceParam = null,
-      },
+      search: { editor: editorParam = null, select: selectedParam = null },
       cookies: { [EDITOR_COOKIE]: cookieFlag },
+      session,
     }) => {
       const editor = editorParam === "1" ? true : editorParam === "0" ? false : cookieFlag === "1"
-      const leftTab: "layers" | "settings" = tabParam === "settings" ? "settings" : "layers"
-      const treeStyle: "jsx" | "plain" = treeParam === "jsx" ? "jsx" : "plain"
-      const palette: Palette = paletteParam === "dark" ? "dark" : "light"
-      // Translucent ("blur") is the canonical surface — light + solid
-      // remain in the type system but no toolbar control selects them.
-      const surface: Surface =
-        surfaceParam === "light"
-          ? "light"
-          : surfaceParam === "solid"
-            ? "solid"
-            : "translucent"
-      const attachment: Attachment = attachmentParam === "floating" ? "floating" : "docked"
-      const device: Device =
-        deviceParam === "tablet" ? "tablet" : deviceParam === "mobile" ? "mobile" : "desktop"
       const isPreviewFrameRefetch = url.searchParams.getAll("__frame").includes("preview")
       return {
         editor,
         sync: editorParam,
-        leftTab,
-        treeStyle,
+        leftTab: session.enum("editor-left-tab", ["layers", "settings"], "layers"),
+        treeStyle: session.enum("editor-tree-style", ["jsx", "plain"], "plain"),
         selected: selectedParam,
-        palette,
-        surface,
-        attachment,
-        device,
+        palette: session.enum("editor-palette", ["light", "dark"], "light"),
+        // Translucent ("blur") is the canonical surface; light + solid
+        // remain in the type for future toolbar wiring.
+        surface: session.enum(
+          "editor-surface",
+          ["light", "translucent", "solid"],
+          "translucent",
+        ),
+        attachment: session.enum("editor-attachment", ["floating", "docked"], "docked"),
+        device: session.enum("editor-device", ["desktop", "tablet", "mobile"], "desktop"),
         currentUrl: url.toString(),
         previewUrl: derivePreviewUrl(url),
         isPreviewFrameRefetch,

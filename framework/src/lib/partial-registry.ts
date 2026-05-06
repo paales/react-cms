@@ -77,6 +77,11 @@ export interface PartialSnapshot {
    *  own JSX is unchanged would fp-skip and starve its descendants
    *  of a re-evaluation, even when their URL/CMS deps just changed. */
   varyKey?: string
+  /** Session keys this spec's `vary` read through the `session.*`
+   *  surface. The `setSessionValue` server action walks snapshots
+   *  on each route and unions the specs whose deps include the
+   *  mutated key into a single `{invalidate: {selector}}` directive. */
+  sessionDeps?: readonly string[]
 }
 
 const HINT_LRU_MAX = 10_000

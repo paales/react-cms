@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { ChromeTab, ChromeTabStrip } from "./chrome-tab.tsx"
 import { SixDot } from "./icon.tsx"
+import { SessionToggleLink } from "./session-toggle.tsx"
 
 /**
  * Unified tab-bar for the editor panels. Picks markup per surface:
@@ -22,7 +23,12 @@ export interface PanelTab {
   id: string
   label: string
   icon?: ReactNode
+  /** URL-bound activation. Use when the tab represents a shareable
+   *  view (e.g. the right panel's element tabs reflecting `?select=`). */
   href?: string
+  /** Session-bound activation. Use when the tab toggles a transient
+   *  editor view (e.g. the left panel's Layers / Settings switch). */
+  sessionToggle?: { name: string; value: string | number | boolean }
   active?: boolean
   closeHref?: string
   testId?: string
@@ -111,34 +117,56 @@ export function PanelTabBar({
                 : null),
             }}
           >
-            <a
-              href={t.href}
-              data-testid={t.testId}
-              data-active={t.active ? "true" : undefined}
-              style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: t.closeHref ? "0 22px 0 8px" : "0 8px",
-                textDecoration: "none",
-                color: t.active ? "var(--cms-ink)" : "var(--cms-ink-2)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-              }}
-            >
-              {t.icon}
-              <span
+            {t.sessionToggle ? (
+              <SessionToggleLink
+                name={t.sessionToggle.name}
+                value={t.sessionToggle.value}
+                testId={t.testId}
+                active={t.active}
+                className="cms-segment-link"
+              >
+                {t.icon}
+                <span
+                  style={{
+                    flex: 1,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {t.label}
+                </span>
+              </SessionToggleLink>
+            ) : (
+              <a
+                href={t.href}
+                data-testid={t.testId}
+                data-active={t.active ? "true" : undefined}
                 style={{
                   flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: t.closeHref ? "0 22px 0 8px" : "0 8px",
+                  textDecoration: "none",
+                  color: t.active ? "var(--cms-ink)" : "var(--cms-ink-2)",
                   whiteSpace: "nowrap",
                   overflow: "hidden",
-                  textOverflow: "ellipsis",
                 }}
               >
-                {t.label}
-              </span>
-            </a>
+                {t.icon}
+                <span
+                  style={{
+                    flex: 1,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {t.label}
+                </span>
+              </a>
+            )}
             {t.closeHref && (
               <a
                 href={t.closeHref}
