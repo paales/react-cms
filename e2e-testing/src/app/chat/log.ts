@@ -19,7 +19,7 @@
 
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { getScope, isTestMode } from "@react-cms/framework/runtime/context.ts"
+import { getScope, isTestMode } from "@react-cms/framework"
 
 // Demo cadence (human-perceptible trickle). Playwright workers hit
 // the fast-path below so the e2e suite doesn't pay the 100 ms × 10 s

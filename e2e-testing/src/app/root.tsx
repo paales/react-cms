@@ -1,11 +1,15 @@
 import "./styles.css"
 // Side-effect import — block specs self-register at module load.
 import "./blocks/catalog.ts"
-import { PartialRoot, ROOT } from "@react-cms/framework"
-import { NotFoundError, RedirectError } from "@react-cms/framework/runtime/errors.ts"
-import { setFrameworkControl } from "@react-cms/framework/runtime/context.ts"
-import { Redirect } from "@react-cms/framework/runtime/redirect-client.tsx"
-import { PartialsDebug } from "@react-cms/framework/lib/partial-debug.tsx"
+import {
+  NotFoundError,
+  PartialRoot,
+  PartialsDebug,
+  ROOT,
+  Redirect,
+  RedirectError,
+  setFrameworkControl,
+} from "@react-cms/framework"
 import { AppNav } from "./components/app-nav.tsx"
 import { ChatOverlay } from "./chat/chat-overlay.tsx"
 import { NotFoundPage } from "./pages/not-found.tsx"

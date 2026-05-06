@@ -5,11 +5,12 @@
  * {maxAge: 60}`) and varies by `flavor`; `Clock` stays uncached.
  */
 
-import { ReactCms, type RenderArgs } from "@react-cms/framework"
+import { ReactCms, getScope, type RenderArgs } from "@react-cms/framework"
+// `_cacheStats` is a framework-internal diagnostic surface — kept on
+// the deep path because the demo intentionally peeks at internals.
 import { _cacheStats } from "@react-cms/framework/lib/cache.tsx"
 import { CacheControls } from "../components/cache-controls.tsx"
 import { ClickCounter } from "../components/click-counter.tsx"
-import { getScope } from "@react-cms/framework/runtime/context.ts"
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

@@ -16,23 +16,25 @@
  * those two, never the preview.
  */
 
-import { ReactCms, type RenderArgs } from "@react-cms/framework"
 import {
   EDITOR_COOKIE,
+  ReactCms,
+  getCatalogManifest,
+  getRouteSnapshots,
   listAllCmsNodes,
+  listSpecTypes,
   lookupDraftNode,
   parseSlotEntryId,
   pickBestConfigIndex,
-  listSpecTypes,
+  setCookie,
+  setSessionFrameUrl,
+  type BlockManifest,
   type CmsConfig,
+  type CmsNode,
   type ContentFieldKind,
   type MatchClause,
-  type CmsNode,
-} from "@react-cms/framework/runtime/cms-runtime.ts"
-import { getCatalogManifest, type BlockManifest } from "@react-cms/framework/runtime/cms-prerender.ts"
-import { getRouteSnapshots } from "@react-cms/framework/lib/partial-registry.ts"
-import { setSessionFrameUrl } from "@react-cms/framework/runtime/session.ts"
-import { getRequest, setCookie } from "@react-cms/framework/runtime/context.ts"
+  type RenderArgs,
+} from "@react-cms/framework"
 import { CmsEditTreeLink } from "./components/tree-link.tsx"
 import { CmsEditAddBlock } from "./components/add-block.tsx"
 import { Icon, SixDot } from "./components/icon.tsx"
@@ -88,8 +90,8 @@ function stripEditorAndInternalParams(url: URL): void {
   for (const p of FRAMEWORK_INTERNAL_PARAMS) url.searchParams.delete(p)
 }
 
-function derivePreviewUrl(): string {
-  const url = new URL(getRequest().url)
+function derivePreviewUrl(currentUrl: URL): string {
+  const url = new URL(currentUrl)
   stripEditorAndInternalParams(url)
   return url.pathname + url.search
 }
@@ -105,11 +107,18 @@ function renderedCmsIdsForPreviewedPage(): string[] {
   return [...ids]
 }
 
-function previewRequest(): Request {
-  const page = getRequest()
-  const url = new URL(page.url)
+function buildPreviewRequest(currentUrl: URL, headers: Headers): Request {
+  const url = new URL(currentUrl)
   stripEditorAndInternalParams(url)
-  return new Request(url, { headers: page.headers, method: "GET" })
+  return new Request(url, { headers, method: "GET" })
+}
+
+function headersFromRecord(record: Partial<Record<string, string>>): Headers {
+  const h = new Headers()
+  for (const [k, v] of Object.entries(record)) {
+    if (typeof v === "string") h.set(k, v)
+  }
+  return h
 }
 
 interface HrefOpts {
@@ -125,8 +134,8 @@ interface HrefOpts {
   clearSelect?: boolean
 }
 
-function cmsEditHref(opts: HrefOpts): string {
-  const url = new URL(getRequest().url)
+function cmsEditHref(currentUrl: URL, opts: HrefOpts): string {
+  const url = new URL(currentUrl)
   if (opts.clearSelect) url.searchParams.delete("select")
   else if (opts.select != null) url.searchParams.set("select", opts.select)
 
@@ -184,9 +193,8 @@ function iconForType(type: string | undefined): string {
   return "block"
 }
 
-function readMultiTabs(): string[] {
-  const url = new URL(getRequest().url)
-  const raw = url.searchParams.get("tabs") ?? ""
+function readMultiTabs(currentUrl: URL): string[] {
+  const raw = currentUrl.searchParams.get("tabs") ?? ""
   return raw.split(",").map((s) => s.trim()).filter(Boolean)
 }
 
@@ -196,11 +204,13 @@ export const EditorTreePartial = ReactCms.partial(
   async function EditorTreeRender({
     selected,
     treeStyle,
+    currentUrl: currentUrlRaw,
   }: {
     selected: string | null
-    previewPath: string
     treeStyle: "jsx" | "plain"
+    currentUrl: string
   } & RenderArgs) {
+    const currentUrl = new URL(currentUrlRaw)
     const catalog = await getCatalogManifest()
     const rootIds = renderedCmsIdsForPreviewedPage()
     const entries = listAllCmsNodes(rootIds)
@@ -308,7 +318,7 @@ export const EditorTreePartial = ReactCms.partial(
               style={{ paddingLeft: indent }}
             >
               <CmsEditTreeLink
-                href={cmsEditHref({ select: entry.id })}
+                href={cmsEditHref(currentUrl, { select: entry.id })}
                 className="cms-tree-row"
                 testId={`cms-edit-tree-entry-${entry.id}`}
                 selected={isSelected}
@@ -450,13 +460,10 @@ export const EditorTreePartial = ReactCms.partial(
   },
   {
     selector: "#cms-edit-tree",
-    vary: ({
-      search: { select: selected = null, tree: treeStyleParam = null },
-      pathname,
-    }) => ({
-      selected,
-      previewPath: pathname,
-      treeStyle: treeStyleParam === "jsx" ? "jsx" : "plain",
+    vary: ({ url, search: { select = null, tree = null } }) => ({
+      selected: select,
+      treeStyle: tree === "jsx" ? "jsx" : "plain",
+      currentUrl: url.toString(),
     }),
   },
 )
@@ -507,12 +514,14 @@ export const EditorSettingsPartial = ReactCms.partial(
 export const EditorFieldPanelPartial = ReactCms.partial(
   async function EditorFieldPanelRender({
     selected,
-    configIndexRaw,
+    effectiveIndex: vEffectiveIndex,
+    currentUrl: currentUrlRaw,
   }: {
-    pathname: string
     selected: string | null
-    configIndexRaw: string | null
+    effectiveIndex: number
+    currentUrl: string
   } & RenderArgs) {
+    const currentUrl = new URL(currentUrlRaw)
     if (!selected) {
       return (
         <div className="cms-panel-body">
@@ -536,8 +545,11 @@ export const EditorFieldPanelPartial = ReactCms.partial(
     const manifest = node?.type ? catalog[node.type] : undefined
     const hasDraft = listAllCmsNodes().some((e) => e.id === selected && e.hasDraft)
     const configs = node?.configs ?? []
-    const configIndex = configIndexRaw != null ? Number(configIndexRaw) : null
-    const effectiveIndex = pickEffectiveConfig(configs, configIndex)
+    const effectiveIndex = vEffectiveIndex >= 0 && vEffectiveIndex < configs.length
+      ? vEffectiveIndex
+      : configs.length > 0
+        ? 0
+        : -1
     const currentConfig = effectiveIndex >= 0 ? configs[effectiveIndex] : null
     const fieldMap = buildFieldMap(currentConfig, manifest)
 
@@ -577,7 +589,12 @@ export const EditorFieldPanelPartial = ReactCms.partial(
         </div>
 
         {configs.length > 0 && (
-          <ConfigTabs selected={selected} configs={configs} activeIndex={effectiveIndex} />
+          <ConfigTabs
+            selected={selected}
+            configs={configs}
+            activeIndex={effectiveIndex}
+            currentUrl={currentUrl}
+          />
         )}
 
         {Object.keys(fieldMap).length === 0 ? (
@@ -613,7 +630,7 @@ export const EditorFieldPanelPartial = ReactCms.partial(
                 Save to draft
               </button>
               <a
-                href={cmsEditHref({ select: selected, config: effectiveIndex })}
+                href={cmsEditHref(currentUrl, { select: selected, config: effectiveIndex })}
                 className="cms-btn cms-btn--ghost"
               >
                 Discard changes
@@ -628,20 +645,36 @@ export const EditorFieldPanelPartial = ReactCms.partial(
   },
   {
     selector: "#cms-edit-fields",
-    vary: ({ pathname, search: { select: selected = null, config: configIndexRaw = null } }) => ({
-      pathname,
-      selected,
-      configIndexRaw,
-    }),
+    vary: ({ url, headers, search: { select = null, config = null } }) => {
+      const requested = config != null ? Number(config) : null
+      let effectiveIndex = -1
+      if (select && !parseSlotEntryId(select)) {
+        const node = lookupDraftNode(select)
+        const configs = node?.configs ?? []
+        if (configs.length > 0) {
+          const previewReq = buildPreviewRequest(url, headersFromRecord(headers))
+          effectiveIndex = pickEffectiveConfig(configs, requested, previewReq)
+        }
+      }
+      return {
+        selected: select,
+        effectiveIndex,
+        currentUrl: url.toString(),
+      }
+    },
   },
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
-function pickEffectiveConfig(configs: readonly CmsConfig[], requested: number | null): number {
+function pickEffectiveConfig(
+  configs: readonly CmsConfig[],
+  requested: number | null,
+  previewReq: Request,
+): number {
   if (configs.length === 0) return -1
   if (requested != null && requested >= 0 && requested < configs.length) return requested
-  const best = pickBestConfigIndex(configs, previewRequest())
+  const best = pickBestConfigIndex(configs, previewReq)
   if (best != null) return best
   const defaultIdx = configs.findIndex((c) => Object.keys(c.match).length === 0)
   return defaultIdx >= 0 ? defaultIdx : 0
@@ -651,10 +684,12 @@ function ConfigTabs({
   selected,
   configs,
   activeIndex,
+  currentUrl,
 }: {
   selected: string
   configs: readonly CmsConfig[]
   activeIndex: number
+  currentUrl: URL
 }) {
   return (
     <div data-testid="cms-edit-config-tabs" style={{ marginBottom: 6 }}>
@@ -668,7 +703,7 @@ function ConfigTabs({
           return (
             <CmsEditTreeLink
               key={idx}
-              href={cmsEditHref({ select: selected, config: idx })}
+              href={cmsEditHref(currentUrl, { select: selected, config: idx })}
               testId={`cms-edit-config-tab-${idx}`}
               selected={isActive}
             >
@@ -943,29 +978,29 @@ function EditorToolbar({
   treeStyle,
   selected,
   palette,
-  surface,
   attachment,
   device,
   previewUrl,
   homeLabel,
+  currentUrl,
 }: {
   treeStyle: "jsx" | "plain"
   selected: string | null
   palette: Palette
-  surface: Surface
   attachment: Attachment
   device: Device
   previewUrl: string
   homeLabel: string
+  currentUrl: URL
 }) {
-  const toggleTreeStyle = cmsEditHref({
+  const toggleTreeStyle = cmsEditHref(currentUrl, {
     tree: treeStyle === "jsx" ? "plain" : "jsx",
     select: selected ?? undefined,
   })
-  const toggleAttachment = cmsEditHref({
+  const toggleAttachment = cmsEditHref(currentUrl, {
     attachment: attachment === "docked" ? "floating" : "docked",
   })
-  const togglePalette = cmsEditHref({
+  const togglePalette = cmsEditHref(currentUrl, {
     palette: palette === "dark" ? "light" : "dark",
     surface: "translucent",
   })
@@ -998,7 +1033,7 @@ function EditorToolbar({
         {(["desktop", "tablet", "mobile"] as const).map((d) => (
           <a
             key={d}
-            href={cmsEditHref({ device: d })}
+            href={cmsEditHref(currentUrl, { device: d })}
             className="cms-toolbar-icon"
             data-active={device === d || undefined}
             title={d.charAt(0).toUpperCase() + d.slice(1)}
@@ -1140,6 +1175,9 @@ export const EditorShell = ReactCms.partial(
     surface,
     attachment,
     device,
+    currentUrl: currentUrlRaw,
+    previewUrl,
+    isPreviewFrameRefetch,
   }: {
     editor: boolean
     sync: string | null
@@ -1150,6 +1188,9 @@ export const EditorShell = ReactCms.partial(
     surface: Surface
     attachment: Attachment
     device: Device
+    currentUrl: string
+    previewUrl: string
+    isPreviewFrameRefetch: boolean
   } & RenderArgs) {
     if (sync === "1") setCookie(EDITOR_COOKIE, "1")
     else if (sync === "0") setCookie(EDITOR_COOKIE, "", 0)
@@ -1158,13 +1199,11 @@ export const EditorShell = ReactCms.partial(
     // own; this partial is a sibling overlay placed at body level.
     if (!editor) return null
 
-    const previewUrl = derivePreviewUrl()
-    const incomingUrl = new URL(getRequest().url)
-    const isPreviewFrameRefetch = incomingUrl.searchParams.getAll("__frame").includes("preview")
+    const currentUrl = new URL(currentUrlRaw)
     if (!isPreviewFrameRefetch) setSessionFrameUrl(["preview"], previewUrl)
 
-    const layersHref = cmsEditHref({ tab: "layers" })
-    const settingsHref = cmsEditHref({ tab: "settings", clearSelect: true })
+    const layersHref = cmsEditHref(currentUrl, { tab: "layers" })
+    const settingsHref = cmsEditHref(currentUrl, { tab: "settings", clearSelect: true })
 
     const selectedNode: CmsNode | null = selected ? lookupDraftNode(selected) : null
     const selectedLabel = selectedNode?.displayName ?? (selected ? `#${selected}` : null)
@@ -1174,7 +1213,7 @@ export const EditorShell = ReactCms.partial(
     // active tab is whichever entry matches `?select=`. Closing a tab
     // removes it from the list; if the active tab is closed, fall back
     // to the next one.
-    const openTabIds = new Set<string>(readMultiTabs())
+    const openTabIds = new Set<string>(readMultiTabs(currentUrl))
     if (selected) openTabIds.add(selected)
     const tabs: Array<{ id: string; label: string; type: string | undefined }> = [...openTabIds]
       .map((id) => {
@@ -1184,7 +1223,7 @@ export const EditorShell = ReactCms.partial(
     function closeHrefFor(id: string): string {
       const next = [...openTabIds].filter((x) => x !== id).join(",")
       const newSelect = id === selected ? null : selected
-      return cmsEditHref({
+      return cmsEditHref(currentUrl, {
         tabs: next || "",
         select: newSelect ?? undefined,
         clearSelect: newSelect == null,
@@ -1213,11 +1252,11 @@ export const EditorShell = ReactCms.partial(
             treeStyle={treeStyle}
             selected={selected}
             palette={palette}
-            surface={surface}
             attachment={attachment}
             device={device}
             previewUrl={previewUrl}
             homeLabel="Home page"
+            currentUrl={currentUrl}
           />
 
           {/* Left panel — Layers / Settings */}
@@ -1266,7 +1305,7 @@ export const EditorShell = ReactCms.partial(
                       label: t.label,
                       icon: <Icon name={iconForType(t.type)} size={14} />,
                       active: t.id === selected,
-                      href: cmsEditHref({ select: t.id }),
+                      href: cmsEditHref(currentUrl, { select: t.id }),
                       closeHref: closeHrefFor(t.id),
                     }))
               }
@@ -1288,6 +1327,7 @@ export const EditorShell = ReactCms.partial(
   },
   {
     vary: ({
+      url,
       search: {
         editor: editorParam = null,
         tab: tabParam = null,
@@ -1315,6 +1355,7 @@ export const EditorShell = ReactCms.partial(
       const attachment: Attachment = attachmentParam === "floating" ? "floating" : "docked"
       const device: Device =
         deviceParam === "tablet" ? "tablet" : deviceParam === "mobile" ? "mobile" : "desktop"
+      const isPreviewFrameRefetch = url.searchParams.getAll("__frame").includes("preview")
       return {
         editor,
         sync: editorParam,
@@ -1325,6 +1366,9 @@ export const EditorShell = ReactCms.partial(
         surface,
         attachment,
         device,
+        currentUrl: url.toString(),
+        previewUrl: derivePreviewUrl(url),
+        isPreviewFrameRefetch,
       }
     },
   },

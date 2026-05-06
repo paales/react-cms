@@ -16,7 +16,7 @@
  * own entity types. Commerce apps add `getProduct`, CMS-heavy apps
  * add `getPage`, etc.
  */
-import type { Reference } from "@react-cms/framework/runtime/cms-runtime.ts"
+import type { Reference } from "@react-cms/framework"
 import { client } from "../data.ts"
 import { graphql } from "../pokeapi-graphql.ts"
 
