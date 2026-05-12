@@ -60,7 +60,7 @@ placements.
 
 | Folder | Role |
 |---|---|
-| `framework/src/lib/` | Framework primitives — `partial.tsx` (constructor + PartialRoot), `cache.tsx`, `partial-registry.ts`, `slot.tsx`. |
+| `framework/src/lib/` | Framework primitives — `partial.tsx` (constructor + `PartialRoot`), `frame.tsx` (`<Frame>` scope opener), `cache.tsx`, `partial-registry.ts`. |
 | `framework/src/runtime/` | RSC plumbing — `context.ts` (request ALS only), `cms-runtime.ts`, `navigation-api.ts`, `session.ts`. (The `entry.{rsc,browser,ssr}.tsx` glue files live with the active app: `e2e-testing/src/`.) |
 | `cms/src/editor/` | CMS editor UI — three-pane shell. |
 | `e2e-testing/src/app/` | Example application — pages and blocks. |

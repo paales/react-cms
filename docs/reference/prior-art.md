@@ -153,8 +153,8 @@ doesn't borrow:
 
 - Schema files. Accessor reads ARE the schema; the catalog
   prerender captures the field manifest at render time.
-- The sections-and-blocks two-tier hierarchy. `<Children>` slots
-  are recursive; arbitrary depth, same primitive at every level.
+- The sections-and-blocks two-tier hierarchy. Block slots are
+  recursive; arbitrary depth, same primitive at every level.
 - The template-language constraints. Blocks are server components;
   full async, full data-loading, full type inference.
 

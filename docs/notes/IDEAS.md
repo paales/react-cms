@@ -1,58 +1,13 @@
-## Define-step constructor — SHIPPED 2026-04-28
+# Forward-looking ideas
 
-The implicit access-pattern manifest, the per-Partial frame/CMS/
-manifest ALS cells, and the `<Partial>` JSX wrapper are all gone.
-The new primitive is `ReactCms.partial(Render, options)` — a
-module-scope constructor that returns a placeable React component.
-Every dependency a spec has on the request, route, or CMS lives in
-a single sync `vary` callback whose result is also the cache-key
-surface. See [`reference/partial.md`](../reference/partial.md) and the
-design rationale in [`partial-define-step-api.md`](./partial-define-step-api.md).
-
-What landed:
-
-- `<Partial>` + tracked accessors (`getCookie`, `getSearchParam`,
-  `getPathname`, `getHeader`, `getText`, …) → deleted. ~1,200 lines
-  of manifest / cell / hoisting machinery removed.
-- `ReactCms.partial(Render, options)` constructor — pattern-as-router
-  via `match`, declarative deps via `vary`, sync CMS read surface
-  inside `vary`, slot block + page spec dual mode.
-- `registerBlock` removed — slot blocks self-register on
-  construction when they declare `tags: [".x"]`.
-- `<Children>` / `<Child>` slots take explicit `host` + `hostCmsId`
-  props (no ambient cell read).
-- `flight-runtime.ts` shim — runtime-aware Flight encode/decode that
-  uses `@vitejs/plugin-rsc/rsc` in production (real client manifest)
-  and the vendored bundles with stub manifests in test mode (so
-  `cache.tsx`'s import doesn't leak `virtual:` URLs to Vitest's
-  bare-Node loader).
-
-Test status at landing: 18/18 unit tests + 109/127 e2e tests passing.
-Remaining 9 e2e failures are concentrated in two design-gap areas:
-(1) per-SKU dynamic Partials in the Magento demo (the old `<Partial
-selector="#price-{sku}">` pattern doesn't fit the constructor model;
-either restore via a different mechanism or rewrite the tests), and
-(2) a navigation-api / chat-overlay frame interaction where silent
-URL bumps from infinite-scroll pollute the chat-overlay frame's
-session URL, breaking back-nav.
+Open backlog. Resolved items aren't tracked here — they're either
+deleted (when there's no useful pre-shipment rationale to preserve)
+or moved to [`../archive/`](../archive/) with a Superseded banner
+(when the design exploration is worth keeping for context).
 
 ---
 
-## Continuous streaming content — SHIPPED as bounded `<Piece>` + compaction (2026-04-22)
-
-`user-ideas.md:35` asked how to implement AI-chat-style trickling content. Landed as a demo at `/chat-notes`: recursive `<Piece>` server component, each chunk its own Suspense reveal, `MAX_DEPTH` cap with a client-side `<ResumeTail>` firing a targeted refetch at the bound. Server re-renders as `<FlatPrefix>` (synchronous chunks `[0..cursor)`) + fresh depth-0 Piece chain. Durable per-message log decouples source production from client reconnects; cursor lives in the URL so reloads/back-forward resume correctly. See `STREAMING_CHAT.md` for the full write-up, including why SSE / unbounded recursion / multipart-redirect were passed over, and the two gotchas that turned into generalizable lessons (React fiber reuse across targeted refetches requires per-value `useEffect` guards, not booleans; `disableTransition: true` is load-bearing for per-chunk reveals).
-
----
-
-## Borrowed-from-Inertia candidates (2026-04-16)
-
-### Lazy partials — SHIPPED as `<Partial defer>` (2026-04-18)
-
-`defer={true}` emits fallback only; app calls `useNavigation().reload({selector: "#id"})` whenever. `defer={<Activator/>}` wires a client-side trigger automatically. Companion hook `useActivate(partialId, subscribe)` is the primitive every activator is built on. See `DEFER_ACTIVATORS.md`.
-
-### Refetch-trigger pattern — SHIPPED as `useActivate`
-
-`<WhenVisible>` is one reference activator built on the `useActivate(partialId, subscribe)` hook. Adding a new trigger type (idle, event, mediaQuery) is ~30 lines against that contract. Reference activators (`<WhenVisible>`, `<WhenStored>`) live in userspace (`e2e-testing/src/app/components/`) — the framework only ships `defer` + `useActivate`. The `<AnyOf>` wrapper and a subsequent array/fragment `DeferSpec` experiment were both removed on 2026-04-19: `defer` takes one element; composition is written as a bespoke activator when needed.
+## Inertia-borrowed candidates still open
 
 ### Prefetch links
 
@@ -62,124 +17,44 @@ session URL, breaking back-nav.
 
 `useNavigation().reload()` returns a Promise that resolves on commit, and callers track pending state via their own `useState`. Inertia emits `start / progress / success / error / finish` on every visit. Adding an options bag (`reload({ selector }, { onSuccess, onError, onProgress })`) or an event emitter keyed per-partial would let apps build NProgress-style top bars, per-partial progress affordances, and analytics without forking the framework.
 
-Deliberately skipped (Inertia has these, we don't need them): Deferred Props (Suspense is better), useForm (RSC actions cover it), stacked modals (too specific), full Visit API surface.
+---
 
-Also deliberately skipped (2026-04-19): an `await getLocalStorage('key')` / `getMousePosition()` DSL that would bail a server component's render on a client-state read and re-render when the value arrives. Sharp edges win over ergonomics: (1) hidden control flow — every `await` becomes a latent Partial boundary invisible at the call-site; (2) every read implicitly subscribes, adding a client→server subscription lifecycle the one-shot model doesn't have; (3) per-client cache keys break the `<Partial cache>` model (either explode the cache fleet or disable caching for anything reading client state); (4) SSR has no access to localStorage so every page ships the fallback first, causing a hydration-time flip; (5) streams of client state to the server re-rendering continuously (mouse position, websocket multiplayer) route client-owned data through a request/response abstraction that isn't shaped for it. The existing `<Partial defer={<WhenStored .../>}>` pattern already covers the consent-banner / hydration-dependent-content use case with the defer boundary *visible in the JSX* — that legibility is load-bearing for the "look at the tree and see the boundaries" design promise.
+## Deliberately rejected — decisions worth remembering
+
+### Composite activators (`<AnyOf>`, array `defer`)
+
+The framework only ships `defer` + `useActivate`. The `<AnyOf>` wrapper and a subsequent array/fragment `DeferSpec` experiment were both removed on 2026-04-19: `defer` takes one element; composition is written as a bespoke activator when needed.
+
+### Inertia-style ergonomics we don't want
+
+Deliberately skipped: Deferred Props (Suspense is better), useForm (RSC actions cover it), stacked modals (too specific), full Visit API surface.
+
+### Server-side client-state DSL (`getLocalStorage()` / `getMousePosition()`)
+
+An `await getLocalStorage('key')` / `getMousePosition()` DSL that would bail a server component's render on a client-state read and re-render when the value arrives. Sharp edges win over ergonomics: (1) hidden control flow — every `await` becomes a latent Partial boundary invisible at the call-site; (2) every read implicitly subscribes, adding a client→server subscription lifecycle the one-shot model doesn't have; (3) per-client cache keys break the `<Partial cache>` model (either explode the cache fleet or disable caching for anything reading client state); (4) SSR has no access to localStorage so every page ships the fallback first, causing a hydration-time flip; (5) streams of client state to the server re-rendering continuously (mouse position, websocket multiplayer) route client-owned data through a request/response abstraction that isn't shaped for it. The existing `defer={<WhenStored .../>}` pattern already covers the consent-banner / hydration-dependent-content use case with the defer boundary *visible in the JSX* — that legibility is load-bearing for the "look at the tree and see the boundaries" design promise.
 
 ---
 
-## State-preserving refetches — RESOLVED (2026-04-16 → 2026-04-17)
+## Fingerprint-skip follow-ups
 
-**Resolution:** bare-key + `startTransition` default. The old
-`?revalidate=1` flag and `streamVersion` key stamping are gone. React
-19.3 on a bare-key refetch reconciles in place AND streams per-chunk
-(outside transitions), so the fresh-mount / revalidate split was
-unnecessary. Full write-up: `LESSONS.md` §1–§3 and
-`/archive/BARE_KEY_REFETCH.md`.
+### Widen the match
 
-Open tail:
+Today the fingerprint is purely structural (component name + scalar props + recursion). Two refetches of the cart partial from different carts hash the same because they carry no discriminating prop. In practice that's fine because carts render via `vary` (URL/cookies), not props — but it means the server still has to execute the partial to know the output differs. A **content fingerprint** (hash of the decoded Flight bytes) would let two matching _renders_ share cached bytes, but costs a render to compute. Probably not worth it unless we see "server re-rendering identical output repeatedly" in practice.
 
-- **Instance-identity debugger.** `useRef(() => randomColor())`
-  rendered as a small corner dot in dev builds. Dot color changes →
-  component remounted. Turns "did my component just remount" from a
-  guessing game into a glance. Still worth building; lives alongside
-  the PartialDebugPanel status dots.
+### Per-partial opt-out
+
+An author may want a partial that _always_ re-renders on nav regardless of fingerprint match (e.g., a server-time readout). Would need an option like `alwaysFresh` (or its inverse `cacheOnNav`) plus a filter in the skip loop. Not needed yet, but predictable ask.
 
 ---
 
-## Fingerprint-skip v2 (2026-04-17)
+## Selector addressing — open growth
 
-Navigations now use the fingerprint-compare already embedded in the
-`?cached=id:fp,…` protocol: server renders the skipped partials as
-`<i data-partial hidden key={id}/>` placeholders, client fills from
-its `_cache`. Empirical win on `/pokemon/1 → /pokemon/1?search=url`:
-~75 KB → ~34 KB (~55% smaller). Regression test in
-`e2e/fingerprint-skip.spec.ts`.
-
-Follow-ups worth considering:
-
-1. **Widen the match.** Today the fingerprint is purely structural
-   (component name + scalar props + recursion). Two refetches of
-   `<Partial selector="#cart">` from different carts hash the same because
-   they carry no discriminating prop. In practice that's fine because
-   carts render via `getRequest()` context, not props — but it means
-   the server still has to execute the partial to know the output
-   differs. A **content fingerprint** (hash of the decoded Flight
-   bytes) would let two matching _renders_ share cached bytes, but
-   costs a render to compute. Probably not worth it unless we see
-   "server re-rendering identical output repeatedly" in practice.
-
-2. **Prune stale `_cache` entries — RESOLVED (2026-04-19).** After
-   every streaming render, the client now collects the placeholder
-   ids in the derived template and drops `_cache` entries whose id
-   isn't in that set. `_fingerprints` is cleared in the same pass —
-   every live id is re-registered by its `PartialErrorBoundary`
-   during the subsequent React render (both top-level and deep
-   inside cached ancestors). The old problem — an earlier
-   `cache.clear()` was clobbering skipped placeholders — is avoided
-   by pruning AFTER `cacheFromStreamingChildren` + `deriveTemplate`
-   run, so placeholders emitted for fingerprint-match ids still find
-   their cache entry. Regression cover:
-   `e2e/cache-prune-across-nav.spec.ts`.
-
-3. **Per-partial opt-out.** An author may want a partial that
-   _always_ re-renders on nav regardless of fingerprint match
-   (e.g., a server-time readout). Would need a prop on `<Partial>`
-   like `alwaysFresh` (or its inverse `cacheOnNav`) plus a filter
-   in the skip loop. Not needed yet, but predictable ask.
-
----
-
-## Cache + dynamic Partials — RESOLVED (2026-04-17)
-
-**Resolution:** `<Cache>` now uses strip-on-store + reinject-on-return.
-The rendered tree has its partial-bearing subtrees replaced with `<i
-data-partial>` placeholders before the bytes are stored; on hit, the
-registry is consulted to splice live `<PartialBoundary>` elements
-back into the decoded tree. Dynamic partials inside a cached region
-stay live. See `SERVER_CACHE_NOTES.md · Follow-up · The fix: strip-
-on-store + reinject-on-return` for the implementation notes.
-
-Open tails:
-
-1. **Double-render on miss — RESOLVED.** On cold miss
-   `renderToReadableStream` runs once; `stream.tee()` splits it
-   into a user branch (decoded immediately, streamed to the outer
-   render) and a storage branch (buffered, re-stripped of dynamic
-   wrappers, re-encoded, stored in the background). User-facing
-   latency is not doubled; inner async work (GraphQL) still fires
-   exactly once. CPU / memory overhead from the storage-side
-   encode → decode → re-encode cycle remains, but runs off the
-   critical path. See `renderMissAndStore` in `cache.tsx`.
-2. **Post-HMR cold hit.** If the cache hit lands on a request after
-   `clearRegistry()` (HMR, new process), `lookupPartial` returns
-   nothing and reinject produces placeholders only. Today this is
-   harmless in practice — the test harness clears both stores
-   together via `/__test/clear-caches`, and real dev restarts flush
-   both via the HMR listener. Worth keeping in mind if we ever add
-   a cross-process cache backend (Redis).
-
----
-
-## Stringly-typed ids — selector-based addressing — SHIPPED 2026-04-19, SUPERSEDED 2026-04-21
-
-**Original resolution.** `<Partial>` accepts optional `id` and `tags` (as an array OR a whitespace-separated string, like DOM `className`). An id-less Partial synthesizes `__anon:<sorted-tags>` internally — addressable only via a tag selector. `usePartial(selector)` parsed one of four shapes:
-
-- `"hero"` — bare string, by id (back-compat).
-- `"#hero"` — by id (explicit).
-- `".price"` — every Partial tagged `price`.
-- `".price.featured"` — every Partial tagged both `price` AND `featured` (AND intersection).
-
-**Superseded 2026-04-21 (first pass).** `usePartial` replaced by `useNavigation().reload({ ids })` / `{ tags }`.
-
-**Superseded again 2026-04-21 (second pass — selector API).** The `id` + `tags` prop pair on `<Partial>` and the `{ ids, tags }` shape on `reload` / `navigate` / action `invalidate` are gone. Collapsed into one CSS-style `selector` prop / option: `#foo` unique (hard-enforced per page), `.foo` shared (unions on refetch). `reload({ selector: "#cart .price" })`. Union still applies; for intersection, give the intersection its own label. The "codegen union types" follow-up below is now ergonomic-only (catch `#`-tokens statically) — the grammar grew the prefix instead. See `SELECTOR_API.md`.
-
-**Deferred from the original sketch:**
+### Deferred sub-items
 
 - **Attribute selectors (`.price[data-sku="ABC"]`).** Skipped — dynamic Partial families keep using explicit `#`-tokens (`#price-${sku}`) + a shared label. Attribute selectors would eliminate id-family plumbing entirely but require `data-*` attribute tracking in `PartialSnapshot`; saved for later if the pain shows up.
-- **Codegen union types for selectors.** Cheap stepping-stone: scan for `selector="#…"` literals, emit `type PartialSelector = "#hero" | …`. Would catch typos at the call site. Template-literal-type variant covered in `SELECTOR_API.md` §Open questions.
+- **Codegen union types for selectors.** Cheap stepping-stone: scan for `selector="#…"` literals, emit `type PartialSelector = "#hero" | …`. Would catch typos at the call site. Template-literal-type variant covered in archived `SELECTOR_API.md` §Open questions.
 
-**Growth vectors still open:**
+### Growth vectors
 
 - **Pseudo-selectors** (`.price:cached`, `.price:visible`) — not needed yet, but the `parseSelector` grammar has room.
 - **Shared-token-first refetch policy** as the default DX for most invalidation flows — mostly a docs/convention call now that the runtime supports it.
@@ -200,7 +75,7 @@ Server-action → invalidate is round-tripping. `<Partial optimistic={(prev, inp
 
 ### Cache invalidation by manifest value
 
-Today `<Cache>` entries can be invalidated by id or tag. The manifest store already records *which* cookies/headers/URL params each entry depends on (see `AUTO_TRACKED_CACHE_KEYS.md`). So `invalidateByManifest({ cookie: "user_id", value: "42" })` could walk the manifest store and drop every entry read under that cookie value. Missing third axis of invalidation; falls out nearly for free from the tracked-accessor design.
+Today `<Cache>` entries can be invalidated by id or tag. The manifest store already records *which* cookies/headers/URL params each entry depends on (see archived `AUTO_TRACKED_CACHE_KEYS.md`). So `invalidateByManifest({ cookie: "user_id", value: "42" })` could walk the manifest store and drop every entry read under that cookie value. Missing third axis of invalidation; falls out nearly for free from the tracked-accessor design.
 
 ### Cross-tab sync via BroadcastChannel
 
@@ -208,7 +83,7 @@ When tab A runs a server action that invalidates `["cart"]`, tab B is stale. A B
 
 ### Re-defer / unmount policy
 
-`DEFER_ACTIVATORS.md` §Known-sharp-edges flags this: once activated, a Partial can't go dormant again. Design space: `<Partial unmountWhen={<WhenHidden/>}>`, memory-pressure eviction, TTL after last interaction. Relevant for long-session CMS pages where hundreds of Partials accumulate.
+Once activated, a Partial can't go dormant again. Design space: `<Partial unmountWhen={<WhenHidden/>}>`, memory-pressure eviction, TTL after last interaction. Relevant for long-session CMS pages where hundreds of Partials accumulate.
 
 ### Form primitives on top of Partials
 
@@ -241,7 +116,6 @@ Things the framework will need before it can host a real app. Flagged here so th
 - **Accessibility defaults for refetch.** `aria-busy` during pending, focus restoration policy across swaps, live-region announcements. Currently on the app; will be pile-of-ad-hoc in a year.
 - **Per-Partial observability.** Trace context threaded through Partial boundaries so logs group automatically. Pairs with the debug-overlay idea in `user-ideas.md` §partial-debugging-component.
 - **i18n as a Partial concern.** Locale switching that refetches only locale-sensitive Partials (`tags={["i18n"]}`). Locale as a first-class input alongside URL/cookie state.
-- **CMS authoring mode.** Conspicuously absent given the repo name. Directions: draft/preview modes as a Partial property, author-editable regions identified by tag/selector, per-Partial publish workflows, edit-in-place overlays. If the framework's positioning is "CMS," this isn't optional — it's the core use case. **— DESIGN EXTRACTED 2026-04-25** into a dedicated doc family: `CMS_VISION.md` (the why + prior art), `CMS_MANIFEST.md` (data model — the insight is that the existing tracked-accessor manifest already dimensions configuration space), `CMS_EDITOR.md` (authoring UX — the debug panel expanded with forms + drag-drop, preview via `<Partial frame>` not iframe). Not yet shipped; see those docs for the current design.
 
 ---
 
@@ -250,25 +124,9 @@ Things the framework will need before it can host a real app. Flagged here so th
 Reading the architecture end-to-end, the framework is making two layered claims:
 
 1. **Partials as addressable RSC subtrees** — solid, working, primitive is coherent.
-2. **Runtime discovery over static analysis** — fully realized. Every architectural lessons doc (`LESSONS.md`, `LESSONS_FROM_REFACTOR.md`, `LESSONS_2026-04-19.md`) is about removing one more pre-walk, and as of 2026-04-19 the last one (`refreshRegistry`) is gone.
+2. **Runtime discovery over static analysis** — fully realized. Every architectural lessons doc (archived `LESSONS.md`, `LESSONS_FROM_REFACTOR.md`, `LESSONS_2026-04-19.md`) is about removing one more pre-walk, and as of 2026-04-19 the last one (`refreshRegistry`) is gone.
 
 The second claim is the one that distinguishes this from Next.js App Router in the long run. Everything that reinstates a static walker (typed partial registries via codegen, explicit route manifests, declarative input schemas resolved at build time) works against it. When evaluating future directions, the test is: *can this self-register at render time instead of requiring a pre-render walk?* The selector addressing scheme above passes that test. Typed-handle codegen fails it. Keep that principle sharp — it's the architectural load-bearing idea and it's easy to erode one convenient walker at a time.
-
-### How `refreshRegistry` was eliminated (2026-04-19, revised 2026-04-21)
-
-The old walker refreshed registry snapshots before cache-mode refetches so their captured closures (e.g. `<SearchStage2 query={searchQuery}/>` where `searchQuery` came from the URL) reflected the current request. It existed because:
-
-- `cloneElement(__inputs)` couldn't drill through a `<Cache dep>` wrapper to reach the inner content.
-- The Partial's fingerprint was hashed from pre-override `children`, so even when `__inputs` did apply, the cache key stayed pinned to the stale snapshot's values → cache hit on stale bytes.
-
-Two changes made the walker redundant in 2026-04-19:
-
-1. `<Cache>` was folded into `<Partial cache>` (part of the auto-tracked cache-keys work), removing the intermediate wrapper. `cloneElement(__inputs)` reached the content component directly.
-2. `<Partial>`'s fingerprint was computed AFTER `applyInputs` (`partial-component.tsx`). A cache-mode refetch whose inputs changed a prop yielded a distinct fingerprint, a distinct `<Cache>` key, and correctly missed stale entries.
-
-**2026-04-21 revision.** `__inputs` and `applyInputs` are gone entirely. Stale-snapshot correctness is now driven by **ambient-frame-URL folding into the fingerprint**: the Partial body looks up `getCurrentFrameScope()` and folds the enclosing frame URL into its fp seed. A refetch that changes the frame URL (or the page URL, if the Partial is framed) produces a distinct fingerprint and Cache key without any client-supplied prop override. Request-varying state reaches descendant Partials through URL accessors (or scalar props threaded by a parent that reads the accessor); the `cloneElement(__inputs)` channel no longer exists. See `NAVIGATE_UNIFIED.md` for the replacement surface and `/archive/USE_PARTIAL_AND_INPUTS.md` for a historical summary.
-
-With those in place, deleting `refreshRegistry` kept all unit tests and e2e tests passing. The PartialRoot now has exactly two branches (streaming + cache-mode) with no author-JSX walking in either; `stripPartials`/`reinject` in `cache.tsx` is the only remaining walker and it operates on rendered output, not on author JSX.
 
 ### Follow-up backlog
 
@@ -312,16 +170,17 @@ The shape of the gap, with concrete failure cases:
    to anything that renders through the Partial pipeline.
 4. **Cross-tab leak via session-scoped frame URL.** Two tabs viewing
    the same app share the frame URL through the session cookie
-   (`docs/frames-navigation.md` §Sharp-edges). Tab A opens a drawer,
-   tab B's drawer also opens on next render. Already a known leak;
-   a per-tab-id channel would fix it but that channel doesn't exist.
+   (`docs/reference/frames-navigation.md` §Sharp-edges). Tab A opens a
+   drawer, tab B's drawer also opens on next render. Already a known
+   leak; a per-tab-id channel would fix it but that channel doesn't
+   exist.
 
 The deliberately-rejected design (`getLocalStorage()` /
-`getMousePosition()` server-side accessors, see "Borrowed-from-Inertia
-§Deliberately skipped", 2026-04-19) is still the right thing to reject:
-implicit subscription, hidden control flow, per-client cache keys,
-SSR fallback flips. Those critiques stand. The directions below try
-to address the gap **without** reinstating that DSL.
+`getMousePosition()` server-side accessors, see "Deliberately rejected
+§Server-side client-state DSL" above) is still the right thing to
+reject: implicit subscription, hidden control flow, per-client cache
+keys, SSR fallback flips. Those critiques stand. The directions below
+try to address the gap **without** reinstating that DSL.
 
 ### Direction A — Durable draft as a server entity (Partial reads it)
 
@@ -486,26 +345,6 @@ so future work has a single ranked list. Priority legend:
 
 ### P0 — correctness
 
-- **djb2-32-bit hash for fingerprints + cache keys + variant keys —
-  RESOLVED 2026-04-30.** `framework/src/lib/hash.ts` is now a 64-bit composite:
-  two independent 32-bit mixers (djb2-with-xor + FNV-1a) each finalised
-  through MurmurHash3's `fmix32` and concatenated to 16 hex chars. A
-  single-character change in the input avalanches across all 64 output
-  bits. Pure JS so it stays portable across every runtime RSC might
-  land on (an earlier `node:crypto` SHA-256 tripped Vite's browser-
-  externalisation warning whenever the module reached the client
-  bundle). Birthday-paradox now ~50% at 2³² distinct values, comfortable
-  for the cache + registry sizes we expect. Swap to a pure-JS SHA-256
-  behind the same signature if a stronger hash is ever needed.
-- **`stable-stringify.ts` correctness for hash inputs — RESOLVED
-  2026-04-29.** Replaced with a hand-written canonicaliser that
-  distinguishes `undefined` / `null` / missing, `NaN` / ±Infinity,
-  `+0` / `-0`, BigInt, Date (by ms), Set (sorted entries), Map
-  (sorted-by-serialized-key entries), and circular references. Sorts
-  object keys at every level. Sentinel tokens use `<…>` brackets that
-  `JSON.stringify` never emits, keeping the output unambiguous.
-  Property-style tests covering each axis live in
-  `framework/src/lib/__tests__/stable-stringify.test.ts`.
 - **In-memory state breaks horizontal scale.** Sessions
   (`session.ts:61`), render cache (`cache.tsx:55`), partial registry
   (`partial-registry.ts:73`) are module-global Maps. Two server
@@ -569,34 +408,6 @@ so future work has a single ranked list. Priority legend:
   hand-disambiguate `#page-stage-1` vs `#frame-stage-1`; scoped
   selectors would let the same internal name be reused across
   factory invocations.
-- **Pattern-as-router doesn't compose hierarchically** (conceded
-  2026-04-29). Every spec on `/pokemon/:id` used to repeat the match
-  and re-validate `params.id` across five sibling specs.
-  **— RESOLVED 2026-04-29** by two orthogonal changes:
-  1. **Typed call-site prop pass-through.** `ReactCms.partial`
-     feels like `React.memo` — JSX call-site props flow into
-     `Render` alongside `vary`'s output and contribute to the cache
-     fingerprint. Subtraction is type-level: keys `vary` provides
-     disappear from the call-site prop type. An outer wrapper spec
-     parses the URL once via `vary` and threads `id` (or whatever)
-     down to its children as ordinary JSX props.
-  2. **Wrapper-spec routing.** A page-level wrapper with `match:
-     "/pokemon/:id"` gates the route; inner specs (`Hero`, `Stats`,
-     `Species`, …) drop their own `match` and `vary`, accept `id`
-     as a JSX prop, and cast to a number themselves. Demoed in
-     `e2e-testing/src/app/pages/pokemon-detail.tsx`.
-  3. **404 fallback.** `getRegisteredMatchPatterns()` exposes the
-     set of every `match` pattern any spec was constructed with;
-     a `NotFoundFallback` spec checks the URL against that set and
-     calls `notFound()` on miss. One declarative line in
-     `e2e-testing/src/app/pages/not-found-fallback.tsx`; documented in
-     `docs/partial.md` §Page-level routing.
-
-  Earlier attempt (`<PartialMatch>` / `<Match>` JSX walker with
-  `__ambientMatchParams`) was rolled back — it was a parallel
-  mechanism that didn't compose with `vary`/cache, didn't cross
-  user function components, and felt off the grain of the rest of
-  the framework.
 - **Auto-derived selector + STRIP_SUFFIXES list is fragile.**
   `partial.tsx:160` strips a hardcoded suffix list; renaming
   `PokemonHeroRender` → `HeroRender` silently flips `#pokemon-hero`
@@ -605,18 +416,13 @@ so future work has a single ranked list. Priority legend:
   default path is a footgun. Fix: require explicit `selector` in
   production builds, or freeze the auto-derive at module load
   before minification (Babel/Vite plugin that stamps `displayName`).
-- **Pattern params are stringly-typed — PARTIALLY RESOLVED
-  2026-04-30.** `ParseRoute<P>` now extracts `:param` names from the
-  pattern at the type level and auto-flows them into `V` when no
-  `vary` is declared (or when `vary`'s return is `null`). So
-  `partial(Render, "/pokemon/:id")` typechecks a `Render` that takes
-  `{ id: string }` with no vary boilerplate. What's still
-  unresolved: when `vary` IS declared, `params` inside the scope is
-  `Record<string, string>` (not `ParseRoute<P>`), so `params.id ??
-  ""` boilerplate persists for any spec that needs to derive other
-  V values from the same params. And there's no runtime schema
-  validator yet (`vary: ({ params: { id } }) => ({ pokemonId: int(id)
-  })`) — string-to-int / regex / enum coercions stay manual.
+- **Pattern params inside `vary` are stringly-typed.** Outside `vary`,
+  `ParseRoute<P>` flows typed `:param` names into Render automatically.
+  Inside `vary`, `scope.params` is `Record<string, string>` (not
+  `ParseRoute<P>`), so `params.id ?? ""` boilerplate persists for any
+  spec that derives other V values from the same params. No runtime
+  schema validator yet — string-to-int / regex / enum coercions stay
+  manual.
 - **Module-graph eagerness on the server** (partially conceded
   2026-04-29). `app/root.tsx` static-imports every page module;
   RSC's native code-splitting is at `'use client'` boundaries, not
@@ -630,22 +436,11 @@ so future work has a single ranked list. Priority legend:
   the longer it grows. Carve into: `merge.ts` (template + cache
   diff), `nav.ts` (navigation API surface), `wrappers.ts`
   (Suspense / boundary detection helpers).
-- **Constructor has two API faces with one signature.** Slot blocks
-  use `{tags, type}`; page specs use `{selector, match}`.
-  Constructor branches on `tags != null` (`partial.tsx:554`).
-  Either two named constructors (`ReactCms.partial(...)` /
-  `ReactCms.block(...)`) or a discriminated options type that
-  forces the choice up-front.
 - **HMR nukes every cache on every edit.** `cache.tsx:584` and
   `entry.rsc.tsx:33`. Dev iteration gets slower the more partials
   you have — the gradient is exactly backwards. Granular HMR-
   invalidation by spec id (only specs whose source module changed
   evict their cache entries) is the right shape.
-- **Children pass-through naming overlap.**
-  `PartialComponentProps.children` (JSX wrapper pattern) vs
-  `<Children name="body">` (CMS slot iteration). Same word, two
-  unrelated mechanisms. Rename the slot primitive (`<SlotChildren>`,
-  `<Slot>`) before the docs surface ossifies.
 
 ### P3 — future polish
 
@@ -669,39 +464,15 @@ so future work has a single ranked list. Priority legend:
   graph entry; same root cause, different symptom — a 200-page
   app pays full module-init on every cold container boot.
 
-### fp-skip cascade on transparent wrappers — RESOLVED 2026-04-30
-
-Restored transitive descendant fp propagation (commit `49de264`).
-At fingerprint time a spec folds every previously-registered
-descendant's contribution, resolved against the *current* request via
-the spec catalog's `match` pattern + `vary` callback. Mirrors the OLD
-`<Partial varyOn>` mechanism (commit `d72a9a7`, "Update 2026-04-26a")
-so an ancestor fp-skip can no longer serve a stale subtree. Wrappers
-called with `outerChildren` skip fp-skip entirely — their output IS
-their children, which are rendered by the JSX parent. Authors no
-longer need to hand-fold `__href: url.href` into wrapper vary just to
-keep descendants fresh.
-
-### Withdrawn / not-a-bug
-
-- **"Cache strip-and-reinject is expensive."** Withdrawn 2026-04-29;
-  local measurement is <5ms. Worth benchmarking under large
-  product-grid subtrees before re-raising.
-- **"The big incumbents are funded."** Withdrawn 2026-04-29;
-  stage-of-project, not value-prop.
-
 ### Suggested sequencing
 
 1. **Remaining P0 items** — in-memory session/cache/registry and the
-   `Date.now()`-tagged CMS storage cache. These are no longer
-   "small / mechanical" (the hash + stable-stringify items that fit
-   that bill landed 2026-04-29/30); they require a `SessionStore`
-   interface + real backend and a real CMS database. Both block any
-   HA deploy, so they gate external adoption.
+   `Date.now()`-tagged CMS storage cache. Both require a
+   `SessionStore` interface + real backend and a real CMS database.
+   Both block any HA deploy, so they gate external adoption.
 2. **Scoped selectors** — unblocks the biggest ergonomic complaint
    from the review (P2 selector-token global namespace) with a
-   single coherent design pass. Wrapper-spec routing already shipped
-   (commit `49de264`), so the routing half of this batch is done.
+   single coherent design pass.
 3. **P1 auth + storage + metadata** — the three things every
    real adopter would have to build themselves on day one.
    Picking opinionated defaults (NextAuth-style adapter, Postgres

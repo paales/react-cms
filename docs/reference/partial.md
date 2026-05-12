@@ -256,33 +256,14 @@ so refetches carry the props they were originally rendered with.
 
 ## Slots
 
-A partial (or block) that hosts CMS-managed children uses `<Children>`
-/ `<Child>` to render entries from a CMS slot. The entries are looked
-up in the type catalog — see [`block.md`](./block.md) for how blocks
-register and get placed into slots.
-
-```tsx
-import { Children, Child } from "./lib"
-
-function PageRootRender({ parent, cmsId }: RenderArgs) {
-  return (
-    <main>
-      <Children name="body" allow=".page-block" host={parent} hostCmsId={cmsId} />
-      <aside>
-        <Child name="sidebar" allow=".widget" host={parent} hostCmsId={cmsId} />
-      </aside>
-    </main>
-  )
-}
-```
-
-| Component | Renders |
-|---|---|
-| `<Children name allow host hostCmsId>` | Every entry in `node.slots[name]` in stored order, each rendered through its registered block spec with `cmsId={entry.id}` override. |
-| `<Child name allow host hostCmsId>` | At most one entry. |
-
-`host` becomes the placed block's `parent`. `hostCmsId` is the parent
-node whose `slots[name]` array to read.
+Slot composition is a block-spec concern. Partials don't have a
+`schema` callback and can't read CMS slot entries — if you need a unit
+that hosts CMS-managed children, use [`ReactCms.block`](./block.md)
+and declare the slot via `cms.blocks(slot, selector?)` /
+`cms.block(slot, selector?)` inside `schema`. A partial that happens
+to render a specific block can still place it directly via JSX
+(`<SomeBlock parent={parent} cmsId="…" />`); the framework wires
+host context through the block's effective cmsId.
 
 ## Selector grammar
 
@@ -397,9 +378,8 @@ The set is populated as a side-effect of every `ReactCms.partial(…,
   [`block.md`](./block.md).
 - **CMS reads live on blocks, not partials.** `vary` is strictly
   request-dimensions (URL / cookies / headers / session). To bind a
-  partial's content to the CMS, either use `ReactCms.block` with
-  `schema`, or have the partial host a `<Children>` slot whose
-  entries are blocks.
+  partial's content to the CMS, use `ReactCms.block` with `schema`
+  — that's where `cms.text(...)`, `cms.blocks(slot)`, etc. live.
 - **`closest` / ancestor `provides`.** Punted. Specs that need
   ancestor data should accept it as a render prop (manual threading
   from a parent spec's `vary`).
