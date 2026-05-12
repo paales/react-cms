@@ -4,7 +4,6 @@ import "./blocks/catalog.ts"
 import {
   NotFoundError,
   PartialRoot,
-  PartialsDebug,
   ROOT,
   Redirect,
   RedirectError,
@@ -63,7 +62,6 @@ export function Root() {
             </div>
             <EditorShell parent={ROOT} />
             <ChatOverlay parent={ROOT} />
-            {import.meta.env.DEV && <PartialsDebug />}
           </body>
         </html>
       </PartialRoot>

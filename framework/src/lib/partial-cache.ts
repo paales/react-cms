@@ -104,9 +104,9 @@ export function invalidateByTags(tags: string[]): number {
 
 /**
  * Clear cache entries. With no argument (or `"all"`), clears every
- * scope — used by HMR dispose hooks and by the dev debug toolbar.
- * Pass a specific scope to clear just that worker's entries (the
- * `/__test/clear-caches` endpoint does this per-request).
+ * scope — used by HMR dispose hooks. Pass a specific scope to clear
+ * just that worker's entries (the `/__test/clear-caches` endpoint
+ * does this per-request).
  */
 export function clearCache(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {

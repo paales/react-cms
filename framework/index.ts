@@ -92,9 +92,6 @@ export {
 // ── Partial registry — read-only snapshot lookups for the editor ───────
 export { getRouteSnapshots } from "./src/lib/partial-registry.ts"
 
-// ── Dev-only debug overlay ─────────────────────────────────────────────
-export { PartialsDebug } from "./src/lib/partial-debug.tsx"
-
 // ── Session (frame URLs, per-key values, read surface) ─────────────────
 export {
   setSessionFrameUrl,

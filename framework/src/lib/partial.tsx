@@ -994,10 +994,6 @@ function createSpecComponent<V>(
             key={id}
             partialId={id}
             partialFingerprint={fp}
-            debugUniqueTokens={parsed.uniqueTokens}
-            debugSharedTokens={parsed.sharedTokens}
-            debugFramePath={ourFrameChain}
-            debugParentPath={parent.path}
           >
             {dormant}
           </PartialErrorBoundary>
@@ -1031,10 +1027,6 @@ function createSpecComponent<V>(
           <PartialErrorBoundary
             partialId={id}
             partialFingerprint={fp}
-            debugUniqueTokens={parsed.uniqueTokens}
-            debugSharedTokens={parsed.sharedTokens}
-            debugFramePath={ourFrameChain}
-            debugParentPath={parent.path}
           >
             {body}
           </PartialErrorBoundary>
@@ -1049,10 +1041,6 @@ function createSpecComponent<V>(
           key={id}
           partialId={id}
           partialFingerprint={fp}
-          debugUniqueTokens={parsed.uniqueTokens}
-          debugSharedTokens={parsed.sharedTokens}
-          debugFramePath={ourFrameChain}
-          debugParentPath={parent.path}
         >
           {body}
         </PartialErrorBoundary>
