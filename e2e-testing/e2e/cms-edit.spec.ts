@@ -145,6 +145,10 @@ test.describe("CMS editor — smoke", () => {
 
     test("each slot-child tree row exposes inline ↑ / ↓ / × buttons", async ({ page }) => {
       await page.goto("/cms-demo?editor=1")
+      // Tree row tools (↑/↓/×) are hover-revealed via
+      // `.cms-tree-row-wrapper:hover .cms-tree-tools`. Hover the row
+      // first so the assertions see the surfaced tools.
+      await page.getByTestId("cms-edit-tree-entry-composed-hero-1").hover()
       await expect(page.locator('[aria-label="Move composed-hero-1 up"]')).toBeVisible()
       await expect(page.locator('[aria-label="Move composed-hero-1 down"]')).toBeVisible()
       await expect(page.getByTestId("cms-edit-slot-remove-composed-hero-1")).toBeVisible()
@@ -199,6 +203,8 @@ test.describe("CMS editor — smoke", () => {
     test("removing a block drops it from the tree and the preview", async ({ page }) => {
       await page.goto("/cms-demo?editor=1")
       const responseP = waitForActionResponse(page)
+      // Tools are hover-revealed; surface them before clicking.
+      await page.getByTestId("cms-edit-tree-entry-composed-text-1").hover()
       await page.getByTestId("cms-edit-slot-remove-composed-text-1").click()
       await responseP
       await page.reload()
@@ -212,6 +218,8 @@ test.describe("CMS editor — smoke", () => {
     test("moving a block reorders it in the tree", async ({ page }) => {
       await page.goto("/cms-demo?editor=1")
       const responseP = waitForActionResponse(page)
+      // Tools are hover-revealed; surface them before clicking.
+      await page.getByTestId("cms-edit-tree-entry-composed-text-1").hover()
       await page.locator('[aria-label="Move composed-text-1 up"]').click()
       await responseP
       await page.reload()
