@@ -39,7 +39,11 @@ import {
   registerPartial,
   type PartialSnapshot,
 } from "./partial-registry.ts"
-import { enterPartialState, getPartialState, type PartialRequestState } from "./partial-request-state.ts"
+import {
+  enterPartialState,
+  getPartialState,
+  type PartialRequestState,
+} from "./partial-request-state.ts"
 import {
   cmsFingerprintContribution,
   createCmsReadSurface,
@@ -148,45 +152,23 @@ export interface RenderArgs {
  */
 export type MatchPattern = string | URLPatternInit
 
-export interface PartialOptions<V> {
-  /** URLPattern gate. Spec emits nothing on miss. */
-  match?: MatchPattern
-  /** Request-dimensions dependency surface. Sync; result is the
-   *  cache-key surface and merged into Render's prop bag. */
-  vary?: (scope: VaryScope) => V | null
-  /** Selector for non-slot (page-position) specs. Auto-derived from
-   *  `Render.name` when omitted. */
-  selector?: SelectorTokens
-  cache?: CacheOptions
-  defer?: DeferSpec
-  fallback?: ReactNode
-}
+export type PartialOptions<V> = Pick<
+  InternalSpecConfig<V>,
+  "match" | "vary" | "cache" | "defer" | "fallback"
+>
 
 /**
  * Options for `ReactCms.block(R, opts)` — a slot-placeable CMS-driven
  * spec with a declared `schema`. Internally produces a partial; same
  * fingerprint / cache / refetch path.
  */
-export interface BlockOptions<V, S> {
-  /** CSS-style selector declaring this block's class identity (and
-   *  optionally a `#singleton` token). `".page-block .composed-hero"`
-   *  registers under `.page-block` and `.composed-hero` class tokens
-   *  for slot-allow matching + shared-token refetch.
-   *  `"#app-nav .nav-root"` makes the block a singleton bound to
-   *  cmsId `"app-nav"`. Auto-derived from `Render.name` when omitted. */
-  selector?: SelectorTokens
+export type BlockOptions<V, S> = PartialOptions<V> & {
   /** CMS field reads + child slots. Runs at render time with a real
    *  `cms` surface; the result is merged into Render's prop bag
    *  alongside `vary`'s. The editor's catalog prerender invokes it
    *  with a tracking surface to discover content fields + child slot
    *  declarations. */
   schema?: (scope: SchemaScope) => S
-  /** Request-dimensions dependency surface (no `cms` — that lives on
-   *  `schema`). Optional; most blocks don't have request deps. */
-  vary?: (scope: VaryScope) => V | null
-  cache?: CacheOptions
-  defer?: DeferSpec
-  fallback?: ReactNode
 }
 
 /**
@@ -194,8 +176,19 @@ export interface BlockOptions<V, S> {
  * (`ReactCms.partial`, `ReactCms.block`) marshal to this shape.
  */
 interface InternalSpecConfig<V> {
+  /** URLPattern gate. Spec emits nothing on miss. */
   match?: MatchPattern
+  /** Request-dimensions dependency surface. Sync; result is the
+   *  cache-key surface and merged into Render's prop bag. */
   vary?: (scope: VaryScope) => V | null
+  /** Selector for non-slot (page-position) specs. Auto-derived from
+   *  `Render.name` when omitted. */
+  /** CSS-style selector declaring this block's class identity (and
+   *  optionally a `#singleton` token). `".page-block .composed-hero"`
+   *  registers under `.page-block` and `.composed-hero` class tokens
+   *  for slot-allow matching + shared-token refetch.
+   *  `"#app-nav .nav-root"` makes the block a singleton bound to
+   *  cmsId `"app-nav"`. Auto-derived from `Render.name` when omitted. */
   selector?: SelectorTokens
   cache?: CacheOptions
   defer?: DeferSpec
@@ -248,12 +241,11 @@ export type SpecExtraProps<R, V> = Omit<R, keyof RenderArgs | keyof V>
  * names run until any of `/`, `(` (start of regex), `?`/`+`/`*`
  * (modifiers), `{`/`}` (group brackets), or `.`.
  */
-type ReadParamName<S extends string, Acc extends string = ""> =
-  S extends `${infer C}${infer R}`
-    ? C extends "/" | "(" | "?" | "+" | "*" | "{" | "}" | "."
-      ? [Acc, S]
-      : ReadParamName<R, `${Acc}${C}`>
-    : [Acc, S]
+type ReadParamName<S extends string, Acc extends string = ""> = S extends `${infer C}${infer R}`
+  ? C extends "/" | "(" | "?" | "+" | "*" | "{" | "}" | "."
+    ? [Acc, S]
+    : ReadParamName<R, `${Acc}${C}`>
+  : [Acc, S]
 
 /**
  * Skip a `(regex)` modifier following a parameter name. URLPattern
@@ -263,8 +255,7 @@ type ReadParamName<S extends string, Acc extends string = ""> =
  *
  * Doesn't handle nested parens; URLPattern itself doesn't either.
  */
-type SkipParamRegex<S extends string> =
-  S extends `(${string})${infer After}` ? After : S
+type SkipParamRegex<S extends string> = S extends `(${string})${infer After}` ? After : S
 
 /**
  * Parse a URLPattern path string into a `{ name: string }` shape at
@@ -280,18 +271,17 @@ type SkipParamRegex<S extends string> =
  * runtime URLPattern is the source of truth for what actually matches;
  * unparseable corners fall through and the prop is just absent.
  */
-export type ParseRoute<T extends string> =
-  T extends `${string}:${infer Rest}`
-    ? ReadParamName<Rest> extends [infer Name extends string, infer Tail extends string]
-      ? Name extends ""
-        ? ParseRoute<Tail>
-        : SkipParamRegex<Tail> extends `?${infer After}`
-          ? { [K in Name]?: string } & ParseRoute<After>
-          : SkipParamRegex<Tail> extends `${"+" | "*"}${infer After}`
-            ? { [K in Name]: string } & ParseRoute<After>
-            : { [K in Name]: string } & ParseRoute<SkipParamRegex<Tail>>
-      : object
+export type ParseRoute<T extends string> = T extends `${string}:${infer Rest}`
+  ? ReadParamName<Rest> extends [infer Name extends string, infer Tail extends string]
+    ? Name extends ""
+      ? ParseRoute<Tail>
+      : SkipParamRegex<Tail> extends `?${infer After}`
+        ? { [K in Name]?: string } & ParseRoute<After>
+        : SkipParamRegex<Tail> extends `${"+" | "*"}${infer After}`
+          ? { [K in Name]: string } & ParseRoute<After>
+          : { [K in Name]: string } & ParseRoute<SkipParamRegex<Tail>>
     : object
+  : object
 
 /**
  * Infer the framework-supplied prop surface (`V`) from the options
@@ -349,9 +339,7 @@ export type InferRenderProps<Opts> = Prettify<InferV<Opts> & RenderArgs>
  * builder overload (`partial(opts)`) handles the forward-reference
  * pattern where the Render needs the type before the spec exists.
  */
-export type SpecComponent<Extra = unknown, Props = unknown> = FC<
-  PartialComponentProps & Extra
-> & {
+export type SpecComponent<Extra = unknown, Props = unknown> = FC<PartialComponentProps & Extra> & {
   /** Phantom — `typeof Spec.props` resolves to the prop bag the
    *  framework supplies to Render. No runtime value. */
   readonly props: Props
@@ -372,7 +360,7 @@ export type SpecComponent<Extra = unknown, Props = unknown> = FC<
  */
 export type PartialBuilder<Opts, V = InferV<Opts>> = {
   /** Phantom — `typeof Builder.props` is the Render prop bag. */
-  readonly props: Prettify<V & RenderArgs>
+  readonly props: Prettify<V & RenderArgs>;
   /** Bind a Render to produce the final spec component. */
   (Render: (props: V & RenderArgs) => ReactNode): SpecComponent<object, Prettify<V & RenderArgs>>
 }
@@ -387,7 +375,10 @@ interface ParsedSelector {
 function parseSelector(input: SelectorTokens): ParsedSelector {
   const tokens = Array.isArray(input)
     ? input.map((t) => (typeof t === "string" ? t.trim() : "")).filter(Boolean)
-    : input.split(/\s+/).map((t) => t.trim()).filter(Boolean)
+    : input
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter(Boolean)
   if (tokens.length === 0) {
     throw new Error("ReactCms.partial: selector is empty")
   }
@@ -481,7 +472,6 @@ function resolveFrameRequest(framePath: readonly string[]): Request {
   const resolved = new URL(sessionUrl, pageRequest.url).toString()
   return new Request(resolved, { headers: pageRequest.headers, method: "GET" })
 }
-
 
 // ─── PartialBoundary — registers + passes children through ────────────
 
@@ -767,7 +757,10 @@ function placeholderFor(id: string): ReactElement {
   return <i key={id} hidden data-partial data-partial-id={id} />
 }
 
-function effectiveIdForInstance(spec: InternalSpec<unknown>, cmsIdOverride: string | undefined): {
+function effectiveIdForInstance(
+  spec: InternalSpec<unknown>,
+  cmsIdOverride: string | undefined,
+): {
   id: string
   parsed: ParsedSelector
 } {
@@ -805,10 +798,7 @@ function createSpecComponent<V>(
     //      token in selector for singletons).
     const cmsIdOverride = directCmsIdOverride ?? slotCmsIdOverride
     const effectiveCmsId = cmsIdOverride ?? spec.cmsId
-    const { id, parsed } = effectiveIdForInstance(
-      spec as InternalSpec<unknown>,
-      cmsIdOverride,
-    )
+    const { id, parsed } = effectiveIdForInstance(spec as InternalSpec<unknown>, cmsIdOverride)
     // ── Match phase ──
     // `match` runs against the PAGE URL — it's a page-level "should
     // this spec render on this route" gate. The frame URL is
@@ -826,8 +816,7 @@ function createSpecComponent<V>(
     // Specs inherit the frame chain from their parent (a `<Frame>`
     // ancestor extends it). The spec itself never opens a new frame.
     const ourFrameChain = parent.frameChain
-    const ourRequest =
-      ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()
+    const ourRequest = ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()
 
     // ── Vary phase ──
     // `vary` is request-dimensions only. CMS reads on block specs run
@@ -895,13 +884,9 @@ function createSpecComponent<V>(
     // against the CURRENT request so URL changes are reflected at
     // ancestor fp time without lag (mirrors the OLD `<Partial>`
     // `computeDescendantManifestKey` mechanism).
-    const cmsKey = effectiveCmsId
-      ? cmsFingerprintContribution(effectiveCmsId, ourRequest)
-      : ""
+    const cmsKey = effectiveCmsId ? cmsFingerprintContribution(effectiveCmsId, ourRequest) : ""
     const ambientFrameKey =
-      ourFrameChain.length > 0
-        ? `|inFrame=${ourFrameChain.join(".")}:${ourRequest.url}`
-        : ""
+      ourFrameChain.length > 0 ? `|inFrame=${ourFrameChain.join(".")}:${ourRequest.url}` : ""
     const propsKey =
       Object.keys(extraProps).length > 0 ? `|props=${stableStringify(extraProps)}` : ""
     const varyKey = stableStringify(varyResult)
@@ -930,8 +915,7 @@ function createSpecComponent<V>(
     const cachedFp = state?.cachedFingerprints.get(id)
     const fingerprintMatches = cachedFp != null && cachedFp === fp
     const hasOuterChildren = outerChildren != null && outerChildren !== false
-    const shouldSkip =
-      state != null && !isExplicit && fingerprintMatches && !hasOuterChildren
+    const shouldSkip = state != null && !isExplicit && fingerprintMatches && !hasOuterChildren
 
     if (state) {
       for (const tok of parsed.uniqueTokens) {
@@ -960,8 +944,7 @@ function createSpecComponent<V>(
       children: outerChildren,
     } as V & RenderArgs
     const fallback = opts.fallback ?? null
-    const sessionDeps =
-      sessionDepsSet.size > 0 ? Array.from(sessionDepsSet).sort() : undefined
+    const sessionDeps = sessionDepsSet.size > 0 ? Array.from(sessionDepsSet).sort() : undefined
 
     if (shouldSkip) {
       return (
@@ -991,11 +974,7 @@ function createSpecComponent<V>(
         defer === true
           ? fallback
           : isValidElement(defer)
-            ? cloneElement(
-                defer as ReactElement<ActivatorProps>,
-                { partialId: id },
-                fallback,
-              )
+            ? cloneElement(defer as ReactElement<ActivatorProps>, { partialId: id }, fallback)
             : fallback
       return (
         <PartialBoundary
@@ -1305,7 +1284,7 @@ function buildBlock<V extends object, S extends object>(
 }
 
 export const ReactCms: ReactCmsApi = {
-  partial: (function partialImpl(arg1: unknown, arg2?: unknown) {
+  partial: function partialImpl(arg1: unknown, arg2?: unknown) {
     // Two-step: a single non-function argument is the options object.
     // Returns a callable builder that builds the spec when invoked
     // with a Render.
@@ -1323,13 +1302,13 @@ export const ReactCms: ReactCmsApi = {
         ? ({ match: arg2 } as PartialOptions<object>)
         : ((arg2 ?? {}) as PartialOptions<object>)
     return buildPartialFromOptions(Render, options)
-  }) as ReactCmsApi["partial"],
-  block: (function blockImpl<V extends object, S extends object>(
+  } as ReactCmsApi["partial"],
+  block: function blockImpl<V extends object, S extends object>(
     Render: (props: V & S & RenderArgs) => ReactNode,
     opts?: BlockOptions<V, S>,
   ) {
     return buildBlock(Render, opts ?? {})
-  }) as ReactCmsApi["block"],
+  } as ReactCmsApi["block"],
 }
 
 // ─── PartialRoot ──────────────────────────────────────────────────────
@@ -1354,7 +1333,10 @@ function parseCachedFingerprints(raw: string | null): Map<string, string | null>
 
 function parseCsvTokens(raw: string | null): string[] {
   if (!raw) return []
-  return raw.split(",").map((s) => s.trim()).filter(Boolean)
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 function resolveSelectorToIds(
