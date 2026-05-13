@@ -372,11 +372,17 @@ test.describe("CMS editor — smoke", () => {
       if (r.url().includes("/cms-demo_.rsc")) seen.push(r.url())
     }
     page.on("request", onReq)
+    // Set up the response wait BEFORE the click. The selector-targeted
+    // refetch fires synchronously from `nav.navigate` → `enqueueRefetch`
+    // → microtask, so the response can arrive before `click()` resolves
+    // on faster reconciliation paths. Setting up `waitForResponse`
+    // first ensures the listener is armed for the in-flight request.
+    const responseP = page.waitForResponse((r) => r.url().includes("/cms-demo_.rsc"), {
+      timeout: 5000,
+    })
     try {
       await page.getByTestId("cms-edit-tree-entry-composed-hero-1").click()
-      await page.waitForResponse((r) => r.url().includes("/cms-demo_.rsc"), {
-        timeout: 5000,
-      })
+      await responseP
     } finally {
       page.off("request", onReq)
     }

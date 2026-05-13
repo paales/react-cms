@@ -97,6 +97,7 @@ interface PartialOptions<V> {
   cache?: CacheOptions
   defer?: true | ReactElement<ActivatorProps>
   fallback?: ReactNode
+  keepalive?: boolean                              // default true
 }
 ```
 
@@ -108,6 +109,7 @@ interface PartialOptions<V> {
 | `cache` | See [`cache.md`](./cache.md). |
 | `defer` | `true` for app-driven, an activator element to wire automatically. |
 | `fallback` | React node rendered while the partial's body is suspended. |
+| `keepalive` | When `true` (default), the rendered body is wrapped in `<Activity mode="visible">` while active and the spec emits `<Activity mode="hidden">` + placeholder on cross-route nav (instead of returning nothing on `match`/`vary` miss). The client's cached subtree is substituted at the placeholder position, so the React fiber tree stays shape-stable across active ↔ parked transitions — `useState`, `useRef`, and DOM state survive a navigate-away-and-back round-trip. Set to `false` for partials whose state should reset on cross-route nav (heavy video/iframe DOM, debug-only specs, anything where stale state is worse than re-mount cost). |
 
 ## `VaryScope`
 
@@ -286,15 +288,41 @@ Auto-derived from `Render.name`: `PokemonHeroRender` → `#pokemon-hero`.
 
 ## Skip semantics
 
-A spec doesn't render in three cases:
+A spec emits in one of four shapes, in priority order:
 
-1. `match` is set and the URL didn't match.
-2. `vary` returned `null`.
-3. The client's cached fingerprint matches this render's fingerprint
-   (the `?cached=` skip handshake).
+1. **`match` miss or `vary` returned `null`, no cached entry on the
+   client.** Spec emits nothing — the JSX position is empty.
+2. **`match` miss or `vary` returned `null`, AND the client has this
+   id cached (declared via `?cached=id:fp`), AND `keepalive` is on
+   (default).** Spec emits `<Activity mode="hidden">{placeholder}</Activity>`.
+   The client substitutes its cached subtree at the placeholder,
+   yielding `<Activity mode="hidden"><Suspense …>…</Suspense></Activity>`.
+   React reconciles the new emission against the prior active
+   emission (`<Activity mode="visible">…</Activity>` at the same spec
+   JSX position) — Activity's fiber persists, mode flips, the inner
+   Suspense subtree's `useState` / DOM / scroll position survive.
+3. **`match` succeeded, `vary` returned non-null, fingerprint matches
+   the client's cached one.** Spec emits `<Activity mode="visible">
+   {placeholder}</Activity>`. Client substitutes from cache — same
+   bytes as last render, no body re-execution.
+4. **`match` succeeded, `vary` returned non-null, fingerprint differs
+   (fresh render).** Spec executes its `Render`, wraps the result in
+   `<Activity mode="visible"><Suspense …><PartialErrorBoundary …>
+   {body}</PartialErrorBoundary></Suspense></Activity>`, and streams it.
 
-Cases 1 and 2 emit nothing. Case 3 emits a placeholder so the client
-paints from `_currentPagePartials`.
+The shared Activity wrapper at the spec's natural JSX position is
+what carries the round-trip state preservation. The active emission
+and the parked emission produce a structurally identical fiber tree
+(Activity > Suspense > PEB > body), so React's reconciler treats the
+cross-route transition as a `mode` prop update on the Activity fiber
+rather than an unmount/remount. The cached element ref is the same
+across renders (until the next fresh render overwrites it), so the
+inner fiber chain stays alive.
+
+When `keepalive: false`, the spec falls back to the classic two-case
+behavior: case 1 returns `null`, case 4 emits the wrappers without
+the Activity layer. The fp-skip path (case 3) still emits a
+placeholder for the same-route refetch optimization, just unwrapped.
 
 ### Transitive fingerprint propagation
 

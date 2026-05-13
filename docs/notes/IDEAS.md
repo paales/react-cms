@@ -54,6 +54,37 @@ Open questions:
 
 When tab A runs a server action that invalidates `["cart"]`, tab B is stale. A BroadcastChannel propagating invalidation signals across same-origin tabs would make multi-tab behaviour correct by default. Strictly simpler than server-push realtime (no websocket infra) and probably what 90% of apps actually need.
 
+### Keepalive follow-ups (multi-version cache + server-driven TTL)
+
+The first cut of `keepalive` (default `true`) wraps each spec's body
+in `<Activity mode="visible">` and emits `<Activity mode="hidden">`
++ placeholder on `match`/`vary` miss when the client has the id
+cached. Two extensions are open:
+
+- **Per-fingerprint variant pool.** `_currentPagePartials` keys by
+  id, so navigating between routes that render the same partial id
+  with different `vary` results (e.g. `/a` → `/c` where both render
+  `#cart` but `/c` has `?variantX`) thrashes — each route's fp
+  overwrites the prior. The fix is to key the pool by `(id, fp)` and
+  emit one `<Activity>` sibling per cached variant under the same
+  parent (each keyed by fp, only the matching one `mode="visible"`).
+  Requires wire-format change: `?cached=` would carry one `id:fp`
+  pair per variant rather than one per id, and the server's
+  `cachedFingerprints` map would become `Map<id, Set<fp>>` for
+  fp-skip lookup.
+- **Server-driven cache-control on the wire.** Today `keepalive` is
+  a binary flag with an unbounded client-side pool. The natural
+  extension is to surface the spec's `cache: { maxAge,
+  staleWhileRevalidate }` numbers in the wrapper props the server
+  ships down, and have the client use them to decide when to even
+  send the id in `?cached=` on the next nav (within `maxAge`:
+  paint cached, skip the network round-trip for this id entirely;
+  within SWR window: include in `?cached=` and revalidate in
+  background; past both: include and treat as cold).
+
+Both can be layered on the current implementation without breaking
+the API surface.
+
 ### Activate ⇄ deactivate symmetry (deferred + infinite-scroll unload)
 
 Today `useActivate(partialId, subscribe)` fires once and the partial

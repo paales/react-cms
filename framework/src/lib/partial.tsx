@@ -18,6 +18,7 @@
  */
 
 import React, {
+  Activity,
   Suspense,
   cloneElement,
   isValidElement,
@@ -154,7 +155,7 @@ export type MatchPattern = string | URLPatternInit
 
 export type PartialOptions<V> = Pick<
   InternalSpecConfig<V>,
-  "match" | "vary" | "cache" | "defer" | "fallback"
+  "match" | "vary" | "cache" | "defer" | "fallback" | "keepalive"
 >
 
 /**
@@ -193,6 +194,21 @@ interface InternalSpecConfig<V> {
   cache?: CacheOptions
   defer?: DeferSpec
   fallback?: ReactNode
+  /** When `true` (default), wraps the spec's rendered body in
+   *  `<Activity mode="visible">` while active and emits
+   *  `<Activity mode="hidden">` with a placeholder when `match` /
+   *  `vary` says the spec shouldn't render on this route — provided
+   *  the client has previously cached this id (signalled via
+   *  `?cached=id:fp`). The spec component fiber lives at its natural
+   *  JSX position (e.g. a root.tsx sibling), so Activity mode flips
+   *  rather than the subtree mounting/unmounting; `useState` /
+   *  `useRef` / DOM state inside the partial survive cross-route
+   *  navigation, refetching only when the fingerprint differs.
+   *
+   *  Set to `false` for partials that genuinely should be torn down
+   *  on cross-route nav (heavy video / iframe DOM, partials whose
+   *  state is meaningful only while visible, debug-only specs). */
+  keepalive?: boolean
   schema?: (scope: SchemaScope) => unknown
   /** `true` when constructed via `ReactCms.block` — controls slot-block
    *  catalog registration + selector parsing rules. */
@@ -756,6 +772,30 @@ function placeholderFor(id: string): ReactElement {
   return <i key={id} hidden data-partial data-partial-id={id} />
 }
 
+/**
+ * Parked emission for a keepalive spec whose `match`/`vary` says it
+ * shouldn't render on this request, but the client has it cached
+ * (declared via `?cached=id:fp`). Returns an `<Activity mode="hidden">`
+ * containing the same placeholder a fp-skip would emit — the client's
+ * cache merge substitutes the placeholder with the cached subtree,
+ * so the React fiber tree stays shape-identical to the active emission
+ * (Activity > Suspense/PEB > body). Mode flips, fiber persists, state
+ * survives.
+ *
+ * Returns `null` when keepalive is opted out or when the client hasn't
+ * cached this id — falls back to the classic "render nothing on
+ * match-miss" behavior.
+ */
+function emitParkedKeepalive(
+  id: string,
+  keepalive: boolean,
+  state: PartialRequestState | undefined,
+): ReactNode {
+  if (!keepalive) return null
+  if (!state?.cachedFingerprints.has(id)) return null
+  return <Activity mode="hidden">{placeholderFor(id)}</Activity>
+}
+
 function effectiveIdForInstance(
   spec: InternalSpec<unknown>,
   cmsIdOverride: string | undefined,
@@ -798,6 +838,15 @@ function createSpecComponent<V>(
     const cmsIdOverride = directCmsIdOverride ?? slotCmsIdOverride
     const effectiveCmsId = cmsIdOverride ?? spec.cmsId
     const { id, parsed } = effectiveIdForInstance(spec as InternalSpec<unknown>, cmsIdOverride)
+    // Keepalive defaults to true. The flag governs both the active
+    // emission (wrap body in `<Activity mode="visible">`) and the
+    // parked emission on match-miss / vary-null (emit
+    // `<Activity mode="hidden">` + placeholder when the client has
+    // this id cached). The shared Activity wrapper is what lets React
+    // preserve the inner Suspense subtree's fiber identity across
+    // active ↔ parked transitions — mode flips, fiber stays.
+    const keepalive = opts.keepalive !== false
+    const requestState = getPartialState()
     // ── Match phase ──
     // `match` runs against the PAGE URL — it's a page-level "should
     // this spec render on this route" gate. The frame URL is
@@ -807,7 +856,7 @@ function createSpecComponent<V>(
     let params: Record<string, string> = {}
     if (spec.matchPattern) {
       const result = spec.matchPattern.exec(getRequest().url)
-      if (result === null) return null
+      if (result === null) return emitParkedKeepalive(id, keepalive, requestState)
       params = extractNamedParams(result)
     }
 
@@ -834,7 +883,7 @@ function createSpecComponent<V>(
         params,
         session,
       })
-      if (v === null) return null
+      if (v === null) return emitParkedKeepalive(id, keepalive, requestState)
       varyResult = v
     } else if (Object.keys(extraProps).length > 0) {
       // No `vary` declared, but the call site supplied JSX props.
@@ -907,7 +956,7 @@ function createSpecComponent<V>(
     //    it costs nothing and preserves correctness.
     // 2. The spec's fp folds in transitive descendant fps so any
     //    descendant-dep change moves the ancestor's fp too.
-    const state = getPartialState() ?? null
+    const state = requestState ?? null
 
     const isExplicit = state?.explicitIds.has(id) ?? false
     const cachedFp = state?.cachedFingerprints.get(id)
@@ -945,6 +994,17 @@ function createSpecComponent<V>(
     const sessionDeps = sessionDepsSet.size > 0 ? Array.from(sessionDepsSet).sort() : undefined
 
     if (shouldSkip) {
+      // Wrap the placeholder in `<Activity mode="visible">` so the
+      // React tree shape matches the active fresh emission — Activity
+      // > Suspense subtree. Without this wrapper here, a same-route
+      // refetch that ends up fp-skipped would produce a different
+      // tree shape than the prior fresh render and React would
+      // remount the inner Suspense subtree, losing client state.
+      const skipBody: ReactNode = keepalive ? (
+        <Activity mode="visible">{placeholderFor(id)}</Activity>
+      ) : (
+        placeholderFor(id)
+      )
       return (
         <PartialBoundary
           id={id}
@@ -961,7 +1021,7 @@ function createSpecComponent<V>(
           varyKey={varyKey}
           sessionDeps={sessionDeps}
         >
-          {placeholderFor(id)}
+          {skipBody}
         </PartialBoundary>
       )
     }
@@ -974,6 +1034,16 @@ function createSpecComponent<V>(
           : isValidElement(defer)
             ? cloneElement(defer as ReactElement<ActivatorProps>, { partialId: id }, fallback)
             : fallback
+      let deferBody: ReactNode = (
+        <PartialErrorBoundary
+          key={id}
+          partialId={id}
+          partialFingerprint={fp}
+        >
+          {dormant}
+        </PartialErrorBoundary>
+      )
+      if (keepalive) deferBody = <Activity mode="visible">{deferBody}</Activity>
       return (
         <PartialBoundary
           id={id}
@@ -990,13 +1060,7 @@ function createSpecComponent<V>(
           varyKey={varyKey}
           sessionDeps={sessionDeps}
         >
-          <PartialErrorBoundary
-            key={id}
-            partialId={id}
-            partialFingerprint={fp}
-          >
-            {dormant}
-          </PartialErrorBoundary>
+          {deferBody}
         </PartialBoundary>
       )
     }
@@ -1046,6 +1110,15 @@ function createSpecComponent<V>(
         </PartialErrorBoundary>
       )
     }
+
+    // Outermost wrap is `<Activity mode="visible">` so the React tree
+    // shape matches the parked emission (`<Activity mode="hidden">`
+    // + placeholder substituted on the client). Same shape across
+    // active ↔ parked means the inner Suspense/PEB fiber and its
+    // descendants persist across the transition — `useState`,
+    // `useRef`, and DOM state survive the navigate-away-and-back
+    // round-trip.
+    if (keepalive) body = <Activity mode="visible">{body}</Activity>
 
     return (
       <PartialBoundary

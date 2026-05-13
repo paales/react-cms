@@ -1,16 +1,21 @@
 import { test, expect, request } from "./fixtures"
 
 /**
- * Verify: after navigating between routes, the client `_cache` drops
- * entries whose ids aren't on the new page. Observable via the
- * `?cached=` param on a subsequent refetch — it should only report
- * ids present on the CURRENT page, not stale ones carried over from
- * the prior route.
+ * With `keepalive: true` (the default on every spec), partials that
+ * leave the current route are NOT pruned from `_currentPagePartials` —
+ * they're parked under `<Activity mode="hidden">` and continue to
+ * appear in the `?cached=` query string on subsequent refetches. The
+ * server emits an `<Activity mode="hidden">{placeholder}</Activity>`
+ * shell for any parked id whose fingerprint the client reports as
+ * cached, and the client substitutes its cached subtree at the
+ * placeholder position — so the React fiber tree stays shape-stable
+ * across the route change and `useState` / `useRef` survive.
  *
- * Without pruning, a long session hopping between routes accumulates
- * every id it's ever seen; the `?cached=` query string grows
- * unbounded and starts announcing fingerprints for partials that no
- * longer render.
+ * This test pins that invariant by checking that ids rendered on a
+ * prior route still show up in `?cached=` after a client-side nav,
+ * which is the server's signal to keep emitting the parked shell.
+ * Without keepalive (the previous behavior) those ids would be
+ * pruned and the round-trip would lose state.
  */
 test.beforeEach(async ({ baseURL }) => {
   const ctx = await request.newContext()
@@ -18,7 +23,7 @@ test.beforeEach(async ({ baseURL }) => {
   await ctx.dispose()
 })
 
-test("client-side nav from /pokemon/1 to /defer-demo prunes stale ids from ?cached=", async ({
+test("client-side nav from /pokemon/1 to /defer-demo keeps parked ids in ?cached=", async ({
   page,
 }) => {
   // Warm the cache on /pokemon/1 — partial ids include hero, stats,
@@ -33,9 +38,9 @@ test("client-side nav from /pokemon/1 to /defer-demo prunes stale ids from ?cach
 
   // Client-side nav via the app-nav link. A hard `page.goto` would
   // drop the browser process entirely and clear module state (making
-  // the prune moot); a same-document intercepted click preserves the
-  // `_cache` / `_fingerprints` Maps, which is where stale entries
-  // actually leak.
+  // the keepalive pool moot); a same-document intercepted click
+  // preserves the `_currentPagePartials` / `_currentPageFingerprints`
+  // Maps, which is what we want to assert against.
   await page.getByRole("link", { name: /Defer Demo/ }).click()
   await expect(page.locator('[data-testid="manual-fallback"]')).toBeVisible()
   await page.waitForFunction(
@@ -62,21 +67,21 @@ test("client-side nav from /pokemon/1 to /defer-demo prunes stale ids from ?cach
     .map((t) => t.split(":")[0])
     .filter(Boolean)
 
-  // Stale ids from /pokemon/1 must NOT appear.
+  // Parked ids from /pokemon/1 SHOULD still appear — keepalive defaults
+  // to true, so the client keeps reporting them and the server can
+  // fp-skip them when the user navigates back.
   for (const id of ["hero", "stats", "species", "trivia"]) {
-    expect(cachedIds, `expected pruned id "${id}" to be absent from ?cached=`).not.toContain(id)
+    expect(cachedIds, `expected keepalive id "${id}" to be parked in ?cached=`).toContain(id)
   }
 
-  // Current-page ids SHOULD be present. `stored` and `any` are unique
-  // to /defer-demo, and both sit inside `<body>` where they register
-  // quickly. (`head` is intentionally NOT asserted here — it lives
-  // directly under `<html>` and its `<PartialErrorBoundary>` commits
-  // on a separate reconciliation tick from the body subtree; the
-  // activate-manual click routinely wins that race, so the assertion
-  // would be flaky. The core pruning behavior is exercised by the
-  // negative assertions above and below.)
-  // `manual` is the refetch target and is excluded from ?cached= by
-  // design.
+  // Current-page ids SHOULD be present too. `stored` and `any` are
+  // unique to /defer-demo, and both sit inside `<body>` where they
+  // register quickly. (`head` is intentionally NOT asserted here — it
+  // lives directly under `<html>` and its `<PartialErrorBoundary>`
+  // commits on a separate reconciliation tick from the body subtree;
+  // the activate-manual click routinely wins that race, so the
+  // assertion would be flaky.) `manual` is the refetch target and is
+  // excluded from `?cached=` by design.
   expect(cachedIds).toContain("stored")
   expect(cachedIds).toContain("any")
   expect(cachedIds).not.toContain("manual")
