@@ -19,6 +19,15 @@ const isTest = process.env.VITEST === "true"
 const REPO_CMS_DATA_DIR = path.resolve(import.meta.dirname, "..", "cms", "data")
 process.env.CMS_DATA_DIR ??= REPO_CMS_DATA_DIR
 
+// DOCS_DIR pins the chat-overlay's markdown source. Same rationale as
+// CMS_DATA_DIR — preview-mode bundles live under `dist/rsc/`, so
+// neither `process.cwd()` nor `import.meta.dirname`-relative paths
+// inside the bundled code reach the repo's `docs/` tree. Anchor it
+// from `vite.config.ts`, where `import.meta.dirname` is the workspace
+// root regardless of run mode.
+const REPO_DOCS_DIR = path.resolve(import.meta.dirname, "..", "docs")
+process.env.DOCS_DIR ??= REPO_DOCS_DIR
+
 // Workspace alias map — referenced by both the dev/build config and
 // (separately) by the root vitest config. Keep them in lockstep.
 const REPO_ROOT = path.resolve(import.meta.dirname, "..")

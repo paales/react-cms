@@ -13,6 +13,12 @@ const isTest = process.env.VITEST === "true"
 const REPO_CMS_DATA_DIR = path.resolve(import.meta.dirname, "..", "cms", "data")
 process.env.CMS_DATA_DIR ??= REPO_CMS_DATA_DIR
 
+// Mirror e2e-testing/vite.config.ts — DOCS_DIR pins chat-overlay's
+// markdown source so bundled-preview cwd quirks can't strand the
+// path.
+const REPO_DOCS_DIR = path.resolve(import.meta.dirname, "..", "docs")
+process.env.DOCS_DIR ??= REPO_DOCS_DIR
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "..")
 const workspaceAliases = [
   {

@@ -44,11 +44,20 @@ const STREAM_BUDGET_MS_TEST = 3_000
 // active research, archived design proposals — without the chat
 // overlay having to hardcode where each file lives.
 //
-// Resolved against this source file's location, not `process.cwd()` —
-// `yarn dev` runs vite from the workspace root (e2e-testing/), so a
-// cwd-rooted path would look under `e2e-testing/docs/notes/` and miss
-// the repo-level `docs/` tree.
-const REPO_DOCS = resolve(import.meta.dirname, "../../../../docs")
+// Path resolution priority:
+//   1. `DOCS_DIR` env var — set by each app's `vite.config.ts` to the
+//      absolute repo-level `docs/`. Robust for dev / build / preview
+//      regardless of how the bundle gets called or where cwd lands.
+//   2. `import.meta.dirname`-relative — fallback for source-tree
+//      runs (e.g. vitest) that don't load the app's vite.config.ts.
+//      The four-level walk only works when this file is at its
+//      authored path (`e2e-testing/src/app/chat/log.ts`); bundled
+//      consumers must rely on `DOCS_DIR`.
+function resolveDocsRoot(): string {
+  if (process.env.DOCS_DIR) return resolve(process.env.DOCS_DIR)
+  return resolve(import.meta.dirname, "../../../../docs")
+}
+const REPO_DOCS = resolveDocsRoot()
 const SEARCH_DIRS = [
   resolve(REPO_DOCS, "notes"),
   resolve(REPO_DOCS, "reference"),
