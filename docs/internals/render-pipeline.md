@@ -185,14 +185,30 @@ time hydration runs the comment may not yet be in the DOM.
 fires once the response body has been fully consumed; the additive
 nature of `registerClientPartial` makes the double-scan safe.
 
-The trailer mechanism only covers the SSR HTML response (the
-common entry point: a fresh page load). RSC navigations don't carry
-a trailer of their own — a binary length-prefixed segment after the
-Flight bytes stalls Flight in some configurations (Flight stops
-reading once the root resolves; any splitter sitting between source
-and Flight stalls behind it). Cold→warm activation for a route the
-user reached purely via RSC nav is a follow-up; see
-`docs/notes/IDEAS.md`.
+Two transports, both at the same routeKey-bound flush hook:
+
+- **SSR HTML response**: `<!--fp-trailer:JSON-->` comment after
+  `</html>` (see `wrapSsrStreamWithFpTrailer`). Picked up by
+  `_applyFpTrailerFromDocument` at hydration time, or — when the
+  parser hasn't reached the trailing comment by then — on the
+  subsequent `load` event.
+- **RSC GET response**: length-prefixed binary segment after the
+  main Flight bytes (see `wrapStreamWithFpTrailer` and
+  `splitAtFpTrailer`). The 12-byte sentinel
+  (`\xFF\xFE` + ASCII `fp-updates` + `\xFD\xFC`) marks the boundary;
+  invalid UTF-8 lead bytes make it impossible for the marker to
+  occur inside the Flight JSON. `splitAtFpTrailer` is a no-holdback
+  splitter — chunks forward to Flight immediately, so progressive
+  rows stream with their original timing, and the trailer is parsed
+  from a rolling tail buffer on source-end.
+
+Action POSTs (`renderRequest.isAction === true`) skip the trailer.
+Flight stops reading once the action result row resolves; a splitter
+waiting for the trailer past that point can stall under
+backpressure. The cold→warm path for action POSTs falls back to the
+same single-round-trip warm-up that any cold-without-trailer hits:
+the next visit registers warm fps via PEB-prop hydration on the
+fresh wrapper the action response emitted.
 
 ## Stream-driven commit timing
 

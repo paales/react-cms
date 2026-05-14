@@ -195,17 +195,14 @@ async function handleRequest(
   })
 
   if (renderRequest.isRsc) {
-    // RSC response: commit-only (no trailer bytes appended). The
-    // SSR HTML comment is the canonical channel for fp-trailer
-    // updates — once the client has warm fps registered from the
-    // initial cold HTML load, subsequent RSC navs already fp-skip.
-    // Emitting a binary trailer here would also have to thread
-    // through Flight's stream consumer cleanly; doing so safely
-    // requires more care than fire-and-forget allows. Tracked as
-    // a follow-up: ship trailer updates on RSC responses for
-    // scenarios where the cold render is itself an RSC nav (rare
-    // on first-visit, common on hot-route SPA-style sessions).
-    return new Response(wrapStreamWithCommitOnly(rscStream, _captureCommitHandle()), {
+    // RSC response: GET navs get the binary fp-trailer (length-
+    // prefixed segment after the main Flight bytes, parsed client-
+    // side by `splitAtFpTrailer`). Action POSTs skip the trailer —
+    // Flight stops reading once the root row resolves on the action-
+    // result path, and a splitter waiting for the trailer past that
+    // point can stall under backpressure.
+    const wrap = renderRequest.isAction ? wrapStreamWithCommitOnly : wrapStreamWithFpTrailer
+    return new Response(wrap(rscStream, _captureCommitHandle()), {
       status: actionStatus,
       headers: { "content-type": "text/x-component;charset=utf-8" },
     })

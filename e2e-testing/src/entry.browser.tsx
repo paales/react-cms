@@ -13,12 +13,14 @@ import { GlobalErrorBoundary } from "@react-cms/framework/runtime/error-boundary
 import { createRscRenderRequest } from "@react-cms/framework/runtime/request.tsx"
 import {
   _applyFpTrailerFromDocument,
+  _applyFpUpdates,
   _collectFramePaths,
   _dispatchFrameRefetch,
   _readFramesSnapshot,
   getCachedPartialIds,
   isFrameworkSilentInfo,
 } from "@react-cms/framework/lib/partial-client.tsx"
+import { splitAtFpTrailer } from "@react-cms/framework/lib/fp-trailer-split.ts"
 import { getNavigation } from "@react-cms/framework/runtime/navigation-api.ts"
 
 async function main() {
@@ -108,14 +110,18 @@ async function main() {
     const disableTransition = url.searchParams.has("disableTransition")
     const renderRequest = createRscRenderRequest(url.toString())
     const response = await fetch(renderRequest)
-    // RSC responses don't carry a binary fp-trailer today; the
-    // SSR-only HTML-comment channel covers cold→warm activation,
-    // and emitting a binary segment after Flight bytes interfered
-    // with action POST response handling (Flight stops reading
-    // before EOF once the root resolves, so any splitter sitting
-    // between source and Flight can stall). Pass response.body
-    // straight to Flight.
-    const payload = await createFromReadableStream<RscPayload>(response.body!)
+    // RSC GET navs carry a length-prefixed binary fp-trailer after
+    // the Flight bytes. Split it off before handing the main stream
+    // to Flight: the splitter forwards source chunks immediately
+    // (Flight sees its bytes with original timing) and parses the
+    // trailer on source-end. The trailer's warm-fp updates are
+    // applied to `_currentPageFingerprints` so the next nav's
+    // `?cached=` carries both cold and warm.
+    const { mainStream, trailer } = splitAtFpTrailer(response.body!)
+    const payload = await createFromReadableStream<RscPayload>(mainStream)
+    trailer.then((updates) => {
+      if (updates) _applyFpUpdates(updates)
+    })
     if (disableTransition) {
       setPayloadRaw(payload)
     } else {
