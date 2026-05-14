@@ -43,11 +43,17 @@ const STREAM_BUDGET_MS_TEST = 3_000
 // any markdown in the project — current docs, framework internals,
 // active research, archived design proposals — without the chat
 // overlay having to hardcode where each file lives.
+//
+// Resolved against this source file's location, not `process.cwd()` —
+// `yarn dev` runs vite from the workspace root (e2e-testing/), so a
+// cwd-rooted path would look under `e2e-testing/docs/notes/` and miss
+// the repo-level `docs/` tree.
+const REPO_DOCS = resolve(import.meta.dirname, "../../../../docs")
 const SEARCH_DIRS = [
-  resolve(process.cwd(), "docs/notes"),
-  resolve(process.cwd(), "docs/reference"),
-  resolve(process.cwd(), "docs/internals"),
-  resolve(process.cwd(), "docs/archive"),
+  resolve(REPO_DOCS, "notes"),
+  resolve(REPO_DOCS, "reference"),
+  resolve(REPO_DOCS, "internals"),
+  resolve(REPO_DOCS, "archive"),
 ]
 
 async function readMarkdown(fileId: string): Promise<string> {
