@@ -59,31 +59,71 @@ When tab A runs a server action that invalidates `["cart"]`, tab B is stale. A B
 The first cut of `keepalive` (default `true`) wraps each spec's body
 in `<Activity mode="visible">` and emits `<Activity mode="hidden">`
 + placeholder on `match`/`vary` miss when the client has the id
-cached. Two extensions are open:
+cached. The second cut added the **fp trailer**: at end-of-render the
+server recomputes each spec's fp against the now-populated snapshot
+registry, ships a `{id: warm_fp}` map down as a length-prefixed
+segment after the main Flight bytes, and the client registers both
+the cold-emitted fp and the warm fp in its fp set. That fixes the
+cold→warm fp instability — the very next visit fp-skips against the
+warm value instead of paying a wasted re-render.
 
-- **Per-fingerprint variant pool.** `_currentPagePartials` keys by
-  id, so navigating between routes that render the same partial id
-  with different `vary` results (e.g. `/a` → `/c` where both render
-  `#cart` but `/c` has `?variantX`) thrashes — each route's fp
-  overwrites the prior. The fix is to key the pool by `(id, fp)` and
-  emit one `<Activity>` sibling per cached variant under the same
-  parent (each keyed by fp, only the matching one `mode="visible"`).
-  Requires wire-format change: `?cached=` would carry one `id:fp`
-  pair per variant rather than one per id, and the server's
-  `cachedFingerprints` map would become `Map<id, Set<fp>>` for
-  fp-skip lookup.
+Two extensions are still open:
+
+- **Per-fingerprint variant pool for cached subtrees.** Multi-fp on
+  the wire is wired up (`_currentPageFingerprints` is `Map<id, Set<fp>>`,
+  `?cached=` accepts multiple `id:fp` tokens per id, server's
+  `cachedFingerprints` is `Map<id, Set<fp>>`). But the actual cached
+  React element pool (`_currentPagePartials`) still keys by id —
+  navigating between routes that render the same partial id with
+  different `vary` results (e.g. `/pokemon/1` → `/pokemon/2`)
+  overwrites the cached subtree, losing inner state. The fix is to
+  promote that pool to `Map<id, Map<fp, ReactNode>>` and emit one
+  `<Activity>` sibling per cached variant under the same
+  `PartialBoundary` (each keyed by fp, only the matching one
+  `mode="visible"`). The fp-skip placeholder needs to carry
+  `data-partial-fp` so the cache merge knows which variant to
+  substitute.
 - **Server-driven cache-control on the wire.** Today `keepalive` is
   a binary flag with an unbounded client-side pool. The natural
   extension is to surface the spec's `cache: { maxAge,
-  staleWhileRevalidate }` numbers in the wrapper props the server
-  ships down, and have the client use them to decide when to even
-  send the id in `?cached=` on the next nav (within `maxAge`:
-  paint cached, skip the network round-trip for this id entirely;
-  within SWR window: include in `?cached=` and revalidate in
-  background; past both: include and treat as cold).
+  staleWhileRevalidate }` numbers via the same trailer channel and
+  have the client use them to decide when to even send the id in
+  `?cached=` on the next nav (within `maxAge`: paint cached, skip
+  the network round-trip for this id entirely; within SWR window:
+  include in `?cached=` and revalidate in background; past both:
+  include and treat as cold).
 
-Both can be layered on the current implementation without breaking
-the API surface.
+Both can be layered on the current trailer + multi-fp infrastructure
+without breaking the API surface.
+
+### Restart-streaming via segmented Flight (cursor-frequency updates)
+
+The fp-trailer is one segment after the main Flight bytes. The same
+framing (4-byte sentinel-with-tag + length-prefix per segment)
+generalises to N segments: server keeps the response stream open,
+emits Flight payload + sentinel + Flight payload + sentinel + …,
+client splits on sentinels and calls `setPayload(payload)` once per
+segment. Effectively Server-Sent Events with Flight payloads as
+events — the client just keeps reconciling into the same React tree
+on every segment.
+
+For a cursor-position firehose (10–60 updates/sec), the server-side
+shape is: render-to-readable-stream → wait for next state mutation →
+render again → emit as next segment, looping until the request
+aborts. State-push from client to server stays a separate channel
+(parallel POST stream, websocket, or just a different `Request`) —
+the asymmetry (RSC down, state up) is intrinsic.
+
+Open questions if/when we build this:
+- **Server-side iteration loop.** How does `<Root>` know to
+  re-render? Probably an explicit `useRevalidate` primitive or an
+  external state observer.
+- **Segment framing in flight-trailer-marker.** Vary the tag to
+  distinguish `next-payload` from `fp-updates` — same sentinel
+  shape, different ASCII tag means same parser dispatches on it.
+- **Backpressure.** If client renders slowly, server keeps emitting.
+  Bounded queue + drop-oldest is probably what we want for cursor
+  positions.
 
 ### Activate ⇄ deactivate symmetry (deferred + infinite-scroll unload)
 

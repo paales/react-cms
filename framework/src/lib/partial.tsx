@@ -509,6 +509,11 @@ interface PartialBoundaryProps {
   /** Hash of the spec's varyResult — feeds the descendant fold so
    *  ancestors' fps reflect descendants' deps. */
   varyKey?: string
+  /** The full fp baked into this spec's PartialErrorBoundary prop —
+   *  i.e. what the client ends up registering. Stored on the snapshot
+   *  so the fp-trailer flush can detect cold→warm drift and ship the
+   *  warm fp to the client without an extra round-trip. */
+  emittedFp?: string
   /** Session keys this spec's `vary` read via the `session.*` surface.
    *  Server-action invalidations (`setSessionValue`) walk every
    *  registered snapshot and refetch the specs that recorded the
@@ -530,6 +535,7 @@ export function PartialBoundary({
   fallback,
   props,
   varyKey,
+  emittedFp,
   sessionDeps,
   children,
 }: PartialBoundaryProps): ReactNode {
@@ -545,6 +551,7 @@ export function PartialBoundary({
     cache,
     props,
     varyKey,
+    emittedFp,
     sessionDeps,
   })
   return children
@@ -959,8 +966,8 @@ function createSpecComponent<V>(
     const state = requestState ?? null
 
     const isExplicit = state?.explicitIds.has(id) ?? false
-    const cachedFp = state?.cachedFingerprints.get(id)
-    const fingerprintMatches = cachedFp != null && cachedFp === fp
+    const cachedFps = state?.cachedFingerprints.get(id)
+    const fingerprintMatches = cachedFps != null && cachedFps.has(fp)
     const hasOuterChildren = outerChildren != null && outerChildren !== false
     const shouldSkip = state != null && !isExplicit && fingerprintMatches && !hasOuterChildren
 
@@ -1019,6 +1026,7 @@ function createSpecComponent<V>(
           fallback={fallback}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           varyKey={varyKey}
+          emittedFp={fp}
           sessionDeps={sessionDeps}
         >
           {skipBody}
@@ -1058,6 +1066,7 @@ function createSpecComponent<V>(
           fallback={fallback}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           varyKey={varyKey}
+          emittedFp={fp}
           sessionDeps={sessionDeps}
         >
           {deferBody}
@@ -1134,6 +1143,7 @@ function createSpecComponent<V>(
         fallback={fallback}
         props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
         varyKey={varyKey}
+        emittedFp={fp}
         sessionDeps={sessionDeps}
       >
         {body}
@@ -1376,16 +1386,21 @@ interface PartialRootProps {
   children: ReactNode
 }
 
-function parseCachedFingerprints(raw: string | null): Map<string, string | null> {
-  const out = new Map<string, string | null>()
+function parseCachedFingerprints(raw: string | null): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>()
   if (!raw) return out
   for (const token of raw.split(",").map((s) => s.trim())) {
     if (!token) continue
-    // Use lastIndexOf — anonymous ids contain `:` (e.g. `__anon:product`).
-    // The fingerprint comes after the LAST colon.
     const colonIdx = token.lastIndexOf(":")
-    if (colonIdx > 0) out.set(token.slice(0, colonIdx), token.slice(colonIdx + 1))
-    else out.set(token, null)
+    if (colonIdx <= 0) continue
+    const id = token.slice(0, colonIdx)
+    const fp = token.slice(colonIdx + 1)
+    let set = out.get(id)
+    if (!set) {
+      set = new Set()
+      out.set(id, set)
+    }
+    set.add(fp)
   }
   return out
 }

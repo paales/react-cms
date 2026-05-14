@@ -12,6 +12,7 @@ import type { RscPayload } from "./entry.rsc"
 import { GlobalErrorBoundary } from "@react-cms/framework/runtime/error-boundary.tsx"
 import { createRscRenderRequest } from "@react-cms/framework/runtime/request.tsx"
 import {
+  _applyFpTrailerFromDocument,
   _collectFramePaths,
   _dispatchFrameRefetch,
   _readFramesSnapshot,
@@ -36,6 +37,16 @@ async function main() {
   }
 
   const initialPayload = await createFromReadableStream<RscPayload>(rscStream)
+
+  // The SSR HTML response carries the fp-trailer as an HTML comment
+  // appended after `</html>` (see `wrapSsrStreamWithFpTrailer` in
+  // the framework). Parse it now so the warm fps the server
+  // computed during this cold render are registered before any
+  // subsequent navigation fires `?cached=`. Without this, the first
+  // nav after a hard refresh / SSR mounts the page with only cold
+  // fps in `_currentPageFingerprints` and the very next visit
+  // pays a full fresh re-render instead of fp-skipping.
+  _applyFpTrailerFromDocument()
 
   function BrowserRoot() {
     const [payload, setPayload_] = React.useState(initialPayload)
@@ -97,6 +108,13 @@ async function main() {
     const disableTransition = url.searchParams.has("disableTransition")
     const renderRequest = createRscRenderRequest(url.toString())
     const response = await fetch(renderRequest)
+    // RSC responses don't carry a binary fp-trailer today; the
+    // SSR-only HTML-comment channel covers cold→warm activation,
+    // and emitting a binary segment after Flight bytes interfered
+    // with action POST response handling (Flight stops reading
+    // before EOF once the root resolves, so any splitter sitting
+    // between source and Flight can stall). Pass response.body
+    // straight to Flight.
     const payload = await createFromReadableStream<RscPayload>(response.body!)
     if (disableTransition) {
       setPayloadRaw(payload)
@@ -128,7 +146,6 @@ async function main() {
     const payload = await createFromFetch<RscPayload>(fetch(renderRequest), {
       temporaryReferences,
     })
-
     setPayload(payload)
     const { ok, data } = payload.returnValue!
     if (!ok) throw data

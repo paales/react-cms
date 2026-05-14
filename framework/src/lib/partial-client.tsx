@@ -403,7 +403,7 @@ function cacheFromStreamingChildren(
       // late-committing ids. The wrapper already carries the
       // fingerprint — just lift it off.
       const fp = getPartialFingerprint(node)
-      if (fp) _currentPageFingerprints.set(id, fp)
+      if (fp) registerClientPartial(id, fp)
     }
     // Descend: nested partial wrappers need their own top-level cache
     // entries so subsequent parent-only refetches with inner
@@ -525,7 +525,7 @@ function renderTemplate(template: ReactNode, cache: Map<string, ReactNode>): Rea
  * by the largest single page the user visits, not by browsing history.
  */
 const _currentPagePartials = new Map<string, ReactNode>()
-const _currentPageFingerprints = new Map<string, string>()
+const _currentPageFingerprints = new Map<string, Set<string>>()
 
 /**
  * Structural layout skeleton, derived from the most recent full-payload
@@ -548,7 +548,73 @@ let _template: ReactNode = null
  * here to tell the server what's already cached.
  */
 export function registerClientPartial(id: string, fingerprint: string): void {
-  _currentPageFingerprints.set(id, fingerprint)
+  let set = _currentPageFingerprints.get(id)
+  if (!set) {
+    set = new Set()
+    _currentPageFingerprints.set(id, set)
+  }
+  set.add(fingerprint)
+}
+
+/**
+ * Apply an fp-updates trailer (parsed JSON from the wire) to the
+ * client's fingerprint map. Each `id → warm_fp` entry is added to
+ * the id's existing fp set, so the next `?cached=` carries both the
+ * cold fp the client originally registered AND the warm fp the
+ * server just told us about. See `lib/fp-trailer.ts` for the
+ * server-side emission, and `lib/fp-trailer-marker.ts` for the wire
+ * sentinel.
+ */
+export function _applyFpUpdates(updates: Record<string, string>): void {
+  for (const [id, fp] of Object.entries(updates)) {
+    registerClientPartial(id, fp)
+  }
+}
+
+/**
+ * Apply an fp-updates trailer (parsed JSON from the wire) to the
+ * client's fingerprint map. Each `id → warm_fp` entry is added to
+ * the id's existing fp set, so the next `?cached=` carries both the
+ * cold fp the client originally registered AND the warm fp the
+ * server just told us about.
+ */
+function applyFpUpdates(updates: Record<string, string>): void {
+  for (const [id, fp] of Object.entries(updates)) {
+    registerClientPartial(id, fp)
+  }
+}
+
+/**
+ * Scan the document for an `<!--fp-trailer:JSON-->` comment node
+ * placed by the server's SSR response (see
+ * `wrapSsrStreamWithFpTrailer` in `lib/fp-trailer.ts`). Returns the
+ * parsed update map, or `null` when no trailer is present.
+ *
+ * The comment lives after `</html>` so browsers parse it as a
+ * Comment node at the document root — we walk `document.childNodes`
+ * and `document.documentElement.childNodes` to catch both rendering
+ * conventions.
+ */
+export function _applyFpTrailerFromDocument(): void {
+  const tag = "fp-trailer:"
+  const candidates: Node[] = []
+  for (const c of document.childNodes) candidates.push(c)
+  if (document.documentElement) {
+    for (const c of document.documentElement.childNodes) candidates.push(c)
+  }
+  for (const node of candidates) {
+    if (node.nodeType !== 8 /* COMMENT_NODE */) continue
+    const text = (node as Comment).data
+    if (!text.startsWith(tag)) continue
+    try {
+      const json = text.slice(tag.length).replace(/-\\-/g, "--")
+      const updates = JSON.parse(json) as Record<string, string>
+      applyFpUpdates(updates)
+    } catch {
+      // Malformed trailer — ignore.
+    }
+    return
+  }
 }
 
 /**
@@ -567,8 +633,10 @@ export function registerClientPartial(id: string, fingerprint: string): void {
  */
 export function getCachedPartialIds(): string[] {
   const out: string[] = []
-  for (const [id, fp] of _currentPageFingerprints) {
-    out.push(`${id}:${fp}`)
+  for (const [id, fps] of _currentPageFingerprints) {
+    for (const fp of fps) {
+      out.push(`${id}:${fp}`)
+    }
   }
   return out
 }

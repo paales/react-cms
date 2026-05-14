@@ -21,8 +21,9 @@ export interface PartialRequestState {
   isPartialRefetch: boolean
   /** `?__populateCache=1` — server-action flow that repopulates the client cache on first post-action render. */
   populateCache: boolean
-  /** `?cached=id:fp,…` — fingerprints the client already has in `_currentPageFingerprints`. */
-  cachedFingerprints: Map<string, string | null>
+  /** `?cached=id:fp,…` — fingerprints the client already has in
+   *  `_currentPageFingerprints`. Multi-fp per id supported. */
+  cachedFingerprints: Map<string, Set<string>>
   /** Effective ids explicitly targeted this request (resolved from `?partials=`+`?tags=`). Never skipped. */
   explicitIds: Set<string>
   /** Effective ids seen this request (catches duplicate anonymous Partials via `__anon:` collision and debug). */

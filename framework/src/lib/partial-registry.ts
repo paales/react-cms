@@ -75,6 +75,14 @@ export interface PartialSnapshot {
    *  own JSX is unchanged would fp-skip and starve its descendants
    *  of a re-evaluation, even when their URL/CMS deps just changed. */
   varyKey?: string
+  /** The full fingerprint the spec emitted in this render — the value
+   *  baked into the `<PartialErrorBoundary>`'s `partialFingerprint`
+   *  prop that the client registered. Used by the fp-trailer flush
+   *  step: at end-of-render we recompute the fp with the now-populated
+   *  descendant fold; if it differs from `emittedFp`, we ship both old
+   *  and new fps to the client so the next visit fp-skips against the
+   *  warm value rather than mismatching against the cold one. */
+  emittedFp?: string
   /** Session keys this spec's `vary` read through the `session.*`
    *  surface. The `setSessionValue` server action walks snapshots
    *  on each route and unions the specs whose deps include the
@@ -291,6 +299,30 @@ export function getRouteSnapshots(): Map<string, PartialSnapshot> | undefined {
     for (const [id, snap] of ctx.pendingWrites) merged.set(id, snap)
   }
   return merged.size > 0 ? merged : undefined
+}
+
+/**
+ * Read the canonical snapshot set for a given (scope, routeKey)
+ * without depending on the registry ALS. Used by the fp-trailer
+ * flush hook in `lib/fp-trailer.ts` — flush fires after the
+ * request's ALS contexts have unwound, but the scope + URL captured
+ * at wrap time are enough to locate the same snapshot set the
+ * commit just wrote.
+ */
+export function _readSnapshotsForRoute(
+  scope: string,
+  routeKey: string,
+): Map<string, PartialSnapshot> {
+  const store = canonical.get(scope)
+  if (!store) return new Map()
+  const hint = store.hints.get(routeKey)
+  if (!hint) return new Map()
+  const snapshots = new Map<string, PartialSnapshot>()
+  for (const [id, vk] of hint) {
+    const snap = store.partials.get(id)?.get(vk)
+    if (snap) snapshots.set(id, snap)
+  }
+  return snapshots
 }
 
 export function invalidateSnapshot(id: string): void {

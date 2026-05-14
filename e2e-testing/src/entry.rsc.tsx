@@ -18,6 +18,11 @@ import {
 } from "@react-cms/framework/runtime/context.ts"
 import { warmCmsCache } from "@react-cms/framework/runtime/cms-runtime.ts"
 import { deferRequestRegistryCommit } from "@react-cms/framework/lib/partial-registry.ts"
+import {
+  wrapStreamWithFpTrailer,
+  wrapStreamWithCommitOnly,
+  wrapSsrStreamWithFpTrailer,
+} from "@react-cms/framework/lib/fp-trailer.ts"
 
 export type RscPayload = {
   root: React.ReactNode
@@ -191,20 +196,43 @@ async function handleRequest(
   })
 
   if (renderRequest.isRsc) {
-    return new Response(wrapStreamWithRegistryCommit(rscStream), {
+    // RSC response: commit-only (no trailer bytes appended). The
+    // SSR HTML comment is the canonical channel for fp-trailer
+    // updates — once the client has warm fps registered from the
+    // initial cold HTML load, subsequent RSC navs already fp-skip.
+    // Emitting a binary trailer here would also have to thread
+    // through Flight's stream consumer cleanly; doing so safely
+    // requires more care than fire-and-forget allows. Tracked as
+    // a follow-up: ship trailer updates on RSC responses for
+    // scenarios where the cold render is itself an RSC nav (rare
+    // on first-visit, common on hot-route SPA-style sessions).
+    return new Response(wrapStreamWithCommitOnly(rscStream, _captureCommitHandle()), {
       status: actionStatus,
       headers: { "content-type": "text/x-component;charset=utf-8" },
     })
   }
 
+  // SSR response: rscStream gets inlined into <script>FLIGHT_DATA</script>
+  // tags by `rsc-html-stream`. If we appended a binary trailer to
+  // rscStream the trailer's JSON payload would be visible in the
+  // rendered HTML source (FLIGHT_DATA pushes are JSON-stringified
+  // chunk content). Instead: commit-only on the rscStream, and
+  // append the fp-trailer as an `<!--fp-trailer:JSON-->` comment
+  // AFTER the HTML output. The client's `_applyFpTrailerFromDocument`
+  // reads it on hydration.
+  const commit = _captureCommitHandle()
+  deferRequestRegistryCommit()
   const ssrEntryModule = await import.meta.viteRsc.loadModule<typeof import("./entry.ssr.tsx")>(
     "ssr",
     "index",
   )
-  const ssrResult = await ssrEntryModule.renderHTML(rscStream, {
-    formState,
-    debugNojs: renderRequest.url.searchParams.has("__nojs"),
-  })
+  const ssrResult = await ssrEntryModule.renderHTML(
+    wrapStreamWithCommitOnly(rscStream, commit),
+    {
+      formState,
+      debugNojs: renderRequest.url.searchParams.has("__nojs"),
+    },
+  )
 
   const finalControl = getFrameworkControl()
 
@@ -228,33 +256,17 @@ async function handleRequest(
       formState,
       debugNojs: renderRequest.url.searchParams.has("__nojs"),
     })
-    return new Response(wrapStreamWithRegistryCommit(notFoundSsr.stream), {
+    return new Response(wrapSsrStreamWithFpTrailer(notFoundSsr.stream, commit), {
       status: 404,
       headers: { "Content-type": "text/html" },
     })
   }
 
-  return new Response(wrapStreamWithRegistryCommit(ssrResult.stream), {
+  // TEMP: skip HTML-comment trailer.
+  return new Response(wrapStreamWithCommitOnly(ssrResult.stream, commit), {
     status: ssrResult.status,
     headers: { "Content-type": "text/html" },
   })
-}
-
-function wrapStreamWithRegistryCommit(
-  stream: ReadableStream<Uint8Array>,
-): ReadableStream<Uint8Array> {
-  const commit = _captureCommitHandle()
-  deferRequestRegistryCommit()
-  return stream.pipeThrough(
-    new TransformStream({
-      transform(chunk, controller) {
-        controller.enqueue(chunk)
-      },
-      flush() {
-        commit()
-      },
-    }),
-  )
 }
 
 function silenceClientDisconnect(error: unknown): string | undefined {
