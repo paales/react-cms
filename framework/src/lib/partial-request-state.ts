@@ -21,9 +21,17 @@ export interface PartialRequestState {
   isPartialRefetch: boolean
   /** `?__populateCache=1` — server-action flow that repopulates the client cache on first post-action render. */
   populateCache: boolean
-  /** `?cached=id:fp,…` — fingerprints the client already has in
-   *  `_currentPageFingerprints`. Multi-fp per id supported. */
+  /** `?cached=id:matchKey:fp,…` — fingerprints the client already has
+   *  in `_currentPageFingerprints`. Multi-fp per id supported (cold/warm
+   *  fp drift); fingerprint-skip decisions consult this map. */
   cachedFingerprints: Map<string, Set<string>>
+  /** `?cached=id:matchKey:fp,…` — matchKeys the client already has cached
+   *  per id, derived from the same wire tokens. Drives hidden Activity
+   *  sibling emission so navigating across variants of the same spec
+   *  (`/pokemon/1` ↔ `/pokemon/2`) parks the prior variant rather than
+   *  unmounting it. matchKey is `stableStringify(matchParams)`, stable
+   *  across vary refreshes of the same route. */
+  cachedMatchKeys: Map<string, Set<string>>
   /** Effective ids explicitly targeted this request (resolved from `?partials=`+`?tags=`). Never skipped. */
   explicitIds: Set<string>
   /** Effective ids seen this request (catches duplicate anonymous Partials via `__anon:` collision and debug). */

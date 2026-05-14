@@ -3,10 +3,12 @@
  */
 
 import { describe, expect, it } from "vitest"
-import { ReactCms, ROOT, type RenderArgs } from "../partial.tsx"
+import { ReactCms, ROOT, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { Frame } from "../frame.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { setCookie } from "../../runtime/context.ts"
+import { hash } from "../hash.ts"
+import { stableStringify } from "../stable-stringify.ts"
 
 async function flightAt(url: string, node: React.ReactNode): Promise<string> {
   const { stream } = await renderWithRequest(url, node)
@@ -379,5 +381,168 @@ describe("ReactCms.partial — vary sees mid-request setCookie writes", () => {
     // Flight serializes JSX children as an array `["theme=", "dark"]`.
     expect(out).toContain('"theme=","dark"')
     expect(out).not.toContain('"theme=","light"')
+  })
+})
+
+describe("multi-variant pool", () => {
+  it("emits a hidden Activity sibling for each other cached matchKey", async () => {
+    // Same spec, different match params. Client claims a cached
+    // variant for /pokemon/1 (matchKey₁) while navigating to
+    // /pokemon/2 (matchKey₂); server must emit a hidden Activity
+    // sibling for matchKey₁ so React keeps the prior fiber alive
+    // when /pokemon/1's body re-mounts on back-nav.
+    const Page = ReactCms.partial(
+      function MultiVariantTestRender({ id }: { id: string } & RenderArgs) {
+        return <span data-testid="variant-body">id={id}</span>
+      },
+      { match: "/pokemon/:id", selector: "#multi-variant-test" },
+    )
+    const tree = (
+      <PartialRoot>
+        <Page parent={ROOT} />
+      </PartialRoot>
+    )
+
+    // Pretend the client visited /pokemon/1 first, so it has
+    // (id=multi-variant-test, matchKey₁) cached. Fake fp matters
+    // less — the wire's matchKey is what drives sibling emission.
+    const mk1 = hash(stableStringify({ id: "1" }))
+    const stalefp = "0".repeat(16)
+    const flight = await new Response(
+      (
+        await renderWithRequest(
+          `http://t/pokemon/2?cached=multi-variant-test:${mk1}:${stalefp}`,
+          tree,
+        )
+      ).stream,
+    ).text()
+
+    // Visible body for /pokemon/2 must be present.
+    expect(flight).toContain('"id=","2"')
+    // The prior variant's matchKey shows up as an Activity sibling
+    // (mode:"hidden") + placeholder (data-partial-match=matchKey₁).
+    expect(flight).toContain(`"data-partial-match":"${mk1}"`)
+    expect(flight).toContain('"mode":"hidden"')
+  })
+
+  it("does not emit hidden siblings when the client has only the current variant cached", async () => {
+    const Page = ReactCms.partial(
+      function NoSiblingTestRender({ id }: { id: string } & RenderArgs) {
+        return <span data-testid="no-sibling">id={id}</span>
+      },
+      { match: "/pokemon/:id", selector: "#no-sibling-test" },
+    )
+    const tree = (
+      <PartialRoot>
+        <Page parent={ROOT} />
+      </PartialRoot>
+    )
+    const mk = hash(stableStringify({ id: "1" }))
+    const stalefp = "0".repeat(16)
+    const flight = await new Response(
+      (
+        await renderWithRequest(
+          `http://t/pokemon/1?cached=no-sibling-test:${mk}:${stalefp}`,
+          tree,
+        )
+      ).stream,
+    ).text()
+    expect(flight).toContain('"id=","1"')
+    // No hidden Activity mode in the stream — only the visible one.
+    expect(flight).not.toContain('"mode":"hidden"')
+  })
+
+  it("nested partial inherits matchKey from match-bearing ancestor", async () => {
+    // Regression: navigating `/` → `/pokemon/1` → `/` → `/pokemon/2`
+    // → `/` → `/pokemon/1` must surface `/pokemon/1`'s nested content
+    // (Hero, Stats, …), NOT `/pokemon/2`'s. The bug was that nested
+    // partials without their own `match` collapsed to a constant
+    // matchKey, so each `/pokemon/n` visit overwrote the same cache
+    // slot and the outer wrapper's substituteNested walk re-resolved
+    // nested partials to whatever was cached most recently.
+    //
+    // Fix: a spec without its own named match params walks
+    // `parent.path` and inherits the closest match-bearing ancestor's
+    // matchKey. So a child of `/pokemon/:id` gets a distinct matchKey
+    // per `:id` value — different cache slots, no cross-variant
+    // clobbering.
+    const Inner = ReactCms.partial(
+      function InheritedMatchKeyInnerRender({ id }: { id: string } & RenderArgs) {
+        return <span data-testid="inner-body">inner-id={id}</span>
+      },
+      { selector: "#inherited-match-key-inner" },
+    )
+    const Outer = ReactCms.partial(
+      function InheritedMatchKeyOuterRender({
+        id,
+        parent,
+      }: { id: string } & RenderArgs) {
+        return <Inner parent={parent} id={id} />
+      },
+      { match: "/pokemon/:id", selector: "#inherited-match-key-outer" },
+    )
+    const tree = (
+      <PartialRoot>
+        <Outer parent={ROOT} />
+      </PartialRoot>
+    )
+    const flight1 = await new Response(
+      (await renderWithRequest("http://t/pokemon/1", tree)).stream,
+    ).text()
+    const flight2 = await new Response(
+      (await renderWithRequest("http://t/pokemon/2", tree)).stream,
+    ).text()
+
+    // The matchKey hashes are deterministic from the named match
+    // params alone — both ancestor and descendant must produce them.
+    const mk1 = hash(stableStringify({ id: "1" }))
+    const mk2 = hash(stableStringify({ id: "2" }))
+    expect(mk1).not.toBe(mk2)
+    // Each render's Flight stream carries `partialMatchKey:"<mk>"`
+    // on every PEB wrapper — outer AND inner. Both spec wrappers in
+    // a single render share the same matchKey: proof of inheritance.
+    const count = (haystack: string, needle: string) =>
+      haystack.split(needle).length - 1
+    expect(count(flight1, `partialMatchKey":"${mk1}"`)).toBeGreaterThanOrEqual(2)
+    expect(count(flight2, `partialMatchKey":"${mk2}"`)).toBeGreaterThanOrEqual(2)
+    // Cross-check: render-1 has no mk2 (and vice versa) — variants
+    // are independent across requests.
+    expect(count(flight1, `partialMatchKey":"${mk2}"`)).toBe(0)
+    expect(count(flight2, `partialMatchKey":"${mk1}"`)).toBe(0)
+  })
+
+  it("parked emission produces a hidden Activity per cached variant", async () => {
+    // Spec doesn't match this URL but the client has two variants
+    // cached for the id. Server should emit a hidden Activity for
+    // each cached matchKey so React doesn't unmount the parked
+    // fibers as the user navigates between unrelated routes.
+    const Page = ReactCms.partial(
+      function ParkedMultiTestRender({ id }: { id: string } & RenderArgs) {
+        return <span data-testid="parked-multi">id={id}</span>
+      },
+      { match: "/pokemon/:id", selector: "#parked-multi-test" },
+    )
+    const tree = (
+      <PartialRoot>
+        <Page parent={ROOT} />
+      </PartialRoot>
+    )
+    const mk1 = hash(stableStringify({ id: "1" }))
+    const mk2 = hash(stableStringify({ id: "2" }))
+    const stalefp = "0".repeat(16)
+    const flight = await new Response(
+      (
+        await renderWithRequest(
+          `http://t/elsewhere?cached=parked-multi-test:${mk1}:${stalefp},parked-multi-test:${mk2}:${stalefp}`,
+          tree,
+        )
+      ).stream,
+    ).text()
+    // Both variants represented as hidden placeholders. Body
+    // content for either is absent (match miss → no fresh emit).
+    expect(flight).not.toContain('"id=","1"')
+    expect(flight).not.toContain('"id=","2"')
+    expect(flight).toContain(`"data-partial-match":"${mk1}"`)
+    expect(flight).toContain(`"data-partial-match":"${mk2}"`)
   })
 })

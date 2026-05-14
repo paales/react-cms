@@ -22,6 +22,8 @@ import { describe, expect, it } from "vitest"
 import { ReactCms, ROOT, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { clearRegistry } from "../partial-registry.ts"
+import { hash } from "../hash.ts"
+import { stableStringify } from "../stable-stringify.ts"
 
 /** Pull every `partialFingerprint:"…"` value out of the Flight payload,
  *  keyed by partialId. The Flight serializer emits each
@@ -183,9 +185,12 @@ describe("wildcard match — fingerprint stability", () => {
 
     // Second render at /inspect/p/3, faking a client refetch that has
     // the prior fp cached. Server should fp-skip the base — the body
-    // `grid-body` should NOT appear in the payload.
+    // `grid-body` should NOT appear in the payload. matchKey for a
+    // wildcard-only match resolves to hash("{}") since the wildcard
+    // capture is anonymous (no named params).
+    const matchKey = hash(stableStringify({}))
     const second = await flightAt(
-      `http://t/inspect/p/3?cached=inspect-base-skip-test:${fp}`,
+      `http://t/inspect/p/3?cached=inspect-base-skip-test:${matchKey}:${fp}`,
       tree,
     )
     expect(second).not.toContain("grid-body")

@@ -91,7 +91,12 @@ function recomputeFp(
       ? `|props=${stableStringify(snap.props)}`
       : ""
   const varyKey = snap.varyKey ?? ""
-  const ownStructuralFp = hash(`${id}|vary=${varyKey}${propsKey}${cmsKey}`)
+  // Mirror `partial.tsx`'s formula — fold matchKey in so content-
+  // independent specs still produce distinct fps across variants of
+  // their match-bearing ancestor. The snapshot carries the matchKey
+  // computed at render time so we don't re-derive from the catalog.
+  const matchKey = snap.matchKey ?? ""
+  const ownStructuralFp = hash(`${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}${cmsKey}`)
   const fold = computeFoldFromSnapshots(id, snapshots, frameRequest)
   return hash(`${ownStructuralFp}${ambientFrameKey}${fold}`)
 }

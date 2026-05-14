@@ -31,13 +31,18 @@ still be represented as Flight lazy refs. `cache.tsx::resolveLazies`
 forces resolution before re-stripping dynamic wrappers — both cache
 hit and miss paths return an equivalent fully-materialized tree.
 
-## `data-partial-id` on placeholders
+## `data-partial-id` + `data-partial-match` on placeholders
 
-Placeholder elements carry `data-partial-id` (in addition to a key)
-because Flight composite-key behavior also affects the `<i>`'s key
-for placeholders emitted inside `.map()` walks. The client looks up
-ids via `data-partial-id` first, falling back to `key` only when
-the attribute is missing.
+Placeholder elements carry both `data-partial-id` and
+`data-partial-match` (in addition to a composite key
+`"<id>|<matchKey>"`) because Flight composite-key behavior also
+affects the `<i>`'s key for placeholders emitted inside `.map()`
+walks. The client looks up the cached subtree under
+`Map<id, Map<matchKey, ReactNode>>` from those two attributes;
+`key` is reserved for React sibling reconciliation only and is not
+used for cache lookups. matchKey is a 16-char hex hash of
+`stableStringify(matchParams)` so the three-segment `id:matchKey:fp`
+wire token parses unambiguously regardless of the id's content.
 
 ## `key` on a `<PartialBoundary>` element
 

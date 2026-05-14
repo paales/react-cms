@@ -109,7 +109,7 @@ interface PartialOptions<V> {
 | `cache` | See [`cache.md`](./cache.md). |
 | `defer` | `true` for app-driven, an activator element to wire automatically. |
 | `fallback` | React node rendered while the partial's body is suspended. |
-| `keepalive` | When `true` (default), the rendered body is wrapped in `<Activity mode="visible">` while active and the spec emits `<Activity mode="hidden">` + placeholder on cross-route nav (instead of returning nothing on `match`/`vary` miss). The client's cached subtree is substituted at the placeholder position, so the React fiber tree stays shape-stable across active ↔ parked transitions — `useState`, `useRef`, and DOM state survive a navigate-away-and-back round-trip. Set to `false` for partials whose state should reset on cross-route nav (heavy video/iframe DOM, debug-only specs, anything where stale state is worse than re-mount cost). |
+| `keepalive` | When `true` (default), the rendered body is wrapped in a `<Activity mode="visible" key={matchKey}>` while active and the spec emits `<Activity mode="hidden">` + placeholder for each cached variant on cross-route nav (instead of returning nothing on `match`/`vary` miss). The client substitutes its cached subtree at each placeholder, so the React fiber tree stays shape-stable across active ↔ parked transitions — `useState`, `useRef`, and DOM state survive a navigate-away-and-back round-trip. Multiple variants of the same spec (e.g. `/pokemon/1` ↔ `/pokemon/2`) coexist as hidden Activity siblings keyed by `matchKey` so each variant's fiber stays alive across cross-variant navigation. Set to `false` for partials whose state should reset on cross-route nav (heavy video/iframe DOM, debug-only specs, anything where stale state is worse than re-mount cost). |
 
 ## `VaryScope`
 
@@ -292,32 +292,54 @@ A spec emits in one of four shapes, in priority order:
 
 1. **`match` miss or `vary` returned `null`, no cached entry on the
    client.** Spec emits nothing — the JSX position is empty.
-2. **`match` miss or `vary` returned `null`, AND the client has this
-   id cached (declared via `?cached=id:fp`), AND `keepalive` is on
-   (default).** Spec emits `<Activity mode="hidden">{placeholder}</Activity>`.
-   The client substitutes its cached subtree at the placeholder,
-   yielding `<Activity mode="hidden"><Suspense …>…</Suspense></Activity>`.
-   React reconciles the new emission against the prior active
-   emission (`<Activity mode="visible">…</Activity>` at the same spec
-   JSX position) — Activity's fiber persists, mode flips, the inner
-   Suspense subtree's `useState` / DOM / scroll position survive.
+2. **`match` miss or `vary` returned `null`, AND the client has one
+   or more variants cached (declared via `?cached=id:matchKey:fp`),
+   AND `keepalive` is on (default).** Spec emits one
+   `<Activity mode="hidden" key={matchKey}>{placeholder}</Activity>`
+   per cached variant. The client substitutes each placeholder with
+   its cached subtree, so every cached variant stays parked under
+   its own hidden Activity. React reconciles each Activity by its
+   `matchKey` against the prior render, preserving inner fibers
+   across the cross-route transition.
 3. **`match` succeeded, `vary` returned non-null, fingerprint matches
-   the client's cached one.** Spec emits `<Activity mode="visible">
-   {placeholder}</Activity>`. Client substitutes from cache — same
-   bytes as last render, no body re-execution.
+   the client's cached one.** Spec emits
+   `<Activity mode="visible" key={matchKey}>{placeholder}</Activity>`
+   plus a hidden Activity sibling for each other cached matchKey.
+   Client substitutes from cache — same bytes as last render, no
+   body re-execution.
 4. **`match` succeeded, `vary` returned non-null, fingerprint differs
    (fresh render).** Spec executes its `Render`, wraps the result in
-   `<Activity mode="visible"><Suspense …><PartialErrorBoundary …>
-   {body}</PartialErrorBoundary></Suspense></Activity>`, and streams it.
+   `<Activity mode="visible" key={matchKey}>
+   <Suspense …><PartialErrorBoundary …>{body}</PartialErrorBoundary>
+   </Suspense></Activity>`, plus a hidden Activity sibling for each
+   other cached matchKey, and streams it.
 
-The shared Activity wrapper at the spec's natural JSX position is
-what carries the round-trip state preservation. The active emission
-and the parked emission produce a structurally identical fiber tree
-(Activity > Suspense > PEB > body), so React's reconciler treats the
-cross-route transition as a `mode` prop update on the Activity fiber
-rather than an unmount/remount. The cached element ref is the same
-across renders (until the next fresh render overwrites it), so the
-inner fiber chain stays alive.
+`matchKey` is the variant identity. A spec with its OWN `match`
+having named params hashes those (`hash(stableStringify(params))`).
+A spec WITHOUT named match params walks `parent.path` and inherits
+the closest ancestor's matchKey — so a `<Hero>` inside `/pokemon/:id`
+gets a distinct matchKey per `:id` value, even though `Hero` itself
+has no `match`. This propagates URL-derived variant identity through
+the JSX tree without threading extra state.
+
+So:
+- `/pokemon/1` ↔ `/pokemon/2`: different variants, independent
+  cache slots, React keeps each fiber alive in its own Activity
+  sibling.
+- `/cache-demo?flavor=A` ↔ `?flavor=B`: same variant (parent
+  `match: "/cache-demo"` has no named params, descendants inherit
+  the constant root key), content updates in place via vary/fp.
+- Same-URL vary refresh: same variant, content updates, fiber
+  preserved.
+
+CMS data changes flow through `fp`, not `matchKey`.
+
+The active emission and the parked emission produce a structurally
+identical fiber tree (Activity > Suspense > PEB > body), so React's
+reconciler treats a cross-route transition as a `mode` prop update
+on the Activity fiber rather than an unmount/remount. The cached
+element ref is the same across renders (until the next fresh
+render overwrites it), so the inner fiber chain stays alive.
 
 When `keepalive: false`, the spec falls back to the classic two-case
 behavior: case 1 returns `null`, case 4 emits the wrappers without

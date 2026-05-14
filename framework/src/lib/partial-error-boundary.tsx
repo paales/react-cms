@@ -9,6 +9,13 @@ interface Props {
    *  gets registered into the client-side fingerprint map on render
    *  so subsequent navigations can send it back via `?cached=`. */
   partialFingerprint?: string
+  /** Stable variant key for this rendered instance. Derived from
+   *  `stableStringify(matchParams)`, so /pokemon/1 and /pokemon/2 get
+   *  distinct matchKeys but a same-route vary refresh keeps the same
+   *  matchKey. The client uses it to slot cached subtrees under
+   *  `Map<id, Map<matchKey, ReactNode>>` so multiple variants of the
+   *  same spec coexist as hidden Activity siblings. */
+  partialMatchKey?: string
   children: React.ReactNode
   /**
    * Optional error fallback. Rendered when a descendant throws.
@@ -58,7 +65,11 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
 
   render() {
     if (this.props.partialFingerprint) {
-      registerClientPartial(this.props.partialId, this.props.partialFingerprint)
+      registerClientPartial(
+        this.props.partialId,
+        this.props.partialMatchKey ?? "",
+        this.props.partialFingerprint,
+      )
     }
     if (this.state.error) {
       if (this.props.fallback !== undefined) {

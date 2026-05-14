@@ -75,6 +75,12 @@ export interface PartialSnapshot {
    *  own JSX is unchanged would fp-skip and starve its descendants
    *  of a re-evaluation, even when their URL/CMS deps just changed. */
   varyKey?: string
+  /** Variant key — `hash(stableStringify(matchParams))` for specs
+   *  with their own named match params, otherwise the closest match-
+   *  bearing ancestor's matchKey, otherwise `ROOT_MATCH_KEY`. Stored
+   *  so the fp-trailer's `recomputeFp` doesn't have to re-derive it
+   *  from the catalog/URL after the ALS context has unwound. */
+  matchKey?: string
   /** The full fingerprint the spec emitted in this render — the value
    *  baked into the `<PartialErrorBoundary>`'s `partialFingerprint`
    *  prop that the client registered. Used by the fp-trailer flush

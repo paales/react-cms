@@ -54,51 +54,61 @@ Open questions:
 
 When tab A runs a server action that invalidates `["cart"]`, tab B is stale. A BroadcastChannel propagating invalidation signals across same-origin tabs would make multi-tab behaviour correct by default. Strictly simpler than server-push realtime (no websocket infra) and probably what 90% of apps actually need.
 
-### Keepalive follow-ups (multi-version cache + server-driven TTL)
+### Keepalive follow-ups (server-driven TTL, device-aware eviction)
 
-The first cut of `keepalive` (default `true`) wraps each spec's body
-in `<Activity mode="visible">` and emits `<Activity mode="hidden">`
-+ placeholder on `match`/`vary` miss when the client has the id
-cached. The second cut added the **fp trailer**: at end-of-render
-the server recomputes each spec's fp against the now-populated
-snapshot registry, ships a `{id: warm_fp}` map down (HTML comment
-after `</html>` for SSR responses, length-prefixed binary segment
-after the main Flight bytes for RSC GET responses), and the client
-registers both the cold-emitted fp and the warm fp in its fp set.
-That fixes the cold→warm fp instability — the very next visit
-fp-skips against the warm value instead of paying a wasted
-re-render. Action POSTs skip the trailer (Flight stops reading once
-the result row resolves; a splitter past that point can stall) and
-fall back to single-round-trip warm-up via the wrapper's
-PEB-prop hydration.
+`keepalive` (default `true`) wraps each spec's body in `<Activity
+mode="visible">` and emits hidden Activity siblings for every cached
+variant the client claims via `?cached=id:matchKey:fp`. matchKey
+identifies the rendered variant: a spec with its own named match
+params hashes those; a spec without inherits from the closest
+match-bearing ancestor by walking `parent.path` and consulting the
+spec catalog — so descendants of `/pokemon/:id` track the URL's
+variant identity even with no match of their own, while descendants
+of a literal `match: "/cache-demo"` share a single slot and update
+in place. The derivation reads only the spec catalog plus the
+current request URL, so partial-refetch reconstruction (which
+restores `parent.path` from the snapshot but doesn't run the
+parent) produces the same matchKey as the originating render.
+React's reconciler keeps each variant's fiber alive across
+cross-variant nav. The client cache pool is `Map<id, Map<matchKey,
+ReactNode>>`; per-page prune drops any (id, matchKey) not in the
+new render's seen set.
+
+The fp trailer is orthogonal: at end-of-render the server
+recomputes each spec's fp against the now-populated snapshot
+registry, ships a `{id: warm_fp}` map down (HTML comment after
+`</html>` for SSR responses, length-prefixed binary segment after
+the main Flight bytes for RSC GET responses), and the client adds
+the warm fp to the most-recently-emitted variant's fp set. That
+fixes the cold→warm fp instability — the very next visit fp-skips
+against the warm value instead of paying a wasted re-render. Action
+POSTs skip the trailer (Flight stops reading once the result row
+resolves; a splitter past that point can stall) and fall back to
+single-round-trip warm-up via the wrapper's PEB-prop hydration.
 
 Two extensions are still open:
 
-- **Per-fingerprint variant pool for cached subtrees.** Multi-fp on
-  the wire is wired up (`_currentPageFingerprints` is `Map<id, Set<fp>>`,
-  `?cached=` accepts multiple `id:fp` tokens per id, server's
-  `cachedFingerprints` is `Map<id, Set<fp>>`). But the actual cached
-  React element pool (`_currentPagePartials`) still keys by id —
-  navigating between routes that render the same partial id with
-  different `vary` results (e.g. `/pokemon/1` → `/pokemon/2`)
-  overwrites the cached subtree, losing inner state. The fix is to
-  promote that pool to `Map<id, Map<fp, ReactNode>>` and emit one
-  `<Activity>` sibling per cached variant under the same
-  `PartialBoundary` (each keyed by fp, only the matching one
-  `mode="visible"`). The fp-skip placeholder needs to carry
-  `data-partial-fp` so the cache merge knows which variant to
-  substitute.
-- **Server-driven cache-control on the wire.** Today `keepalive` is
-  a binary flag with an unbounded client-side pool. The natural
-  extension is to surface the spec's `cache: { maxAge,
-  staleWhileRevalidate }` numbers via the same trailer channel and
-  have the client use them to decide when to even send the id in
-  `?cached=` on the next nav (within `maxAge`: paint cached, skip
-  the network round-trip for this id entirely; within SWR window:
-  include in `?cached=` and revalidate in background; past both:
-  include and treat as cold).
+- **Server-driven cache-control on the wire.** Today `keepalive`
+  has no time component — variants stay cached until the next
+  layout boundary prunes them. The natural extension is to surface
+  the spec's `cache: { maxAge, staleWhileRevalidate }` numbers via
+  the same trailer channel and have the client use them to decide
+  when to even send the id in `?cached=` on the next nav (within
+  `maxAge`: paint cached, skip the network round-trip for this id
+  entirely; within SWR window: include in `?cached=` and
+  revalidate in background; past both: include and treat as cold).
+- **Device-aware eviction over the variant pool.** Per-page prune
+  already covers cross-layout cleanup, but within-id multi-matchKey
+  accumulation is unbounded — deep `/pokemon/<n>` browsing keeps
+  every visited variant's hidden Activity in the fiber tree. React
+  still ticks low-priority work on hidden Activities, so the
+  steady-state cost scales with depth. The natural fix is an LRU
+  over the variant pool sized by something the harness can read
+  (`navigator.deviceMemory` plus a measured budget?), but the
+  device-capability story isn't fleshed out yet — deferred until a
+  real pressure signal exists in-tree.
 
-Both can be layered on the current trailer + multi-fp infrastructure
+Both can be layered on the current trailer + matchKey infrastructure
 without breaking the API surface.
 
 ### Restart-streaming via segmented Flight (cursor-frequency updates)

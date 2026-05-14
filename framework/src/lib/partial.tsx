@@ -509,6 +509,10 @@ interface PartialBoundaryProps {
   /** Hash of the spec's varyResult — feeds the descendant fold so
    *  ancestors' fps reflect descendants' deps. */
   varyKey?: string
+  /** Variant key for this rendered instance — see `deriveMatchKey`.
+   *  Stored on the snapshot so the fp-trailer's `recomputeFp` can
+   *  read it without re-deriving from the catalog. */
+  matchKey?: string
   /** The full fp baked into this spec's PartialErrorBoundary prop —
    *  i.e. what the client ends up registering. Stored on the snapshot
    *  so the fp-trailer flush can detect cold→warm drift and ship the
@@ -535,6 +539,7 @@ export function PartialBoundary({
   fallback,
   props,
   varyKey,
+  matchKey,
   emittedFp,
   sessionDeps,
   children,
@@ -551,6 +556,7 @@ export function PartialBoundary({
     cache,
     props,
     varyKey,
+    matchKey,
     emittedFp,
     sessionDeps,
   })
@@ -775,23 +781,77 @@ interface InternalSpec<V> {
   isSlotBlock: boolean
 }
 
-function placeholderFor(id: string): ReactElement {
-  return <i key={id} hidden data-partial data-partial-id={id} />
+/** Constant matchKey for specs with no match-bearing ancestor on the
+ *  current URL (root-level specs without match, or descendants of
+ *  literal-match specs). 16-char hex hash of `stableStringify({})`. */
+const ROOT_MATCH_KEY = hash(stableStringify({}))
+
+/**
+ * Resolve the variant identity for a spec rendering this request.
+ *
+ *  - Spec has its OWN `match` with named params → hash those params.
+ *    `/pokemon/1` and `/pokemon/2` get distinct keys.
+ *  - Spec has no own named params → walk `parent.path` outer-to-inner
+ *    (in reverse: nearest first) and find the closest ancestor in the
+ *    catalog whose `matchPattern` produces named params on the current
+ *    URL. Hash those. Descendants of `/pokemon/:id` (Hero, Stats, …)
+ *    share that variant identity even though their own bodies have no
+ *    match.
+ *  - No match-bearing ancestor on the URL → `ROOT_MATCH_KEY`. Specs
+ *    in this branch share a single cache slot; vary-driven refreshes
+ *    update content in place (`/cache-demo?flavor=A` ↔ `?flavor=B`).
+ *
+ * Self-contained: only reads from the spec catalog plus the current
+ * request URL, so partial-refetch (which reconstructs the spec
+ * component with `parent.path` from the snapshot) gets the same
+ * matchKey as the originating streaming render.
+ */
+export function deriveMatchKey(
+  ownMatchPattern: URLPattern | undefined,
+  ownParams: Record<string, string>,
+  parentPath: readonly string[],
+  url?: string,
+): string {
+  if (ownMatchPattern && Object.keys(ownParams).length > 0) {
+    return hash(stableStringify(ownParams))
+  }
+  const requestUrl = url ?? getRequest().url
+  for (let i = parentPath.length - 1; i >= 0; i--) {
+    const ancestor = getSpecByCmsId(parentPath[i])
+    if (!ancestor?.matchPattern) continue
+    const result = ancestor.matchPattern.exec(requestUrl)
+    if (!result) continue
+    const ancestorParams = extractNamedParams(result)
+    if (Object.keys(ancestorParams).length === 0) continue
+    return hash(stableStringify(ancestorParams))
+  }
+  return ROOT_MATCH_KEY
+}
+
+function placeholderFor(id: string, matchKey: string): ReactElement {
+  return (
+    <i
+      key={`${id}|${matchKey}`}
+      hidden
+      data-partial
+      data-partial-id={id}
+      data-partial-match={matchKey}
+    />
+  )
 }
 
 /**
  * Parked emission for a keepalive spec whose `match`/`vary` says it
  * shouldn't render on this request, but the client has it cached
- * (declared via `?cached=id:fp`). Returns an `<Activity mode="hidden">`
- * containing the same placeholder a fp-skip would emit — the client's
- * cache merge substitutes the placeholder with the cached subtree,
- * so the React fiber tree stays shape-identical to the active emission
- * (Activity > Suspense/PEB > body). Mode flips, fiber persists, state
- * survives.
+ * (declared via `?cached=id:matchKey:fp`). Returns one
+ * `<Activity mode="hidden" key={matchKey}>` per cached matchKey,
+ * each wrapping a placeholder the client's cache merge resolves to
+ * the cached subtree for that variant. Mode flips, fiber persists,
+ * state survives.
  *
- * Returns `null` when keepalive is opted out or when the client hasn't
- * cached this id — falls back to the classic "render nothing on
- * match-miss" behavior.
+ * Returns `null` when keepalive is opted out or when the client has
+ * no cached variants for this id — falls back to the classic
+ * "render nothing on match-miss" behavior.
  */
 function emitParkedKeepalive(
   id: string,
@@ -799,8 +859,67 @@ function emitParkedKeepalive(
   state: PartialRequestState | undefined,
 ): ReactNode {
   if (!keepalive) return null
-  if (!state?.cachedFingerprints.has(id)) return null
-  return <Activity mode="hidden">{placeholderFor(id)}</Activity>
+  const matchKeys = state?.cachedMatchKeys.get(id)
+  if (!matchKeys || matchKeys.size === 0) return null
+  // Single cached variant — emit one Activity without a key so React
+  // reconciles by position across active ↔ parked transitions. Same
+  // shape as `emitWithVariantSiblings`'s single-variant branch.
+  if (matchKeys.size === 1) {
+    const [mk] = matchKeys
+    return <Activity mode="hidden">{placeholderFor(id, mk)}</Activity>
+  }
+  return (
+    <>
+      {[...matchKeys].map((mk) => (
+        <Activity key={mk} mode="hidden">{placeholderFor(id, mk)}</Activity>
+      ))}
+    </>
+  )
+}
+
+/**
+ * Wrap an emitted visible body in a keyed `<Activity>` and append
+ * hidden Activity siblings for each other matchKey the client has
+ * cached for this id. The visible Activity is keyed by its own
+ * matchKey too — React requires unique keys among siblings, and a
+ * stable matchKey-keyed Activity reconciles cleanly across renders
+ * (same variant → same key → same fiber → state preserved).
+ *
+ * When `state` is null (e.g. test fixtures without PartialRoot) or
+ * the client has no other cached matchKeys, returns a single
+ * `<Activity mode="visible">` with no hidden siblings — identical
+ * shape to today's emission for the single-variant case.
+ */
+function emitWithVariantSiblings(
+  id: string,
+  matchKey: string,
+  visibleBody: ReactNode,
+  state: PartialRequestState | null | undefined,
+): ReactNode {
+  const cached = state?.cachedMatchKeys.get(id)
+  const others: string[] = []
+  if (cached) {
+    for (const mk of cached) {
+      if (mk !== matchKey) others.push(mk)
+    }
+  }
+  // No other cached variants — emit a single Activity without a key
+  // so React reconciles by position against the prior render. Adding
+  // a key here would shift the structure on first cross-variant nav
+  // (when a hidden sibling appears) and remount the body, resetting
+  // local state.
+  if (others.length === 0) {
+    return <Activity mode="visible">{visibleBody}</Activity>
+  }
+  // Multi-variant: keys required for sibling reconciliation.
+  return (
+    <>
+      <Activity key={matchKey} mode="visible">{visibleBody}</Activity>
+      {others.map((mk) => (
+        <Activity key={mk} mode="hidden">{placeholderFor(id, mk)}</Activity>
+      ))}
+    </>
+  )
 }
 
 function effectiveIdForInstance(
@@ -866,6 +985,25 @@ function createSpecComponent<V>(
       if (result === null) return emitParkedKeepalive(id, keepalive, requestState)
       params = extractNamedParams(result)
     }
+    // matchKey identifies the rendered variant for client-side
+    // Activity keying AND nested-substitution lookups. The rule is:
+    //   - A spec with its OWN named match params hashes them — so
+    //     `/pokemon/1` and `/pokemon/2` get distinct keys.
+    //   - A spec WITHOUT named match params walks parent.path to
+    //     find the closest ancestor whose matchPattern has named
+    //     params on the current URL, and inherits that hash — so
+    //     descendants of `/pokemon/:id` (Hero, Stats, …) share the
+    //     URL-derived variant identity even though their own bodies
+    //     have no match.
+    //   - No match-bearing ancestor on the current URL → a constant
+    //     key (`/cache-demo?flavor=A` ↔ `?flavor=B` share a slot;
+    //     content updates in place via vary/fp).
+    //
+    // Walking ancestors at render time (rather than threading
+    // `parent.matchKey` through PartialCtx) keeps partial-refetch
+    // working: the catalog lookup uses `parent.path` from the
+    // reconstructed snapshot, no extra state to thread.
+    const matchKey = deriveMatchKey(spec.matchPattern, params, parent.path)
 
     // ── Frame phase ──
     // Specs inherit the frame chain from their parent (a `<Frame>`
@@ -944,7 +1082,16 @@ function createSpecComponent<V>(
     const propsKey =
       Object.keys(extraProps).length > 0 ? `|props=${stableStringify(extraProps)}` : ""
     const varyKey = stableStringify(varyResult)
-    const ownStructuralFp = hash(`${id}|vary=${varyKey}${propsKey}${cmsKey}`)
+    // Fold matchKey into the structural fp so content-independent
+    // specs (no own match, no vary — e.g. a layout `<LazySpacer>`)
+    // still get distinct fps across variants of a match-bearing
+    // ancestor. Without this, lazy-spacer at `/pokemon/1` and
+    // `/pokemon/2` share an fp, the server fp-skips on the second
+    // visit, and the placeholder it emits points at `matchKey=mk-id-2`
+    // — which the client's variant-keyed cache pool has no entry
+    // under, so substitution misses and the `<i hidden>` placeholder
+    // collapses the layout instead of substituting in a spacer.
+    const ownStructuralFp = hash(`${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}${cmsKey}`)
     const descendantFold = computeDescendantFold(id)
     const structuralFp = hash(`${ownStructuralFp}${descendantFold}`)
     const fp = hash(`${ownStructuralFp}${ambientFrameKey}${descendantFold}`)
@@ -1007,11 +1154,15 @@ function createSpecComponent<V>(
       // refetch that ends up fp-skipped would produce a different
       // tree shape than the prior fresh render and React would
       // remount the inner Suspense subtree, losing client state.
-      const skipBody: ReactNode = keepalive ? (
-        <Activity mode="visible">{placeholderFor(id)}</Activity>
-      ) : (
-        placeholderFor(id)
-      )
+      //
+      // Multi-variant: emitWithVariantSiblings adds hidden Activity
+      // siblings for each other matchKey the client has cached for
+      // this id, so navigating between variants of the same spec
+      // parks the prior variant rather than dropping its fiber.
+      const placeholder = placeholderFor(id, matchKey)
+      const skipBody: ReactNode = keepalive
+        ? emitWithVariantSiblings(id, matchKey, placeholder, state)
+        : placeholder
       return (
         <PartialBoundary
           id={id}
@@ -1026,6 +1177,7 @@ function createSpecComponent<V>(
           fallback={fallback}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           varyKey={varyKey}
+          matchKey={matchKey}
           emittedFp={fp}
           sessionDeps={sessionDeps}
         >
@@ -1047,11 +1199,12 @@ function createSpecComponent<V>(
           key={id}
           partialId={id}
           partialFingerprint={fp}
+          partialMatchKey={matchKey}
         >
           {dormant}
         </PartialErrorBoundary>
       )
-      if (keepalive) deferBody = <Activity mode="visible">{deferBody}</Activity>
+      if (keepalive) deferBody = emitWithVariantSiblings(id, matchKey, deferBody, state)
       return (
         <PartialBoundary
           id={id}
@@ -1066,6 +1219,7 @@ function createSpecComponent<V>(
           fallback={fallback}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           varyKey={varyKey}
+          matchKey={matchKey}
           emittedFp={fp}
           sessionDeps={sessionDeps}
         >
@@ -1087,12 +1241,16 @@ function createSpecComponent<V>(
     if (fallback != null) {
       // With fallback: outer Suspense carries the key (wrapper
       // detection: keyed Suspense). Inner PartialErrorBoundary
-      // carries partialId/fingerprint for fp registration.
+      // carries partialId/fingerprint/matchKey for fp registration.
       body = (
         <Suspense
           key={id}
           fallback={
-            <PartialErrorBoundary partialId={id} partialFingerprint={fp}>
+            <PartialErrorBoundary
+              partialId={id}
+              partialFingerprint={fp}
+              partialMatchKey={matchKey}
+            >
               {fallback}
             </PartialErrorBoundary>
           }
@@ -1100,6 +1258,7 @@ function createSpecComponent<V>(
           <PartialErrorBoundary
             partialId={id}
             partialFingerprint={fp}
+            partialMatchKey={matchKey}
           >
             {body}
           </PartialErrorBoundary>
@@ -1114,20 +1273,23 @@ function createSpecComponent<V>(
           key={id}
           partialId={id}
           partialFingerprint={fp}
+          partialMatchKey={matchKey}
         >
           {body}
         </PartialErrorBoundary>
       )
     }
 
-    // Outermost wrap is `<Activity mode="visible">` so the React tree
-    // shape matches the parked emission (`<Activity mode="hidden">`
-    // + placeholder substituted on the client). Same shape across
-    // active ↔ parked means the inner Suspense/PEB fiber and its
-    // descendants persist across the transition — `useState`,
-    // `useRef`, and DOM state survive the navigate-away-and-back
-    // round-trip.
-    if (keepalive) body = <Activity mode="visible">{body}</Activity>
+    // Outermost wrap is `<Activity mode="visible">` keyed by matchKey
+    // so the React tree shape matches the parked emission
+    // (`<Activity mode="hidden">` siblings substituted on the client).
+    // Same shape across active ↔ parked means the inner Suspense/PEB
+    // fiber persists across the transition — state survives the
+    // navigate-away-and-back round-trip. emitWithVariantSiblings adds
+    // hidden Activity siblings for each other matchKey the client has
+    // cached, so cross-variant navigation parks the prior variant
+    // rather than dropping its fiber.
+    if (keepalive) body = emitWithVariantSiblings(id, matchKey, body, state)
 
     return (
       <PartialBoundary
@@ -1143,6 +1305,7 @@ function createSpecComponent<V>(
         fallback={fallback}
         props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
         varyKey={varyKey}
+        matchKey={matchKey}
         emittedFp={fp}
         sessionDeps={sessionDeps}
       >
@@ -1386,23 +1549,53 @@ interface PartialRootProps {
   children: ReactNode
 }
 
-function parseCachedFingerprints(raw: string | null): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>()
-  if (!raw) return out
+/**
+ * Parse `?cached=id:matchKey:fp,…` into two maps the request state
+ * consults:
+ *   - `cachedFingerprints: Map<id, Set<fp>>` — drives fp-skip decisions
+ *     (server's computed fp ∈ set ⇒ emit placeholder).
+ *   - `cachedMatchKeys: Map<id, Set<matchKey>>` — drives hidden Activity
+ *     sibling emission so cross-variant navigation preserves prior
+ *     variant fibers (`/pokemon/1` ↔ `/pokemon/2`).
+ *
+ * Both halves come from the same wire token. matchKey is a 16-char
+ * hex hash (URL-safe, no colons) so the three-segment split is
+ * unambiguous regardless of the id's content.
+ */
+function parseCachedTokens(raw: string | null): {
+  fingerprints: Map<string, Set<string>>
+  matchKeys: Map<string, Set<string>>
+} {
+  const fingerprints = new Map<string, Set<string>>()
+  const matchKeys = new Map<string, Set<string>>()
+  if (!raw) return { fingerprints, matchKeys }
   for (const token of raw.split(",").map((s) => s.trim())) {
     if (!token) continue
-    const colonIdx = token.lastIndexOf(":")
-    if (colonIdx <= 0) continue
-    const id = token.slice(0, colonIdx)
-    const fp = token.slice(colonIdx + 1)
-    let set = out.get(id)
-    if (!set) {
-      set = new Set()
-      out.set(id, set)
+    const fpIdx = token.lastIndexOf(":")
+    if (fpIdx <= 0) continue
+    const fp = token.slice(fpIdx + 1)
+    const rest = token.slice(0, fpIdx)
+    const mkIdx = rest.lastIndexOf(":")
+    // Two-token legacy `id:fp` is not supported — wire is upgraded
+    // in lockstep with the client. A missing matchKey segment means
+    // the token is malformed; drop it rather than guess.
+    if (mkIdx <= 0) continue
+    const matchKey = rest.slice(mkIdx + 1)
+    const id = rest.slice(0, mkIdx)
+    let fpSet = fingerprints.get(id)
+    if (!fpSet) {
+      fpSet = new Set()
+      fingerprints.set(id, fpSet)
     }
-    set.add(fp)
+    fpSet.add(fp)
+    let mkSet = matchKeys.get(id)
+    if (!mkSet) {
+      mkSet = new Set()
+      matchKeys.set(id, mkSet)
+    }
+    mkSet.add(matchKey)
   }
-  return out
+  return { fingerprints, matchKeys }
 }
 
 function parseCsvTokens(raw: string | null): string[] {
@@ -1534,11 +1727,13 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   if (combinedRequestedIds) for (const id of combinedRequestedIds) explicitIds.add(id)
   if (partialsParam) for (const name of parseCsvTokens(partialsParam)) explicitIds.add(name)
 
+  const parsedCache = parseCachedTokens(cachedParam)
   const state: PartialRequestState = {
     requestedIds: populateCache ? null : combinedRequestedIds,
     isPartialRefetch: isPartialRefetch && !populateCache,
     populateCache,
-    cachedFingerprints: parseCachedFingerprints(cachedParam),
+    cachedFingerprints: parsedCache.fingerprints,
+    cachedMatchKeys: parsedCache.matchKeys,
     explicitIds,
     seenIds: new Set(),
     seenUniqueTokens: new Set(),

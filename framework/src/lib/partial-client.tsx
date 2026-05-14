@@ -171,17 +171,66 @@ function getPlaceholderId(node: React.ReactElement): string | null {
 }
 
 /**
- * Collect every partial id reachable inside a node — wrapper OR
- * placeholder. Read-only walk: doesn't mutate `_currentPagePartials` or
- * `_currentPageFingerprints`. Used by the streaming-mode prune to expand `seen`
- * with nested ids that live inside cached wrappers — when the server
- * fp-skips an outer partial, the new tree carries only its top-level
- * placeholder, so the nested ids backing the rendered region (via
- * `substituteNested` walking the cached wrapper) need to be
- * harvested from the cache itself or the prune deletes them out from
- * under the next render.
+ * MatchKey of a placeholder `<i>`. matchKey identifies the rendered
+ * variant (cache slot under id) — read from `data-partial-match`. The
+ * value is a 16-char hex hash of stableStringify(matchParams); specs
+ * without `match` resolve to a constant matchKey.
  */
-function harvestPartialIds(node: ReactNode, out: Set<string>): void {
+function getPlaceholderMatchKey(node: React.ReactElement): string | null {
+  const props = node.props as { ["data-partial-match"]?: unknown }
+  if (typeof props["data-partial-match"] === "string") {
+    return props["data-partial-match"]
+  }
+  return null
+}
+
+/**
+ * MatchKey off a partial wrapper. Mirrors `getPartialFingerprint`:
+ * read `partialMatchKey` directly, or peek through a Suspense wrapper
+ * to its PartialErrorBoundary child.
+ */
+function getPartialMatchKey(node: React.ReactElement): string | null {
+  const props = node.props as {
+    partialMatchKey?: unknown
+    children?: unknown
+  }
+  if (typeof props.partialMatchKey === "string") return props.partialMatchKey
+  if (node.type === Suspense) {
+    const child = props.children
+    if (isValidElement(child)) {
+      const cp = (child as React.ReactElement).props as {
+        partialMatchKey?: unknown
+      }
+      if (typeof cp.partialMatchKey === "string") return cp.partialMatchKey
+    }
+  }
+  return null
+}
+
+function addSeen(out: Map<string, Set<string>>, id: string, matchKey: string): void {
+  let inner = out.get(id)
+  if (!inner) {
+    inner = new Set()
+    out.set(id, inner)
+  }
+  inner.add(matchKey)
+}
+
+/**
+ * Collect every (id, matchKey) pair reachable inside a node — wrapper
+ * OR placeholder. Read-only walk: doesn't mutate `_currentPagePartials`
+ * or `_currentPageFingerprints`. Used by the streaming-mode prune to
+ * expand `seen` with nested variants that live inside cached wrappers —
+ * when the server fp-skips an outer partial, the new tree carries only
+ * its top-level placeholder, so the nested (id, matchKey) pairs backing
+ * the rendered region need to be harvested from the cache itself or the
+ * prune deletes them out from under the next render.
+ *
+ * Wrappers without a `partialMatchKey` prop (legacy fixtures, missing
+ * server-side wire) fall back to the empty string so they're still
+ * tracked as a single-variant cache entry under `(id, "")`.
+ */
+function harvestPartialIds(node: ReactNode, out: Map<string, Set<string>>): void {
   if (node == null || typeof node === "boolean") return
   if (typeof node === "string" || typeof node === "number") return
   if (Array.isArray(node)) {
@@ -200,35 +249,53 @@ function harvestPartialIds(node: ReactNode, out: Set<string>): void {
 
   if (isPartialWrapper(node)) {
     const id = getPartialId(node)
-    if (id) out.add(id)
+    if (id) addSeen(out, id, getPartialMatchKey(node) ?? "")
     const inner = (node.props as { children?: ReactNode })?.children
     if (inner != null) harvestPartialIds(inner, out)
     return
   }
   if (isPlaceholder(node)) {
     const id = getPlaceholderId(node)
-    if (id) out.add(id)
+    if (id) addSeen(out, id, getPlaceholderMatchKey(node) ?? "")
     return
   }
   const inner = (node.props as { children?: ReactNode })?.children
   if (inner != null) harvestPartialIds(inner, out)
 }
 
+type PartialCache = Map<string, Map<string, ReactNode>>
+
+function cacheLookup(
+  cache: PartialCache,
+  id: string,
+  matchKey: string,
+): ReactNode | undefined {
+  return cache.get(id)?.get(matchKey)
+}
+
 /**
  * Walk a cached element tree and substitute any nested partial wrappers
- * with the current cache entry for that partial id.
+ * with the current cache entry for that (id, matchKey) variant.
+ *
+ * `skipKey` is `${id}|${matchKey}` so the recursion can't loop on a
+ * wrapper that contains a placeholder pointing to itself (any
+ * fp-skipped partial caches a wrapper that contains its own
+ * placeholder). The outer id alone isn't enough — two siblings under
+ * the same PartialBoundary can share an id but differ on matchKey
+ * (hidden Activity sibling for a parked variant), and the inner one
+ * must still resolve when the outer references the same id.
  */
 function substituteNested(
   node: ReactNode,
-  cache: Map<string, ReactNode>,
-  skipId: string,
+  cache: PartialCache,
+  skipKey: string,
 ): ReactNode {
   if (node == null || typeof node === "boolean") return node
   if (typeof node === "string" || typeof node === "number") return node
   if (Array.isArray(node)) {
     let changed = false
     const mapped = node.map((c) => {
-      const s = substituteNested(c, cache, skipId)
+      const s = substituteNested(c, cache, skipKey)
       if (s !== c) changed = true
       return s
     })
@@ -245,13 +312,14 @@ function substituteNested(
   const unwrapped = unwrapLazy(node)
   if (unwrapped !== node) {
     if (unwrapped == null) return node
-    return substituteNested(unwrapped as ReactNode, cache, skipId)
+    return substituteNested(unwrapped as ReactNode, cache, skipKey)
   }
 
   if (!isValidElement(node)) return node
 
-  // Placeholder: substitute from cache. Id comes from the
-  // `data-partial-id` prop (stable), not the key (Flight composites).
+  // Placeholder: substitute from cache. Id + matchKey come from the
+  // `data-partial-id` + `data-partial-match` props (stable), not the
+  // key (Flight composites).
   //
   // Recurse into the cached wrapper. A wrapper produced by a
   // cache-mode refetch can carry INTERNAL placeholders for partials
@@ -265,53 +333,42 @@ function substituteNested(
   // children, and the substitution stopped at the wrapper without
   // unfolding those nested placeholders against the cache entries
   // populated by move 1.
-  //
-  // Pass `id` as the new skipId so the recursion can't loop on a
-  // wrapper that contains a placeholder pointing to itself (which
-  // happens any time a fp-skipped partial gets cached).
   if (isPlaceholder(node)) {
     const id = getPlaceholderId(node)
-    if (id && id !== skipId) {
-      const fresh = cache.get(id)
-      return fresh ? substituteNested(fresh, cache, id) : node
+    const mk = getPlaceholderMatchKey(node) ?? ""
+    const key = `${id ?? ""}|${mk}`
+    if (id && key !== skipKey) {
+      const fresh = cacheLookup(cache, id, mk)
+      return fresh ? substituteNested(fresh, cache, key) : node
     }
   }
 
-  // Partial-shape wrapper: if there's a fresh cache entry, use it.
-  // If the cache entry is the same wrapper we're looking at (i.e. the
-  // wrapper itself wasn't replaced this round), descend INTO its
-  // children so any descendant Partial that DID get a fresh cache
-  // entry still gets swapped. Without this descent, a refetch
-  // targeting a deeply-nested partial (e.g. `#product-card-1` inside
-  // a preview frame) lands a fresh entry in the cache for that id,
-  // but the surrounding ancestor wrappers (cms-edit-preview, the
-  // composed/group containers) keep their old children references —
-  // so the new content never reaches the rendered tree.
+  // Partial-shape wrapper: if there's a fresh cache entry for the
+  // same (id, matchKey) variant, use it. If the cache entry is the
+  // same wrapper we're looking at (i.e. the wrapper itself wasn't
+  // replaced this round), descend INTO its children so any descendant
+  // Partial that DID get a fresh cache entry still gets swapped.
+  // Without this descent, a refetch targeting a deeply-nested partial
+  // lands a fresh entry but the surrounding ancestor wrappers keep
+  // their old children references — so the new content never reaches
+  // the rendered tree.
   if (isPartialWrapper(node)) {
     const id = getPartialId(node)
-    if (id && id !== skipId) {
-      const fresh = cache.get(id)
+    const mk = getPartialMatchKey(node) ?? ""
+    const key = `${id ?? ""}|${mk}`
+    if (id && key !== skipKey) {
+      const fresh = cacheLookup(cache, id, mk)
       if (fresh && fresh !== node) {
-        // Recurse into the substituted wrapper. A cache-mode
-        // refetch can produce a wrapper whose children are
-        // placeholders or stale nested wrappers — without recursing
-        // those inner stale references survive into the rendered
-        // tree, leaving partial regions blank. Pass `id` as the new
-        // skipId so the recursion can't loop on a wrapper that
-        // contains a placeholder pointing to itself.
-        return substituteNested(fresh, cache, id)
+        return substituteNested(fresh, cache, key)
       }
       // Wrapper unchanged — keep descending so nested partials whose
-      // cache entries DID change still get substituted. Lazy-safety:
-      // any unresolved Flight lazy hits the `unwrapLazy` branch
-      // earlier in this function on its first visit, so by the time
-      // we recurse here the wrapper's children are real elements.
+      // cache entries DID change still get substituted.
     }
   }
 
   const children = (node.props as any).children
   if (children == null) return node
-  const newChildren = substituteNested(children, cache, skipId)
+  const newChildren = substituteNested(children, cache, skipKey)
   if (newChildren === children) return node
   // Spread arrays as variadic — see the matching comment in
   // cache.tsx#resolveLazies. Flight-decoded children are arrays
@@ -368,10 +425,24 @@ function unwrapLazy(node: unknown): unknown {
  * Placeholders (`<i data-partial hidden>`) are skipped — the
  * existing cache entry from a prior render is the thing we want.
  */
+function cacheStore(
+  cache: PartialCache,
+  id: string,
+  matchKey: string,
+  node: ReactNode,
+): void {
+  let inner = cache.get(id)
+  if (!inner) {
+    inner = new Map()
+    cache.set(id, inner)
+  }
+  inner.set(matchKey, node)
+}
+
 function cacheFromStreamingChildren(
   node: ReactNode,
-  cache: Map<string, ReactNode>,
-  seen?: Set<string>,
+  cache: PartialCache,
+  seen?: Map<string, Set<string>>,
 ): void {
   if (node == null || typeof node === "boolean") return
   if (typeof node === "string" || typeof node === "number") return
@@ -392,8 +463,9 @@ function cacheFromStreamingChildren(
   if (isPartialWrapper(node)) {
     const id = getPartialId(node)
     if (id) {
-      seen?.add(id)
-      cache.set(id, node)
+      const mk = getPartialMatchKey(node) ?? ""
+      if (seen) addSeen(seen, id, mk)
+      cacheStore(cache, id, mk, node)
       // Populate `_currentPageFingerprints` synchronously from the tree walk
       // rather than waiting for each `<PartialErrorBoundary>` to
       // commit on the client. The commit order is non-deterministic
@@ -403,7 +475,7 @@ function cacheFromStreamingChildren(
       // late-committing ids. The wrapper already carries the
       // fingerprint — just lift it off.
       const fp = getPartialFingerprint(node)
-      if (fp) registerClientPartial(id, fp)
+      if (fp) registerClientPartial(id, mk, fp)
     }
     // Descend: nested partial wrappers need their own top-level cache
     // entries so subsequent parent-only refetches with inner
@@ -414,15 +486,16 @@ function cacheFromStreamingChildren(
   }
   if (isPlaceholder(node)) {
     // Placeholder means "server skipped this partial; client keeps
-    // its existing cache entry." Don't overwrite — but DO mark the id
-    // as seen so the streaming-mode prune step keeps the cache /
-    // fingerprint entries that back this placeholder. Without this,
-    // a nested partial whose server confirmed an fp match would be
-    // pruned out of `_currentPagePartials` and the next render's `substituteNested`
-    // call would leave the `<i hidden>` placeholder in the DOM —
-    // blanking the partial's region until a hard reload.
+    // its existing cache entry." Don't overwrite — but DO mark the
+    // (id, matchKey) pair as seen so the streaming-mode prune step
+    // keeps the cache / fingerprint entries that back this placeholder.
+    // Without this, a nested partial whose server confirmed an fp
+    // match would be pruned out of `_currentPagePartials` and the next
+    // render's `substituteNested` call would leave the `<i hidden>`
+    // placeholder in the DOM — blanking the partial's region until a
+    // hard reload.
     const id = getPlaceholderId(node)
-    if (id) seen?.add(id)
+    if (id && seen) addSeen(seen, id, getPlaceholderMatchKey(node) ?? "")
     return
   }
 
@@ -461,15 +534,35 @@ function deriveTemplate(node: ReactNode): ReactNode {
 
   if (isPartialWrapper(node)) {
     const id = getPartialId(node)
-    return id ? <i key={id} hidden data-partial data-partial-id={id} /> : node
+    if (!id) return node
+    const mk = getPartialMatchKey(node) ?? ""
+    return (
+      <i
+        key={`${id}|${mk}`}
+        hidden
+        data-partial
+        data-partial-id={id}
+        data-partial-match={mk}
+      />
+    )
   }
   if (isPlaceholder(node)) {
     // Already a placeholder (server emitted a fingerprint-match skip);
-    // re-emit with a clean key derived from `data-partial-id` to
-    // undo any Flight key-composite artifacts (e.g. "page-1,page-1"
-    // for .map()-produced placeholders).
+    // re-emit with a clean key derived from `data-partial-id` +
+    // `data-partial-match` to undo any Flight key-composite
+    // artifacts (e.g. "page-1,page-1" for .map()-produced placeholders).
     const id = getPlaceholderId(node)
-    return id ? <i key={id} hidden data-partial data-partial-id={id} /> : node
+    if (!id) return node
+    const mk = getPlaceholderMatchKey(node) ?? ""
+    return (
+      <i
+        key={`${id}|${mk}`}
+        hidden
+        data-partial
+        data-partial-id={id}
+        data-partial-match={mk}
+      />
+    )
   }
 
   const inner = (node.props as any)?.children
@@ -481,7 +574,7 @@ function deriveTemplate(node: ReactNode): ReactNode {
     : cloneElement(node, {}, newInner)
 }
 
-function renderTemplate(template: ReactNode, cache: Map<string, ReactNode>): ReactNode[] {
+function renderTemplate(template: ReactNode, cache: PartialCache): ReactNode[] {
   const result: ReactNode[] = []
 
   Children.forEach(template, (child) => {
@@ -491,9 +584,10 @@ function renderTemplate(template: ReactNode, cache: Map<string, ReactNode>): Rea
     }
     if (isPlaceholder(child)) {
       const id = getPlaceholderId(child)
+      const mk = getPlaceholderMatchKey(child) ?? ""
       if (id) {
-        const cached = cache.get(id)
-        if (cached) result.push(substituteNested(cached, cache, id))
+        const cached = cacheLookup(cache, id, mk)
+        if (cached) result.push(substituteNested(cached, cache, `${id}|${mk}`))
       }
       return
     }
@@ -523,9 +617,28 @@ function renderTemplate(template: ReactNode, cache: Map<string, ReactNode>): Rea
  * cache-mode refetches don't wipe everything between commits — but
  * doesn't accumulate across navigations. Steady-state size is bounded
  * by the largest single page the user visits, not by browsing history.
+ *
+ * Two-level keying:
+ *   - Outer key: partial `id` (e.g. `"pokemon-page"`).
+ *   - Inner key: `matchKey` (16-char hex hash of `stableStringify(
+ *     matchParams)`) — identifies the rendered variant.
+ *
+ * Why nested: navigating `/pokemon/1` ↔ `/pokemon/2` produces two
+ * different matchKeys for the same id. Both variants coexist in the
+ * cache (rendered as hidden `<Activity>` siblings by the server when
+ * the client advertises them via `?cached=`), so the prior variant's
+ * fiber survives the round-trip. Specs without `match` resolve to a
+ * constant matchKey — the inner map always has size 1.
+ *
+ * Eviction is purely per-page prune today: any (id, matchKey) not in
+ * the new render's `seen` set is dropped on the next streaming-mode
+ * commit. There is no time-based TTL or LRU; the steady-state bound
+ * is the cartesian product of (live id) × (cached variants per id).
+ * For a future LRU layer over the variant pool, see
+ * `docs/notes/IDEAS.md` (Keepalive follow-ups).
  */
-const _currentPagePartials = new Map<string, ReactNode>()
-const _currentPageFingerprints = new Map<string, Set<string>>()
+const _currentPagePartials = new Map<string, Map<string, ReactNode>>()
+const _currentPageFingerprints = new Map<string, Map<string, Set<string>>>()
 
 /**
  * Structural layout skeleton, derived from the most recent full-payload
@@ -543,44 +656,65 @@ let _template: ReactNode = null
  * Register a partial's fingerprint from the client side.
  *
  * Called by `<PartialErrorBoundary>` during its render, which is how
- * each `<Partial>`'s fingerprint gets into `_currentPageFingerprints` without a
- * server prop round-trip. Later `getCachedPartialIds()` reads from
- * here to tell the server what's already cached.
+ * each `<Partial>`'s fingerprint gets into `_currentPageFingerprints`
+ * without a server prop round-trip. Later `getCachedPartialIds()` reads
+ * from here to tell the server what's already cached.
+ *
+ * Fingerprints are scoped to (id, matchKey) — cold/warm fp drift
+ * accumulates within a single variant; cross-variant navigation
+ * (`/pokemon/1` ↔ `/pokemon/2`) populates distinct matchKey slots.
  */
-export function registerClientPartial(id: string, fingerprint: string): void {
-  let set = _currentPageFingerprints.get(id)
+export function registerClientPartial(
+  id: string,
+  matchKey: string,
+  fingerprint: string,
+): void {
+  let inner = _currentPageFingerprints.get(id)
+  if (!inner) {
+    inner = new Map()
+    _currentPageFingerprints.set(id, inner)
+  }
+  let set = inner.get(matchKey)
   if (!set) {
     set = new Set()
-    _currentPageFingerprints.set(id, set)
+    inner.set(matchKey, set)
   }
   set.add(fingerprint)
 }
 
 /**
  * Apply an fp-updates trailer (parsed JSON from the wire) to the
- * client's fingerprint map. Each `id → warm_fp` entry is added to
- * the id's existing fp set, so the next `?cached=` carries both the
- * cold fp the client originally registered AND the warm fp the
- * server just told us about. See `lib/fp-trailer.ts` for the
- * server-side emission, and `lib/fp-trailer-marker.ts` for the wire
- * sentinel.
+ * client's fingerprint map. Each `id → warm_fp` entry is attached
+ * to the most-recently-inserted variant for that id — the trailer
+ * fires only for ids whose body the server JUST emitted in this
+ * response, so insertion order pins the right variant without
+ * having to wire matchKey through the trailer payload.
+ *
+ * See `lib/fp-trailer.ts` for the server-side emission, and
+ * `lib/fp-trailer-marker.ts` for the wire sentinel.
  */
 export function _applyFpUpdates(updates: Record<string, string>): void {
-  for (const [id, fp] of Object.entries(updates)) {
-    registerClientPartial(id, fp)
-  }
+  applyFpUpdates(updates)
 }
 
-/**
- * Apply an fp-updates trailer (parsed JSON from the wire) to the
- * client's fingerprint map. Each `id → warm_fp` entry is added to
- * the id's existing fp set, so the next `?cached=` carries both the
- * cold fp the client originally registered AND the warm fp the
- * server just told us about.
- */
 function applyFpUpdates(updates: Record<string, string>): void {
   for (const [id, fp] of Object.entries(updates)) {
-    registerClientPartial(id, fp)
+    const inner = _currentPageFingerprints.get(id)
+    if (!inner || inner.size === 0) continue
+    // Pick the most-recently-inserted matchKey — that's the variant
+    // the just-emitted body belongs to. Map iteration is
+    // insertion-ordered, so `Array.from(...keys()).at(-1)` is the
+    // freshest. Trailer is a no-op if the client hasn't registered
+    // any variant for the id yet (e.g. the wrapper was unreachable
+    // during walk; the next render will re-register).
+    const matchKeys = Array.from(inner.keys())
+    const latestMk = matchKeys[matchKeys.length - 1]
+    let set = inner.get(latestMk)
+    if (!set) {
+      set = new Set()
+      inner.set(latestMk, set)
+    }
+    set.add(fp)
   }
 }
 
@@ -650,23 +784,29 @@ export function _applyFpTrailerFromDocument(): void {
 
 /**
  * Module-level accessor for cached partial tokens.
- * Returns "id:fingerprint" pairs so the server can detect shape changes.
- * Used by the browser entry to send ?cached= during navigation.
+ * Returns "id:matchKey:fingerprint" triples so the server can:
+ *   - decide fp-skip per (id, fingerprint), unchanged from before;
+ *   - emit hidden `<Activity>` siblings for cached matchKeys other
+ *     than the current variant, so cross-variant navigation parks
+ *     the prior variant rather than dropping its fiber.
  *
- * Source of truth is `_currentPageFingerprints`, not `_currentPagePartials`. Every rendered
- * Partial — top-level OR deep (`.map()`-generated, nested inside an
- * ancestor's subtree) — registers its fingerprint client-side as its
- * wrapper mounts via `PartialErrorBoundary`. Reporting from
- * `_currentPageFingerprints` means the skip-on-unchanged optimization applies
- * uniformly across the entire tree; deep Partials that live inside
- * an ancestor's `_currentPagePartials` entry (rather than as a standalone key) are
- * reported correctly. See `docs/partial.md`.
+ * Used by the browser entry to build `?cached=` during navigation.
+ *
+ * Source of truth is `_currentPageFingerprints`, not
+ * `_currentPagePartials`. Every rendered Partial — top-level OR deep
+ * (`.map()`-generated, nested inside an ancestor's subtree) —
+ * registers its (matchKey, fingerprint) client-side as its wrapper
+ * mounts via `PartialErrorBoundary`. Reporting from
+ * `_currentPageFingerprints` means the skip-on-unchanged optimization
+ * applies uniformly across the entire tree.
  */
 export function getCachedPartialIds(): string[] {
   const out: string[] = []
-  for (const [id, fps] of _currentPageFingerprints) {
-    for (const fp of fps) {
-      out.push(`${id}:${fp}`)
+  for (const [id, byMatchKey] of _currentPageFingerprints) {
+    for (const [matchKey, fps] of byMatchKey) {
+      for (const fp of fps) {
+        out.push(`${id}:${matchKey}:${fp}`)
+      }
     }
   }
   return out
@@ -1994,13 +2134,13 @@ export function PartialsClient({ mode = "cache", children }: PartialsClientProps
     // fresh but whose own region was fp-skipped — leaving
     // `substituteNested` no entry to fill the placeholder with on the
     // next render.
-    const seen = new Set<string>()
+    const seen = new Map<string, Set<string>>()
     cacheFromStreamingChildren(children, cache, seen)
     const derived = deriveTemplate(children)
     _template = derived
 
-    // Expand `seen` with nested partial ids reachable through cached
-    // wrappers. When the server fp-skips an OUTER partial (e.g.
+    // Expand `seen` with nested (id, matchKey) pairs reachable through
+    // cached wrappers. When the server fp-skips an OUTER partial (e.g.
     // `cms-demo-root` unchanged across `/cms-demo/beta` →
     // `/cms-demo/gamma`), the new streamed tree carries only the
     // outer's placeholder. Without this expansion, the prune below
@@ -2009,23 +2149,27 @@ export function PartialsClient({ mode = "cache", children }: PartialsClientProps
     // would find empty placeholders for slug-nav, hero, multi-slot,
     // product-grid, …, blanking those regions.
     //
-    // Frontier-style BFS: each newly-discovered id can itself be a
-    // wrapper containing more nested partials, so harvest until no
-    // new ids appear.
-    let frontier: string[] = [...seen]
+    // Frontier-style BFS: each newly-discovered (id, matchKey) can
+    // itself be a wrapper containing more nested partials, so harvest
+    // until no new pairs appear.
+    let frontier: Array<[string, string]> = []
+    for (const [id, mks] of seen) for (const mk of mks) frontier.push([id, mk])
     while (frontier.length > 0) {
-      const next: string[] = []
-      for (const id of frontier) {
-        const wrapper = cache.get(id)
+      const next: Array<[string, string]> = []
+      for (const [id, mk] of frontier) {
+        const wrapper = cacheLookup(cache, id, mk)
         if (!wrapper) continue
         const inner = (wrapper as { props?: { children?: ReactNode } }).props?.children
         if (inner == null) continue
-        const nested = new Set<string>()
+        const nested = new Map<string, Set<string>>()
         harvestPartialIds(inner, nested)
-        for (const nid of nested) {
-          if (!seen.has(nid)) {
-            seen.add(nid)
-            next.push(nid)
+        for (const [nid, nmks] of nested) {
+          for (const nmk of nmks) {
+            const existing = seen.get(nid)
+            if (!existing || !existing.has(nmk)) {
+              addSeen(seen, nid, nmk)
+              next.push([nid, nmk])
+            }
           }
         }
       }
@@ -2034,13 +2178,25 @@ export function PartialsClient({ mode = "cache", children }: PartialsClientProps
 
     // Drop entries from prior routes that don't appear on the new
     // page. `seen` covers fresh wrappers, placeholders from the new
-    // tree, AND nested ids harvested from cached wrappers, so any
-    // partial still backing the rendered tree survives.
-    for (const id of [..._currentPagePartials.keys()]) {
-      if (!seen.has(id)) _currentPagePartials.delete(id)
+    // tree, AND nested (id, matchKey) pairs harvested from cached
+    // wrappers, so any variant still backing the rendered tree
+    // survives. Pruning is at (id, matchKey) granularity — a parked
+    // variant whose hidden Activity sibling is still emitted by the
+    // server stays alive, while a variant no longer referenced
+    // anywhere (different layout, never re-emitted) drops.
+    for (const [id, mkMap] of _currentPagePartials) {
+      const seenMks = seen.get(id)
+      for (const mk of [...mkMap.keys()]) {
+        if (!seenMks?.has(mk)) mkMap.delete(mk)
+      }
+      if (mkMap.size === 0) _currentPagePartials.delete(id)
     }
-    for (const id of [..._currentPageFingerprints.keys()]) {
-      if (!seen.has(id)) _currentPageFingerprints.delete(id)
+    for (const [id, byMatchKey] of _currentPageFingerprints) {
+      const seenMks = seen.get(id)
+      for (const mk of [...byMatchKey.keys()]) {
+        if (!seenMks?.has(mk)) byMatchKey.delete(mk)
+      }
+      if (byMatchKey.size === 0) _currentPageFingerprints.delete(id)
     }
 
     const rendered = renderTemplate(derived, cache)
