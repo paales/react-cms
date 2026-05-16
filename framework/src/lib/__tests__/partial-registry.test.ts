@@ -23,8 +23,7 @@ function snap(parentPath: readonly string[], extra: Partial<PartialSnapshot> = {
   return {
     type: extra.type ?? "test",
     fallback: null,
-    uniqueTokens: extra.uniqueTokens ?? ["t"],
-    sharedTokens: extra.sharedTokens ?? [],
+    labels: extra.labels ?? ["t"],
     framePath: extra.framePath ?? [],
     parentFrameChain: extra.parentFrameChain ?? [],
     parentPath,

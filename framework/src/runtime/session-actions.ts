@@ -40,5 +40,5 @@ export async function setSessionValue(
   // bare invalidation that just commits the session write. The next
   // streaming nav picks the new value up via vary.
   if (ids.length === 0) return { invalidate: { selector: "" } }
-  return { invalidate: { selector: ids.map((id) => `#${id}`).join(" ") } }
+  return { invalidate: { selector: ids.join(" ") } }
 }

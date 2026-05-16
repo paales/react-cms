@@ -269,12 +269,12 @@ export const EditorTreePartial = ReactCms.partial(
                 : blockTypes.filter((type) => {
                     const m = catalog[type]
                     if (!m) return false
-                    return blockTagsSatisfyAllow(m.tags, allow)
+                    return blockLabelsSatisfyAllow(m.labels, allow)
                   })
             const options = filteredTypes.map((type) => ({
               type,
               displayName: camelToSpace(type),
-              tags: catalog[type]?.tags ?? [],
+              labels: catalog[type]?.labels ?? [],
               action: addBlockToSlot.bind(null, entry.parentId!, entry.slotName!, type),
             }))
             return (
@@ -766,13 +766,14 @@ function isWildcardAllow(allow: string): boolean {
   return allow.split(/\s+/).some((t) => t.trim() === "*")
 }
 
-function blockTagsSatisfyAllow(tags: readonly `.${string}`[], allow: string): boolean {
+function blockLabelsSatisfyAllow(labels: readonly string[], allow: string): boolean {
   const tokens = allow
     .split(/\s+/)
     .map((t) => t.trim())
     .filter(Boolean)
+    .map((t) => (t.startsWith("#") || t.startsWith(".") ? t.slice(1) : t))
   for (const token of tokens) {
-    if (token.startsWith(".") && tags.includes(token as `.${string}`)) return true
+    if (labels.includes(token)) return true
   }
   return false
 }

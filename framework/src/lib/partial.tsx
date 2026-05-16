@@ -65,7 +65,10 @@ export { ROOT, type PartialCtx } from "./partial-context.ts"
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
-export type SelectorToken = `${"#" | "."}${string}`
+/** A refetch label. Plain string; the framework treats CSS-style
+ *  `#foo` / `.foo` prefixes as cosmetic and strips them on parse.
+ *  Multiple labels per spec are allowed (fan-out refetch targets). */
+export type SelectorToken = string
 export type SelectorTokens = SelectorToken | SelectorToken[]
 
 export interface ActivatorProps {
@@ -377,45 +380,40 @@ export type PartialBuilder<Opts, V = InferV<Opts>> = {
 }
 
 // ─── Selector parsing & id derivation ─────────────────────────────────
+//
+// Selectors are flat lists of string labels. The parser strips leading
+// `#` or `.` as cosmetic (legacy CSS-style syntax keeps working), but
+// the framework no longer distinguishes "unique" from "shared" — all
+// labels are fan-out refetch targets. A spec's labels are stored on
+// its snapshot; `reload({selector: "foo"})` matches every spec whose
+// label set contains "foo" (or whose catalog id is "foo").
 
 interface ParsedSelector {
-  uniqueTokens: string[]
-  sharedTokens: string[]
+  labels: string[]
+}
+
+function stripPrefix(tok: string): string {
+  if (tok.startsWith("#") || tok.startsWith(".")) return tok.slice(1)
+  return tok
 }
 
 function parseSelector(input: SelectorTokens): ParsedSelector {
-  const tokens = Array.isArray(input)
+  const raw = Array.isArray(input)
     ? input.map((t) => (typeof t === "string" ? t.trim() : "")).filter(Boolean)
     : input
         .split(/\s+/)
         .map((t) => t.trim())
         .filter(Boolean)
-  if (tokens.length === 0) {
+  if (raw.length === 0) {
     throw new Error("ReactCms.partial: selector is empty")
   }
-  const uniqueTokens: string[] = []
-  const sharedTokens: string[] = []
-  for (const tok of tokens) {
-    if (tok.startsWith("#")) {
-      const name = tok.slice(1)
-      if (!name) throw new Error('Empty "#" token')
-      if (!uniqueTokens.includes(name)) uniqueTokens.push(name)
-    } else if (tok.startsWith(".")) {
-      const name = tok.slice(1)
-      if (!name) throw new Error('Empty "." token')
-      if (!sharedTokens.includes(name)) sharedTokens.push(name)
-    } else {
-      throw new Error(`Unprefixed token "${tok}" — must start with "#" or "."`)
-    }
+  const labels: string[] = []
+  for (const tok of raw) {
+    const name = stripPrefix(tok)
+    if (!name) throw new Error(`Empty selector token in "${tok}"`)
+    if (!labels.includes(name)) labels.push(name)
   }
-  return { uniqueTokens, sharedTokens }
-}
-
-function effectiveIdFromSelector(parsed: ParsedSelector): string {
-  const { uniqueTokens, sharedTokens } = parsed
-  if (uniqueTokens.length === 1) return uniqueTokens[0]
-  if (uniqueTokens.length > 1) return [...uniqueTokens].sort().join(",")
-  return `__anon:${[...sharedTokens].sort().join(",")}`
+  return { labels }
 }
 
 const STRIP_SUFFIXES = ["Render", "Page", "Block", "Partial", "Component"]
@@ -430,11 +428,10 @@ function autoSelector(render: (...args: never[]) => unknown): SelectorTokens {
     }
   }
   if (!stem) stem = "anon"
-  const kebab = stem
+  return stem
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .replace(/[_\s]+/g, "-")
     .toLowerCase()
-  return `#${kebab}` as SelectorToken
 }
 
 // ─── Frame request resolution ─────────────────────────────────────────
@@ -490,8 +487,12 @@ interface PartialBoundaryProps {
   id: string
   type: string
   parentPath: readonly string[]
-  uniqueTokens: string[]
-  sharedTokens: string[]
+  /** Refetch labels carried by this rendered instance. Any
+   *  `reload({selector: "label"})` matching one of these labels
+   *  targets this spec. The first label is always `id` itself, so
+   *  refetching by spec catalog id works without an explicit
+   *  selector. */
+  labels: string[]
   framePath: readonly string[]
   parentFrameChain: readonly string[]
   /** CMS storage key for this rendered instance, when the spec binds
@@ -529,8 +530,7 @@ export function PartialBoundary({
   id,
   type,
   parentPath,
-  uniqueTokens,
-  sharedTokens,
+  labels,
   framePath,
   parentFrameChain,
   cmsContentKey,
@@ -546,8 +546,7 @@ export function PartialBoundary({
   registerPartial(id, {
     type,
     fallback,
-    uniqueTokens,
-    sharedTokens,
+    labels,
     framePath,
     parentFrameChain,
     parentPath,
@@ -945,11 +944,13 @@ function effectiveIdForInstance(
   if (override == null || override === spec.id) {
     return { id: spec.id, parsed: spec.parsed }
   }
-  const uniqueTokens = [override]
-  const sharedTokens = spec.parsed.sharedTokens
+  // Slot-placed instance: the override (entry id) replaces the first
+  // label so external refetch by entry id finds THIS placement; the
+  // spec's other labels stay as fan-out targets.
+  const labels = [override, ...spec.parsed.labels.slice(1)]
   return {
     id: override,
-    parsed: { uniqueTokens, sharedTokens },
+    parsed: { labels },
   }
 }
 
@@ -1135,20 +1136,10 @@ function createSpecComponent<V>(
     const shouldSkip = state != null && !isExplicit && fingerprintMatches && !hasOuterChildren
 
     if (state) {
-      for (const tok of parsed.uniqueTokens) {
-        if (state.seenUniqueTokens.has(tok)) {
-          throw new Error(
-            `Duplicate "#${tok}" selector. Tokens starting with "#" must be unique per page.`,
-          )
-        }
-        state.seenUniqueTokens.add(tok)
-      }
-      // No per-id uniqueness check: multiple placements of a keyless
-      // multi-instance spec (e.g. `<LivePrice/>` per product card)
-      // share the same `spec.id` and fan out under class-token
-      // refetch (`reload({selector:".price"})`). The variant store
-      // dedupes structurally identical snapshots; cache-mode refetch
-      // by id collapses to spec-level fan-out for these.
+      // No uniqueness checks. Selectors are flat labels with fan-out
+      // semantics — multiple placements of the same spec share their
+      // labels and refetch together. seenIds stays as a debug-only
+      // record of what rendered this request.
       state.seenIds.add(id)
     }
 
@@ -1186,8 +1177,7 @@ function createSpecComponent<V>(
           id={id}
           type={spec.type}
           parentPath={parent.path}
-          uniqueTokens={parsed.uniqueTokens}
-          sharedTokens={parsed.sharedTokens}
+          labels={parsed.labels}
           framePath={ourFrameChain}
           parentFrameChain={parent.frameChain}
           cmsContentKey={effectiveCmsContentKey}
@@ -1228,8 +1218,7 @@ function createSpecComponent<V>(
           id={id}
           type={spec.type}
           parentPath={parent.path}
-          uniqueTokens={parsed.uniqueTokens}
-          sharedTokens={parsed.sharedTokens}
+          labels={parsed.labels}
           framePath={ourFrameChain}
           parentFrameChain={parent.frameChain}
           cmsContentKey={effectiveCmsContentKey}
@@ -1314,8 +1303,7 @@ function createSpecComponent<V>(
         id={id}
         type={spec.type}
         parentPath={parent.path}
-        uniqueTokens={parsed.uniqueTokens}
-        sharedTokens={parsed.sharedTokens}
+        labels={parsed.labels}
         framePath={ourFrameChain}
         parentFrameChain={parent.frameChain}
         cmsContentKey={effectiveCmsContentKey}
@@ -1354,20 +1342,18 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
   if (matchPattern) registeredMatchPatterns.push(matchPattern)
 
   // `isSlotBlock` is passed by `ReactCms.block`. `ReactCms.partial`
-  // omits it (or sets `false`). The flag drives selector parsing,
-  // catalog registration, and per-instance content-key resolution.
+  // omits it (or sets `false`). Drives slot-block catalog
+  // registration and per-instance content-key resolution.
   const isSlotBlock = options.isSlotBlock === true
 
-  // Selector parsing is identical for blocks and partials — both get
-  // `#unique` / `.shared` tokens. The spec catalog id (`spec.id`) is
-  // the first `#token` if present, otherwise the sorted-join, or
-  // `__anon:` of the shared tokens. For singleton blocks, that id is
-  // ALSO the CMS storage key — placing it via `selector: "#app-nav"`
-  // means CMS row `"app-nav"`. Auto-derives from `Render.name` when
-  // no selector is given (e.g. `AppNavRender` → `"#app-nav"`).
+  // Selector parsing: flat labels, no unique/shared distinction. The
+  // spec catalog id (`spec.id`) is the FIRST label — also the CMS
+  // storage key for singleton blocks (e.g. `selector: "app-nav"` →
+  // id "app-nav", CMS row "app-nav"). Auto-derives from `Render.name`
+  // when no selector is given (e.g. `AppNavRender` → `"app-nav"`).
   const selectorInput = options.selector ?? autoSelector(Render)
   const parsed = parseSelector(selectorInput)
-  const id = effectiveIdFromSelector(parsed)
+  const id = parsed.labels[0]
   const type = id
 
   const spec: InternalSpec<V> = {
@@ -1386,7 +1372,7 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
   registerSpec({
     id,
     type,
-    selectorTokens: parsed,
+    labels: parsed.labels,
     // Slot lookup invokes the component with only framework props
     // (`parent`, optional `__cmsContentKey`/`children`); call sites
     // passing extra `Extra` props go through the typed
@@ -1605,40 +1591,27 @@ function parseCsvTokens(raw: string | null): string[] {
     .filter(Boolean)
 }
 
-function resolveSelectorToIds(
-  uniqueParam: string | null,
-  sharedParam: string | null,
-): Set<string> | null {
-  const uniqueNames = parseCsvTokens(uniqueParam)
-  const sharedNames = parseCsvTokens(sharedParam)
-  if (uniqueNames.length === 0 && sharedNames.length === 0) return null
+function resolveSelectorToIds(partialsParam: string | null): Set<string> | null {
+  const wanted = parseCsvTokens(partialsParam)
+  if (wanted.length === 0) return null
 
   const snapshots = getRouteSnapshots()
   if (!snapshots) return null
 
   const ids = new Set<string>()
-  for (const name of uniqueNames) {
+  // Direct id match first — `?partials=hero` resolves to the snapshot
+  // registered under id "hero" without walking labels.
+  for (const name of wanted) {
     if (snapshots.has(name)) ids.add(name)
   }
-  if (uniqueNames.length > 0) {
-    for (const [id, snap] of snapshots) {
-      if (ids.has(id)) continue
-      for (const u of snap.uniqueTokens) {
-        if (uniqueNames.includes(u)) {
-          ids.add(id)
-          break
-        }
-      }
-    }
-  }
-  if (sharedNames.length > 0) {
-    for (const [id, snap] of snapshots) {
-      if (ids.has(id)) continue
-      for (const s of snap.sharedTokens) {
-        if (sharedNames.includes(s)) {
-          ids.add(id)
-          break
-        }
+  // Then label match — any snapshot whose labels include a wanted
+  // token. Fan-out: one wanted label can resolve to many ids.
+  for (const [id, snap] of snapshots) {
+    if (ids.has(id)) continue
+    for (const label of snap.labels) {
+      if (wanted.includes(label)) {
+        ids.add(id)
+        break
       }
     }
   }
@@ -1683,7 +1656,6 @@ function partialFromSnapshot(
 export async function PartialRoot({ children }: PartialRootProps): Promise<ReactNode> {
   const requestUrl = new URL(getRequest().url)
   const partialsParam = requestUrl.searchParams.get("partials")
-  const tagsParam = requestUrl.searchParams.get("tags")
   const cachedParam = requestUrl.searchParams.get("cached")
   const populateCache = requestUrl.searchParams.has("__populateCache")
   const partialPropsParam = requestUrl.searchParams.get("partialProps")
@@ -1722,8 +1694,8 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   // read-only lookups, so replacing it is safe.
   enterRequestRegistry(routeKey, "cache")
 
-  const combinedRequestedIds = resolveSelectorToIds(partialsParam, tagsParam)
-  const hasGlobalFilter = partialsParam != null || tagsParam != null
+  const combinedRequestedIds = resolveSelectorToIds(partialsParam)
+  const hasGlobalFilter = partialsParam != null
   const isPartialRefetch = hasGlobalFilter || populateCache
 
   const explicitIds = new Set<string>()
@@ -1739,25 +1711,24 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
     cachedMatchKeys: parsedCache.matchKeys,
     explicitIds,
     seenIds: new Set(),
-    seenUniqueTokens: new Set(),
   }
 
-  const requestedUniqueNames = parseCsvTokens(partialsParam)
+  const requestedNames = parseCsvTokens(partialsParam)
   let registryMiss = state.isPartialRefetch && hasGlobalFilter && !combinedRequestedIds
-  if (state.isPartialRefetch && !registryMiss && requestedUniqueNames.length > 0) {
+  if (state.isPartialRefetch && !registryMiss && requestedNames.length > 0) {
     const snapshots = getRouteSnapshots()
-    for (const name of requestedUniqueNames) {
+    for (const name of requestedNames) {
       if (snapshots?.has(name)) continue
-      let foundAsToken = false
+      let foundAsLabel = false
       if (snapshots) {
         for (const snap of snapshots.values()) {
-          if (snap.uniqueTokens.includes(name)) {
-            foundAsToken = true
+          if (snap.labels.includes(name)) {
+            foundAsLabel = true
             break
           }
         }
       }
-      if (!foundAsToken) {
+      if (!foundAsLabel) {
         registryMiss = true
         break
       }

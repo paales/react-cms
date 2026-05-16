@@ -870,44 +870,29 @@ export function isFrameworkSilentInfo(info: unknown): info is FrameworkSilentInf
   )
 }
 
-// ─── Selector parsing (client-side, mirrors partial-component.tsx) ───
+// ─── Selector parsing (client-side, mirrors partial.tsx) ─────────────
 //
-// The server-side parser lives in `partial-component.tsx` and runs on
-// `<Partial selector>`. Authors also pass selector strings on
-// `reload({ selector })` / `navigate(url, { selector })` — we parse
-// them here before splitting into the wire params the server expects.
+// Selectors at the use site (`reload({selector})` / `navigate(url,
+// {selector})`) are flat lists of labels. The framework strips
+// leading `#` / `.` characters as cosmetic — both `"#hero"` and
+// `"hero"` resolve to the same label.
 
 function parseSelectorClient(input: string | string[] | undefined): {
-  uniqueTokens: string[]
-  sharedTokens: string[]
+  labels: string[]
 } {
-  if (input == null) return { uniqueTokens: [], sharedTokens: [] }
-  // Mirror the server parser: string form splits on whitespace;
-  // array form keeps each element as one token (so values with
-  // spaces — SKUs, slugs — survive intact).
+  if (input == null) return { labels: [] }
   const tokens = Array.isArray(input)
     ? input.map((t) => (typeof t === "string" ? t.trim() : "")).filter(Boolean)
     : input
         .split(/\s+/)
         .map((t) => t.trim())
         .filter(Boolean)
-  const uniqueTokens: string[] = []
-  const sharedTokens: string[] = []
+  const labels: string[] = []
   for (const tok of tokens) {
-    if (tok.startsWith("#")) {
-      const name = tok.slice(1)
-      if (name && !uniqueTokens.includes(name)) uniqueTokens.push(name)
-    } else if (tok.startsWith(".")) {
-      const name = tok.slice(1)
-      if (name && !sharedTokens.includes(name)) sharedTokens.push(name)
-    } else {
-      throw new Error(
-        `Unprefixed token "${tok}" in selector. Tokens must start with ` +
-          `"#" (unique) or "." (shared). Did you mean "#${tok}" or ".${tok}"?`,
-      )
-    }
+    const name = tok.startsWith("#") || tok.startsWith(".") ? tok.slice(1) : tok
+    if (name && !labels.includes(name)) labels.push(name)
   }
-  return { uniqueTokens, sharedTokens }
+  return { labels }
 }
 
 // ─── Microtask-batched targeted-refetch dispatcher ────────────────
@@ -918,10 +903,10 @@ function parseSelectorClient(input: string | string[] | undefined): {
 // produce one request with `?partials=a,b,c`.
 
 interface RefetchBatchEntry {
-  /** `#`-token names (sans `#`) — become `?partials=…` on the wire. */
-  uniqueTokens: string[]
-  /** `.`-token names (sans `.`) — become `?tags=…` on the wire. */
-  sharedTokens: string[]
+  /** Selector labels — become `?partials=…` on the wire. The server
+   *  walks snapshots looking for matching labels (or matching ids)
+   *  and re-renders each match. */
+  labels: string[]
   disableTransition: boolean
   /** Per-id props map merged into the wire as `?partialProps=<JSON>`.
    *  Server reads it in `PartialRoot` and forwards to the spec via
@@ -941,13 +926,11 @@ async function flushRefetchBatch(batch: RefetchBatchEntry[]): Promise<void> {
   ).__rsc_partial_refetch
   if (!handler) return
 
-  const uniques = new Set<string>()
-  const shareds = new Set<string>()
+  const labelSet = new Set<string>()
   const mergedProps: Record<string, Record<string, unknown>> = {}
   let disableTransition = false
   for (const entry of batch) {
-    for (const u of entry.uniqueTokens) uniques.add(u)
-    for (const s of entry.sharedTokens) shareds.add(s)
+    for (const l of entry.labels) labelSet.add(l)
     if (entry.disableTransition) disableTransition = true
     if (entry.props) {
       for (const [id, p] of Object.entries(entry.props)) {
@@ -957,22 +940,20 @@ async function flushRefetchBatch(batch: RefetchBatchEntry[]): Promise<void> {
   }
 
   const url = new URL(window.location.href)
-  if (uniques.size > 0) url.searchParams.set("partials", [...uniques].join(","))
-  if (shareds.size > 0) url.searchParams.set("tags", [...shareds].join(","))
+  if (labelSet.size > 0) url.searchParams.set("partials", [...labelSet].join(","))
   if (disableTransition) url.searchParams.set("disableTransition", "1")
   if (Object.keys(mergedProps).length > 0) {
     url.searchParams.set("partialProps", JSON.stringify(mergedProps))
   }
 
   // Send cached fingerprints for the non-target set so the server can
-  // skip the unchanged ones via fingerprint-match placeholders. We
-  // don't know the server-side effective-id→`#`-token mapping from
-  // here (a multi-`#` Partial's effective id is a sorted-join), but
-  // the common case is effective id == single `#`-token, so a prefix
-  // filter on the effective id works. For the rare multi-`#` case
-  // we'd send the fingerprint anyway and the server would match it.
-  if (uniques.size > 0) {
-    const targetPrefixes = [...uniques].map((u) => `${u}:`)
+  // skip the unchanged ones via fingerprint-match placeholders. The
+  // client doesn't know the server-side id↔label mapping from here, so
+  // we strip cached tokens whose id prefix matches a wanted label.
+  // Specs whose id equals the wanted label hit; spec-with-label-only
+  // would slip through and just get re-rendered (cheap).
+  if (labelSet.size > 0) {
+    const targetPrefixes = [...labelSet].map((l) => `${l}:`)
     const cached = getCachedPartialIds().filter((t) => !targetPrefixes.some((p) => t.startsWith(p)))
     if (cached.length > 0) url.searchParams.set("cached", cached.join(","))
   }
@@ -1391,8 +1372,8 @@ function composeResult(
 
 function parseOptionsSelector(
   options: FrameworkNavigateOptions | FrameworkReloadOptions | undefined,
-): { uniqueTokens: string[]; sharedTokens: string[] } {
-  if (!options?.selector) return { uniqueTokens: [], sharedTokens: [] }
+): { labels: string[] } {
+  if (!options?.selector) return { labels: [] }
   return parseSelectorClient(options.selector)
 }
 
@@ -1529,7 +1510,7 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
     applyClientCookies(options?.cookies)
     const url = resolveWindowTarget(target)
     const parsed = parseOptionsSelector(options)
-    const filtered = parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0
+    const filtered = parsed.labels.length > 0
     const silent = options?.silent === true
     if (filtered || silent) {
       // URL-only update — the page-level listener sees the branded
@@ -1547,8 +1528,7 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
         () => nav.currentEntry!,
         () =>
           enqueueRefetch({
-            uniqueTokens: parsed.uniqueTokens,
-            sharedTokens: parsed.sharedTokens,
+            labels: parsed.labels,
             disableTransition: options?.disableTransition ?? false,
             props: options?.props,
           }),
@@ -1566,12 +1546,11 @@ function buildWindowNavigationHandle(): FrameworkNavigation {
 
   const windowReload = (options?: FrameworkReloadOptions): FrameworkNavigationResult => {
     const parsed = parseOptionsSelector(options)
-    if (parsed.uniqueTokens.length > 0 || parsed.sharedTokens.length > 0) {
+    if (parsed.labels.length > 0) {
       return syntheticResult(
         nav,
         enqueueRefetch({
-          uniqueTokens: parsed.uniqueTokens,
-          sharedTokens: parsed.sharedTokens,
+          labels: parsed.labels,
           disableTransition: options?.disableTransition ?? false,
           props: options?.props,
         }),

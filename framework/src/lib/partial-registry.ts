@@ -45,8 +45,10 @@ export interface PartialSnapshot {
    *  blocks rendered with a content-key override). */
   type: string
   fallback: ReactNode
-  uniqueTokens: string[]
-  sharedTokens: string[]
+  /** Refetch labels carried by this rendered instance. Selectors are
+   *  flat — `reload({selector: "foo"})` hits every snapshot whose
+   *  `labels` contains "foo" (or whose id is "foo"). */
+  labels: string[]
   cache?: CacheOptions
   /** The frame chain this spec was rendered under — populated from
    *  the `parent.frameChain` flowing in from a `<Frame>` ancestor (or

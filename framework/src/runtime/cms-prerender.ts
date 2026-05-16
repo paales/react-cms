@@ -17,7 +17,10 @@ import {
 
 export interface BlockManifest {
   readonly type: string
-  readonly tags: readonly `.${string}`[]
+  /** Refetch labels carried by the spec (excluding the spec's own id,
+   *  which the editor identifies separately via `type`). The editor's
+   *  slot-allow filter matches against these. */
+  readonly labels: readonly string[]
   readonly contentFields: Record<string, ContentFieldKind>
   readonly references: Record<string, string>
   readonly childSlots: Record<string, SlotSpec>
@@ -86,9 +89,13 @@ export async function prerenderBlock(type: string): Promise<BlockManifest | null
       // reads it did before throwing.
     }
   }
+  // Skip the first label (== spec.id == catalog type). The editor
+  // already keys blocks by `type`; the remaining labels are the
+  // fan-out targets a slot's `allow` filter may match against.
+  const labels = spec.labels.slice(1)
   return {
     type,
-    tags: spec.selectorTokens.sharedTokens.map((t) => `.${t}` as `.${string}`),
+    labels,
     contentFields: Object.fromEntries(tracker.contentFields),
     references: Object.fromEntries(tracker.references),
     childSlots: Object.fromEntries(tracker.childSlots),

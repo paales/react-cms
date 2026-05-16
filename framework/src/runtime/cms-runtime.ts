@@ -623,9 +623,10 @@ export function createCmsReadSurface(
   }
 }
 
-/** Filter slot entries against an optional class-selector filter (e.g.
- *  `".page-block"`). Each entry's type → spec → spec.selectorTokens
- *  provides the class tokens to match against. */
+/** Filter slot entries against an optional label-selector filter (e.g.
+ *  `"page-block"`). Each entry's type → spec → spec.labels provides
+ *  the labels to match against. Leading `.` / `#` in the filter is
+ *  cosmetic and stripped. */
 function filterEntriesBySelector(
   entries: readonly CmsNode[],
   selector: string | undefined,
@@ -634,15 +635,15 @@ function filterEntriesBySelector(
   const wanted = selector
     .split(/\s+/)
     .map((t) => t.trim())
-    .filter((t) => t.startsWith("."))
-    .map((t) => t.slice(1))
+    .filter(Boolean)
+    .map((t) => (t.startsWith("#") || t.startsWith(".") ? t.slice(1) : t))
   if (wanted.length === 0) return entries
   return entries.filter((entry) => {
     const type = entry.type
     if (!type) return false
     const spec = getSpecByType(type)
     if (!spec) return false
-    return wanted.some((w) => spec.selectorTokens.sharedTokens.includes(w))
+    return wanted.some((w) => spec.labels.includes(w))
   })
 }
 
@@ -693,7 +694,9 @@ export interface SpecCatalogEntry {
    *  ALSO the CMS storage key (the row in `content.json` whose
    *  fields the spec's schema reads). */
   id: string
-  selectorTokens: { uniqueTokens: string[]; sharedTokens: string[] }
+  /** Refetch labels declared by the spec's `selector` (plus the
+   *  spec's own id, which is always the first label). */
+  labels: string[]
   /** The component returned by ReactCms.partial — render it as JSX.
    *  Accepts the standard `parent` plus the framework-internal
    *  `__cmsContentKey` channel used by slot wiring to pass the entry's
