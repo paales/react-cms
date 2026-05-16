@@ -18,6 +18,7 @@ import { PokemonOverviewPage } from "./pages/pokemon.tsx"
 import { PokemonDetailPage } from "./pages/pokemon-detail.tsx"
 import { CacheDemoPage } from "./pages/cache-demo.tsx"
 import { CacheStreamingDemoPage } from "./pages/cache-streaming-demo.tsx"
+import { RemoteFrameDemoPage } from "./pages/remote-frame-demo.tsx"
 import { CmsDemoPage } from "./pages/cms-demo.tsx"
 import { DeferDemoPage } from "./pages/defer-demo.tsx"
 import { SelectorDemoPage } from "./pages/selector-demo.tsx"
@@ -47,6 +48,7 @@ export function Root() {
               <PokemonDetailPage parent={ROOT} />
               <CacheDemoPage parent={ROOT} />
               <CacheStreamingDemoPage parent={ROOT} />
+              <RemoteFrameDemoPage parent={ROOT} />
               <CmsDemoPage parent={ROOT} />
               <DeferDemoPage parent={ROOT} />
               <SelectorDemoPage parent={ROOT} />

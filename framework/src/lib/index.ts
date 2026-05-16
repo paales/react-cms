@@ -51,3 +51,4 @@ export type {
 
 export { PartialErrorBoundary } from "./partial-error-boundary.tsx"
 export { invalidateByTags, clearCache, getCacheStats } from "./partial-cache.ts"
+export { RemoteFrame, type RemoteFrameProps } from "./remote-frame.tsx"

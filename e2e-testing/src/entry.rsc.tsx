@@ -9,6 +9,8 @@ import {
 import type { ReactFormState } from "react-dom/client"
 import { Root } from "./app/root.tsx"
 import { NotFoundPage } from "./app/pages/not-found.tsx"
+import { ROOT } from "@parton/framework"
+import { getSpecById } from "@parton/framework/lib/spec-catalog.ts"
 import { parseRenderRequest } from "@parton/framework/runtime/request.tsx"
 import {
   _captureCommitHandle,
@@ -32,8 +34,49 @@ export type RscPayload = {
 export default { fetch: handler }
 
 async function handler(request: Request): Promise<Response> {
+  const url = new URL(request.url)
+
+  // RemoteFrame endpoint. `<RemoteFrame src="/__remote/<spec-id>">`
+  // fetches this URL; the response is a focused Flight stream
+  // containing just `<Component parent={ROOT} />` for the named
+  // spec. Same-origin v1; v2 will lift this onto a separate dev
+  // server (e2e-magento) and add CORS + capability scoping.
+  if (url.pathname.startsWith("/__remote/")) {
+    const id = decodeURIComponent(url.pathname.slice("/__remote/".length))
+    const spec = getSpecById(id)
+    if (!spec) {
+      return new Response(`Unknown spec: ${id}`, { status: 404 })
+    }
+    const Component = spec.Component
+    // Wire shape: the remote response is the bare ReactNode the
+    // spec produces — no Root, no wrapper object. The host's
+    // `<RemoteFrame>` decodes it and uses the result directly as
+    // JSX. Keeping it bare makes the host code symmetrical with
+    // any other server-component await.
+    //
+    // The render runs inside `runWithRequestAsync` so server
+    // components can call `getRequest` / `getCookie` / etc. —
+    // same as the main page render path. `deriveMatchKey` in
+    // partial.tsx in particular pulls the URL out of the request
+    // context, so this isn't optional.
+    const { result: stream } = await runWithRequestAsync(request, async () => {
+      return renderToReadableStream(<Component parent={ROOT} />, {
+        onError: silenceClientDisconnect,
+      })
+    })
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "content-type": "text/x-component;charset=utf-8",
+        // Same-origin v1 doesn't strictly need CORS, but stamping
+        // them now lets the v2 cross-origin demo work without
+        // server changes.
+        "access-control-allow-origin": "*",
+      },
+    })
+  }
+
   if (import.meta.env?.DEV) {
-    const url = new URL(request.url)
     if (url.pathname === "/__test/clear-caches") {
       const [
         { _clearCache },
