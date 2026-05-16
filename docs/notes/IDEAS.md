@@ -358,6 +358,56 @@ server axis instead of their current names.
 session from `?__frame=&__frameUrl=` URL params on every request.
 Two paths into one store — worth checking if they can collapse.
 
+### RemoteFrame v2 — cross-origin refetch routing
+
+Same-origin v1 of `<RemoteFrame>` routes selector-targeted
+refetches through the host's local spec catalog. That works
+because both processes share the same parton definitions in dev.
+For true cross-origin (different deployments, different
+codebases), the host doesn't have the remote's spec — the
+refetch needs to round-trip back to the remote endpoint.
+
+The fix: when the snapshot trailer carries snapshots from a
+remote, annotate them with `source: "remote:<origin>"`. The
+host's refetch dispatcher checks the field: if remote-sourced,
+fire a fetch to `<origin>/__remote/<id>` instead of running the
+local spec. The response stitches in via the same RemoteFrame
+machinery (snapshot trailer, module-ref rewrite, etc.).
+
+Open questions: how does the targeted-refetch URL carry the
+parent-path context? Today partial-refetch URLs use the host's
+URL; for a remote refetch they'd need to point at the remote
+endpoint with a way to carry capability + selector-token info.
+Probably: same `?partials=<id>` shape but origin from the
+snapshot's `source` field.
+
+### RemoteFrame v2 — signed capability tokens
+
+Today the capability header is trust-the-network: the remote
+believes whatever the host puts in `x-parton-capability`. For
+real third-party deployments, the remote needs to verify the
+host's claims (this cart-id actually exists, this user actually
+owns it, this total is what was quoted). HMAC-signed tokens
+with an expiration and an issuer are the obvious shape — pick
+JWT or PASETO depending on team taste.
+
+The signing key lives at the host; the verification key is
+either the host's public key (asymmetric) or a shared secret
+(symmetric, simpler but harder to rotate). For Stripe-style
+"third-party serves a checkout widget" the signature is
+non-optional; for "Adobe-vetted module in a trusted deployment"
+it's overkill.
+
+### RemoteFrame v2 — within-remote streaming
+
+`<RemoteFrame>` buffers the full remote response today to keep
+the snapshot trailer ordering simple. A holdback-streaming
+splitter (analogous to `splitAtFpTrailer`) would let each
+remote payload stream incrementally — useful when a remote has
+nested Suspense boundaries that should reveal independently. The
+trade-off: holdback adds latency proportional to trailer size.
+Filed against a real use case.
+
 ---
 
 ## Meta principle — prefer runtime discovery to static analysis

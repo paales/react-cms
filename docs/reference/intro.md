@@ -3,13 +3,14 @@
 A React Server Components based framework layer for pages composed
 of independently re-renderable, addressable, cacheable subtrees.
 
-The public surface is three things:
+The public surface is four things:
 
 | | What it is | When you reach for it |
 |---|---|---|
 | `parton(R, opts)` | Addressable render unit. Optionally URL-gated via `match`. | Any subtree you want fingerprinted, cacheable, refetchable. The catch-all. |
 | `block(R, opts)` | Slot-placeable partial with a `schema` for CMS content. | Content blocks the CMS can place into slots or render directly as a singleton (storage row matches spec id). |
 | `<Frame name initialUrl>` | Scope opener — extends `parent.frameChain` so descendants see the frame-resolved request. | Any region whose URL is independent of the window URL. |
+| `<RemoteFrame src capability>` | Cross-process composition — embeds a parton hosted by a different process (same- or cross-origin). | Federated UI: payment forms hosted by a payment provider, marketing widgets from a CMS, etc. |
 
 A spec is constructed once at module scope; every dependency it has on
 the request lives in a single sync `vary` callback (CMS reads live on
@@ -75,3 +76,6 @@ placements.
 4. [`cms.md`](./cms.md) — CMS layer + editor.
 5. [`frames-navigation.md`](./frames-navigation.md) — `<Frame>`
    component and the `useNavigation` API.
+6. [`remote-frame.md`](./remote-frame.md) — `<RemoteFrame>` for
+   cross-process composition (same- or cross-origin partons
+   stitched into the host's response).
