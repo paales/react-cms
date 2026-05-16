@@ -162,3 +162,65 @@ export function parseRow(line: string): FlightRow {
 export function serializeRow(row: FlightRow): string {
   return `${row.id}:${row.type}${row.data}`
 }
+
+/**
+ * Composes multiple rewriters left-to-right. A `null` short-circuits
+ * (the row is dropped). A `string` short-circuits and is emitted
+ * verbatim — subsequent rewriters in the chain don't see it.
+ */
+export function composeRewriters(...rewriters: RowRewriter[]): RowRewriter {
+  return (row) => {
+    let current: FlightRow = row
+    for (const r of rewriters) {
+      const result = r(current)
+      if (result === null) return null
+      if (typeof result === "string") return result
+      current = result
+    }
+    return current
+  }
+}
+
+/**
+ * Builds a rewriter that rewrites client-module references in `I`
+ * rows. Flight encodes a client component import as a row like:
+ *
+ *   `1:I["./Button.tsx","main"]`
+ *
+ * where the first JSON element is the module path the host's bundle
+ * resolves. For a `<RemoteFrame>`, the remote's module paths are
+ * meaningless to the host — they need to point at the remote
+ * origin's asset URLs so the host browser can dynamically import
+ * them.
+ *
+ * `transform` receives the raw module-path string and returns the
+ * rewritten one. Pass-through for paths the rewriter doesn't care
+ * about: return the input unchanged.
+ *
+ *   const rw = moduleRefRewriter((path) =>
+ *     path.startsWith("./") || path.startsWith("/")
+ *       ? new URL(path, "https://stripe.example/").href
+ *       : path,
+ *   )
+ *
+ * The rewriter only touches rows whose `type === "I"` and whose
+ * data parses as a JSON array starting with a string. Anything
+ * else passes through.
+ */
+export function moduleRefRewriter(transform: (path: string) => string): RowRewriter {
+  return (row) => {
+    if (row.type !== "I") return row
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(row.data)
+    } catch {
+      return row
+    }
+    if (!Array.isArray(parsed) || typeof parsed[0] !== "string") return row
+    const next = transform(parsed[0])
+    if (next === parsed[0]) return row
+    const out = [...parsed]
+    out[0] = next
+    return { ...row, data: JSON.stringify(out) }
+  }
+}

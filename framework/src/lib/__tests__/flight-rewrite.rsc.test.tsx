@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { Suspense } from "react"
 import {
+  composeRewriters,
+  moduleRefRewriter,
   parseRow,
   passthroughRewriter,
   rewriteFlightStream,
@@ -183,6 +185,23 @@ describe("rewriteFlightStream", () => {
     expect(chunk.value).toBe("delayed")
   })
 
+  it("composes multiple rewriters left-to-right", async () => {
+    const upper = (row: FlightRow): FlightRow => ({ ...row, data: row.data.toUpperCase() })
+    const wrap = (row: FlightRow): FlightRow => ({ ...row, data: `[${row.data}]` })
+    const rw = composeRewriters(upper, wrap)
+    const out = await new Response(rewriteFlightStream(stringStream('0:"hi"\n'), rw)).text()
+    expect(out).toBe('0:["HI"]\n')
+  })
+
+  it("composeRewriters short-circuits on null", async () => {
+    const drop: typeof passthroughRewriter = () => null
+    const upper = (row: FlightRow): FlightRow => ({ ...row, data: row.data.toUpperCase() })
+    const out = await new Response(
+      rewriteFlightStream(stringStream('0:"a"\n1:"b"\n'), composeRewriters(drop, upper)),
+    ).text()
+    expect(out).toBe("")
+  })
+
   it("renders a real server tree through passthrough", async () => {
     // A real server tree with a Suspense + async child. After passthrough,
     // the decoded tree must contain the same content.
@@ -201,5 +220,46 @@ describe("rewriteFlightStream", () => {
     const text = await flightToString(rewritten)
     expect(text).toContain("loaded")
     expect(text).toContain("loading")
+  })
+})
+
+describe("moduleRefRewriter", () => {
+  it("rewrites I-row module paths via transform", async () => {
+    const rw = moduleRefRewriter((path) =>
+      path.startsWith("./") ? `https://remote.example/assets/${path.slice(2)}` : path,
+    )
+    const input = '1:I["./Button.tsx","main"]\n2:I["lodash","default"]\n'
+    const out = await new Response(rewriteFlightStream(stringStream(input), rw)).text()
+    expect(out).toBe(
+      '1:I["https://remote.example/assets/Button.tsx","main"]\n2:I["lodash","default"]\n',
+    )
+  })
+
+  it("ignores non-I rows", async () => {
+    const rw = moduleRefRewriter(() => "REWRITTEN")
+    const input = '0:{"value":"$L1"}\n1:"hello"\n'
+    const out = await new Response(rewriteFlightStream(stringStream(input), rw)).text()
+    expect(out).toBe(input)
+  })
+
+  it("preserves additional array elements (export name, chunks)", async () => {
+    const rw = moduleRefRewriter((path) => `prefix:${path}`)
+    const input = '5:I["./X.tsx","Named",["a","b"]]\n'
+    const out = await new Response(rewriteFlightStream(stringStream(input), rw)).text()
+    expect(out).toBe('5:I["prefix:./X.tsx","Named",["a","b"]]\n')
+  })
+
+  it("no-ops when transform returns the same string", async () => {
+    const rw = moduleRefRewriter((path) => path)
+    const input = '1:I["./X.tsx","main"]\n'
+    const out = await new Response(rewriteFlightStream(stringStream(input), rw)).text()
+    expect(out).toBe(input)
+  })
+
+  it("tolerates malformed I row data (passes through)", async () => {
+    const rw = moduleRefRewriter(() => "SHOULD-NOT-APPLY")
+    const input = '1:I[malformed\n'
+    const out = await new Response(rewriteFlightStream(stringStream(input), rw)).text()
+    expect(out).toBe(input)
   })
 })
