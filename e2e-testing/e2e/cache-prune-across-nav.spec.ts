@@ -69,8 +69,12 @@ test("client-side nav from /pokemon/1 to /defer-demo keeps parked ids in ?cached
 
   // Parked ids from /pokemon/1 SHOULD still appear — keepalive defaults
   // to true, so the client keeps reporting them and the server can
-  // fp-skip them when the user navigates back.
-  for (const id of ["hero", "stats", "species", "trivia"]) {
+  // fp-skip them when the user navigates back. Only addressable specs
+  // (selector / vary / match declared) get snapshot-registered, so the
+  // page-level addressable ids are what we assert on: the wrapper
+  // `pokemon-detail` (match="/pokemon/:id"), the `header` partial, and
+  // the search-area pair.
+  for (const id of ["pokemon-detail", "header", "search-page", "search"]) {
     expect(cachedIds, `expected keepalive id "${id}" to be parked in ?cached=`).toContain(id)
   }
 

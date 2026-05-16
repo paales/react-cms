@@ -52,7 +52,6 @@ interface PartialSnapshot {
   framePath: readonly string[]
   parentFrameChain: readonly string[]   // for cache-mode reconstruction
   parentPath: readonly string[]
-  contentKey?: string                // CMS storage row for this rendered instance, if any
   props?: Record<string, unknown>       // captured call-site JSX props
   varyKey?: string                      // hash of last varyResult, for descendant-fp fold
 }
@@ -135,7 +134,9 @@ The fp folds in:
 - vary result (stable-stringified)
 - call-site JSX props (`extraProps`)
 - frame URL (own and ambient)
-- CMS resolved fields contribution (when `contentKey` is set)
+- CMS resolved fields contribution (for `ReactCms.block` specs;
+  folded in via the wrapper's `vary` augmentation, keyed by the
+  instance's `__instanceId`)
 - every previously-registered descendant spec's `varyKey` snapshot,
   resolved against the *current* request via the spec catalog's
   `match` + `vary` (transitive descendant fp propagation — an
@@ -182,7 +183,7 @@ Critically, **the descendant fold still folds non-addressable
 specs in**. Snapshots are recorded unconditionally
 (`registerPartial` runs from every `<PartialBoundary>`), so the
 parent's `computeDescendantFold` picks up the child's `varyKey`
-+ `contentKey` contributions. The parent's wire fp moves
+contributions. The parent's wire fp moves
 whenever a non-addressable child's deps would have moved — so
 fp-skipping the parent never serves a stale child. The gate
 only collapses the *wire identity*, never the structural one.

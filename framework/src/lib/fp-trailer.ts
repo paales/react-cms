@@ -32,7 +32,6 @@ import {
 } from "./partial-registry.ts"
 import { computeRouteKey } from "./partial.tsx"
 import { getRequest, getScope } from "../runtime/context.ts"
-import { cmsFingerprintContribution } from "../runtime/cms-runtime.ts"
 import { getSessionFrameUrl } from "../runtime/session.ts"
 import { FP_TRAILER_MARKER } from "./fp-trailer-marker.ts"
 
@@ -83,7 +82,6 @@ function recomputeFp(
   request: Request,
 ): string {
   const frameRequest = snap.framePath.length > 0 ? resolveFrameRequest(snap.framePath, request) : request
-  const cmsKey = snap.contentKey ? cmsFingerprintContribution(snap.contentKey, frameRequest) : ""
   const ambientFrameKey =
     snap.framePath.length > 0 ? `|inFrame=${snap.framePath.join(".")}:${frameRequest.url}` : ""
   const propsKey =
@@ -95,8 +93,10 @@ function recomputeFp(
   // independent specs still produce distinct fps across variants of
   // their match-bearing ancestor. The snapshot carries the matchKey
   // computed at render time so we don't re-derive from the catalog.
+  // CMS contribution lives inside `varyKey` now (the CMS block
+  // wrapper folds it into `vary`'s result via a `__cmsFp` field).
   const matchKey = snap.matchKey ?? ""
-  const ownStructuralFp = hash(`${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}${cmsKey}`)
+  const ownStructuralFp = hash(`${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}`)
   const fold = computeFoldFromSnapshots(id, snapshots, frameRequest)
   return hash(`${ownStructuralFp}${ambientFrameKey}${fold}`)
 }
@@ -139,8 +139,7 @@ function descendantContributionFromSnapshot(
   // already captures the same value the descendant emitted on this
   // request — re-running vary here would produce the identical string,
   // so we skip the extra work.
-  const cmsKey = snap.contentKey ? cmsFingerprintContribution(snap.contentKey, request) : ""
-  return `${descId}:${snap.varyKey ?? ""}|${stableStringify(snap.props ?? null)}|${cmsKey}`
+  return `${descId}:${snap.varyKey ?? ""}|${stableStringify(snap.props ?? null)}`
 }
 
 /**

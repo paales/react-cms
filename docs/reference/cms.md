@@ -199,9 +199,10 @@ When the cookie is set, `<EditorShell>` paints three panes:
 - Tree (`cms-edit-tree`) — registry-driven view of the CMS content
   rows that rendered for the previewed page. The tree reads
   `getRouteSnapshots()` (every CMS-bound block self-registers at
-  render time) and walks each snapshot's `contentKey` as a tree
-  root through `listAllCmsNodes(rootIds)`; slot-children-of-other-
-  roots are filtered out automatically. Chrome that renders on every
+  render time), filters to the ids whose spec is registered as a
+  slot block via `getSlotBlockMeta(snap.type)`, and walks each as a
+  tree root through `listAllCmsNodes(rootIds)`; slot-children-of-
+  other-roots are filtered out automatically. Chrome that renders on every
   page (e.g. the `AppNavBlock` singleton placed at the page root)
   appears on every page; per-page roots only appear where their
   partial mounts. Folds the previewed `pathname` into its `vary` so

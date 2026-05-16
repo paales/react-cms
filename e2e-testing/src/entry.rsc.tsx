@@ -134,39 +134,25 @@ async function handleRequest(
   if (directive && typeof directive === "object" && !Array.isArray(directive)) {
     const { selector } = directive as { selector?: string | string[] }
     if (selector) {
+      // Selectors are flat labels now — leading `#`/`.` is cosmetic and
+      // stripped. All tokens merge into the unified `?partials=` wire
+      // param; the server resolves each token against snapshot ids and
+      // labels (fan-out across carriers).
       const raw = Array.isArray(selector) ? selector.join(" ") : selector
-      const tokens = raw
-        .split(/\s+/)
-        .map((t) => t.trim())
-        .filter(Boolean)
-      const uniqueNames: string[] = []
-      const sharedNames: string[] = []
-      for (const tok of tokens) {
-        if (tok.startsWith("#")) {
-          const n = tok.slice(1)
-          if (n && !uniqueNames.includes(n)) uniqueNames.push(n)
-        } else if (tok.startsWith(".")) {
-          const n = tok.slice(1)
-          if (n && !sharedNames.includes(n)) sharedNames.push(n)
-        } else {
-          throw new Error(
-            `Unprefixed token "${tok}" in action invalidate selector. ` +
-              `Tokens must start with "#" or ".".`,
-          )
-        }
+      const labels: string[] = []
+      for (const tok of raw.split(/\s+/).map((t) => t.trim()).filter(Boolean)) {
+        const name = tok.startsWith("#") || tok.startsWith(".") ? tok.slice(1) : tok
+        if (name && !labels.includes(name)) labels.push(name)
       }
-      if (uniqueNames.length > 0) {
+      if (labels.length > 0) {
         const existing = renderRequest.url.searchParams.get("partials")
-        const merged = existing ? `${existing},${uniqueNames.join(",")}` : uniqueNames.join(",")
+        const merged = existing ? `${existing},${labels.join(",")}` : labels.join(",")
         renderRequest.url.searchParams.set("partials", merged)
-        needsUpdate = true
-      }
-      if (sharedNames.length > 0) {
+        // Also bust any tagged GraphQL cache entries that carry these
+        // labels — the action mutated upstream data, so cached
+        // requests are stale.
         const { invalidateByTags } = await import("@react-cms/framework/lib/partial-cache.ts")
-        invalidateByTags(sharedNames)
-        const existing = renderRequest.url.searchParams.get("tags")
-        const merged = existing ? `${existing},${sharedNames.join(",")}` : sharedNames.join(",")
-        renderRequest.url.searchParams.set("tags", merged)
+        invalidateByTags(labels)
         needsUpdate = true
       }
       if (!clientHasCache) {

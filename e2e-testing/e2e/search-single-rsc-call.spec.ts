@@ -59,10 +59,10 @@ test("single keystroke in search dispatches exactly one RSC call", async ({ page
   }
 
   // Stages-only refetch is the ONE expected call. Server receives
-  // `?tags=search-results`; the ids resolve server-side against the
-  // route registry.
-  const stageCalls = rscCalls.filter((c) => c.tags === "search-results")
-  const otherCalls = rscCalls.filter((c) => c.tags !== "search-results")
+  // `?partials=search-results`; the ids resolve server-side against
+  // the route registry by label.
+  const stageCalls = rscCalls.filter((c) => c.partials === "search-results")
+  const otherCalls = rscCalls.filter((c) => c.partials !== "search-results")
 
   expect(stageCalls.length, "expected exactly one RSC call dispatching the search stages").toBe(1)
   expect(

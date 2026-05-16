@@ -48,11 +48,18 @@ test("dynamic live-price Partial is discoverable and individually refetchable by
   expect(sku.length).toBeGreaterThan(0)
 
   rscRefetches.length = 0
-  await page.locator(`[data-testid="refresh-price-${sku}"]`).click()
+  await page.locator(`[data-testid="refresh-price-${sku}"]`).first().click()
 
-  // The refetch should hit the RSC endpoint with EXACTLY the targeted id.
+  // The refetch should hit the RSC endpoint with a single id. The id
+  // is the framework-derived per-instance instance id — opaque on the
+  // wire but stable for self-refetch via `useEnclosingPartialId()`.
   await expect.poll(() => rscRefetches.length, { timeout: 5000 }).toBeGreaterThan(0)
-  expect(rscRefetches[0].partials).toBe(`price-${sku}`)
+  const partials = rscRefetches[0].partials
+  expect(partials).toBeTruthy()
+  // The id is derived from the spec id ("price") plus a per-instance
+  // hash, so it starts with the spec id and is a single token.
+  expect(partials!.startsWith("price")).toBe(true)
+  expect(partials!.includes(",")).toBe(false)
 })
 
 /**
@@ -78,7 +85,7 @@ test("clicking refresh updates the targeted price's tick in the DOM", async ({ p
   const otherPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').nth(1)
   const otherTickBefore = await otherPrice.getAttribute("data-price-tick")
 
-  await page.locator(`[data-testid="refresh-price-${sku}"]`).click()
+  await page.locator(`[data-testid="refresh-price-${sku}"]`).first().click()
 
   // The targeted price's tick should update within a few seconds.
   await expect
@@ -91,27 +98,25 @@ test("clicking refresh updates the targeted price's tick in the DOM", async ({ p
 })
 
 /**
- * Tag-based bulk refresh. Clicking "Refresh all prices" should issue
- * a single `?tags=price` refetch that resolves (through the route
- * registry — see `partial-registry.ts`) to every dynamic
- * `price-<sku>` partial currently rendered. Each one's tick should
- * advance on the client.
+ * Class-label bulk refresh. Clicking "Refresh all prices" should
+ * issue a single `?partials=price` refetch — `price` is a label
+ * carried by every LivePrice instance, and the framework resolves it
+ * (through `partial-registry.ts`) to every dynamic instance currently
+ * rendered. Each one's tick should advance on the client.
  */
 test("clicking 'refresh all prices' updates every visible price in one request", async ({
   page,
 }) => {
   const rscRefetches: Array<{
     url: string
-    tags: string | null
     partials: string | null
   }> = []
   page.on("request", (req) => {
     const url = req.url()
-    if (url.includes("_.rsc") && (url.includes("tags=") || url.includes("partials="))) {
+    if (url.includes("_.rsc") && url.includes("partials=")) {
       const u = new URL(url)
       rscRefetches.push({
         url,
-        tags: u.searchParams.get("tags"),
         partials: u.searchParams.get("partials"),
       })
     }
@@ -142,9 +147,9 @@ test("clicking 'refresh all prices' updates every visible price in one request",
   rscRefetches.length = 0
   await page.locator('[data-testid="refresh-all-prices"]').click()
 
-  // Exactly one refetch, carrying the `price` tag.
+  // Exactly one refetch, carrying the `price` label.
   await expect.poll(() => rscRefetches.length, { timeout: 5000 }).toBeGreaterThan(0)
-  expect(rscRefetches[0].tags).toBe("price")
+  expect(rscRefetches[0].partials).toBe("price")
 
   // Every price's tick should update to a new value.
   await expect

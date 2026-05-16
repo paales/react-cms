@@ -109,6 +109,13 @@ export interface VaryScope {
    *  Sync; values are stored in the framework session store, written
    *  by the `setSessionValue` action. */
   session: SessionReadSurface
+  /** The rendered effective id for this placement. Slot-placed
+   *  blocks receive their slot entry's id here; direct-JSX
+   *  placements get the auto-derived `spec.id`-plus-props-hash.
+   *  Most `vary` callbacks ignore this — it's the hook that lets
+   *  the CMS block wrapper (and any other per-instance extension)
+   *  contribute per-placement data to the spec's fingerprint. */
+  instanceId: string
 }
 
 /** Build a plain `{key: value}` object from a URLSearchParams. */
@@ -619,6 +626,7 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
       // Snapshot dep recording happens during the descendant's own
       // render pass, not here.
       session: createSessionReadSurface(new Set()),
+      instanceId: descId,
     })
   } catch {
     // A vary that throws on the synthetic scope (e.g. relies on a
@@ -900,10 +908,13 @@ function effectiveIdForInstance(
   if (override == null || override === spec.id) {
     return { id: spec.id, parsed: spec.parsed }
   }
-  // Slot-placed instance: the override (entry id) replaces the first
-  // label so external refetch by entry id finds THIS placement; the
-  // spec's other labels stay as fan-out targets.
-  const labels = [override, ...spec.parsed.labels.slice(1)]
+  // Per-instance placement: prepend the override as the new
+  // effective id, but KEEP the spec's original labels (including the
+  // catalog id at slot 0) as fan-out targets. Without this, a
+  // multi-instance partial like `LivePrice` (selector `"price"`)
+  // loses the "price" class label on per-instance refetch — and the
+  // next `?partials=price` request finds nothing.
+  const labels = [override, ...spec.parsed.labels.filter((l) => l !== override)]
   return {
     id: override,
     parsed: { labels },
@@ -925,11 +936,33 @@ function createSpecComponent<V>(
     } & Record<string, unknown>
     const opts = spec.options
     // Render-time identity (the `id` keying snapshots, wire, cache
-    // lookup) is `__instanceId ?? spec.id`. The slot wiring in the
-    // CMS layer sets `__instanceId` to the slot entry's id when
-    // placing a multi-instance block; direct-JSX placements omit it
-    // and the spec's catalog id is used directly.
-    const { id, parsed } = effectiveIdForInstance(spec as InternalSpec<unknown>, instanceIdOverride)
+    // lookup) is:
+    //
+    //   1. `__instanceId` if provided (slot wiring in cms-runtime
+    //      sets this to the slot entry's id);
+    //   2. otherwise `spec.id` plus a per-instance hash of any JSX
+    //      call-site props — so multiple placements with different
+    //      props (e.g. `<LivePrice sku="A"/>` and `<LivePrice
+    //      sku="B"/>`) each get a distinct id, instead of all
+    //      collapsing onto the spec's catalog id and fighting for
+    //      one registry slot;
+    //   3. otherwise just `spec.id` (singleton / no-prop placement).
+    //
+    // The auto-derivation step keeps the snapshot store one entry
+    // per actual on-page placement without forcing authors to thread
+    // an explicit instance-id prop through every site.
+    // Priority: `__instanceId` from slot wiring → auto-derive from
+    // extraProps hash → undefined (singleton).
+    const autoInstanceKey =
+      instanceIdOverride === undefined && Object.keys(extraProps).length > 0
+        ? hash(stableStringify(extraProps))
+        : undefined
+    const effectiveInstanceId =
+      instanceIdOverride ?? (autoInstanceKey ? `${spec.id}:${autoInstanceKey}` : undefined)
+    const { id, parsed } = effectiveIdForInstance(
+      spec as InternalSpec<unknown>,
+      effectiveInstanceId,
+    )
     // Keepalive defaults to true. The flag governs both the active
     // emission (wrap body in `<Activity mode="visible">`) and the
     // parked emission on match-miss / vary-null (emit
@@ -992,6 +1025,7 @@ function createSpecComponent<V>(
         headers: headersToRecord(ourRequest.headers),
         params,
         session,
+        instanceId: id,
       })
       if (v === null) return emitParkedKeepalive(id, keepalive, requestState)
       varyResult = v
@@ -1108,7 +1142,7 @@ function createSpecComponent<V>(
       ...(varyResult as object),
       parent: childCtx,
       children: outerChildren,
-      ...(instanceIdOverride !== undefined ? { __instanceId: instanceIdOverride } : {}),
+      ...(effectiveInstanceId !== undefined ? { __instanceId: effectiveInstanceId } : {}),
     } as V & RenderArgs
     const fallback = opts.fallback ?? null
     const sessionDeps = sessionDepsSet.size > 0 ? Array.from(sessionDepsSet).sort() : undefined
@@ -1539,15 +1573,13 @@ function partialFromSnapshot(
   // Try direct id lookup first — singleton specs register their
   // Component under spec.id, which is also the snapshot id.
   let Component = componentById.get(id)
-  let instanceIdOverride: string | undefined
   if (!Component && snap.type) {
     // Per-instance placement (id !== spec.id) — look up the spec
-    // Component by type and replay the instance-id override so the
-    // spec re-renders with the same effective id it had originally.
+    // Component by `type` (= spec catalog id). Slot-placed blocks
+    // and auto-derived multi-instance specs land here.
     const spec = getSpecById(snap.type)
     if (spec) {
       Component = spec.Component as FC<PartialComponentProps & Record<string, unknown>>
-      instanceIdOverride = id
     }
   }
   if (!Component) return null
@@ -1562,7 +1594,12 @@ function partialFromSnapshot(
   // without writing it into the URL.
   const replayProps = (snap.props ?? {}) as Record<string, unknown>
   const props = overrideProps ? { ...replayProps, ...overrideProps } : replayProps
-  return <Component parent={parent} __instanceId={instanceIdOverride} {...props} />
+  // ALWAYS pass the snapshot's id as `__instanceId`. createSpecComponent
+  // will use it to set effectiveInstanceId, suppressing the auto-derive
+  // step that would otherwise re-hash extraProps and shift the rendered
+  // id mid-flight (e.g. when activator-supplied props arrive after the
+  // initial cold render).
+  return <Component parent={parent} __instanceId={id} {...props} />
 }
 
 export async function PartialRoot({ children }: PartialRootProps): Promise<ReactNode> {

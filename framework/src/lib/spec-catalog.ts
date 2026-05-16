@@ -33,6 +33,7 @@ export type SpecCatalogVary = (scope: {
   headers: Partial<Record<string, string>>
   params: Record<string, string>
   session: SessionReadSurface
+  instanceId: string
 }) => unknown
 
 /** Minimal framework-internal props every spec component accepts. */

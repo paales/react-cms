@@ -98,7 +98,7 @@ function TypeBadge({ type, className }: { type: string; className?: string }) {
 // All take `id: string` from the wrapper and cast to a number themselves.
 // No `match` (wrapper gates), no `vary` (id is supplied by the call site).
 
-const Hero = ReactCms.partial(async function HeroRender({ id }: { id: string } & RenderArgs) {
+const Hero = ReactCms.partial(async function PokemonHeroRender({ id }: { id: string } & RenderArgs) {
   const pokemonId = Number(id)
   const data = await client.request(PokemonHeroQuery, { id: pokemonId })
   const pokemon = data.pokemon_v2_pokemon[0]

@@ -48,7 +48,6 @@ function variantKeyOf(snap: PartialSnapshot): string {
   return hash(stableStringify([
     snap.parentPath,
     snap.parentFrameChain,
-    snap.contentKey ?? null,
   ]))
 }
 ```
@@ -70,7 +69,12 @@ distinguish two registrations of the same id:
 |---|---|
 | `parentPath` | Same id mounted under different ancestors (e.g. `Header` under `PageRoot` vs under `EditorShell`) |
 | `parentFrameChain` | Same id rendered inside vs outside a frame |
-| `contentKey` | Slot-block instance bound to a different CMS row (also folded into the spec's effective id, but kept here defensively) |
+
+Per-instance content divergence (slot blocks bound to different CMS
+rows, partials called with different JSX props) folds into the
+spec's effective id via `__instanceId`, not into the variant key —
+each instance registers under its own id (`spec.id:HASH` for
+auto-derived instances, or the CMS row id for slot blocks).
 
 Per-user variation (cookies, search params, A/B test buckets) is
 *not* in the variant key — that divergence flows through the

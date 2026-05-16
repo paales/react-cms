@@ -51,3 +51,5 @@ async function refreshAll() {
 - [ ] Wrap fetch and then hoist all queries that are pure based on vary into a preload step so we can start of N+1 queries. Sooo, how can we make this pure? How can we survive 3 layers of indirection and still detect it correctly? Should the preload be explicit?
 
 - [ ] Create a prefetch primitive that allows us to prefetch partials with <Activity mode="hidden"> and place them in the DOM without any effects being run.
+
+- [ ] "Can you investigate the codebase deeply and after that I'd like to talk about tensions of multi frameworks that a shopify uses (liquid+react checkout/account), hyva alpine catalogs + checkout. Magento Luma server rendered + client side layered + layout checkout variable. admin html xml componetns, etc. All projects seem to abandon their base frameworks to go with a more advanced frameworks."

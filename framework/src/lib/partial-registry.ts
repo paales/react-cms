@@ -59,11 +59,6 @@ export interface PartialSnapshot {
    *  (passed back in as `parent.frameChain` when re-rendering). */
   parentFrameChain: readonly string[]
   parentPath: readonly string[]
-  /** CMS storage key, when this spec was rendered as a CMS-bound block
-   *  instance. Drives `cmsFingerprintContribution` and replay of the
-   *  schema's CMS-read surface on cache-mode refetch. Absent on
-   *  non-block specs (and on blocks without CMS binding). */
-  contentKey?: string
   /** Call-site JSX props captured during the streaming render. Cache-
    *  mode partial-refetch reads them back so a child spec rendered
    *  via a parent wrapper still receives `flavor={...}` etc. when
@@ -125,13 +120,7 @@ function scopeStore(scope: string): ScopeStore {
 }
 
 function variantKeyOf(snap: PartialSnapshot): string {
-  return hash(
-    stableStringify([
-      snap.parentPath,
-      snap.parentFrameChain,
-      snap.contentKey ?? null,
-    ]),
-  )
+  return hash(stableStringify([snap.parentPath, snap.parentFrameChain]))
 }
 
 function touchHint(store: ScopeStore, routeKey: string, hint: Map<string, string>): void {

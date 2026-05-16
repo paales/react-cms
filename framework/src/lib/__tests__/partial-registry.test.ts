@@ -27,7 +27,6 @@ function snap(parentPath: readonly string[], extra: Partial<PartialSnapshot> = {
     framePath: extra.framePath ?? [],
     parentFrameChain: extra.parentFrameChain ?? [],
     parentPath,
-    contentKey: extra.contentKey,
   }
 }
 
@@ -154,7 +153,13 @@ describe("partial-registry — variant-keyed storage", () => {
     })
   })
 
-  it("streaming-mode commit replaces the route hint wholesale (id removal)", async () => {
+  it("streaming-mode commit merges into the route hint (keeps fp-skipped descendants)", async () => {
+    // Background: fp-skipping an ancestor means its body never runs, so
+    // its descendants don't get a chance to re-register. Their hint
+    // entries from the prior commit must survive the new streaming
+    // commit, otherwise `computeDescendantFold` reads an eroded
+    // canonical and the ancestor's fp drifts. See the merge rationale
+    // in `commitRequestRegistry`.
     await runRequest("http://t/a", "/a", "streaming", () => {
       registerPartial("a", snap(["root"]))
       registerPartial("b", snap(["root"]))
@@ -165,14 +170,16 @@ describe("partial-registry — variant-keyed storage", () => {
       expect(lookupPartial("b")).toBeDefined()
     })
 
-    // Re-render the page without 'b' — streaming commit should replace.
+    // Re-render the page without re-registering 'b' — merge semantics
+    // mean the existing hint entry stays put. Removal flows through
+    // `invalidateSnapshot`, not through "absence from pendingHints".
     await runRequest("http://t/a", "/a", "streaming", () => {
       registerPartial("a", snap(["root"]))
     })
 
     await runRequest("http://t/a", "/a", "cache", () => {
       expect(lookupPartial("a")).toBeDefined()
-      expect(lookupPartial("b")).toBeUndefined()
+      expect(lookupPartial("b")).toBeDefined()
     })
   })
 

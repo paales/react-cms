@@ -21,6 +21,7 @@ import {
   ReactCms,
   getCatalogManifest,
   getRouteSnapshots,
+  getSlotBlockMeta,
   listAllCmsNodes,
   listSlotBlockIds,
   lookupDraftNode,
@@ -96,11 +97,18 @@ function derivePreviewUrl(currentUrl: URL): string {
 }
 
 function renderedCmsIdsForPreviewedPage(): string[] {
+  // The editor tree's roots are the CMS rows the previewed page
+  // bound to. After the partial.tsx ↔ cms-block.ts split, snapshots
+  // no longer carry a `contentKey` field — instead we cross-check
+  // each snapshot's `type` against the slot-block meta side-table
+  // (only block specs land there). The snapshot id of a CMS-bound
+  // instance IS the CMS row key (singleton spec id, or the slot
+  // entry's id from the `__instanceId` channel).
   const ids = new Set<string>()
   const snapshots = getRouteSnapshots()
   if (snapshots) {
-    for (const snap of snapshots.values()) {
-      if (snap.contentKey != null) ids.add(snap.contentKey)
+    for (const [id, snap] of snapshots) {
+      if (snap.type && getSlotBlockMeta(snap.type)) ids.add(id)
     }
   }
   return [...ids]

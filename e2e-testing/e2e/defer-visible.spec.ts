@@ -46,11 +46,16 @@ test("defer + VisibleTrigger activates the block when it enters the viewport", a
   // Tiny settling window to catch any extra calls.
   await page.waitForTimeout(500)
 
+  // The trivia spec's effective id is auto-derived from its catalog
+  // id ("trivia") plus a hash of its JSX call-site props — looks like
+  // "trivia:abcdef0123". Any partials token whose first colon-segment
+  // is "trivia" is the trivia partial.
+  const isTrivia = (token: string): boolean => token.split(":")[0] === "trivia"
   const triviaCalls = rscCalls.filter(
-    (c) => c.partials != null && c.partials.split(",").includes("trivia"),
+    (c) => c.partials != null && c.partials.split(",").some(isTrivia),
   )
   const otherCalls = rscCalls.filter(
-    (c) => c.partials == null || !c.partials.split(",").includes("trivia"),
+    (c) => c.partials == null || !c.partials.split(",").some(isTrivia),
   )
 
   console.log(`\n=== RSC calls after scroll (${rscCalls.length}) ===`)

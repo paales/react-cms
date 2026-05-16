@@ -1,24 +1,30 @@
 "use client"
 
 import { useState } from "react"
-import { useNavigation } from "@react-cms/framework/lib/partial-client.tsx"
+import {
+  useEnclosingPartialId,
+  useNavigation,
+} from "@react-cms/framework/lib/partial-client.tsx"
 import { Button } from "@react-cms/copies/components/ui/button"
 
 /**
- * Per-card refresh button. Triggers a class-scoped refetch
- * (`reload({selector: ".price"})`) — every LivePrice on the page
- * refreshes together. There's no per-instance addressing for
- * keyless multi-instance specs; the underlying assumption is that
- * a single price refresh and a fan-out refresh look the same to
- * the user (both go through the same data source).
+ * Per-card refresh button. Reads the enclosing partial instance's id
+ * via `useEnclosingPartialId()` and refetches just that one. The id
+ * for a `<LivePrice sku=…/>` placement auto-derives in the framework
+ * from `spec.id + hash(props)` — each card gets a distinct one, so
+ * the refetch targets exactly the clicked card. The "refresh all"
+ * companion button uses the class-level `.price` selector to fan
+ * out across every instance.
  */
 export function RefreshPriceButton({ sku }: { sku: string }) {
   const nav = useNavigation()
+  const myId = useEnclosingPartialId()
   const [isPending, setIsPending] = useState(false)
   async function refresh() {
+    if (!myId) return
     setIsPending(true)
     try {
-      await nav.reload({ selector: ".price" }).finished
+      await nav.reload({ selector: myId }).finished
     } finally {
       setIsPending(false)
     }

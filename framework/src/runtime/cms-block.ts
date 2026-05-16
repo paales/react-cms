@@ -144,17 +144,26 @@ export function block<
   }
 
   // Fold the CMS content fingerprint into `vary` so the spec's fp
-  // moves on CMS edits even when the schema doesn't touch every
-  // field (slot subtree changes, etc).
+  // moves whenever the rendered instance's CMS row changes shape —
+  // both for schema edits (fields the schema reads) and for slot-
+  // subtree edits (which schema doesn't directly observe but
+  // `contributionForNode` folds in).
+  //
+  // We resolve the per-instance content row from `scope.instanceId`,
+  // which the framework derives from `__instanceId ?? spec.id` (slot
+  // wiring sets `__instanceId` to the slot entry's id; singletons
+  // fall back to `spec.id` which matches the singleton's CMS row).
+  // Using `specId` here would give every multi-instance block
+  // placement the same `cmsContribution`, so cascade-resolution
+  // changes (e.g. `/cms-demo/alpha` → `/cms-demo/beta`) wouldn't
+  // move the fp and the spec would fp-skip with stale cached
+  // content.
   const augmentedVary = (scope: VaryScope) => {
     const userResult = opts.vary?.(scope) ?? null
     if (userResult === null && opts.vary != null) return null
     const baseVary = (userResult ?? {}) as Record<string, unknown>
-    // Use the SPEC id here — the per-instance contribution is added
-    // through the slot wiring (each instance has a distinct entry id
-    // which contributes via the descendant fold of its parent host).
-    // For singletons (no slot wiring), spec id is the storage row.
-    const cmsContribution = cmsFingerprintContribution(specId, getRequest())
+    const contentKey = scope.instanceId
+    const cmsContribution = cmsFingerprintContribution(contentKey, getRequest())
     return { ...baseVary, __cmsFp: cmsContribution }
   }
 
