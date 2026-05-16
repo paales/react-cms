@@ -150,6 +150,48 @@ Wrappers called with `outerChildren` (transparent passthrough) skip
 fp-skip entirely — their output IS the children, which the JSX
 parent renders directly, so there's nothing for fp-skip to gate.
 
+## Addressable gate
+
+A spec is *externally addressable* iff the author explicitly
+declared at least one of `selector`, `vary`, or `match`. Specs
+declaring none of the three are non-addressable: they have no
+external refetch handle (`reload({selector})` requires a declared
+selector, session/tag invalidation requires `vary` deps,
+URL-driven variant carve-out requires `match`). Auto-derived
+selectors from `Render.name` don't count — they only exist to
+give the spec catalog a unique id.
+
+Non-addressable specs **don't emit a `partialFingerprint` on the
+wire**. The four-step fp cycle is collapsed for them:
+
+- `<PartialErrorBoundary>` is emitted via conditional spread
+  (`{...fpProp}`) so the prop is omitted from Flight's
+  serialized prop bag rather than appearing as the
+  `"$undefined"` sentinel. Wire bytes drop accordingly.
+- `PartialBoundary`'s `emittedFp` is `undefined`, so
+  `computeFpUpdates` in `fp-trailer.ts` (which already skips
+  `!snap.emittedFp`) omits the spec from the trailer.
+- `registerClientPartial` is guarded by
+  `if (this.props.partialFingerprint)`, so no entry lands in
+  `_currentPageFingerprints` for the id.
+- `getCachedPartialIds()` therefore produces no
+  `id:matchKey:fp` triple for the spec on the next nav's
+  `?cached=`.
+
+Critically, **the descendant fold still folds non-addressable
+specs in**. Snapshots are recorded unconditionally
+(`registerPartial` runs from every `<PartialBoundary>`), so the
+parent's `computeDescendantFold` picks up the child's `varyKey`
++ `contentKey` contributions. The parent's wire fp moves
+whenever a non-addressable child's deps would have moved — so
+fp-skipping the parent never serves a stale child. The gate
+only collapses the *wire identity*, never the structural one.
+
+The gate is computed once at spec construction time
+(`addressable = options.selector !== undefined ||
+options.vary !== undefined || options.match !== undefined`) and
+read in the render path as `spec.addressable`.
+
 ## Cold → warm fp drift and the trailer
 
 A spec's fp folds in `descendantFold`, which reads

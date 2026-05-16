@@ -8,8 +8,9 @@
  */
 
 import {
-  listSpecTypes,
-  getSpecByType,
+  getSlotBlockMeta,
+  getSpecById,
+  listSlotBlockIds,
   type ContentFieldKind,
   type SlotSpec,
   type CmsReadSurface,
@@ -77,12 +78,15 @@ function trackingCms(): {
 }
 
 export async function prerenderBlock(type: string): Promise<BlockManifest | null> {
-  const spec = getSpecByType(type)
+  // Block-specific schema lives in slotBlockMeta; refetch labels
+  // live on the framework spec catalog entry. Both lookups are by id.
+  const meta = getSlotBlockMeta(type)
+  const spec = getSpecById(type)
   if (!spec) return null
   const tracker = trackingCms()
-  if (spec.schema) {
+  if (meta?.schema) {
     try {
-      spec.schema({ cms: tracker.surface })
+      meta.schema({ cms: tracker.surface })
     } catch {
       // schema may throw if it expects content shape that isn't
       // present in the empty tracking surface; we still get the field
@@ -104,7 +108,7 @@ export async function prerenderBlock(type: string): Promise<BlockManifest | null
 
 export async function buildCatalogManifest(): Promise<Record<string, BlockManifest>> {
   const out: Record<string, BlockManifest> = {}
-  for (const type of listSpecTypes()) {
+  for (const type of listSlotBlockIds()) {
     const manifest = await prerenderBlock(type)
     if (manifest) out[type] = manifest
   }

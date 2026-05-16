@@ -22,7 +22,7 @@ import {
   getCatalogManifest,
   getRouteSnapshots,
   listAllCmsNodes,
-  listSpecTypes,
+  listSlotBlockIds,
   lookupDraftNode,
   parseSlotEntryId,
   pickBestConfigIndex,
@@ -204,7 +204,7 @@ export const EditorTreePartial = ReactCms.partial(
     const catalog = await getCatalogManifest()
     const rootIds = renderedCmsIdsForPreviewedPage()
     const entries = listAllCmsNodes(rootIds)
-    const blockTypes = listSpecTypes()
+    const blockTypes = listSlotBlockIds()
 
     const parentTypeById = new Map<string, string | undefined>()
     for (const entry of entries) {

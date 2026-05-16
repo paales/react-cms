@@ -7,7 +7,6 @@ export {
   ROOT,
   type PartialCtx,
   type PartialOptions,
-  type BlockOptions,
   type PartialComponentProps,
   type PartialBuilder,
   type SpecComponent,
@@ -15,7 +14,6 @@ export {
   type SelectorToken,
   type SelectorTokens,
   type VaryScope,
-  type SchemaScope,
   type RenderArgs,
   type ActivatorProps,
   type DeferSpec,
@@ -23,9 +21,15 @@ export {
   type InferRenderProps,
   type ParseRoute,
   getSpecComponentById,
-  lookupSpecComponentByType,
   getRegisteredMatchPatterns,
 } from "./partial.tsx"
+
+// CMS block constructor — composes around `ReactCms.partial`.
+export {
+  block,
+  type BlockOptions,
+  type SchemaScope,
+} from "../runtime/cms-block.ts"
 
 export {
   PartialsClient,

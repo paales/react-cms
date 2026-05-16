@@ -23,6 +23,7 @@ import React, { type ReactNode } from "react"
 import { matchRoutePattern } from "./context.ts"
 import { getCmsStorage, type LoadedStore } from "./cms-storage.ts"
 import { CMS_DRAFT_COOKIE, EDITOR_COOKIE } from "./cms-constants.ts"
+import { getSpecById } from "../lib/spec-catalog.ts"
 
 export { CMS_DRAFT_COOKIE, EDITOR_COOKIE }
 
@@ -641,7 +642,7 @@ function filterEntriesBySelector(
   return entries.filter((entry) => {
     const type = entry.type
     if (!type) return false
-    const spec = getSpecByType(type)
+    const spec = getSpecById(type)
     if (!spec) return false
     return wanted.some((w) => spec.labels.includes(w))
   })
@@ -653,7 +654,7 @@ function renderSlotEntry(
 ): React.ReactElement | null {
   const type = entry.type
   if (!type) return null
-  const spec = getSpecByType(type)
+  const spec = getSpecById(type)
   if (!spec) {
     if (import.meta.env?.DEV) {
       console.warn(
@@ -663,98 +664,61 @@ function renderSlotEntry(
     }
     return null
   }
-  // Slot wiring passes the entry's id through the framework-internal
-  // `__contentKey` channel — underscore-prefixed because it isn't
-  // part of the public surface. The same value serves two internal
-  // roles: it's the CMS storage key the block's `schema` reads
-  // against, AND the per-instance render-id discriminator the
-  // framework uses to address this placement.
+  // Slot wiring passes the entry's id through the generic framework
+  // `__instanceId` channel — it becomes this placement's effective
+  // render id AND (interpreted by the CMS block wrapper) the CMS row
+  // the schema reads from.
   const Component = spec.Component as React.FC<{
     parent: import("../lib/partial-context.ts").PartialCtx
-    __contentKey?: string
+    __instanceId?: string
   }>
   return React.createElement(Component, {
     key: entry.id,
     parent: host,
-    __contentKey: entry.id,
+    __instanceId: entry.id,
   })
 }
 
-// ─── Spec catalog (block + page registration) ─────────────────────────
+// ─── Slot-block metadata ────────────────────────────────────────────
 //
-// `ReactCms.partial(...)` and `ReactCms.block(...)` self-register each
-// spec under its `type` (= the spec's catalog id, derived from
-// `Render.name` or the spec's selector). Slots resolve store entries
-// by looking up `entry.type` here. Page-level partial-refetch resolves
-// by the same key.
+// Side-table keyed by spec id, holding CMS-specific metadata
+// (`schema` callback) for blocks. The framework spec catalog
+// (`spec-catalog.ts`) stays CMS-free; this table is consulted by:
+//
+//   - the editor's catalog-manifest prerender, which walks each
+//     registered block id and invokes its `schema` with a tracking
+//     CMS surface;
+//   - other CMS layer code that needs to know whether a given spec
+//     is block-shaped.
+//
+// Specs that don't go through `ReactCms.block` aren't here; they
+// have no schema and aren't slot-placeable.
 
-export interface SpecCatalogEntry {
-  /** Spec catalog id (same as `type`). Derived from selector or
-   *  auto-named from `Render.name`. For singleton blocks, this is
-   *  ALSO the CMS storage key (the row in `content.json` whose
-   *  fields the spec's schema reads). */
+export interface SlotBlockMeta {
   id: string
-  /** Refetch labels declared by the spec's `selector` (plus the
-   *  spec's own id, which is always the first label). */
-  labels: string[]
-  /** The component returned by ReactCms.partial — render it as JSX.
-   *  Accepts the standard `parent` plus the framework-internal
-   *  `__contentKey` channel used by slot wiring to pass the entry's
-   *  id into a multi-instance block. */
-  Component: React.FC<{
-    parent: import("../lib/partial-context.ts").PartialCtx
-    __contentKey?: string
-    children?: ReactNode
-  }>
-  /** Stable identifier for the catalog ("type" tag). Equal to `id`. */
-  type: string
-  /** True iff constructed via `ReactCms.block` — usable as a slot
-   *  block (registers in the type catalog for slot lookup). */
-  isSlotBlock: boolean
-  /** Request-dimensions vary callback. Used by the descendant-fp fold
-   *  (`computeDescendantFold`) to re-resolve a descendant's vary
-   *  against the current request without rendering. The shape mirrors
-   *  `VaryScope` in partial.tsx; kept inline here to avoid the
-   *  runtime → lib import edge. */
-  vary?: (scope: {
-    url: URL
-    pathname: string
-    search: Partial<Record<string, string>>
-    cookies: Partial<Record<string, string>>
-    headers: Partial<Record<string, string>>
-    params: Record<string, string>
-    session: import("./session.ts").SessionReadSurface
-  }) => unknown
-  /** Schema callback on `ReactCms.block` specs. Reads CMS fields via
-   *  the supplied `cms` surface. The editor's catalog prerender
-   *  invokes it with a tracking surface to discover what fields the
-   *  block reads. */
   schema?: (scope: { cms: CmsReadSurface }) => unknown
-  /** Compiled URLPattern for the spec's `match` option, if any. The
-   *  framework's descendant-fp fold needs to evaluate descendants'
-   *  matches against the current request URL when computing
-   *  ancestors' fingerprints. */
-  matchPattern?: URLPattern
-  /** Optional render fn name for selector auto-derivation. */
-  displayName: string
 }
 
-const typeCatalog = new Map<string, SpecCatalogEntry>()
+const slotBlockMeta = new Map<string, SlotBlockMeta>()
 
-export function registerSpec(entry: SpecCatalogEntry): void {
-  typeCatalog.set(entry.type, entry)
+export function registerSlotBlockMeta(entry: SlotBlockMeta): void {
+  slotBlockMeta.set(entry.id, entry)
 }
 
-export function getSpecByType(type: string): SpecCatalogEntry | undefined {
-  return typeCatalog.get(type)
+export function getSlotBlockMeta(id: string): SlotBlockMeta | undefined {
+  return slotBlockMeta.get(id)
 }
 
-export function listSpecTypes(): string[] {
-  return [...typeCatalog.keys()]
+export function listSlotBlockIds(): string[] {
+  return [...slotBlockMeta.keys()]
 }
+
+// Re-export spec-catalog lookups so existing CMS callers (slot
+// machinery, editor) don't need to import from two places.
+export { getSpecById, listSpecIds } from "../lib/spec-catalog.ts"
 
 export function _clearSpecCatalog(): void {
-  typeCatalog.clear()
+  slotBlockMeta.clear()
 }
 
 // Re-export for slot.tsx compatibility.

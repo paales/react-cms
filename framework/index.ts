@@ -64,9 +64,10 @@ export { getNavigation } from "./src/runtime/navigation-api.ts"
 // ── CMS runtime (server) ────────────────────────────────────────────────
 export {
   EDITOR_COOKIE,
-  getSpecByType,
+  getSpecById,
+  getSlotBlockMeta,
   listAllCmsNodes,
-  listSpecTypes,
+  listSlotBlockIds,
   lookupCmsNode,
   lookupDraftNode,
   parseSlotEntryId,
@@ -81,7 +82,11 @@ export {
   type ContentFieldKind,
   type MatchClause,
   type Reference,
+  type SlotBlockMeta,
 } from "./src/runtime/cms-runtime.ts"
+
+// Side-effect import to attach `ReactCms.block` to the namespace.
+import "./src/runtime/cms-block.ts"
 
 // ── CMS prerender (build-time catalog) ──────────────────────────────────
 export {

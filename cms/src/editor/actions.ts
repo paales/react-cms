@@ -12,7 +12,7 @@
  */
 
 import {
-  getSpecByType,
+  getSlotBlockMeta,
   lookupDraftNode,
   publishDraft,
   revertDraftNode,
@@ -123,7 +123,7 @@ export async function addBlockToSlot(
   slotName: string,
   blockType: string,
 ): Promise<{ invalidate: { selector: string } }> {
-  if (!getSpecByType(blockType)) {
+  if (!getSlotBlockMeta(blockType)) {
     throw new Error(
       `addBlockToSlot: block type "${blockType}" is not registered. ` +
         `Add it to the catalog before wiring it into the palette.`,
