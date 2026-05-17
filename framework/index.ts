@@ -113,6 +113,15 @@ export {
   type CapabilityValue,
 } from "./src/runtime/capability.ts"
 
+// ── Remote endpoint dispatch (host side of <RemoteFrame>) ──────────────
+export {
+  createRemoteHandler,
+  buildRemoteManifest,
+  type RemoteHandlerOptions,
+  type RemoteManifest,
+  type RemoteManifestSpec,
+} from "./src/runtime/remote-endpoints.tsx"
+
 // `setSessionValue` (a server action) is deliberately NOT re-exported
 // here. `"use client"` files calling it must deep-import from
 // `@parton/framework/runtime/session-actions.ts` — see the

@@ -113,7 +113,17 @@ export interface PartialSnapshot {
 }
 
 /** Per-snapshot origin annotation. See `PartialSnapshot.source`. */
-export type SnapshotSource = { kind: "remote"; origin: string; capability?: Record<string, unknown> }
+export type SnapshotSource = {
+  kind: "remote"
+  origin: string
+  capability?: Record<string, unknown>
+  /** Bare spec id at the remote endpoint. The host may register the
+   *  snapshot under a namespaced id (`magento:stocks`) for selector
+   *  hygiene + collision-avoidance, but the refetch URL needs the
+   *  remote's own id (`stocks`). Stored separately so
+   *  `partialFromSnapshot` can rebuild the right URL. */
+  remoteId: string
+}
 
 const HINT_LRU_MAX = 10_000
 
@@ -166,6 +176,13 @@ export interface RequestRegistry {
   invalidations: Set<string>
   committed: boolean
   deferred: boolean
+  /** Promises the commit must wait for. `<RemoteFrame>` registers
+   *  one here that resolves when the remote's snapshot trailer has
+   *  arrived and its snapshots have been written to this registry.
+   *  Stream wrappers `Promise.allSettled` this list before firing
+   *  commit, so the canonical hint table sees the remote's snapshots
+   *  before client-side selector refetch can hit a registry miss. */
+  pendingDefers: Promise<unknown>[]
 }
 
 const registryAls = new AsyncLocalStorage<RequestRegistry>()
@@ -181,6 +198,7 @@ export function enterRequestRegistry(routeKey: string, mode: RegistryMode): Requ
     invalidations: new Set(),
     committed: false,
     deferred: false,
+    pendingDefers: [],
   }
   registryAls.enterWith(ctx)
   _setRegistryCommit(() => commitRequestRegistry(ctx))
@@ -195,6 +213,39 @@ export function deferRequestRegistryCommit(): void {
   const ctx = registryAls.getStore()
   if (ctx) ctx.deferred = true
   _deferRegistryCommit()
+}
+
+/**
+ * Add a promise to the current request's commit-defer list. The
+ * stream-wrapping helpers that fire `commitRequestRegistry` await
+ * `Promise.allSettled` of this list first, so the snapshot writes the
+ * promise's resolver performs are already in `pendingWrites` /
+ * `pendingHints` when commit runs. Used by `<RemoteFrame>` to hold
+ * commit open until the remote's snapshot trailer has been parsed
+ * and registered — without this the trailer's `.then` callback can
+ * fire after commit and the route-hint write is lost.
+ *
+ * No-op outside a request registry context. Multiple deferrers
+ * compose: the wrapper waits for all of them.
+ */
+export function deferCommitUntil(promise: Promise<unknown>): void {
+  const ctx = registryAls.getStore()
+  if (!ctx) return
+  ctx.pendingDefers.push(promise)
+}
+
+/**
+ * Snapshot + clear the current request's pending defers. The stream
+ * wrappers call this from their flush callback so each commit fires
+ * once, with the full set of promises that were registered by the
+ * time the stream ended.
+ */
+export function _drainPendingDefers(): Promise<unknown>[] {
+  const ctx = registryAls.getStore()
+  if (!ctx) return []
+  const drained = ctx.pendingDefers
+  ctx.pendingDefers = []
+  return drained
 }
 
 /**

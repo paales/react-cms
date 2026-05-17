@@ -9,18 +9,7 @@ import {
 import type { ReactFormState } from "react-dom/client"
 import { Root } from "./app/root.tsx"
 import { NotFoundPage } from "./app/pages/not-found.tsx"
-import { ROOT } from "@parton/framework"
-import { getSpecById } from "@parton/framework/lib/spec-catalog.ts"
-import {
-  enterRequestRegistry,
-  getActiveRegistry,
-} from "@parton/framework/lib/partial-registry.ts"
-import { wrapStreamWithSnapshotTrailer } from "@parton/framework/lib/snapshot-trailer.ts"
-import {
-  CAPABILITY_HEADER,
-  decodeCapability,
-  runWithCapability,
-} from "@parton/framework/runtime/capability.ts"
+import { createRemoteHandler } from "@parton/framework"
 import { parseRenderRequest } from "@parton/framework/runtime/request.tsx"
 import {
   _captureCommitHandle,
@@ -43,67 +32,19 @@ export type RscPayload = {
 
 export default { fetch: handler }
 
-async function handler(request: Request): Promise<Response> {
-  const url = new URL(request.url)
+/** Shared remote-endpoint dispatch — OPTIONS, /__remote/manifest.json,
+ *  /__remote/types.d.ts, /__remote/<selector>. */
+const remoteHandler = createRemoteHandler({
+  name: "e2e-testing",
+  renderToFlightStream: (element) =>
+    renderToReadableStream(element, { onError: silenceClientDisconnect }),
+})
 
-  // RemoteFrame endpoint. `<RemoteFrame src="/__remote/<spec-id>">`
-  // fetches this URL; the response is a focused Flight stream
-  // containing just `<Component parent={ROOT} />` for the named
-  // spec. Same-origin v1; v2 will lift this onto a separate dev
-  // server (e2e-magento) and add CORS + capability scoping.
-  if (url.pathname.startsWith("/__remote/")) {
-    const id = decodeURIComponent(url.pathname.slice("/__remote/".length))
-    const spec = getSpecById(id)
-    if (!spec) {
-      return new Response(`Unknown spec: ${id}`, { status: 404 })
-    }
-    const Component = spec.Component
-    // Wire shape: bare ReactNode Flight bytes + a trailing
-    // snapshot map (see `snapshot-trailer.ts`). The host's
-    // `<RemoteFrame>` parses the trailer and re-registers the
-    // snapshots in the host's request registry, so any partial
-    // wrapper the remote emitted (e.g. PartialBoundary inside the
-    // spec) is addressable by selector from the host.
-    //
-    // Two contexts entered before render:
-    // - `runWithRequestAsync`: gives the spec a request context
-    //   so `getRequest` / `getCookie` etc. work.
-    // - `enterRequestRegistry`: gives PartialBoundary's
-    //   `registerPartial` somewhere to write. The remote's
-    //   registry is throwaway — only the `pendingWrites` map
-    //   matters, captured by the trailer wrapper at flush time.
-    const capability = decodeCapability(request.headers.get(CAPABILITY_HEADER))
-    const { result: stream } = await runWithRequestAsync(request, async () => {
-      enterRequestRegistry("__remote", "streaming")
-      // Capability scope wraps the render so specs can call
-      // `getCapability()` to read host-declared values. Empty
-      // capability when no header was sent (or it failed to
-      // decode) — the remote sees nothing from the host.
-      return runWithCapability(capability, () => {
-        const flightStream = renderToReadableStream(<Component parent={ROOT} />, {
-          onError: silenceClientDisconnect,
-        })
-        // Snapshot the registry's pendingWrites at flush time —
-        // the trailer wrapper invokes this callback after the
-        // Flight stream has emitted its last chunk, by which point
-        // every PartialBoundary in the rendered tree has registered.
-        return wrapStreamWithSnapshotTrailer(flightStream, () => {
-          const reg = getActiveRegistry()
-          return reg ? reg.pendingWrites : new Map()
-        })
-      })
-    })
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        "content-type": "text/x-component;charset=utf-8",
-        // Same-origin v1 doesn't strictly need CORS, but stamping
-        // them now lets the v2 cross-origin demo work without
-        // server changes.
-        "access-control-allow-origin": "*",
-      },
-    })
-  }
+async function handler(request: Request): Promise<Response> {
+  const remote = await remoteHandler(request)
+  if (remote) return remote
+
+  const url = new URL(request.url)
 
   if (import.meta.env?.DEV) {
     if (url.pathname === "/__test/clear-caches") {

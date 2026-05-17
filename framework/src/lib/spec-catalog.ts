@@ -64,6 +64,14 @@ export interface SpecCatalogEntry {
   matchPattern?: URLPattern
   /** Render-fn display name (for debug). */
   displayName: string
+  /** Author-declared via selector / vary / match. Auto-named specs
+   *  are `false` and excluded from the public `/__remote/<id>`
+   *  surface. */
+  addressable?: boolean
+  /** Capability schema type name — referenced by the remote
+   *  manifest so the `parton add` CLI can generate typed bindings.
+   *  See `PartialOptions.capabilityType`. */
+  capabilityType?: string
 }
 
 const specCatalog = new Map<string, SpecCatalogEntry>()
@@ -78,6 +86,11 @@ export function getSpecById(id: string): SpecCatalogEntry | undefined {
 
 export function listSpecIds(): string[] {
   return [...specCatalog.keys()]
+}
+
+/** Read-only iteration over every registered spec entry. */
+export function listSpecs(): SpecCatalogEntry[] {
+  return [...specCatalog.values()]
 }
 
 export function _clearSpecCatalog(): void {

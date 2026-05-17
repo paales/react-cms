@@ -133,7 +133,7 @@ export const MagentoPaymentSummary = parton(
       </div>
     )
   },
-  { selector: "magento-payment-summary" },
+  { selector: "magento-payment-summary", capabilityType: "PaymentCap" },
 )
 
 /** A second parton — exercise multiple cross-origin frames in
@@ -144,7 +144,7 @@ export const MagentoPaymentSummary = parton(
  *  `data-tick=` so e2e tests can assert it strictly changes. */
 export const MagentoStockTicker = parton(
   async function MagentoStockTickerRender(
-    { tick }: { tick: number } & RenderArgs,
+    { tick, parent }: { tick: number } & RenderArgs,
   ) {
     await delay(700)
     const tickers = [
@@ -178,6 +178,7 @@ export const MagentoStockTicker = parton(
             ))}
           </tbody>
         </table>
+        <MagentoCartSummary parent={parent} />
       </div>
     )
   },
@@ -186,3 +187,47 @@ export const MagentoStockTicker = parton(
     vary: () => ({ tick: Date.now() }),
   },
 )
+
+/** A nested addressable parton — rendered INSIDE another parton, so
+ *  its snapshot only ever reaches the host's registry via the
+ *  trailer that ships with its parent's render. Used to validate
+ *  the commit-defer mechanism: the host's `<RemoteFrame>` keeps
+ *  commit open until every nested snapshot in the trailer has been
+ *  registered, so `nav.reload({selector: "magento:cart-summary"})`
+ *  from the host finds the snapshot and routes back to the remote.
+ *  Without commit-defer this would race and fall through to a full
+ *  streaming-mode page render. */
+export const MagentoCartSummary = parton(
+  async function MagentoCartSummaryRender(_: RenderArgs) {
+    await delay(50)
+    const subtotal = 89.94 + (Math.random() * 2)
+    return (
+      <div
+        data-testid="magento-cart-summary"
+        data-tick={String(Date.now())}
+        style={{
+          marginTop: "0.5rem",
+          padding: "0.75rem",
+          border: "1px dashed rgba(244, 114, 182, 0.4)",
+          background: "rgba(244, 114, 182, 0.04)",
+          borderRadius: "0.5rem",
+          fontSize: "0.85em",
+          color: "#fbcfe8",
+        }}
+      >
+        <strong>Cart subtotal</strong> · ${subtotal.toFixed(2)}
+        <div style={{ marginTop: "0.25rem", fontSize: "0.75em", opacity: 0.7 }}>
+          Nested addressable parton inside the stock ticker. Host can refetch{" "}
+          <code>magento:cart-summary</code> independently — the framework's
+          commit-defer mechanism guarantees the snapshot lands in the host's
+          registry before the response goes out.
+        </div>
+      </div>
+    )
+  },
+  {
+    selector: "cart-summary",
+    vary: () => ({ tick: Date.now() }),
+  },
+)
+

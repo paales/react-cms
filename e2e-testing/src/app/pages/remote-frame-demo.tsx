@@ -29,7 +29,6 @@ import { Suspense } from "react"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { Button } from "@parton/copies/components/ui/button"
 import { ClickCounter } from "../components/click-counter.tsx"
-import { ReconcileFlash } from "../components/reconcile-flash.tsx"
 import { RemoteRefreshButton } from "../components/remote-refresh-button.tsx"
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -42,16 +41,11 @@ const RemoteFastGreeting = parton(
     return (
       <RemoteCard tone="emerald" testid="remote-fast">
         <strong>Fast remote</strong> · 200ms · {new Date().toISOString()}
-        <ReconcileFlash />
       </RemoteCard>
     )
   },
   {
     selector: "remote-fast",
-    // Varying tick → fp differs on every render → the reconcile
-    // event fires for each refetch. Without this, the fp is stable
-    // and `usePartialReconcile` correctly observes "nothing
-    // changed" (firing the event would be semantically wrong).
     vary: () => ({ tick: Date.now() }),
   },
 )
@@ -183,23 +177,23 @@ export const RemoteFrameDemoPage = parton(
         </div>
 
         <Suspense fallback={<RemoteFallback label="fast" testid="remote-fast" />}>
-          <RemoteFrame src="/__remote/remote-fast" parent={parent} />
+          <RemoteFrame url="/__remote/remote-fast" parent={parent} />
         </Suspense>
 
         <Suspense fallback={<RemoteFallback label="mid" testid="remote-mid" />}>
-          <RemoteFrame src="/__remote/remote-mid" parent={parent} />
+          <RemoteFrame url="/__remote/remote-mid" parent={parent} />
         </Suspense>
 
         <Suspense fallback={<RemoteFallback label="slow" testid="remote-slow" />}>
-          <RemoteFrame src="/__remote/remote-slow" parent={parent} />
+          <RemoteFrame url="/__remote/remote-slow" parent={parent} />
         </Suspense>
 
         <Suspense fallback={<RemoteFallback label="counter" testid="remote-counter" />}>
-          <RemoteFrame src="/__remote/remote-counter" parent={parent} />
+          <RemoteFrame url="/__remote/remote-counter" parent={parent} />
         </Suspense>
 
         <Suspense fallback={<RemoteFallback label="cached" testid="remote-cached" />}>
-          <RemoteFrame src="/__remote/remote-cached" parent={parent} />
+          <RemoteFrame url="/__remote/remote-cached" parent={parent} />
         </Suspense>
 
         <footer className="mt-4 text-xs text-muted-foreground" data-testid="rfd-footer">

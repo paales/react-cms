@@ -26,6 +26,7 @@
 import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
 import {
+  _drainPendingDefers,
   _readSnapshotsForRoute,
   deferRequestRegistryCommit,
   type PartialSnapshot,
@@ -202,7 +203,8 @@ export function wrapStreamWithCommitOnly(
       transform(chunk, controller) {
         controller.enqueue(chunk)
       },
-      flush() {
+      async flush() {
+        await Promise.allSettled(_drainPendingDefers())
         if (commit) commit()
       },
     }),
@@ -242,7 +244,8 @@ export function wrapSsrStreamWithFpTrailer(
       transform(chunk, controller) {
         controller.enqueue(chunk)
       },
-      flush(controller) {
+      async flush(controller) {
+        await Promise.allSettled(_drainPendingDefers())
         if (commit) commit()
         if (!request) return
         const routeKey = computeRouteKey(request.url)
@@ -287,7 +290,8 @@ export function wrapStreamWithFpTrailer(
       transform(chunk, controller) {
         controller.enqueue(chunk)
       },
-      flush(controller) {
+      async flush(controller) {
+        await Promise.allSettled(_drainPendingDefers())
         if (commit) commit()
         if (!request) return
         const routeKey = computeRouteKey(request.url)

@@ -105,15 +105,16 @@ test("selector refetch routes back to the cross-origin remote (server wire)", as
   // vite-rsc module IDs happening to be `/@fs/` paths, which
   // varies session-to-session). We:
   //  1. Hit `/remote-frame-crossorigin-demo` once to register
-  //     magento-stocks in the host's registry with source stamped.
-  //  2. Issue the cache-mode refetch URL.
+  //     magento:magento-stocks in the host's registry with source
+  //     stamped + namespaced.
+  //  2. Issue the cache-mode refetch URL targeting the namespaced id.
   //  3. Assert the response is cache-mode (not streaming-mode
   //     fallback) and carries a fresh data-tick (proving the
   //     remote was re-fetched and re-rendered).
   await request.get("/remote-frame-crossorigin-demo")
   // Capture the initial tick.
   const initial = await request.get(
-    "/remote-frame-crossorigin-demo_.rsc?partials=magento-stocks",
+    "/remote-frame-crossorigin-demo_.rsc?partials=magento:magento-stocks",
   )
   const initialBody = await initial.text()
   const initialTickMatch = initialBody.match(/"data-tick":"(\d+)"/)
@@ -125,7 +126,7 @@ test("selector refetch routes back to the cross-origin remote (server wire)", as
 
   // Second refetch — fresh remote render → fresh tick.
   const refetch = await request.get(
-    "/remote-frame-crossorigin-demo_.rsc?partials=magento-stocks",
+    "/remote-frame-crossorigin-demo_.rsc?partials=magento:magento-stocks",
   )
   expect(refetch.status()).toBe(200)
   const body = await refetch.text()
@@ -142,6 +143,69 @@ test("selector refetch routes back to the cross-origin remote (server wire)", as
   expect(tickMatch, "response must contain data-tick from a fresh remote render").not.toBeNull()
   const refetchTick = tickMatch?.[1] ?? ""
   expect(Number(refetchTick)).toBeGreaterThan(Number(initialTick))
+})
+
+test("nested cross-origin partial is refetchable via namespaced selector", async ({
+  request,
+}) => {
+  // `MagentoStockTicker` (rendered on magento) embeds an addressable
+  // child `MagentoCartSummary` with selector "cart-summary". The
+  // child's snapshot only ever reaches the host's registry through
+  // the trailer that ships with its parent's render. This validates
+  // the commit-defer mechanism: the host's `<RemoteFrame>` holds
+  // commit open until every snapshot in the trailer has been
+  // registered, so refetching the nested id routes back to the
+  // remote (not fallback streaming-mode).
+  await request.get("/remote-frame-crossorigin-demo")
+
+  const initial = await request.get(
+    "/remote-frame-crossorigin-demo_.rsc?partials=magento:cart-summary",
+  )
+  expect(initial.status()).toBe(200)
+  const initialBody = await initial.text()
+  expect(initialBody, "expected cache-mode for nested refetch").toContain(
+    '"mode":"cache"',
+  )
+  const initialTickMatch = initialBody.match(/"data-tick":"(\d+)"/)
+  expect(initialTickMatch, "nested partial must render in the refetch").not.toBeNull()
+
+  // Wait long enough that Date.now() differs.
+  await new Promise((r) => setTimeout(r, 30))
+
+  // Second refetch — fresh tick.
+  const refetch = await request.get(
+    "/remote-frame-crossorigin-demo_.rsc?partials=magento:cart-summary",
+  )
+  const refetchBody = await refetch.text()
+  const refetchTickMatch = refetchBody.match(/"data-tick":"(\d+)"/)
+  expect(refetchTickMatch).not.toBeNull()
+  expect(Number(refetchTickMatch?.[1])).toBeGreaterThan(
+    Number(initialTickMatch?.[1]),
+  )
+})
+
+test("namespacing prevents collisions: bare selector doesn't hit remote", async ({
+  request,
+}) => {
+  // The remote's spec is registered locally as `magento:magento-stocks`.
+  // A refetch URL that targets the bare id `magento-stocks` (without
+  // the namespace prefix) must NOT route to the remote — the host's
+  // registry doesn't have anything under that key, so the request
+  // falls through to streaming-mode (a full Root render) rather than
+  // accidentally returning the remote's bytes.
+  await request.get("/remote-frame-crossorigin-demo")
+
+  const bare = await request.get(
+    "/remote-frame-crossorigin-demo_.rsc?partials=magento-stocks",
+  )
+  const body = await bare.text()
+  // No cache-mode marker → fell through to streaming-mode (full
+  // Root render), which is the correct behavior for an unknown
+  // selector. The bare id doesn't accidentally collide with the
+  // namespaced remote registration.
+  expect(body, "bare id must not resolve to the namespaced remote").not.toContain(
+    '"mode":"cache"',
+  )
 })
 
 test("frame navigation within a cross-origin RemoteFrame", async ({ page }) => {

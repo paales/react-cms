@@ -11,7 +11,7 @@ import { Button } from "@parton/copies/components/ui/button"
  * the window axis, the checkout frame has its own history.
  *
  * The frame URL drives a wrapper parton's `vary`, which threads
- * the new `step` into the `<RemoteFrame src=…?step=…>` URL.
+ * the new `step` into the `<RemoteFrame url=…?step=…>` URL.
  * That re-fetches the cross-origin remote with the new state.
  */
 export function CheckoutStepNav() {

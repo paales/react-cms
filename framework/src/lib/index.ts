@@ -36,10 +36,8 @@ export {
   getCachedPartialIds,
   useActivate,
   useNavigation,
-  usePartialReconcile,
   useScrollRestore,
   type ActivatorFire,
-  type PartialReconcileEvent,
 } from "./partial-client.tsx"
 
 export type {
@@ -56,4 +54,4 @@ export { NavigationError, type NavigationErrorKind } from "../runtime/navigation
 
 export { PartialErrorBoundary } from "./partial-error-boundary.tsx"
 export { invalidateByTags, clearCache, getCacheStats } from "./partial-cache.ts"
-export { RemoteFrame, type RemoteFrameProps } from "./remote-frame.tsx"
+export { RemoteFrame, remote, type RemoteFrameProps } from "./remote-frame.tsx"

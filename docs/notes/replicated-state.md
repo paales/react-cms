@@ -8,6 +8,13 @@
 > Predecessor: [`transient-client-state.md`](./transient-client-state.md).
 > This doc concretises Direction A + B from that doc and adds the
 > RepNotify channel.
+>
+> Status note 2026-05-17: a `usePartialReconcile` prototype landed
+> briefly and was rolled back — no in-tree callers and the
+> microtask-defer plumbing it required was paying for nothing. The
+> RepNotify channel described below is still the right design
+> direction; this doc keeps it as the forward-looking proposal,
+> not as something currently shipping.
 
 ## Premise
 

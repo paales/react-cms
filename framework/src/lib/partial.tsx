@@ -157,7 +157,14 @@ export type MatchPattern = string | URLPatternInit
 
 export type PartialOptions<V> = Pick<
   InternalSpecConfig<V>,
-  "match" | "vary" | "cache" | "defer" | "fallback" | "keepalive" | "selector"
+  | "match"
+  | "vary"
+  | "cache"
+  | "defer"
+  | "fallback"
+  | "keepalive"
+  | "selector"
+  | "capabilityType"
 >
 
 /**
@@ -194,6 +201,13 @@ interface InternalSpecConfig<V> {
    *  on cross-route nav (heavy video / iframe DOM, partials whose
    *  state is meaningful only while visible, debug-only specs). */
   keepalive?: boolean
+  /** Capability schema name for this spec — referenced by the
+   *  `/__remote/manifest.json` endpoint so the `parton add` CLI can
+   *  generate typed bindings (`remote<TypeName>({…})`). The string
+   *  must match a type exported from the remote app's
+   *  `remote-types.ts` (served at `/__remote/types.d.ts`). Omit if
+   *  the spec doesn't read capability values. */
+  capabilityType?: string
 }
 
 /**
@@ -1372,6 +1386,8 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
     matchPattern,
     displayName:
       (Render as { displayName?: string; name?: string }).displayName ?? Render.name ?? "anon",
+    addressable,
+    capabilityType: options.capabilityType,
   })
 
   // Attach `.props` as a phantom field. The runtime value is
@@ -1570,16 +1586,23 @@ function partialFromSnapshot(
   // Remote-sourced snapshot: route the refetch back to the
   // remote endpoint via a fresh `<RemoteFrame>`. The remote
   // re-renders, ships a new trailer with updated snapshots, and
-  // the host re-registers with the same `source` stamp — keeping
-  // future refetches routed correctly. The capability from the
-  // original placement is carried through so the remote sees the
-  // same scoped values it saw on the cold render.
+  // the host re-registers with the same `source` stamp + namespace
+  // — keeping future refetches routed correctly. The capability
+  // from the original placement is carried through so the remote
+  // sees the same scoped values it saw on the cold render.
+  //
+  // `id` may be namespaced (`magento:stocks`); the remote endpoint
+  // expects the bare spec id (`stocks`), which lives on
+  // `source.remoteId`. Apply the same namespace on the refetch so
+  // ids stay stable on the host side across re-renders.
   if (snap.source?.kind === "remote") {
+    const namespace = id.includes(":") ? id.slice(0, id.indexOf(":")) : undefined
     return (
       <RemoteFrame
-        src={`${snap.source.origin}/__remote/${encodeURIComponent(id)}`}
+        url={`${snap.source.origin}/__remote/${encodeURIComponent(snap.source.remoteId)}`}
         parent={parent}
         capability={snap.source.capability as Capability | undefined}
+        namespace={namespace}
       />
     )
   }

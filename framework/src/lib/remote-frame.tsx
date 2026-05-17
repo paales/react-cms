@@ -1,45 +1,52 @@
 /**
- * `<RemoteFrame>` — server-rendered frame from a remote origin.
+ * `<RemoteFrame>` — server-rendered frame from a remote endpoint.
  *
- * Fetches Flight bytes from another endpoint (same-origin in v1;
- * cross-origin once CSP / capability scoping land), pipes them
- * through the row-level rewriter, decodes the result, and returns
- * the tree as JSX. The outer Flight encoder serializes the
- * decoded subtree into the host's response, so Suspense pacing
- * inside the remote payload streams through to the client.
+ * Fetches Flight bytes from another endpoint (same-origin path or
+ * cross-origin URL), streams them through the row-level rewriter,
+ * decodes the result, and returns the tree as JSX. The outer Flight
+ * encoder serializes the decoded subtree into the host's response,
+ * so Suspense pacing inside the remote payload streams through to
+ * the client.
  *
  * Both the cache and `<RemoteFrame>` are consumers of the same
  * `flight-rewrite` primitive — wire-level stitching is the
  * framework's foundational composition mechanism. The cache passes
- * `passthroughRewriter`; `<RemoteFrame>` passes a `moduleRefRewriter`
- * for cross-origin paths.
+ * `passthroughRewriter`; `<RemoteFrame>` passes `moduleRefRewriter`
+ * for cross-origin paths so the host's browser can resolve module
+ * references back to the remote's origin.
+ *
+ * The snapshot trailer arrives at the END of the remote's stream, so
+ * registration would normally land after the host's commit fired
+ * (registration is in a `.then` microtask after the trailer Promise
+ * resolves). To avoid that race, RemoteFrame calls
+ * `deferCommitUntil(registrationPromise)` — the host's stream
+ * wrappers (`wrapStreamWithFpTrailer` etc.) `Promise.allSettled` the
+ * pending defers before firing commit, so the route-hint write for
+ * every nested addressable partial lands before the response goes
+ * out. Streaming is preserved end-to-end.
  *
  * Place inside a Suspense boundary if the remote may be slow:
  *
  *   <Suspense fallback={<Spinner />}>
- *     <RemoteFrame src="/__remote/payment-form" parent={parent} />
+ *     <RemoteFrame url="/__remote/payment-form" parent={parent} />
  *   </Suspense>
- *
- * Wire format of the remote endpoint: a bare React element encoded
- * with `renderToReadableStream`. No Root, no wrapper object — the
- * decoded value IS the JSX to render here.
  */
 
 import type { ReactNode } from "react"
 import { createFromReadableStream } from "./flight-runtime.ts"
 import {
-  composeRewriters,
   moduleRefRewriter,
   passthroughRewriter,
   rewriteFlightStream,
   type RowRewriter,
 } from "./flight-rewrite.ts"
 import type { PartialCtx } from "./partial-context.ts"
-import { registerPartial, type PartialSnapshot } from "./partial-registry.ts"
 import {
-  parseSnapshotTrailer,
-  splitStreamAtSnapshotTrailer,
-} from "./snapshot-trailer.ts"
+  deferCommitUntil,
+  registerPartial,
+  type PartialSnapshot,
+} from "./partial-registry.ts"
+import { splitStreamAtSnapshotTrailer } from "./snapshot-trailer.ts"
 import { getRequest } from "../runtime/context.ts"
 import {
   CAPABILITY_HEADER,
@@ -49,28 +56,12 @@ import {
 
 export interface RemoteFrameProps {
   /** Absolute URL or same-origin path of the remote Flight endpoint. */
-  src: string
+  url: string
   /** Host `PartialCtx`. Threaded through normal placement; the
    *  remote's render happens in its own process scope so this isn't
    *  forwarded over the wire, but the prop keeps the JSX call site
    *  consistent with other partons. */
   parent: PartialCtx
-  /** Extra rewriter applied to every Flight row from the remote.
-   *  Compose with the module-ref rewrite (auto-derived from `src`
-   *  origin when `rewriteModuleRefs` is omitted or `true`). */
-  rewriter?: RowRewriter
-  /** Controls module-ref rewriting:
-   *  - `true` / omitted: relative paths (`./X.tsx`) and absolute
-   *    server paths (`/src/X.tsx`) are rewritten to absolute URLs
-   *    at the remote origin so the host's browser can dynamically
-   *    import them.
-   *  - `false`: pass through unchanged. Use when the remote already
-   *    emits absolute URLs in its module refs.
-   *  - `(path) => path`: custom rewrite. */
-  rewriteModuleRefs?: boolean | ((path: string) => string)
-  /** Optional headers to send on the remote fetch. Composed
-   *  with the capability header (the capability wins on collision). */
-  headers?: Record<string, string>
   /** Host-declared scope the remote can read. Flat record of
    *  JSON-serializable values; serialized as the
    *  `x-parton-capability` header. The remote endpoint reads it
@@ -79,26 +70,16 @@ export interface RemoteFrameProps {
    *  here — the host's cookies don't leak (the fetch is
    *  `credentials: "omit"`). */
   capability?: Capability
-  /** Stream the remote's payload through to the host's outer
-   *  encoder instead of buffering first. Default `false`.
-   *
-   *  `true`: the host's decoder starts as the first chunk arrives;
-   *  Suspense boundaries inside the remote payload stream their
-   *  reveals to the host incrementally. Trade-off: snapshot
-   *  registration happens asynchronously (on remote stream-end)
-   *  and the timing can race the host's commit, causing the
-   *  `usePartialReconcile` hook to see initial-render events for
-   *  the remote's PartialBoundary that with the buffered path
-   *  would happen before the subscription was set up. Use when
-   *  the within-remote streaming win outweighs that wrinkle.
-   *
-   *  `false` (default): buffer the full remote response, parse
-   *  the trailer, register snapshots, then decode. Each remote
-   *  arrives atomically; multiple remote frames on the same page
-   *  still parallelise via their own Suspense boundaries. The
-   *  reconcile-hook timing is clean.
-   */
-  streaming?: boolean
+  /** Namespace prefix to apply to every id and label registered
+   *  from this remote's snapshot trailer. `magento` turns the
+   *  remote's `stocks` spec into a `magento:stocks` entry in the
+   *  host's registry; selectors like `nav.reload({selector:
+   *  "magento:stocks"})` then match without colliding with a local
+   *  `stocks` spec or another remote's `stocks`. The original (bare)
+   *  remote id lives on `snap.source.remoteId` so refetch routing
+   *  can rebuild the right `/__remote/<id>` URL. The CLI's generated
+   *  bindings pass this automatically using the install name. */
+  namespace?: string
 }
 
 function defaultModuleRewrite(srcOrigin: string): (path: string) => string {
@@ -114,12 +95,6 @@ function defaultModuleRewrite(srcOrigin: string): (path: string) => string {
     // For shared framework modules (PartialErrorBoundary etc.)
     // the host can resolve `/@fs/...framework/...` against its own
     // bundle. Leaving these alone makes dev "just work".
-    //
-    // Production cross-origin is a different shape entirely (the
-    // remote emits hashed asset URLs at its CDN; CORS on the
-    // bundle assets lets the host browser load them). Authors
-    // who need that can override via the `rewriteModuleRefs`
-    // prop.
     if (path.startsWith("/@fs/") || path.startsWith("/@id/")) return path
 
     if (path.startsWith("./") || path.startsWith("../") || path.startsWith("/")) {
@@ -133,114 +108,42 @@ function defaultModuleRewrite(srcOrigin: string): (path: string) => string {
   }
 }
 
-/** True iff `src` is an absolute URL (different origin possible). */
-function isAbsoluteUrl(src: string): boolean {
-  return src.startsWith("http://") || src.startsWith("https://")
+function isAbsoluteUrl(url: string): boolean {
+  return url.startsWith("http://") || url.startsWith("https://")
 }
 
-// ─── Per-request fetch dedup ───────────────────────────────────────────
-//
-// Multiple `<RemoteFrame src=… capability=…>` placements on the same
-// page would each fire a separate fetch even when the (src,
-// capability) tuple is identical. Dedup: cache the FETCH on the
-// in-flight request so identical placements share one network call.
-// The buffered path returns the same byte array to each caller.
-//
-// Cache lives in a WeakMap keyed by the request object, so it dies
-// with the request — no cross-request leakage. Streaming-mode
-// RemoteFrames don't dedup (the streams are single-use and tee-ing
-// would defeat the streaming purpose); they fire their own fetch
-// each time, which is unusual enough to be the right default.
-
-interface RemoteFetchResult {
-  buffer: Uint8Array
-}
-
-const dedupByRequest = new WeakMap<Request, Map<string, Promise<RemoteFetchResult>>>()
-
-function dedupKey(absoluteSrc: string, capability: Capability | undefined): string {
-  return capability === undefined
-    ? absoluteSrc
-    : `${absoluteSrc}\x00${encodeCapability(capability)}`
-}
-
-function getDedupCache(): Map<string, Promise<RemoteFetchResult>> {
-  let req: Request
-  try {
-    req = getRequest()
-  } catch {
-    // No request context (rare — RemoteFrame outside a server render).
-    // Fall back to a private map so the function still works.
-    return new Map()
+function applyNamespace(snap: PartialSnapshot, namespace: string | undefined): PartialSnapshot {
+  if (!namespace) return snap
+  return {
+    ...snap,
+    labels: snap.labels.map((l) => `${namespace}:${l}`),
   }
-  let cache = dedupByRequest.get(req)
-  if (!cache) {
-    cache = new Map()
-    dedupByRequest.set(req, cache)
-  }
-  return cache
-}
-
-async function fetchRemoteBuffered(
-  absoluteSrc: string,
-  capability: Capability | undefined,
-  requestHeaders: Record<string, string>,
-): Promise<RemoteFetchResult> {
-  const cache = getDedupCache()
-  const key = dedupKey(absoluteSrc, capability)
-  let pending = cache.get(key)
-  if (pending) return pending
-  pending = (async () => {
-    const response = await fetch(absoluteSrc, {
-      headers: requestHeaders,
-      credentials: "omit",
-    })
-    if (!response.ok || !response.body) {
-      throw new Error(
-        `RemoteFrame: fetch failed for ${absoluteSrc} (status ${response.status})`,
-      )
-    }
-    const buffer = new Uint8Array(await response.arrayBuffer())
-    return { buffer }
-  })()
-  cache.set(key, pending)
-  return pending
 }
 
 export async function RemoteFrame({
-  src,
+  url,
   parent: _parent,
-  rewriter,
-  rewriteModuleRefs,
-  headers,
   capability,
-  streaming = false,
+  namespace,
 }: RemoteFrameProps): Promise<ReactNode> {
-  // Resolve `src` to an absolute URL. `fetch` in the server runtime
+  // Resolve `url` to an absolute form. `fetch` in the server runtime
   // doesn't accept bare-path inputs — and we need the origin
   // anyway to decide whether module-ref rewriting applies.
-  const wasRelative = !isAbsoluteUrl(src)
-  const absoluteSrc = wasRelative
-    ? new URL(src, getRequest().url).href
-    : src
+  const wasRelative = !isAbsoluteUrl(url)
+  const absoluteUrl = wasRelative ? new URL(url, getRequest().url).href : url
 
-  const requestHeaders: Record<string, string> = { ...(headers ?? {}) }
+  const requestHeaders: Record<string, string> = {}
   if (capability !== undefined) {
     requestHeaders[CAPABILITY_HEADER] = encodeCapability(capability)
   }
 
-  const sourceOrigin = new URL(absoluteSrc).origin
-  // Only stamp `source` when the remote is genuinely on a
-  // different origin from the host. For same-origin remotes
-  // (`src` was relative or shares the host's origin), the host
-  // already has the spec module in its catalog — the existing
-  // local Component path in `partialFromSnapshot` handles
-  // refetch correctly and is strictly faster than round-tripping
-  // through a fresh `<RemoteFrame>` fetch. Stamping source for
-  // same-origin would force every refetch onto the remote fetch
-  // path, regressing speed and re-introducing the snapshot-
-  // trailer timing concerns for hooks that observe registration
-  // events (`usePartialReconcile`).
+  const sourceOrigin = new URL(absoluteUrl).origin
+  // Only stamp `source` when the remote is genuinely on a different
+  // origin from the host. For same-origin remotes the host already
+  // has the spec in its catalog — the existing local Component path
+  // in `partialFromSnapshot` handles refetch correctly and is
+  // strictly faster than round-tripping through a fresh
+  // `<RemoteFrame>` fetch.
   const hostOrigin = (() => {
     try {
       return new URL(getRequest().url).origin
@@ -249,83 +152,115 @@ export async function RemoteFrame({
     }
   })()
   const isCrossOrigin = sourceOrigin !== hostOrigin && hostOrigin !== ""
-  const stampSource = (snap: PartialSnapshot): PartialSnapshot =>
-    isCrossOrigin
-      ? {
-          ...snap,
-          source: {
-            kind: "remote",
-            origin: sourceOrigin,
-            capability: capability as Record<string, unknown> | undefined,
-          },
-        }
-      : snap
 
-  let flightStreamForDecode: ReadableStream<Uint8Array>
+  const response = await fetch(absoluteUrl, {
+    headers: requestHeaders,
+    credentials: "omit",
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `RemoteFrame: fetch failed for ${absoluteUrl} (status ${response.status})`,
+    )
+  }
+  const split = splitStreamAtSnapshotTrailer(response.body)
 
-  if (streaming) {
-    // Streaming split — no dedup (streams are single-use and
-    // tee-ing would defeat the streaming purpose). Each placement
-    // fires its own fetch.
-    const response = await fetch(absoluteSrc, {
-      headers: requestHeaders,
-      credentials: "omit",
-    })
-    if (!response.ok || !response.body) {
-      throw new Error(
-        `RemoteFrame: fetch failed for ${absoluteSrc} (status ${response.status})`,
-      )
+  // Snapshot registration runs in this RemoteFrame's ALS scope (the
+  // host's request registry). `.then` captures the current async
+  // context, so the registration calls land in the host's
+  // `pendingWrites` + canonical store + hint table.
+  //
+  // Without the defer below, the trailer Promise can resolve AFTER
+  // the host's outer stream has flushed and committed — the
+  // registration writes get applied but the route-hint table has
+  // already been finalised, so cache-mode lookups miss. The defer
+  // makes the host's commit wait for this Promise via the
+  // stream-wrapping helpers' `Promise.allSettled` pass.
+  const registration = split.trailer.then((snapshots) => {
+    if (!snapshots) return
+    for (const [bareId, snap] of Object.entries(snapshots)) {
+      const id = namespace ? `${namespace}:${bareId}` : bareId
+      const namespaced = applyNamespace(snap, namespace)
+      const stamped: PartialSnapshot = isCrossOrigin
+        ? {
+            ...namespaced,
+            source: {
+              kind: "remote",
+              origin: sourceOrigin,
+              capability: capability as Record<string, unknown> | undefined,
+              remoteId: bareId,
+            },
+          }
+        : namespaced
+      registerPartial(id, stamped)
     }
-    const split = splitStreamAtSnapshotTrailer(response.body)
-    flightStreamForDecode = split.mainStream
-    void split.trailer.then((snapshots) => {
-      if (!snapshots) return
-      for (const [id, snap] of Object.entries(snapshots)) {
-        registerPartial(id, stampSource(snap))
-      }
-    })
-  } else {
-    // Buffer-then-split (default) — dedup applies: identical
-    // (src, capability) placements on the same page share one
-    // fetch. Each placement still parses + registers + decodes
-    // independently (each gets its own decoded React tree, so
-    // the host can render them in different positions).
-    const { buffer } = await fetchRemoteBuffered(absoluteSrc, capability, requestHeaders)
-    const { flightBytes, snapshots } = parseSnapshotTrailer(buffer)
-    if (snapshots) {
-      for (const [id, snap] of Object.entries(snapshots)) {
-        registerPartial(id, stampSource(snap))
-      }
-    }
-    flightStreamForDecode = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(flightBytes)
-        controller.close()
-      },
+  })
+  deferCommitUntil(registration)
+
+  // Module-ref rewriting policy auto-derives from URL shape:
+  // - Same-origin (relative `url`): host's bundle already knows the
+  //   modules; no rewrite needed.
+  // - Cross-origin (absolute `url`): rewrite relative module paths
+  //   to absolute URLs at the remote origin so the host's browser
+  //   can dynamically import them.
+  const pipeline: RowRewriter = wasRelative
+    ? passthroughRewriter
+    : moduleRefRewriter(defaultModuleRewrite(sourceOrigin))
+
+  const rewrittenStream = rewriteFlightStream(split.mainStream, pipeline)
+  return await createFromReadableStream<ReactNode>(rewrittenStream)
+}
+
+/**
+ * Typed binding factory for a remote spec.
+ *
+ * The CLI's `parton add` command generates files that call this
+ * with the remote origin + selector baked in, producing a typed
+ * component the host imports and renders directly:
+ *
+ *     // generated bindings (src/remote/magento/index.ts)
+ *     export const MagentoPaymentSummary = remote<PaymentCap>({
+ *       origin: "http://localhost:5181",
+ *       selector: "magento-payment-summary",
+ *       namespace: "magento",
+ *     })
+ *
+ *     // host call site
+ *     <MagentoPaymentSummary
+ *       parent={parent}
+ *       capability={{ cart_id: "...", currency: "EUR", total: 127.45 }}
+ *     />
+ *
+ * The capability shape is enforced at compile time — the host
+ * cannot pass a value that doesn't match what the remote spec
+ * declared. The `namespace` is the CLI's install name; the host's
+ * registry stores ids as `<namespace>:<selector>`, so two remotes
+ * with overlapping selectors don't collide.
+ */
+export function remote<Cap = void>(opts: {
+  origin: string
+  selector: string
+  namespace?: string
+}): (
+  props: {
+    parent: PartialCtx
+    /** Optional URL search params appended to the remote's endpoint
+     *  URL. Useful when the remote spec varies on its own
+     *  `?step=…` etc. and the host wants to drive that variant from
+     *  a wrapper parton's `vary`. */
+    searchParams?: Record<string, string>
+  } & (Cap extends void ? { capability?: never } : { capability: Cap }),
+) => Promise<ReactNode> {
+  const baseUrl = `${opts.origin}/__remote/${encodeURIComponent(opts.selector)}`
+  return async function RemoteBinding(props) {
+    const url =
+      props.searchParams && Object.keys(props.searchParams).length > 0
+        ? `${baseUrl}?${new URLSearchParams(props.searchParams).toString()}`
+        : baseUrl
+    return await RemoteFrame({
+      url,
+      parent: props.parent,
+      capability: (props as { capability?: Capability }).capability,
+      namespace: opts.namespace,
     })
   }
-
-  // Auto-derive module rewrite policy from `src`:
-  // - Relative `src` (same-origin): no rewrite needed; host's bundle
-  //   already knows the modules.
-  // - Absolute `src` (cross-origin): default to rewriting relative
-  //   module paths to the remote origin so the host browser can
-  //   import them.
-  const transform: ((path: string) => string) | null =
-    rewriteModuleRefs === false
-      ? null
-      : typeof rewriteModuleRefs === "function"
-        ? rewriteModuleRefs
-        : wasRelative
-          ? null
-          : defaultModuleRewrite(new URL(absoluteSrc).origin)
-
-  const moduleRw: RowRewriter =
-    transform != null ? moduleRefRewriter(transform) : passthroughRewriter
-
-  const pipeline: RowRewriter =
-    rewriter != null ? composeRewriters(moduleRw, rewriter) : moduleRw
-
-  const rewrittenStream = rewriteFlightStream(flightStreamForDecode, pipeline)
-  return await createFromReadableStream<ReactNode>(rewrittenStream)
 }

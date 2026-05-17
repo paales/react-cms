@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./index.ts",
+  "bin": {
+    "parton": "./scripts/parton-cli.mjs"
+  },
   "exports": {
     ".": "./index.ts",
     "./*": "./src/*"

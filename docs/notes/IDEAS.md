@@ -427,16 +427,6 @@ Length-prefixed sections (like the existing snapshot trailer)
 keep parsing simple; a multipart shape compresses better with
 HTTP/2 frame coalescing but adds a content-type parser.
 
-### RemoteFrame v2 — within-remote streaming
-
-`<RemoteFrame>` buffers the full remote response today to keep
-the snapshot trailer ordering simple. A holdback-streaming
-splitter (analogous to `splitAtFpTrailer`) would let each
-remote payload stream incrementally — useful when a remote has
-nested Suspense boundaries that should reveal independently. The
-trade-off: holdback adds latency proportional to trailer size.
-Filed against a real use case.
-
 ---
 
 ## Meta principle — prefer runtime discovery to static analysis

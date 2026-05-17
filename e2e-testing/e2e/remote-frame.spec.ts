@@ -116,42 +116,6 @@ test("refresh button updates a remote frame's timestamp", async ({ page }) => {
     .toBe(true)
 })
 
-test("usePartialReconcile fires on selector refetch (RepNotify channel)", async ({
-  page,
-}) => {
-  await page.goto("/remote-frame-demo")
-  await page.waitForSelector('[data-testid="remote-fast"]', { timeout: 5000 })
-
-  // Scope the flash query to the remote-fast card.
-  const flash = page.getByTestId("remote-fast").getByTestId("reconcile-flash")
-
-  // Snapshot the count once it has stabilised post-hydration. The
-  // exact initial count depends on streaming-trailer timing
-  // (sometimes the warm-fp trailer fires post-mount before
-  // useEffect's subscription is set; sometimes the order goes the
-  // other way). The contract the hook delivers: a refresh ALWAYS
-  // bumps the count from wherever it was sitting.
-  await page.waitForTimeout(500)
-  const before = Number(await flash.getAttribute("data-reconcile-count"))
-
-  // Refresh — the server emits one or more fresh fingerprints,
-  // so each refetch can trigger 1+ reconcile events. The
-  // assertion: count strictly increased.
-  await page.getByTestId("rfd-refresh-remote-fast").click()
-  await expect
-    .poll(
-      async () => Number(await flash.getAttribute("data-reconcile-count")) > before,
-      { timeout: 5000 },
-    )
-    .toBe(true)
-
-  // The flash visual state cycles back to "0" after 800ms so e2e
-  // confirms the bookkeeping, not animation timing.
-  await expect
-    .poll(() => flash.getAttribute("data-reconcile-flash"), { timeout: 2000 })
-    .toBe("0")
-})
-
 test("page navigation re-fetches all remote frames with fresh content", async ({ page }) => {
   await page.goto("/remote-frame-demo")
   await page.waitForSelector('[data-testid="remote-fast"]', { timeout: 5000 })

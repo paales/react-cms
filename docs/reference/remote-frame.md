@@ -8,13 +8,17 @@ host's registry, and stitches the decoded subtree into the host's
 outer response. Inside the host's tree, the remote frame is
 indistinguishable from a locally-rendered subtree.
 
+Most call sites don't use `<RemoteFrame>` directly — they use
+typed bindings produced by `yarn parton add`. See
+[Typed bindings](#typed-bindings) below.
+
 ```tsx
 import { RemoteFrame } from "@parton/framework"
 import { Suspense } from "react"
 
 <Suspense fallback={<Spinner />}>
   <RemoteFrame
-    src="https://stripe.example/__remote/payment-form"
+    url="https://stripe.example/__remote/payment-form"
     parent={parent}
     capability={{ cart_id: "abc", currency: "USD", total: 49.95 }}
   />
@@ -25,34 +29,174 @@ import { Suspense } from "react"
 
 ```ts
 interface RemoteFrameProps {
-  src: string
+  url: string
   parent: PartialCtx
   capability?: Capability
-  rewriter?: RowRewriter
-  rewriteModuleRefs?: boolean | ((path: string) => string)
-  headers?: Record<string, string>
-  streaming?: boolean
+  namespace?: string
 }
 ```
 
 | Prop | Notes |
 |---|---|
-| `src` | Absolute URL or same-origin path. Relative paths resolve against the current request's URL via `getRequest()`. |
+| `url` | Absolute URL or same-origin path of the remote endpoint. Relative paths resolve against the current request's URL via `getRequest()`. |
 | `parent` | Host `PartialCtx`. Passed for placement consistency; the remote runs in its own process scope, so this isn't forwarded over the wire. |
 | `capability` | Host-declared values the remote can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header. |
-| `rewriter` | Author-supplied per-row Flight rewriter. Composes with the auto-derived module-ref rewriter (module rewrite runs first; author runs second). |
-| `rewriteModuleRefs` | `true` (default for absolute `src`) — rewrite relative module paths to the remote origin. `false` — pass through. A function — custom transform. `/@fs/` and `/@id/` paths are left alone (dev-mode filesystem-absolute, both processes can resolve them). |
-| `headers` | Extra headers on the remote fetch. Composed with `capability` (capability wins on collision). |
-| `streaming` | `false` by default — buffer the full remote response before decoding (clean snapshot ordering, no within-remote streaming). `true` — pass-through main stream, register snapshots asynchronously on remote stream-end. Trade-off: within-remote Suspense reveals stream to the host, but the `usePartialReconcile` hook can fire on initial mount due to the timing race. Opt in when within-remote streaming is worth the wrinkle. |
+| `namespace` | Prefix applied to every id + label registered from this remote's trailer. `magento` turns the remote's `stocks` spec into `magento:stocks` in the host's registry, so selectors stay collision-free across multiple remotes. Set automatically by `parton add` bindings. |
 
-## Per-request fetch dedup
+The remote's payload is always streamed through the row-level
+rewriter — within-remote Suspense reveals reach the host
+incrementally. Module-ref rewriting auto-derives from `url`:
+relative paths skip rewrite (host bundle owns the modules);
+absolute paths rewrite relative module refs to the remote origin
+so the host browser can dynamically import them.
 
-Identical `<RemoteFrame src capability>` placements on the same
-request share one fetch. Stored in a `WeakMap<Request, Map<key,
-Promise>>` so the cache dies with the request. Dedup key:
-`src + "\0" + base64(capability JSON)`. Streaming-mode RemoteFrames
-opt out of dedup (their streams are single-use; tee-ing would
-defeat the streaming purpose).
+### Streaming + correct refetch routing for nested partials
+
+Snapshots arrive at the END of the remote's stream (the trailer
+carries each PartialBoundary's `emittedFp` and descendant-fold
+fields, which can only be computed post-render). The trailer's
+`.then` callback would normally fire AFTER the host's outer stream
+has flushed and committed — leaving the route-hint table empty
+for any nested addressable partial the remote rendered.
+
+The framework's commit-defer mechanism (`deferCommitUntil` on
+`partial-registry.ts`) closes that race. `<RemoteFrame>` registers
+a promise that resolves when its trailer has been parsed and the
+snapshots written; the stream-wrapping helpers
+(`wrapStreamWithFpTrailer`, `wrapStreamWithCommitOnly`) call
+`Promise.allSettled(_drainPendingDefers())` before firing commit.
+Every nested addressable partial therefore lands in the host's
+hint table before the response goes out, so
+`nav.reload({selector: "magento:cart-summary"})` from the host
+finds the snapshot and routes back to the remote — even on the
+very first render of the page.
+
+## Typed bindings
+
+`yarn parton add <name> <origin>` generates per-spec typed
+wrappers in the host repo, so call sites don't write URLs by
+hand and the capability shape is enforced at compile time.
+
+```sh
+$ yarn parton add magento http://localhost:5181
+Fetching manifest from http://localhost:5181/__remote/manifest.json
+Fetching types from http://localhost:5181/__remote/types.d.ts
+Wrote src/remote/magento/types.ts
+Wrote src/remote/magento/index.ts
+Bound 4 spec(s) from http://localhost:5181.
+```
+
+The generated `index.ts` exports one component per addressable
+spec from the remote:
+
+```ts
+import { remote } from "@parton/framework"
+import type { PaymentCap } from "./types.ts"
+
+const ORIGIN = "http://localhost:5181"
+const NAMESPACE = "magento"
+
+export const MagentoPaymentSummary = remote<PaymentCap>({
+  origin: ORIGIN,
+  selector: "magento-payment-summary",
+  namespace: NAMESPACE,
+})
+
+export const MagentoStocks = remote({
+  origin: ORIGIN,
+  selector: "magento-stocks",
+  namespace: NAMESPACE,
+})
+```
+
+The `namespace` is the install name (`magento` in this case).
+Every id + label that comes off this remote is registered in the
+host as `magento:<bare-id>`, so two remotes with overlapping
+selectors don't collide and `nav.reload({selector: "magento:foo"})`
+is self-describing about where the refetch routes to.
+
+Host call sites:
+
+```tsx
+import { MagentoPaymentSummary, MagentoStocks } from "@/remote/magento"
+
+<MagentoPaymentSummary
+  parent={parent}
+  capability={{ cart_id: "...", currency: "EUR", total: 127.45 }}
+/>
+<MagentoStocks parent={parent} />
+```
+
+When a spec varies on URL search params, the binding accepts a
+`searchParams` prop that gets appended to the fetch URL:
+
+```tsx
+<MagentoCheckoutStep parent={parent} searchParams={{ step: "payment" }} />
+```
+
+`yarn parton update <name>` re-runs the fetch using the origin
+recorded in the generated `index.ts`. `yarn parton list` shows
+installed remotes; `yarn parton remove <name>` deletes a binding
+directory.
+
+### Authoring the remote side
+
+Mark the spec's capability schema by name (the same name exported
+from the remote's `remote-types.ts`):
+
+```ts
+// e2e-magento/src/app/remote-specs.tsx
+export const MagentoPaymentSummary = parton(
+  async function Render(_: RenderArgs) {
+    const cap = getCapability()
+    // …
+  },
+  {
+    selector: "magento-payment-summary",
+    capabilityType: "PaymentCap",
+  },
+)
+```
+
+```ts
+// e2e-magento/src/app/remote-types.ts
+export type PaymentCap = {
+  cart_id: string
+  currency: string
+  total: number
+}
+```
+
+Mount the framework's remote handler in your `entry.rsc.tsx`:
+
+```tsx
+import { createRemoteHandler } from "@parton/framework"
+
+const remote = createRemoteHandler({
+  name: "magento",
+  renderToFlightStream: (element) =>
+    renderToReadableStream(element, { onError: silenceClientDisconnect }),
+  typesPath: new URL("./app/remote-types.ts", import.meta.url).pathname,
+})
+
+async function handler(request: Request): Promise<Response> {
+  const r = await remote(request)
+  if (r) return r
+  // …fall through to the app's page handler
+}
+```
+
+`createRemoteHandler` claims four routes:
+
+| Route | Body |
+|---|---|
+| `OPTIONS *` | CORS preflight (204) |
+| `GET /__remote/manifest.json` | Spec inventory for the CLI |
+| `GET /__remote/types.d.ts` | Author-provided `remote-types.ts` file |
+| `GET /__remote/<selector>` | Focused Flight bytes + snapshot trailer |
+
+Everything else returns `null`, so the caller falls through to
+its normal page handler.
 
 ## Selector-targeted refetch routing
 
@@ -63,20 +207,26 @@ by a local render or by `<RemoteFrame>`:
 - **Local**: `partialFromSnapshot` looks up the spec Component in
   the local catalog and re-renders. Fast.
 - **Remote (cross-origin)**: `partialFromSnapshot` returns a fresh
-  `<RemoteFrame src={origin}/__remote/{id} capability={...} />`.
-  The host fetches the remote endpoint again, re-stitches.
+  `<RemoteFrame url={origin}/__remote/{remoteId} capability={...} namespace={ns} />`.
+  The host fetches the remote endpoint again, re-stitches with the
+  same namespace so the registry stays stable across re-renders.
 
 The distinction lives on the snapshot via `source: { kind:
-"remote", origin, capability? }`. RemoteFrame stamps this only
-for genuinely-cross-origin remotes — same-origin remotes use the
-local catalog path (faster, no round-trip to the same machine).
+"remote", origin, capability?, remoteId }`. `remoteId` is the
+spec's bare id at the remote — separate from the host-side
+registry id, which may be namespaced (`magento:stocks` vs
+`stocks`). RemoteFrame stamps `source` only for genuinely-
+cross-origin remotes — same-origin remotes use the local catalog
+path (faster, no round-trip to the same machine).
 
 ## Frame navigation (navigating within a RemoteFrame)
 
 Falls out of composing `<Frame>` + a parton wrapper + the
-RemoteFrame — no dedicated primitive needed:
+bound remote — no dedicated primitive needed:
 
 ```tsx
+import { MagentoCheckoutStep } from "@/remote/magento"
+
 <Frame name="checkout" initialUrl="/?step=shipping" parent={parent}>
   {(p) => (
     <>
@@ -90,10 +240,7 @@ const RemoteCheckoutFrame = parton(
   function Render({ step, parent }) {
     return (
       <Suspense fallback={…}>
-        <RemoteFrame
-          src={`${REMOTE_ORIGIN}/__remote/checkout-step?step=${step}`}
-          parent={parent}
-        />
+        <MagentoCheckoutStep parent={parent} searchParams={{ step }} />
       </Suspense>
     )
   },
@@ -108,24 +255,13 @@ How it composes:
 
 1. `<Frame>` opens a per-name URL scope (session-backed; survives
    reloads; per-tab shared).
-2. The wrapper parton's `vary` reads `?step=` from the frame URL
-   (the framework's `getRequest()` returns the frame-resolved
-   URL via `parent.frameChain`).
-3. The parton threads `step` into `<RemoteFrame>`'s `src` as a
-   query param.
+2. The wrapper parton's `vary` reads `?step=` from the frame URL.
+3. The parton threads `step` into the binding's `searchParams`.
 4. Client buttons inside the frame call
    `useNavigation("checkout").navigate("/?step=…")`. The frame
-   URL updates; the wrapper parton re-runs vary; src changes;
-   RemoteFrame re-fetches.
+   URL updates; the wrapper parton re-runs vary; the binding
+   re-fetches.
 5. The page URL is unaffected; other frames are unaffected.
-
-What this DOESN'T need:
-- A "navigateRemote" API on RemoteFrame.
-- Special wiring between Frame and RemoteFrame.
-- A new server-side primitive.
-
-The vary chain is the bridge — same pattern as navigating any
-local parton.
 
 ## Security note: credentials omit
 
@@ -134,56 +270,6 @@ NOT leak to the remote, even on same-origin embeddings. The only
 host context the remote receives is what's explicitly forwarded
 via `capability`.
 
-## The remote endpoint
-
-A remote endpoint is an HTTP route that returns a focused Flight
-payload for a single parton. In `e2e-testing` and `e2e-magento`,
-the routes live in `entry.rsc.tsx` under `/__remote/<spec-id>`:
-
-```ts
-if (url.pathname.startsWith("/__remote/")) {
-  const id = decodeURIComponent(url.pathname.slice("/__remote/".length))
-  const spec = getSpecById(id)
-  if (!spec) return new Response(`Unknown spec: ${id}`, { status: 404 })
-
-  const capability = decodeCapability(request.headers.get(CAPABILITY_HEADER))
-  const { result: stream } = await runWithRequestAsync(request, async () => {
-    enterRequestRegistry("__remote", "streaming")
-    return runWithCapability(capability, () => {
-      const flightStream = renderToReadableStream(<spec.Component parent={ROOT} />, {
-        onError: silenceClientDisconnect,
-      })
-      return wrapStreamWithSnapshotTrailer(flightStream, () => {
-        const reg = getActiveRegistry()
-        return reg ? reg.pendingWrites : new Map()
-      })
-    })
-  })
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "content-type": "text/x-component;charset=utf-8",
-      "access-control-allow-origin": "*",
-    },
-  })
-}
-```
-
-Three context boundaries wrap the render:
-
-1. **`runWithRequestAsync(request, ...)`** — request ALS for
-   `getRequest()` / `getCookie()` / etc.
-2. **`enterRequestRegistry("__remote", "streaming")`** —
-   PartialBoundary's `registerPartial` side effect has a place to
-   write. The remote's registry is throwaway; only `pendingWrites`
-   matters, captured by the snapshot trailer at flush time.
-3. **`runWithCapability(capability, ...)`** — the host-declared
-   capability becomes available via `getCapability()`.
-
-The remote's CORS handler answers `OPTIONS` preflight with
-permissive `access-control-allow-*`. Production deployments
-should tighten this to the host's origin.
-
 ## Capability scoping
 
 The host explicitly declares what the remote can read. Anything
@@ -191,31 +277,26 @@ not declared, the remote doesn't see.
 
 ```tsx
 // Host
-<RemoteFrame
-  src="https://stripe.example/__remote/payment-method-picker"
+<MagentoPaymentSummary
+  parent={parent}
   capability={{
     cart_id: cart.id,
     currency: cart.currency,
     total: cart.total,
-    idempotency_key: requestId,
   }}
-  parent={parent}
 />
 
 // Remote spec
-import { parton, getCapability, type RenderArgs } from "@parton/framework"
-
-const PaymentMethodPicker = parton(
+const MagentoPaymentSummary = parton(
   async function Render(_: RenderArgs) {
     const cap = getCapability()
-    const methods = await listAcceptedMethods({
-      cartId: String(cap.cart_id),
-      currency: String(cap.currency),
-      total: Number(cap.total),
-    })
-    return <Methods methods={methods} idempotencyKey={String(cap.idempotency_key)} />
+    const cartId = String(cap.cart_id)
+    // …
   },
-  { selector: "payment-method-picker" },
+  {
+    selector: "magento-payment-summary",
+    capabilityType: "PaymentCap",
+  },
 )
 ```
 
@@ -226,9 +307,9 @@ header decodes to `{}` — the remote sees nothing from the host.
 
 The capability is the trust boundary: a misbehaving remote can't
 read host cookies, session, or other host state. It only sees
-what the slot owner explicitly forwarded. v2 will add signed
-capability tokens so the remote can also trust the host's claims
-(not just receive them); v1 is trust-the-network.
+what the slot owner explicitly forwarded. Signed capability tokens
+(so the remote can also trust the host's claims, not just receive
+them) are filed in IDEAS.md; v1 is trust-the-network.
 
 ## Snapshot trailer
 
@@ -245,17 +326,11 @@ After the Flight bytes, the remote appends:
 <UTF-8 JSON: { id: SerializedSnapshot, ... }>
 ```
 
-The host's `<RemoteFrame>` parses the trailer via
-`parseSnapshotTrailer` (in `framework/src/lib/snapshot-trailer.ts`)
-and re-registers each snapshot in the host's request registry via
-`registerPartial`. Selector refetch (`nav.reload({selector: "..."})`)
-now finds the id and routes through the normal cache-mode path.
-
-Same-origin v1: the refetch hits the host's local spec catalog
-(both processes share the same spec definitions). Cross-origin
-v2 will need a `source: "remote:<origin>"` field on the snapshot
-so the host's refetch dispatcher routes back to the remote
-endpoint rather than rendering locally.
+The host's `<RemoteFrame>` parses the trailer via the streaming
+splitter in `framework/src/lib/snapshot-trailer.ts` and registers
+each snapshot in the host's request registry via `registerPartial`.
+Selector refetch then finds the id and routes through the normal
+cache-mode path.
 
 ## Module-ref rewriting
 
@@ -271,9 +346,9 @@ a cross-origin remote, the path is meaningless to the host —
 rewrites it to an absolute URL at the remote's origin so the host
 browser can dynamically import.
 
-The default policy auto-derives from `src`:
+The policy auto-derives from `url`:
 
-| `src` shape | Module-ref rewrite |
+| `url` shape | Module-ref rewrite |
 |---|---|
 | Relative path (`/__remote/foo`) | No rewrite. Same-origin; host bundle owns the modules. |
 | Absolute URL (`http://remote.example/...`) | Rewrite relative paths (`./X.tsx`, `/X.tsx`) to `<remote-origin>/X.tsx`. |
@@ -281,32 +356,14 @@ The default policy auto-derives from `src`:
 | `http://...` / `https://...` paths in the payload | Left alone (already absolute). |
 | Bare specifiers (`lodash`, `@scope/x`) | Left alone. |
 
-Override via `rewriteModuleRefs: false` (no rewrite) or
-`rewriteModuleRefs: (path) => path` (custom transform).
-
-## Streaming trade-off
-
-The current `<RemoteFrame>` implementation buffers the full
-remote response before decoding. The reason: the snapshot
-trailer arrives at the END of the response, and we want to
-register snapshots BEFORE the outer Flight encoder commits.
-Buffering keeps the ordering simple.
-
-Cost: streaming inside a single remote payload is lost. Multiple
-remote frames still arrive in parallel (each in its own Suspense
-boundary) — what doesn't work is a single remote with nested
-Suspense streaming each reveal to the host. Holdback-streaming
-is filed in `snapshot-trailer.ts` as a follow-up.
-
 ## Production deployment
 
 `<RemoteFrame>` is designed for independently-deployed remote
 processes. The dev-mode demos run host + remote on the same
 machine for convenience, but each app builds independently
 (`yarn build` for the host, `yarn build:magento` for the remote)
-and serves independently (`yarn preview` and `yarn
-preview:magento`, or `yarn preview:all` to run both with
-clean port assignments).
+and serves independently (`yarn preview` and `yarn preview:magento`,
+or `yarn preview:all` to run both with clean port assignments).
 
 In dev, both apps' vite-rsc plugins happen to resolve `/@fs/...`
 filesystem-absolute module paths against the same files (so
@@ -326,20 +383,16 @@ yarn preview:all     # serves both: host:5173, magento:5181
 # Open http://localhost:5173/remote-frame-crossorigin-demo
 ```
 
-The cross-origin tests pass against the production preview;
-known-flaky in dev due to vite-rsc emitting unstable hash IDs
-across cold dev starts.
-
 ## Demos
 
 - **`/remote-frame-demo`** — five same-origin remote frames
   exercising parallel streaming, client-component hydration,
   cache-on-remote-spec, and selector-targeted refetch.
 - **`/remote-frame-crossorigin-demo`** — requires
-  `yarn dev:magento` running in parallel. Embeds three partons
-  hosted by `e2e-magento` on port 5181, including a capability-
-  scoped payment summary that reads `cart_id` / `currency` /
-  `total` from `getCapability()`.
+  `yarn dev:magento` running in parallel. Embeds four partons
+  hosted by `e2e-magento` on port 5181 via typed bindings,
+  including a capability-scoped payment summary and a
+  checkout-step navigator that exercises `searchParams`.
 
 ## Related
 

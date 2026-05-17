@@ -1825,6 +1825,8 @@ __metadata:
     react-dom: "npm:19.3.0-canary-00f063c3-20260415"
     vite: "npm:^8.0.3"
     vitest: "npm:^3.1.4"
+  bin:
+    parton: ./scripts/parton-cli.mjs
   languageName: unknown
   linkType: soft
 
