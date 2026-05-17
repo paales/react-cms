@@ -138,6 +138,75 @@ function isAbsoluteUrl(src: string): boolean {
   return src.startsWith("http://") || src.startsWith("https://")
 }
 
+// ─── Per-request fetch dedup ───────────────────────────────────────────
+//
+// Multiple `<RemoteFrame src=… capability=…>` placements on the same
+// page would each fire a separate fetch even when the (src,
+// capability) tuple is identical. Dedup: cache the FETCH on the
+// in-flight request so identical placements share one network call.
+// The buffered path returns the same byte array to each caller.
+//
+// Cache lives in a WeakMap keyed by the request object, so it dies
+// with the request — no cross-request leakage. Streaming-mode
+// RemoteFrames don't dedup (the streams are single-use and tee-ing
+// would defeat the streaming purpose); they fire their own fetch
+// each time, which is unusual enough to be the right default.
+
+interface RemoteFetchResult {
+  buffer: Uint8Array
+}
+
+const dedupByRequest = new WeakMap<Request, Map<string, Promise<RemoteFetchResult>>>()
+
+function dedupKey(absoluteSrc: string, capability: Capability | undefined): string {
+  return capability === undefined
+    ? absoluteSrc
+    : `${absoluteSrc}\x00${encodeCapability(capability)}`
+}
+
+function getDedupCache(): Map<string, Promise<RemoteFetchResult>> {
+  let req: Request
+  try {
+    req = getRequest()
+  } catch {
+    // No request context (rare — RemoteFrame outside a server render).
+    // Fall back to a private map so the function still works.
+    return new Map()
+  }
+  let cache = dedupByRequest.get(req)
+  if (!cache) {
+    cache = new Map()
+    dedupByRequest.set(req, cache)
+  }
+  return cache
+}
+
+async function fetchRemoteBuffered(
+  absoluteSrc: string,
+  capability: Capability | undefined,
+  requestHeaders: Record<string, string>,
+): Promise<RemoteFetchResult> {
+  const cache = getDedupCache()
+  const key = dedupKey(absoluteSrc, capability)
+  let pending = cache.get(key)
+  if (pending) return pending
+  pending = (async () => {
+    const response = await fetch(absoluteSrc, {
+      headers: requestHeaders,
+      credentials: "omit",
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `RemoteFrame: fetch failed for ${absoluteSrc} (status ${response.status})`,
+      )
+    }
+    const buffer = new Uint8Array(await response.arrayBuffer())
+    return { buffer }
+  })()
+  cache.set(key, pending)
+  return pending
+}
+
 export async function RemoteFrame({
   src,
   parent: _parent,
@@ -158,20 +227,6 @@ export async function RemoteFrame({
   const requestHeaders: Record<string, string> = { ...(headers ?? {}) }
   if (capability !== undefined) {
     requestHeaders[CAPABILITY_HEADER] = encodeCapability(capability)
-  }
-
-  // `credentials: "omit"` is the trust-boundary teeth: even on
-  // same-origin fetches the host's cookies do NOT leak to the
-  // remote. The only host context the remote sees is what was
-  // explicitly forwarded via `capability`.
-  const response = await fetch(absoluteSrc, {
-    headers: requestHeaders,
-    credentials: "omit",
-  })
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `RemoteFrame: fetch failed for ${absoluteSrc} (status ${response.status})`,
-    )
   }
 
   const sourceOrigin = new URL(absoluteSrc).origin
@@ -209,16 +264,18 @@ export async function RemoteFrame({
   let flightStreamForDecode: ReadableStream<Uint8Array>
 
   if (streaming) {
-    // Streaming split: main stream flows through immediately so
-    // the decoder can resolve lazies as bytes arrive. Snapshot
-    // registration happens asynchronously on remote stream-end.
-    // Ordering: the host's outer encoder can't finish serializing
-    // this remote subtree until all inner lazies resolve, which
-    // can't happen before the inner stream ends. The
-    // `trailer.then` microtask fires on source-end — before the
-    // outer encoder's stream-flush commit — so the snapshots
-    // are in the registry's `pendingWrites` by the time
-    // `commitRequestRegistry` runs.
+    // Streaming split — no dedup (streams are single-use and
+    // tee-ing would defeat the streaming purpose). Each placement
+    // fires its own fetch.
+    const response = await fetch(absoluteSrc, {
+      headers: requestHeaders,
+      credentials: "omit",
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `RemoteFrame: fetch failed for ${absoluteSrc} (status ${response.status})`,
+      )
+    }
     const split = splitStreamAtSnapshotTrailer(response.body)
     flightStreamForDecode = split.mainStream
     void split.trailer.then((snapshots) => {
@@ -228,15 +285,13 @@ export async function RemoteFrame({
       }
     })
   } else {
-    // Buffer-then-split (default): read the full response,
-    // separate Flight bytes from the snapshot trailer, register
-    // synchronously. Snapshot registration ordering is clean —
-    // no race with the outer commit, no surprise re-fires of
-    // hooks like `usePartialReconcile`. Cost: no within-remote
-    // streaming (a remote with nested Suspense reveals them all
-    // at once when the response finishes).
-    const fullBuffer = new Uint8Array(await response.arrayBuffer())
-    const { flightBytes, snapshots } = parseSnapshotTrailer(fullBuffer)
+    // Buffer-then-split (default) — dedup applies: identical
+    // (src, capability) placements on the same page share one
+    // fetch. Each placement still parses + registers + decodes
+    // independently (each gets its own decoded React tree, so
+    // the host can render them in different positions).
+    const { buffer } = await fetchRemoteBuffered(absoluteSrc, capability, requestHeaders)
+    const { flightBytes, snapshots } = parseSnapshotTrailer(buffer)
     if (snapshots) {
       for (const [id, snap] of Object.entries(snapshots)) {
         registerPartial(id, stampSource(snap))
