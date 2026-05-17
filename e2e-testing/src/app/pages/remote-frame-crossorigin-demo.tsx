@@ -30,11 +30,51 @@
  */
 
 import { parton, RemoteFrame, type RenderArgs } from "@parton/framework"
+import { Frame } from "@parton/framework/lib/frame.tsx"
 import { Suspense } from "react"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { RemoteRefreshButton } from "../components/remote-refresh-button.tsx"
+import { CheckoutStepNav } from "../components/checkout-step-nav.tsx"
 
 const REMOTE_ORIGIN = "http://localhost:5181"
+
+/** Wrapper parton that reads `?step=` from the frame URL and
+ *  passes it to the cross-origin RemoteFrame as a search param.
+ *  The remote spec's `vary` reads the same param — when the
+ *  frame URL changes, this parton re-renders with new `step`,
+ *  RemoteFrame's src changes, the fetch fires with the new URL.
+ *
+ *  Demonstrates: navigating WITHIN a `<Frame>` to a different
+ *  variant of the SAME RemoteFrame, without reloading the host
+ *  or affecting other frames. The frame URL is the navigation
+ *  axis; the parton's vary is the bridge.
+ */
+const RemoteCheckoutFrame = parton(
+  function RemoteCheckoutFrameRender(
+    { step, parent }: { step: string } & RenderArgs,
+  ) {
+    return (
+      <Suspense
+        fallback={
+          <Card className="mb-2 p-4" data-testid="rfxd-checkout-fallback">
+            <CardContent className="px-0 italic text-muted-foreground">
+              Loading checkout step…
+            </CardContent>
+          </Card>
+        }
+      >
+        <RemoteFrame
+          src={`${REMOTE_ORIGIN}/__remote/magento-checkout-step?step=${encodeURIComponent(step)}`}
+          parent={parent}
+        />
+      </Suspense>
+    )
+  },
+  {
+    selector: "remote-checkout-frame",
+    vary: ({ search: { step = "shipping" } }) => ({ step }),
+  },
+)
 
 export const RemoteFrameCrossOriginDemoPage = parton(
   function RemoteFrameCrossOriginDemoRender({ parent }: RenderArgs) {
@@ -109,6 +149,15 @@ export const RemoteFrameCrossOriginDemoPage = parton(
             }}
           />
         </Suspense>
+
+        <Frame name="checkout" initialUrl="/?step=shipping" parent={parent}>
+          {(p) => (
+            <>
+              <CheckoutStepNav />
+              <RemoteCheckoutFrame parent={p} />
+            </>
+          )}
+        </Frame>
 
         <footer className="mt-4 text-xs text-muted-foreground" data-testid="rfxd-footer">
           Footer rendered at <code>{new Date().toISOString()}</code>. The host

@@ -144,6 +144,32 @@ test("selector refetch routes back to the cross-origin remote (server wire)", as
   expect(Number(refetchTick)).toBeGreaterThan(Number(initialTick))
 })
 
+test("frame navigation within a cross-origin RemoteFrame", async ({ page }) => {
+  // Wraps a cross-origin RemoteFrame in a `<Frame name="checkout">`.
+  // Buttons inside call `useNavigation("checkout").navigate(?step=…)`
+  // which updates the frame URL. A wrapper parton reads the frame
+  // URL's `?step=` via `vary` and threads it into the RemoteFrame's
+  // src, causing a re-fetch with new content.
+  //
+  // What this proves: the existing <Frame> + parton + RemoteFrame
+  // primitives COMPOSE to give per-RemoteFrame navigation without
+  // any new framework code. Other frames on the page are unaffected;
+  // the page URL doesn't change.
+  await page.goto("/remote-frame-crossorigin-demo", { timeout: 30000 })
+  const card = page.getByTestId("magento-checkout-step")
+  await expect(card).toBeVisible({ timeout: 15000 })
+  await expect(card).toHaveAttribute("data-step", "shipping")
+
+  await page.getByTestId("checkout-step-payment").click()
+  await expect(card).toHaveAttribute("data-step", "payment", { timeout: 5000 })
+
+  await page.getByTestId("checkout-step-review").click()
+  await expect(card).toHaveAttribute("data-step", "review", { timeout: 5000 })
+
+  // Browser URL didn't change — the frame has its own URL space.
+  expect(new URL(page.url()).pathname).toBe("/remote-frame-crossorigin-demo")
+})
+
 test("remote without capability sees no host values", async ({ request }) => {
   // Direct fetch with no x-parton-capability header — getCapability
   // returns {} on the remote side, so the body falls back to defaults

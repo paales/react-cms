@@ -44,6 +44,54 @@ export const MagentoGreeting = parton(
   { selector: "magento-greeting" },
 )
 
+/** Demonstrates navigation within a RemoteFrame: this parton's
+ *  content varies on a URL search param (`?step=`). The host
+ *  embeds it inside a `<Frame>` so client-side buttons calling
+ *  `useNavigation("checkout").navigate(...)` change the frame's
+ *  URL, the parton's `vary` picks up the new step, and the
+ *  RemoteFrame re-fetches with new content — all without
+ *  reloading the host page or affecting other frames. */
+export const MagentoCheckoutStep = parton(
+  async function MagentoCheckoutStepRender(
+    { step }: { step: string } & RenderArgs,
+  ) {
+    await delay(150)
+    const steps = ["shipping", "payment", "review"] as const
+    const currentIdx = steps.findIndex((s) => s === step)
+    const safeIdx = currentIdx < 0 ? 0 : currentIdx
+    const currentStep = steps[safeIdx]
+    return (
+      <div
+        data-testid="magento-checkout-step"
+        data-step={currentStep}
+        style={{
+          padding: "1rem",
+          border: "1px solid rgba(99, 102, 241, 0.4)",
+          background: "rgba(99, 102, 241, 0.08)",
+          borderRadius: "0.5rem",
+          color: "#c7d2fe",
+        }}
+      >
+        <strong>Cross-origin checkout step</strong>
+        <div style={{ marginTop: "0.5rem", fontSize: "0.85em" }}>
+          Step {safeIdx + 1} of {steps.length} ·{" "}
+          <code data-testid="magento-checkout-current">{currentStep}</code>
+        </div>
+        <div style={{ marginTop: "0.5rem", fontSize: "0.75em", opacity: 0.7 }}>
+          Driven by the frame URL's <code>?step=</code> param. The host's
+          `&lt;Frame name="checkout"&gt;` scopes this URL — client buttons
+          inside navigate the frame, this parton re-renders with the new
+          step, and `&lt;RemoteFrame&gt;` re-fetches.
+        </div>
+      </div>
+    )
+  },
+  {
+    selector: "magento-checkout-step",
+    vary: ({ search: { step = "shipping" } }) => ({ step }),
+  },
+)
+
 /** A capability-aware parton — reads host-declared values via
  *  `getCapability()`. The host passes them as the `capability`
  *  prop on `<RemoteFrame>`; the framework forwards them as a
