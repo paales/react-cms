@@ -156,6 +156,32 @@
             ]
           },
           {
+            "id": "app-nav-link-streaming-demo",
+            "type": "nav-link",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "href": "/streaming-demo",
+                  "label": "Streaming Demo"
+                }
+              }
+            ]
+          },
+          {
+            "id": "app-nav-link-chat-notes",
+            "type": "nav-link",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "href": "/chat-notes",
+                  "label": "Chat Notes"
+                }
+              }
+            ]
+          },
+          {
             "id": "app-nav-link-remote-frame",
             "type": "nav-link",
             "configs": [
