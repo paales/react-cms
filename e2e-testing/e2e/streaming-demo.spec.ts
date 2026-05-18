@@ -24,8 +24,10 @@ test.beforeEach(async ({ baseURL }) => {
  * on `<body>` after it runs — once present, every other use-client
  * component on this page (BumpButton, PushUrlButton) also has its
  * onClick handler attached. Without this Playwright's `.click()`
- * can fire on the SSR-rendered DOM before React 19 finishes
- * attaching event handlers, and the click is a no-op.
+ * can fire on the SSR-rendered DOM before React 19's `hydrateRoot`
+ * installs its delegated root listener, and the click is a no-op
+ * (React's event-replay queue only catches clicks fired AFTER
+ * `hydrateRoot` ran, not before).
  */
 async function waitForStreamingDemoReady(page: import("@playwright/test").Page): Promise<void> {
   await page.locator("body[data-streaming-demo-ready]").waitFor({ timeout: 10000 })

@@ -16,11 +16,16 @@ import { bumpDemoCounter, pushSeq } from "../pages/streaming-demo-actions.ts"
 export function LiveTickAutostart() {
   const [reload] = useNavigation().reload()
   useEffect(() => {
-    // Side-effect signal for e2e: once this useEffect runs we know
-    // the use-client subtree on /streaming-demo has hydrated (and
-    // therefore the BumpButton/PushUrlButton onClick handlers are
-    // attached). Tests wait for `data-streaming-demo-ready` on body
-    // before clicking.
+    // E2E hydration signal: stamps `<body data-streaming-demo-ready>`
+    // once this useEffect runs. Tests wait for the attribute before
+    // clicking. React 19's event-replay only catches clicks that
+    // fire AFTER `hydrateRoot` has installed its delegated root
+    // listener — Playwright's `.click()` on a Test-Id locator often
+    // races ahead of that window (the SSR HTML is in the DOM, but
+    // `await createFromReadableStream(rscStream)` is still resolving
+    // upstream of `hydrateRoot`). Without the signal the click hits
+    // bare DOM, no React handler attached, no replay queue, and the
+    // bump action never fires.
     document.body.setAttribute("data-streaming-demo-ready", "1")
     void reload({ selector: "streaming-demo-tick", disableTransition: true })
   }, [reload])
