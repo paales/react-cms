@@ -7,17 +7,17 @@
  *
  *   ┌─ Flight document 1 bytes ────────────────────────────────────┐
  *   │ <Flight rows…>                                               │
- *   │ <12-byte marker tag="fp"><4-byte length><JSON body>          │   ← trailer entry
- *   │ <12-byte marker tag="url"><4-byte length><JSON body>         │   ← trailer entry
+ *   │ \xFF[parton:fp:N]\n<N-byte JSON body>                        │   ← trailer entry
+ *   │ \xFF[parton:url:M]\n<M-byte JSON body>                       │   ← trailer entry
  *   ├─ optional segment delimiter ─────────────────────────────────┤
- *   │ <12-byte marker tag="next"><4-byte length=0>                 │
+ *   │ \xFF[parton:next:0]\n                                        │
  *   ├─ Flight document 2 bytes ────────────────────────────────────┤
  *   │ <Flight rows…>                                               │
  *   │ <fp-trailer for segment 2>                                   │
  *   └──────────────────────────────────────────────────────────────┘
  *
  * Single-segment streams (no `next` delimiter) parse as one segment,
- * matching the legacy fp-trailer flow.
+ * matching the legacy single-trailer flow.
  *
  * Per segment the splitter exposes:
  *   - `body`     — a ReadableStream of the Flight bytes for THAT
@@ -26,22 +26,16 @@
  *                  segment's trailer block (zero or more entries) is
  *                  fully read.
  *
- * Streaming-safe with bounded buffering. Flight bytes are forwarded
- * to the body stream as they arrive; the splitter keeps at most
- * `MARKER_LENGTH-1` trailing bytes in a tail buffer to catch a marker
- * that straddles a chunk boundary.
+ * Streaming-safe with minimal holdback. Flight bytes are forwarded
+ * to the body stream as they arrive; the splitter only holds back
+ * once it sees a `\xFF` (the marker prefix — invalid as UTF-8, so it
+ * never occurs inside Flight payload bytes).
  */
 
-import { MARKER_LENGTH, readMarkerTag } from "./fp-trailer-marker.ts"
+import { tryReadMarker } from "./fp-trailer-marker.ts"
 
 export interface Segment {
-  /** Flight bytes for this segment. Closes when the segment's body
-   *  block ends (either at the first trailer marker or at end-of-stream
-   *  if no trailers follow). */
   body: ReadableStream<Uint8Array>
-  /** Resolves with a tag → body-bytes map once the segment's trailer
-   *  block is fully read. Trailers without bodies (e.g. `next`) are
-   *  not included — they affect framing only. */
   trailers: Promise<Map<string, Uint8Array>>
 }
 
@@ -63,9 +57,8 @@ export function splitSegments(source: ReadableStream<Uint8Array>): AsyncIterable
  * Convenience wrapper for the legacy single-segment flow. Resolves
  * with `{mainStream, trailer}` where `trailer` is the parsed fp-update
  * JSON (the legacy shape) and `mainStream` is the first segment's
- * Flight body. Any segments past the first are dropped on the floor —
- * callers that want segmented behavior should use `splitSegments`
- * directly.
+ * Flight body. Any segments past the first are dropped — callers that
+ * want segmented behavior should use `splitSegments` directly.
  */
 export interface SplitResult {
   mainStream: ReadableStream<Uint8Array>
@@ -122,17 +115,9 @@ export function splitAtFpTrailer(source: ReadableStream<Uint8Array>): SplitResul
 
 class SegmentIterator implements AsyncIterator<Segment> {
   private reader: ReadableStreamDefaultReader<Uint8Array>
-  /** Bytes pulled from source but not yet processed. Always a freshly
-   *  allocated buffer when non-empty, never a subarray view of a
-   *  larger buffer (so callers can safely retain references). */
   private leftover: Uint8Array = new Uint8Array(0)
   private sourceClosed = false
-  /** Exhausted = both source is closed AND the final segment has been
-   *  delivered. Subsequent `next()` calls return done:true. */
   private exhausted = false
-  /** Promise of the in-flight `driveSegment` for the current segment.
-   *  The next `next()` call awaits this before starting another drive,
-   *  ensuring the shared source reader isn't contended. */
   private currentDrive: Promise<void> | null = null
 
   constructor(source: ReadableStream<Uint8Array>) {
@@ -140,9 +125,6 @@ class SegmentIterator implements AsyncIterator<Segment> {
   }
 
   async next(): Promise<IteratorResult<Segment>> {
-    // Wait for the previous segment's drive to finish (which transitions
-    // either to body→trailer→`next` delimiter, ending the segment but
-    // leaving the source open, OR to EOS, marking exhausted).
     if (this.currentDrive) {
       try {
         await this.currentDrive
@@ -156,10 +138,6 @@ class SegmentIterator implements AsyncIterator<Segment> {
       body: active.bodyStream,
       trailers: active.trailersPromise,
     }
-    // Run the drive in the background. The caller consumes body
-    // bytes as they arrive (preserving Flight's Suspense streaming
-    // timing); trailers resolve when the drive transitions out of
-    // body phase.
     this.currentDrive = this.driveSegment(active).catch((err) => {
       active.closeBody(err instanceof Error ? err : new Error(String(err)))
       active.resolveTrailers()
@@ -168,123 +146,109 @@ class SegmentIterator implements AsyncIterator<Segment> {
     return { value: segment, done: false }
   }
 
-  /** Run the state machine until the active segment is fully delivered
-   *  (body closed + trailers resolved). Sets `exhausted` if the source
-   *  ends with this segment.
-   *
-   *  Body phase emits source bytes to the segment's body stream with
-   *  minimal holdback. Markers always start with `\xFF` (invalid UTF-8
-   *  lead byte), and Flight emits valid UTF-8 — so any byte run that
-   *  doesn't contain `\xFF` is forwarded immediately, preserving
-   *  Suspense streaming timing. Only when `\xFF` appears do we hold
-   *  back to accumulate the 12 marker bytes and verify the pattern. */
+  /** Body phase: forward bytes to the segment's body stream, watching
+   *  for a `\xFF` marker prefix that ends the body block. Pure UTF-8
+   *  Flight content never contains `\xFF`, so byte runs without
+   *  `\xFF` are forwarded immediately — preserves Suspense streaming
+   *  pacing. */
   private async driveSegment(seg: ActiveSegment): Promise<void> {
     bodyLoop: while (true) {
       const buf = await this.pullMore()
       if (buf.length === 0) {
-        // EOS reached without a marker — segment ends here.
         seg.closeBody()
         seg.resolveTrailers()
         this.exhausted = true
         return
       }
-      // Find the first `\xFF` — the only byte that can start a marker.
       const ffIdx = buf.indexOf(0xff)
       if (ffIdx < 0) {
-        // No marker can be in this chunk. Forward in full.
         seg.enqueueBody(buf)
         continue
       }
-      // Forward everything before the `\xFF` immediately.
       if (ffIdx > 0) seg.enqueueBody(copySlice(buf, 0, ffIdx))
-      // Accumulate enough bytes (≥ MARKER_LENGTH) to validate.
       this.leftover = copySlice(buf, ffIdx, buf.length)
-      while (this.leftover.length < MARKER_LENGTH && !this.sourceClosed) {
-        const chunk = await this.readChunk()
-        if (chunk == null) break
-        this.leftover = concat(this.leftover, chunk)
-      }
-      const tag = this.leftover.length >= MARKER_LENGTH ? readMarkerTag(this.leftover) : null
-      if (tag != null) {
+      // Accumulate until tryReadMarker can decide.
+      while (true) {
+        const result = tryReadMarker(this.leftover)
+        if (result === "invalid") {
+          // The leading `\xFF` doesn't begin a valid marker. Could be
+          // junk from a torn stream; advance past it as a body byte and
+          // resume scanning. In practice this never fires in
+          // well-formed streams.
+          if (this.sourceClosed && this.leftover.length === 1) {
+            seg.enqueueBody(this.leftover)
+            this.leftover = new Uint8Array(0)
+            seg.closeBody()
+            seg.resolveTrailers()
+            this.exhausted = true
+            return
+          }
+          // Emit the lone byte to body, drop it from leftover, restart
+          // the body-phase loop so we scan for the next `\xFF` (if any).
+          seg.enqueueBody(copySlice(this.leftover, 0, 1))
+          this.leftover = copySlice(this.leftover, 1, this.leftover.length)
+          continue bodyLoop
+        }
+        if (result === "need-more") {
+          if (this.sourceClosed) {
+            // Truncated trailer header. Treat as garbage; flush
+            // remaining bytes to body and close out.
+            if (this.leftover.length > 0) seg.enqueueBody(this.leftover)
+            this.leftover = new Uint8Array(0)
+            seg.closeBody()
+            seg.resolveTrailers()
+            this.exhausted = true
+            return
+          }
+          const chunk = await this.readChunk()
+          if (chunk == null) continue
+          this.leftover = concat(this.leftover, chunk)
+          continue
+        }
         // Confirmed marker. Close body; trailer phase reads from
-        // leftover (which still starts with the 12-byte marker).
+        // leftover (which still starts at the `\xFF` prefix).
         seg.closeBody()
         break bodyLoop
       }
-      // Not a marker. Either source closed (leftover is final data)
-      // or false-positive `\xFF` at offset 0 with more bytes ahead.
-      if (this.sourceClosed) {
-        if (this.leftover.length > 0) seg.enqueueBody(this.leftover)
-        this.leftover = new Uint8Array(0)
-        seg.closeBody()
-        seg.resolveTrailers()
-        this.exhausted = true
-        return
-      }
-      // False positive: the leading `\xFF` is data. Emit everything up
-      // to the NEXT `\xFF` (the next candidate marker start) and keep
-      // from there onward in leftover.
-      const nextFf = this.leftover.indexOf(0xff, 1)
-      if (nextFf < 0) {
-        seg.enqueueBody(this.leftover)
-        this.leftover = new Uint8Array(0)
-      } else {
-        seg.enqueueBody(copySlice(this.leftover, 0, nextFf))
-        this.leftover = copySlice(this.leftover, nextFf, this.leftover.length)
-      }
-      // Loop again to validate at the new `\xFF`.
     }
 
-    // Trailer phase: parse markers back-to-back. Each marker is
-    // followed by a 4-byte big-endian length and a body of that
-    // length. `next` is a delimiter (length=0) and ends this segment.
+    // Trailer phase: parse markers + bodies back-to-back. Each marker
+    // is parsed by `tryReadMarker`; we then consume the body bytes.
+    // `next` is a delimiter (length=0) and ends this segment.
     while (true) {
-      // Need at least a marker + length to make progress.
-      while (this.leftover.length < MARKER_LENGTH + 4 && !this.sourceClosed) {
+      let parsed = tryReadMarker(this.leftover)
+      while (parsed === "need-more" && !this.sourceClosed) {
+        const chunk = await this.readChunk()
+        if (chunk == null) break
+        this.leftover = concat(this.leftover, chunk)
+        parsed = tryReadMarker(this.leftover)
+      }
+      if (parsed === "need-more" || parsed === "invalid") {
+        seg.resolveTrailers()
+        this.exhausted = true
+        return
+      }
+      const totalSize = parsed.headerSize + parsed.length
+      while (this.leftover.length < totalSize && !this.sourceClosed) {
         const chunk = await this.readChunk()
         if (chunk == null) break
         this.leftover = concat(this.leftover, chunk)
       }
-      if (this.leftover.length < MARKER_LENGTH + 4) {
-        // Truncated trailer — resolve and bail.
+      if (this.leftover.length < totalSize) {
         seg.resolveTrailers()
         this.exhausted = true
         return
       }
-      const tag = readMarkerTag(this.leftover)
-      if (tag == null) {
-        // Corrupt — not a valid marker.
-        seg.resolveTrailers()
-        this.exhausted = true
-        return
-      }
-      const len = new DataView(
-        this.leftover.buffer,
-        this.leftover.byteOffset + MARKER_LENGTH,
-        4,
-      ).getUint32(0, false)
-      const needed = MARKER_LENGTH + 4 + len
-      while (this.leftover.length < needed && !this.sourceClosed) {
-        const chunk = await this.readChunk()
-        if (chunk == null) break
-        this.leftover = concat(this.leftover, chunk)
-      }
-      if (this.leftover.length < needed) {
-        seg.resolveTrailers()
-        this.exhausted = true
-        return
-      }
-      const bodyBytes = copySlice(this.leftover, MARKER_LENGTH + 4, needed)
-      this.leftover = copySlice(this.leftover, needed, this.leftover.length)
-      if (tag === "next") {
-        // Segment boundary. Resolve trailers, leave state ready for
-        // the next segment (body mode), and return.
+      const bodyBytes =
+        parsed.length > 0
+          ? copySlice(this.leftover, parsed.headerSize, totalSize)
+          : new Uint8Array(0)
+      this.leftover = copySlice(this.leftover, totalSize, this.leftover.length)
+      if (parsed.tag === "next") {
         seg.resolveTrailers()
         return
       }
-      seg.addTrailer(tag, bodyBytes)
-      // Continue trailer loop — another trailer entry may follow,
-      // or EOS will end the segment.
+      seg.addTrailer(parsed.tag, bodyBytes)
       if (this.leftover.length === 0 && this.sourceClosed) {
         seg.resolveTrailers()
         this.exhausted = true
@@ -293,8 +257,6 @@ class SegmentIterator implements AsyncIterator<Segment> {
     }
   }
 
-  /** Return any pending leftover, or pull the next chunk from source.
-   *  Empty buffer on EOS. */
   private async pullMore(): Promise<Uint8Array> {
     if (this.leftover.length > 0) {
       const out = this.leftover

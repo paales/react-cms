@@ -1,90 +1,123 @@
 /**
- * Shared sentinel-marker bytes for the segmented-Flight wire format.
- * Server and client both import this so the byte sequence stays in
- * lockstep without either side needing the other's runtime imports.
+ * Wire-format marker for segmented-Flight trailers.
  *
- * Format (12 bytes): `\xFF\xFE` + 8 ASCII tag bytes (space-padded to 8)
- * + `\xFD\xFC`. The leading `\xFF\xFE` are invalid UTF-8 lead bytes —
- * they cannot appear at the start of a valid UTF-8 sequence, and Flight
- * emits UTF-8 JSON, so the sentinel cannot occur by accident inside the
- * upstream Flight bytes. The ASCII tag in the middle discriminates
- * segment types; the trailing `\xFD\xFC` closes the sentinel
- * deterministically so a partial match cannot be misread as a marker
- * start.
+ * On the wire each segment looks like:
  *
- * Tag taxonomy:
- *   `fp`    — length-prefixed JSON of cold→warm fp updates, applied
- *             to the client's fingerprint registry.
- *   `url`   — length-prefixed JSON describing window/frame URL pushes
- *             from server-side `getNavigation(scope).navigate(...)`.
- *   `next`  — zero-length delimiter announcing that the bytes that
- *             follow are a new Flight document (a new segment). The
- *             client peels each segment into its own
- *             `createFromReadableStream` + `setPayload` call.
+ *     <flight bytes…>
+ *     \xFF[parton:fp:256]\n<256-byte JSON body>
+ *     \xFF[parton:url:128]\n<128-byte JSON body>
+ *     \xFF[parton:next:0]\n
+ *     <flight bytes for next segment…>
  *
- * The framing generalises trivially to other trailer types — see
- * `docs/notes/IDEAS.md`. Reserve the tag, pick a body format (length-
- * prefixed JSON for metadata, zero-length for delimiters), and the
- * splitter dispatches by tag.
+ * One UTF-8-invalid lead byte (`\xFF`) marks the start of every
+ * trailer entry. Flight emits UTF-8 JSON, and `\xFF` is invalid as a
+ * UTF-8 lead OR continuation byte — so it cannot occur inside a Flight
+ * payload. After the `\xFF` the header is plain ASCII bracketed text
+ * terminated by `\n`, then a length-prefixed body of the declared size
+ * (or zero, for delimiters like `next`).
+ *
+ * Header grammar:
+ *
+ *     "[" "parton:" TAG ":" LENGTH "]" "\n"
+ *
+ *   TAG     — short ASCII identifier (1–16 chars). Today: `fp`, `url`,
+ *             `next`. Reserve new tags by adding a constant below.
+ *   LENGTH  — decimal byte count of the body, ≥ 0.
+ *
+ * The `parton:` prefix makes a packet trivially identifiable in
+ * tcpdump / curl output without context. The `\xFF` leader is what
+ * keeps Flight bytes unambiguously separable from trailer bytes — a
+ * pure-text boundary would risk collision with Flight content.
  */
 
-export const MARKER_LENGTH = 12
-const TAG_LENGTH = 8
+const PREFIX_BYTE = 0xff
 
-/** Build a 12-byte marker for the given tag. */
-export function buildMarker(tag: string): Uint8Array {
-  if (tag.length > TAG_LENGTH) {
-    throw new Error(`Trailer tag must be ≤ ${TAG_LENGTH} chars, got ${tag.length}: ${tag}`)
+const HEADER_OPEN = "[parton:"
+const HEADER_CLOSE = "]\n"
+
+const TEXT_ENCODER = new TextEncoder()
+const TEXT_DECODER = new TextDecoder()
+
+/** Build the marker + header bytes for a trailer entry. The caller
+ *  enqueues this followed by exactly `bodyLength` body bytes. */
+export function buildMarker(tag: string, bodyLength: number): Uint8Array {
+  if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) {
+    throw new Error(`Trailer tag must match /^[a-z][a-z0-9_-]{0,15}$/i, got: ${tag}`)
   }
-  const bytes = new Uint8Array(MARKER_LENGTH)
-  bytes[0] = 0xff
-  bytes[1] = 0xfe
-  const padded = tag.padEnd(TAG_LENGTH, " ")
-  const tagBytes = new TextEncoder().encode(padded)
-  bytes.set(tagBytes, 2)
-  bytes[10] = 0xfd
-  bytes[11] = 0xfc
-  return bytes
+  if (!Number.isInteger(bodyLength) || bodyLength < 0) {
+    throw new Error(`Trailer length must be a non-negative integer, got: ${bodyLength}`)
+  }
+  const header = `${HEADER_OPEN}${tag}:${bodyLength}${HEADER_CLOSE}`
+  const headerBytes = TEXT_ENCODER.encode(header)
+  const out = new Uint8Array(1 + headerBytes.byteLength)
+  out[0] = PREFIX_BYTE
+  out.set(headerBytes, 1)
+  return out
+}
+
+export interface ParsedMarker {
+  tag: string
+  length: number
+  /** Total bytes from `\xFF` through the trailing `\n`, inclusive.
+   *  Body starts at the buffer offset + headerSize; total entry size
+   *  is `headerSize + length`. */
+  headerSize: number
 }
 
 /**
- * Read the tag from a 12-byte buffer. Returns the trimmed tag string
- * if the buffer is a valid marker, `null` otherwise. Used by the
- * splitter to discriminate marker types on the wire.
+ * Try to parse a marker starting at `offset`. Returns:
+ *   - parsed result if the bytes contain a complete, valid header,
+ *   - `"need-more"` if the prefix is there but the header line hasn't
+ *     fully arrived yet,
+ *   - `"invalid"` if the bytes claim to be a marker but the header
+ *     doesn't validate (corrupt stream — caller should error out).
  */
-export function readMarkerTag(bytes: Uint8Array, offset = 0): string | null {
-  if (bytes.length < offset + MARKER_LENGTH) return null
-  if (bytes[offset] !== 0xff || bytes[offset + 1] !== 0xfe) return null
-  if (bytes[offset + 10] !== 0xfd || bytes[offset + 11] !== 0xfc) return null
-  const tagBytes = bytes.subarray(offset + 2, offset + 10)
-  return new TextDecoder().decode(tagBytes).trimEnd()
-}
+export type ReadMarkerResult = ParsedMarker | "need-more" | "invalid"
 
-/** Locate the first marker in `buffer` starting at `from`. Returns
- *  the offset of the marker, or -1 if none found. */
-export function findMarker(buffer: Uint8Array, from = 0): number {
-  const last = buffer.length - MARKER_LENGTH
-  outer: for (let i = from; i <= last; i++) {
-    if (buffer[i] !== 0xff || buffer[i + 1] !== 0xfe) continue
-    if (buffer[i + 10] !== 0xfd || buffer[i + 11] !== 0xfc) continue
-    // Validate tag region is ASCII (defensive: random bytes that
-    // happen to match `\xFF\xFE...\xFD\xFC` would otherwise be
-    // misread). All defined tags are 7-bit ASCII printable.
-    for (let j = 2; j < 10; j++) {
-      const b = buffer[i + j]
-      if (b < 0x20 || b > 0x7e) continue outer
+export function tryReadMarker(buf: Uint8Array, offset = 0): ReadMarkerResult {
+  if (offset >= buf.byteLength) return "need-more"
+  if (buf[offset] !== PREFIX_BYTE) return "invalid"
+  // Scan for the terminating `]\n` after the prefix.
+  // Cap the scan so a corrupted stream with no `\n` doesn't run away.
+  const SCAN_LIMIT = 64
+  const start = offset + 1
+  const end = Math.min(start + SCAN_LIMIT, buf.byteLength)
+  let nlIdx = -1
+  for (let i = start; i < end; i++) {
+    if (buf[i] === 0x0a) {
+      nlIdx = i
+      break
     }
-    return i
   }
-  return -1
+  if (nlIdx < 0) {
+    // No newline yet within the scan window.
+    if (end - start >= SCAN_LIMIT) return "invalid"
+    return "need-more"
+  }
+  // Header text excludes the trailing `\n` but includes the closing `]`.
+  const headerBytes = buf.subarray(start, nlIdx)
+  const headerText = TEXT_DECODER.decode(headerBytes)
+  if (!headerText.startsWith(HEADER_OPEN)) return "invalid"
+  if (!headerText.endsWith("]")) return "invalid"
+  const inside = headerText.slice(HEADER_OPEN.length, headerText.length - 1)
+  const colonIdx = inside.indexOf(":")
+  if (colonIdx <= 0) return "invalid"
+  const tag = inside.slice(0, colonIdx)
+  const lengthStr = inside.slice(colonIdx + 1)
+  if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) return "invalid"
+  if (!/^\d+$/.test(lengthStr)) return "invalid"
+  const length = Number(lengthStr)
+  return { tag, length, headerSize: 1 + (nlIdx - start) + 1 }
 }
 
-/** Tag taxonomy — exported constants so callers don't have to know
- *  the string literals. */
+/** Tag taxonomy — constants so callers don't have to know the
+ *  literals. */
 export const TAG_FP_UPDATES = "fp"
 export const TAG_URL_UPDATE = "url"
 export const TAG_NEXT_SEGMENT = "next"
 
-/** Backward-compat for callers still importing the bare fp-updates
- *  marker bytes. Equivalent to `buildMarker(TAG_FP_UPDATES)`. */
-export const FP_TRAILER_MARKER: Readonly<Uint8Array> = buildMarker(TAG_FP_UPDATES)
+/** Backward-compat alias the legacy `wrapStreamWithFpTrailer` caller
+ *  used to build its sole trailer entry. Kept around for any out-of-
+ *  tree code that imported the constant directly; new code should use
+ *  `buildMarker(TAG_FP_UPDATES, length)`. */
+export const PREFIX_BYTE_VALUE = PREFIX_BYTE

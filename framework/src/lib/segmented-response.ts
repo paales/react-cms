@@ -49,8 +49,9 @@ export async function driveSegmentedResponse(
   renderSegment: () => ReadableStream<Uint8Array>,
   onSegmentEnd?: () => void,
 ): Promise<void> {
-  const nextMarker = buildMarker(TAG_NEXT_SEGMENT)
-  const zeroLen = new Uint8Array(4)
+  // Pre-encode the `next` delimiter — same bytes every segment
+  // boundary, so build it once.
+  const nextMarker = buildMarker(TAG_NEXT_SEGMENT, 0)
 
   let segmentIndex = 0
   let lastTs = _currentTs()
@@ -60,7 +61,6 @@ export async function driveSegmentedResponse(
 
     if (segmentIndex > 0) {
       controller.enqueue(nextMarker)
-      controller.enqueue(zeroLen)
     }
 
     const flightStream = renderSegment()

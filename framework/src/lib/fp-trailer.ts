@@ -36,14 +36,11 @@ import { getRequest, getScope } from "../runtime/context.ts"
 import { queryMatchingTs } from "../runtime/invalidation-registry.ts"
 import { getSessionFrameUrl } from "../runtime/session.ts"
 import {
-  FP_TRAILER_MARKER,
   buildMarker,
   TAG_FP_UPDATES,
   TAG_NEXT_SEGMENT,
   TAG_URL_UPDATE,
 } from "./fp-trailer-marker.ts"
-
-export { FP_TRAILER_MARKER } from "./fp-trailer-marker.ts"
 
 /**
  * Walk a captured snapshot map and return a `{ id: warm_fp }` map for
@@ -337,18 +334,16 @@ function emitTrailer(
   emitTrailerEntry(controller, TAG_FP_UPDATES, JSON.stringify(updates))
 }
 
-/** Emit one trailer entry (marker + length-prefixed body) onto a
- *  TransformStream controller. JSON bodies use UTF-8 encoding. */
+/** Emit one trailer entry (header + body) onto a controller. The
+ *  header carries the body length so the splitter can read the exact
+ *  byte count. JSON bodies use UTF-8 encoding. */
 export function emitTrailerEntry(
   controller: TransformStreamDefaultController<Uint8Array> | ReadableStreamDefaultController<Uint8Array>,
   tag: string,
   body: string | Uint8Array,
 ): void {
-  controller.enqueue(buildMarker(tag))
   const bodyBytes = typeof body === "string" ? new TextEncoder().encode(body) : body
-  const lenBuf = new Uint8Array(4)
-  new DataView(lenBuf.buffer).setUint32(0, bodyBytes.byteLength, false)
-  controller.enqueue(lenBuf)
+  controller.enqueue(buildMarker(tag, bodyBytes.byteLength))
   if (bodyBytes.byteLength > 0) controller.enqueue(bodyBytes)
 }
 
@@ -358,10 +353,7 @@ export function emitTrailerEntry(
 export function emitNextSegmentDelimiter(
   controller: ReadableStreamDefaultController<Uint8Array>,
 ): void {
-  controller.enqueue(buildMarker(TAG_NEXT_SEGMENT))
-  const lenBuf = new Uint8Array(4)
-  // Length zero — no body for a delimiter.
-  controller.enqueue(lenBuf)
+  controller.enqueue(buildMarker(TAG_NEXT_SEGMENT, 0))
 }
 
 /** Emit a `url`-update trailer entry. Body is JSON describing the
@@ -370,7 +362,7 @@ export function emitNextSegmentDelimiter(
  *  the segment's setPayload. */
 export function emitUrlUpdate(
   controller: TransformStreamDefaultController<Uint8Array> | ReadableStreamDefaultController<Uint8Array>,
-  update: { window?: string; frames?: Record<string, string>; replace?: boolean },
+  update: { window?: string; frames?: Record<string, string>; history?: "push" | "replace" },
 ): void {
   emitTrailerEntry(controller, TAG_URL_UPDATE, JSON.stringify(update))
 }

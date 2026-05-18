@@ -20,12 +20,6 @@ function bytes(str: string): Uint8Array {
   return new TextEncoder().encode(str)
 }
 
-function lengthPrefix(n: number): Uint8Array {
-  const out = new Uint8Array(4)
-  new DataView(out.buffer).setUint32(0, n, false)
-  return out
-}
-
 function concat(...parts: Uint8Array[]): Uint8Array {
   let total = 0
   for (const p of parts) total += p.byteLength
@@ -64,8 +58,30 @@ async function collect(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> 
 
 function emitTrailerEntry(tag: string, body: string): Uint8Array {
   const bodyBytes = bytes(body)
-  return concat(buildMarker(tag), lengthPrefix(bodyBytes.byteLength), bodyBytes)
+  return concat(buildMarker(tag, bodyBytes.byteLength), bodyBytes)
 }
+
+describe("buildMarker — readable wire format", () => {
+  it("produces a marker readable in an ASCII dump", () => {
+    const marker = buildMarker("fp", 42)
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(marker)
+    // Trim the leading `\xFF` (it's not valid UTF-8 so the decoder
+    // emits the replacement character) and check the header text.
+    expect(text).toContain("[parton:fp:42]")
+    expect(text.endsWith("\n")).toBe(true)
+  })
+
+  it("rejects malformed tags", () => {
+    expect(() => buildMarker("with space", 0)).toThrow()
+    expect(() => buildMarker("123leadingDigit", 0)).toThrow()
+    expect(() => buildMarker("ThisTagIsWayTooLong", 0)).toThrow()
+  })
+
+  it("rejects negative or non-integer lengths", () => {
+    expect(() => buildMarker("fp", -1)).toThrow()
+    expect(() => buildMarker("fp", 1.5)).toThrow()
+  })
+})
 
 describe("splitSegments — single segment", () => {
   it("yields one segment with no trailers when source has only Flight bytes", async () => {
@@ -127,11 +143,9 @@ describe("splitSegments — multi-segment", () => {
   it("yields N segments separated by `next` delimiters", async () => {
     const wire = concat(
       bytes("flight-1"),
-      buildMarker(TAG_NEXT_SEGMENT),
-      lengthPrefix(0),
+      buildMarker(TAG_NEXT_SEGMENT, 0),
       bytes("flight-2"),
-      buildMarker(TAG_NEXT_SEGMENT),
-      lengthPrefix(0),
+      buildMarker(TAG_NEXT_SEGMENT, 0),
       bytes("flight-3"),
     )
     const bodies: string[] = []
@@ -146,8 +160,7 @@ describe("splitSegments — multi-segment", () => {
     const wire = concat(
       bytes("seg-1"),
       emitTrailerEntry(TAG_FP_UPDATES, '{"seg":"1"}'),
-      buildMarker(TAG_NEXT_SEGMENT),
-      lengthPrefix(0),
+      buildMarker(TAG_NEXT_SEGMENT, 0),
       bytes("seg-2"),
       emitTrailerEntry(TAG_FP_UPDATES, '{"seg":"2"}'),
       emitTrailerEntry(TAG_URL_UPDATE, '{"window":"/two"}'),
@@ -172,11 +185,11 @@ describe("splitSegments — multi-segment", () => {
 })
 
 describe("splitSegments — chunk-boundary handling", () => {
-  it("detects a marker that straddles two source chunks", async () => {
+  it("detects a header that straddles two source chunks", async () => {
     const trailerEntry = emitTrailerEntry(TAG_FP_UPDATES, '{"x":"y"}')
-    // Split right in the middle of the marker bytes.
     const wire = concat(bytes("flight"), trailerEntry)
-    const splitAt = bytes("flight").byteLength + 5 // mid-marker
+    // Split inside the marker header.
+    const splitAt = bytes("flight").byteLength + 5
     const chunkA = wire.subarray(0, splitAt)
     const chunkB = wire.subarray(splitAt)
     const segments: { body: Uint8Array; trailers: Map<string, Uint8Array> }[] = []
@@ -197,8 +210,7 @@ describe("splitSegments — chunk-boundary handling", () => {
     const wire = concat(
       bytes("ab"),
       emitTrailerEntry(TAG_FP_UPDATES, '{"k":"v"}'),
-      buildMarker(TAG_NEXT_SEGMENT),
-      lengthPrefix(0),
+      buildMarker(TAG_NEXT_SEGMENT, 0),
       bytes("cd"),
     )
     const oneByteChunks: Uint8Array[] = []
