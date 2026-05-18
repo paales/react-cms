@@ -23,6 +23,7 @@ import {
   wrapStreamWithCommitOnly,
   wrapSsrStreamWithFpTrailer,
 } from "@parton/framework/lib/fp-trailer.ts"
+import { runInvalidationTransaction } from "@parton/framework/runtime/invalidation-registry.ts"
 
 export type RscPayload = {
   root: React.ReactNode
@@ -120,7 +121,14 @@ async function handleRequest(
       const args = await decodeReply(body, { temporaryReferences })
       const action = await loadServerAction(renderRequest.actionId)
       try {
-        const data = await action.apply(null, args)
+        // Run inside an invalidation transaction so server-side
+        // `getServerNavigation().reload({selector})` calls inside the
+        // action body queue until the action resolves. On throw the
+        // queued bumps are discarded — a failed mutation shouldn't
+        // trigger downstream refetches. On success the bumps flush
+        // BEFORE the response render runs, so the action's own
+        // response sees the bumped fps and emits fresh content.
+        const data = await runInvalidationTransaction(() => action.apply(null, args))
         returnValue = { ok: true, data }
       } catch (e) {
         returnValue = { ok: false, data: e }
@@ -130,7 +138,7 @@ async function handleRequest(
       const formData = await request.formData()
       const decodedAction = await decodeAction(formData)
       try {
-        const result = await decodedAction()
+        const result = await runInvalidationTransaction(() => decodedAction())
         formState = await decodeFormState(result, formData)
       } catch {
         return new Response("Internal Server Error", { status: 500 })

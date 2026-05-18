@@ -67,6 +67,22 @@ export {
 // ── Navigation API (server-readable) ────────────────────────────────────
 export { getNavigation } from "./src/runtime/navigation-api.ts"
 
+// ── Server-side navigation handle ───────────────────────────────────────
+// Symmetric to client `getNavigation()`. Reads/writes the invalidation
+// registry; use in server actions and external server-side tasks.
+export {
+  getServerNavigation,
+  type ServerNavigation,
+} from "./src/runtime/server-navigation.ts"
+
+// ── Invalidation registry ──────────────────────────────────────────────
+export {
+  refreshSelector,
+  runInvalidationTransaction,
+  parseSelector,
+  parseSelectors,
+} from "./src/runtime/invalidation-registry.ts"
+
 // ── CMS runtime (server) ────────────────────────────────────────────────
 export {
   EDITOR_COOKIE,

@@ -56,6 +56,7 @@ import {
   type SpecComponentProps,
 } from "./spec-catalog.ts"
 import { getRequest, parseCookies } from "../runtime/context.ts"
+import { queryMatchingTs } from "../runtime/invalidation-registry.ts"
 import {
   createSessionReadSurface,
   getSessionFrameUrl,
@@ -1081,7 +1082,21 @@ function createSpecComponent<V>(
     // — which the client's variant-keyed cache pool has no entry
     // under, so substitution misses and the `<i hidden>` placeholder
     // collapses the layout instead of substituting in a spacer.
-    const ownStructuralFp = hash(`${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}`)
+    // Fold in the latest `refreshSelector` ts that matches any of
+    // this spec's labels AND whose constraints (if any) are a subset
+    // of vary inputs. Server-side `getServerNavigation().reload({selector})`
+    // bumps the registry; partials carrying matching labels see their
+    // fp shift on the next render, mismatching the client's cached fp,
+    // and emit fresh content. No registry entries → 0 → no
+    // contribution; same fp as before the registry existed.
+    const invalidationTs = queryMatchingTs(
+      parsed.labels,
+      varyResult as Record<string, unknown> | null | undefined,
+    )
+    const invalidationKey = invalidationTs > 0 ? `|inv=${invalidationTs}` : ""
+    const ownStructuralFp = hash(
+      `${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}${invalidationKey}`,
+    )
     const descendantFold = computeDescendantFold(id)
     const structuralFp = hash(`${ownStructuralFp}${descendantFold}`)
     const fp = hash(`${ownStructuralFp}${ambientFrameKey}${descendantFold}`)

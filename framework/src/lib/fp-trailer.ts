@@ -33,6 +33,7 @@ import {
 } from "./partial-registry.ts"
 import { computeRouteKey } from "./partial.tsx"
 import { getRequest, getScope } from "../runtime/context.ts"
+import { queryMatchingTs } from "../runtime/invalidation-registry.ts"
 import { getSessionFrameUrl } from "../runtime/session.ts"
 import {
   FP_TRAILER_MARKER,
@@ -103,7 +104,25 @@ function recomputeFp(
   // CMS contribution lives inside `varyKey` now (the CMS block
   // wrapper folds it into `vary`'s result via a `__cmsFp` field).
   const matchKey = snap.matchKey ?? ""
-  const ownStructuralFp = hash(`${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}`)
+  // Mirror partial.tsx — fold in the latest matching `refreshSelector`
+  // ts so the trailer's recomputed fp stays in lockstep with what the
+  // server would compute on the next request. varyKey is parsed back
+  // for constraint matching; sentinel-laden stableStringify outputs
+  // (Date, Set, etc.) fall back to label-only matching (constraints
+  // never satisfied → unconstrained entries still apply).
+  let parsedVaryInputs: Record<string, unknown> | null = null
+  if (snap.varyKey) {
+    try {
+      parsedVaryInputs = JSON.parse(snap.varyKey) as Record<string, unknown>
+    } catch {
+      parsedVaryInputs = null
+    }
+  }
+  const invalidationTs = queryMatchingTs(snap.labels ?? [], parsedVaryInputs)
+  const invalidationKey = invalidationTs > 0 ? `|inv=${invalidationTs}` : ""
+  const ownStructuralFp = hash(
+    `${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}${invalidationKey}`,
+  )
   const fold = computeFoldFromSnapshots(id, snapshots, frameRequest)
   return hash(`${ownStructuralFp}${ambientFrameKey}${fold}`)
 }
