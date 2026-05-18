@@ -134,21 +134,9 @@ test("no client-side compaction sentinel — old Piece/ResumeTail pattern is gon
   expect(await page.locator('[data-testid^="resume-tail-"]').count()).toBe(0)
 })
 
-test.skip("closing the chat collapses the overlay back to the open pill mid-stream", async ({
+test("closing the chat collapses the overlay back to the open pill mid-stream", async ({
   page,
 }) => {
-  // Pending: after the close-pill click the segment loop's prior
-  // fetch DOES abort (NavigateEvent.signal + the per-selector
-  // in-flight queue's deferred-abort both target it), but the
-  // close-click's own `setPayload` doesn't seem to commit the
-  // collapsed pill back into the DOM — the chat-box stays visible
-  // and the open-pill never reappears. Failure reproduces on
-  // pristine master too, so this is unrelated to the navigation-
-  // milestones refactor. Suspected: streaming-mode commit racing
-  // with the abort, or a Suspense boundary holding the prior
-  // tree visible until React's transition machinery gives up.
-  // Manual smoke confirms the close button works for a user.
-  //
   // Open via the pill (RSC GET → segment loop). The connection
   // stays live as long as `<ChunkSlot>` is suspended on the next
   // log entry. Closing the overlay fires a new navigation; the

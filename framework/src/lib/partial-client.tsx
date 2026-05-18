@@ -1362,6 +1362,7 @@ export function _dispatchFrameRefetch(
   path: readonly string[],
   url: string,
   options?: FrameworkNavigateOptions,
+  signal?: AbortSignal,
 ): RefetchMilestones {
   const key = joinFramePath(path)
   _frameUrls.set(key, url)
@@ -1404,7 +1405,7 @@ export function _dispatchFrameRefetch(
   if (options?.streaming) {
     refetchUrl.searchParams.set("streaming", "1")
   }
-  return handler(refetchUrl.toString())
+  return handler(refetchUrl.toString(), signal)
 }
 
 // ─── NavigateTarget resolution ────────────────────────────────────
@@ -1988,6 +1989,20 @@ function buildFrameHandle(path: readonly string[]): ImperativeNavigation {
 
     const m = makeMilestoneDeferreds()
 
+    // Frame nav participates in the same per-selector supersede queue
+    // as `windowNavigate({selector})` — keyed by the top-level frame
+    // name (which is also the `partials=` value the server sees), so
+    // a `?chat=closed` frame nav fires while a prior `?chat=open`
+    // segment-loop fetch is still streaming, the older fetch aborts
+    // when the newer one's first segment lands. Without this, the
+    // chat overlay's open response keeps streaming tick updates and
+    // races the close response's commit.
+    const inFlightK = inFlightKey([path[0]])
+    const controller = inFlightK ? new AbortController() : undefined
+    const inFlightEntry: InFlightEntry | null =
+      inFlightK && controller ? { controller } : null
+    if (inFlightK && inFlightEntry) registerInFlight(inFlightK, inFlightEntry)
+
     if (historyMode === "auto") {
       // No new browser entry. updateCurrentEntry patches state in
       // place, fires currententrychange (consumers update) but NOT
@@ -1995,16 +2010,19 @@ function buildFrameHandle(path: readonly string[]): ImperativeNavigation {
       // immediately because there's no browser commit to wait on.
       nav.updateCurrentEntry({ state: nextState })
       m.committed.resolve(nav.currentEntry!)
-      const refetch = _dispatchFrameRefetch(path, url, options)
+      const refetch = _dispatchFrameRefetch(path, url, options, controller?.signal)
       void (async () => {
         try {
           await refetch.streaming
+          if (inFlightK && inFlightEntry) abortPredecessors(inFlightK, inFlightEntry)
           m.streaming.resolve()
           await refetch.finished
           m.finished.resolve(nav.currentEntry!)
         } catch (err) {
           m.streaming.reject(err)
           m.finished.reject(err)
+        } finally {
+          if (inFlightK && inFlightEntry) unregisterInFlight(inFlightK, inFlightEntry)
         }
       })()
       return {
@@ -2026,8 +2044,9 @@ function buildFrameHandle(path: readonly string[]): ImperativeNavigation {
       try {
         await awaitCommitted(result)
         m.committed.resolve(nav.currentEntry!)
-        const refetch = _dispatchFrameRefetch(path, url, options)
+        const refetch = _dispatchFrameRefetch(path, url, options, controller?.signal)
         await refetch.streaming
+        if (inFlightK && inFlightEntry) abortPredecessors(inFlightK, inFlightEntry)
         m.streaming.resolve()
         await refetch.finished
         m.finished.resolve(nav.currentEntry!)
@@ -2035,6 +2054,8 @@ function buildFrameHandle(path: readonly string[]): ImperativeNavigation {
         m.committed.reject(err)
         m.streaming.reject(err)
         m.finished.reject(err)
+      } finally {
+        if (inFlightK && inFlightEntry) unregisterInFlight(inFlightK, inFlightEntry)
       }
     })()
     return {

@@ -171,21 +171,7 @@ test("client component inside cached subtree remains clickable after cache hit",
   await expect(button).toHaveText(/clicked 1/)
 })
 
-test.skip("Toggle flavor: cached spec re-renders with new flavor on URL change", async ({
-  page,
-}) => {
-  // Pending: server-side consumption of `?partialProps=` isn't wired
-  // up. The client builds the URL correctly
-  // (`flushRefetchBatch` in `partial-client.tsx`), but no server-side
-  // path reads the prop bag back off the search params to splice it
-  // into the snapshot-replayed render — the partial-registry comment
-  // at line ~283 (`partialProps — the activator's payload is
-  // dropped`) flags this explicitly. The Toggle button's `props:
-  // {slow:{flavor}}` is therefore a no-op, the slow partial
-  // re-renders with the snapshot's stale flavor, and the test's
-  // toContainText assertion times out. Re-enable when the server
-  // side of `partialFromSnapshot` is implemented.
-  //
+test("Toggle flavor: cached spec re-renders with new flavor on URL change", async ({ page }) => {
   // Cached specs read their deps via `vary` rather than parent-passed
   // JSX props. The `Toggle flavor` button calls
   // `nav.navigate(url, { selector: "#slow" })` — a partial-refetch

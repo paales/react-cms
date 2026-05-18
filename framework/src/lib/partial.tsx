@@ -1783,7 +1783,25 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
     .map((id) => {
       const snap = lookupPartial(id)
       if (!snap) return null
-      return partialFromSnapshot(id, snap, partialProps[id])
+      // Match override props by effective id first (the @self path
+      // already resolves `"@self"` to the per-instance id on the
+      // client), then fall back to any of the snapshot's selector
+      // labels — a regular `selector: "#slow"` refetch sends
+      // `partialProps: {slow: {...}}` keyed by the bare label
+      // because the client doesn't know the `slow:<hash>` instance
+      // id that the snapshot is stored under. Fan-out is fine: every
+      // matching snapshot under the same label gets the same prop
+      // payload.
+      let override = partialProps[id]
+      if (!override) {
+        for (const label of snap.labels) {
+          if (partialProps[label]) {
+            override = partialProps[label]
+            break
+          }
+        }
+      }
+      return partialFromSnapshot(id, snap, override)
     })
     .filter((x): x is NonNullable<typeof x> => x != null)
 

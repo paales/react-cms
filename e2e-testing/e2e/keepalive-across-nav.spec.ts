@@ -21,16 +21,24 @@ test.beforeEach(async ({ baseURL }) => {
 })
 
 test.skip("ClickCounter state inside a partial survives nav away and back", async ({ page }) => {
-  // Pending: navigating away does flip the `<Activity mode="hidden">`
-  // wrapper as expected (the cache-demo subtree's DOM stays mounted
-  // with `display:none`), but navigating BACK doesn't flip it to
-  // `"visible"`. The click-counter stays `display:none` even after
-  // /cache-demo becomes the active route again. Failure reproduces
-  // on pristine master so this is unrelated to the navigation-
-  // milestones refactor — most likely a regression in the spec's
-  // `keepalive` emit path or the route-matcher's pruning of the
-  // Activity wrapper. Re-enable once the Activity round-trip is
-  // hardened.
+  // Pending: cross-route keepalive isn't fully wired. When navigating
+  // /cache-demo → /defer-demo, the new page's streaming render
+  // doesn't touch the Slow spec, so its `_currentPagePartials` entry
+  // is pruned (per the seen-set prune in `PartialsClient`'s streaming
+  // branch). The Activity wrapper React still has in the fiber tree
+  // sticks at `mode="hidden"` (DOM kept with `display: none`).
+  // Navigating back to /cache-demo emits `Activity mode="visible"`
+  // around a `<i hidden>` placeholder, but the cache lookup misses
+  // (entry was pruned), so `renderTemplate` substitutes nothing and
+  // React doesn't reconcile the new Activity's children against the
+  // hidden subtree — display:none stays.
+  //
+  // The fix needs server-side logic in `PartialRoot` (streaming
+  // mode) to walk every (id, matchKey) the client has cached, and
+  // emit a hidden Activity wrapper for any that this page's render
+  // didn't touch — so the client's `seen` harvest covers them and
+  // the prune preserves the cache entry. That's an architectural
+  // addition the navigation-milestones refactor doesn't include.
   await page.goto("/cache-demo")
   const counter = page.getByTestId("click-counter")
   await expect(counter).toBeVisible({ timeout: 10000 })
