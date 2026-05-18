@@ -34,7 +34,13 @@ import {
 import { computeRouteKey } from "./partial.tsx"
 import { getRequest, getScope } from "../runtime/context.ts"
 import { getSessionFrameUrl } from "../runtime/session.ts"
-import { FP_TRAILER_MARKER } from "./fp-trailer-marker.ts"
+import {
+  FP_TRAILER_MARKER,
+  buildMarker,
+  TAG_FP_UPDATES,
+  TAG_NEXT_SEGMENT,
+  TAG_URL_UPDATE,
+} from "./fp-trailer-marker.ts"
 
 export { FP_TRAILER_MARKER } from "./fp-trailer-marker.ts"
 
@@ -309,12 +315,45 @@ function emitTrailer(
   controller: TransformStreamDefaultController<Uint8Array>,
   updates: Record<string, string>,
 ): void {
-  controller.enqueue(FP_TRAILER_MARKER)
-  const json = new TextEncoder().encode(JSON.stringify(updates))
+  emitTrailerEntry(controller, TAG_FP_UPDATES, JSON.stringify(updates))
+}
+
+/** Emit one trailer entry (marker + length-prefixed body) onto a
+ *  TransformStream controller. JSON bodies use UTF-8 encoding. */
+export function emitTrailerEntry(
+  controller: TransformStreamDefaultController<Uint8Array> | ReadableStreamDefaultController<Uint8Array>,
+  tag: string,
+  body: string | Uint8Array,
+): void {
+  controller.enqueue(buildMarker(tag))
+  const bodyBytes = typeof body === "string" ? new TextEncoder().encode(body) : body
   const lenBuf = new Uint8Array(4)
-  new DataView(lenBuf.buffer).setUint32(0, json.byteLength, false)
+  new DataView(lenBuf.buffer).setUint32(0, bodyBytes.byteLength, false)
   controller.enqueue(lenBuf)
-  controller.enqueue(json)
+  if (bodyBytes.byteLength > 0) controller.enqueue(bodyBytes)
+}
+
+/** Emit a `next`-segment delimiter (zero-length body). Server-side
+ *  helper used by multi-segment response builders to separate one
+ *  Flight document from the next on a single connection. */
+export function emitNextSegmentDelimiter(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+): void {
+  controller.enqueue(buildMarker(TAG_NEXT_SEGMENT))
+  const lenBuf = new Uint8Array(4)
+  // Length zero — no body for a delimiter.
+  controller.enqueue(lenBuf)
+}
+
+/** Emit a `url`-update trailer entry. Body is JSON describing the
+ *  URL push (e.g. `{ window?: string, frames?: Record<name, url> }`).
+ *  Client-side `entry.browser.tsx` applies the push before committing
+ *  the segment's setPayload. */
+export function emitUrlUpdate(
+  controller: TransformStreamDefaultController<Uint8Array> | ReadableStreamDefaultController<Uint8Array>,
+  update: { window?: string; frames?: Record<string, string>; replace?: boolean },
+): void {
+  emitTrailerEntry(controller, TAG_URL_UPDATE, JSON.stringify(update))
 }
 
 // Re-export the scope getter so callers (e.g. tests) don't need to

@@ -21,7 +21,7 @@ import {
   getCachedPartialIds,
   isFrameworkSilentInfo,
 } from "@parton/framework/lib/partial-client.tsx"
-import { splitAtFpTrailer } from "@parton/framework/lib/fp-trailer-split.ts"
+import { splitSegments } from "@parton/framework/lib/fp-trailer-split.ts"
 import { getNavigation } from "@parton/framework/runtime/navigation-api.ts"
 
 async function main() {
@@ -133,20 +133,35 @@ async function main() {
         status: response.status,
       })
     }
-    let payload: RscPayload
+    // RSC GET navs carry segmented Flight bytes: one or more Flight
+    // documents on the same response, separated by `next` markers,
+    // each followed by zero-or-more trailer entries (fp-updates,
+    // url-update). The splitter peels each segment off and yields a
+    // `{body, trailers}` pair; we hand each body to `createFromReadableStream`
+    // and call setPayload per segment.
+    //
+    // Single-segment responses (no `next` marker) loop once — same
+    // wire shape and behavior as the legacy fp-trailer flow.
     try {
-      // RSC GET navs carry a length-prefixed binary fp-trailer after
-      // the Flight bytes. Split it off before handing the main stream
-      // to Flight: the splitter forwards source chunks immediately
-      // (Flight sees its bytes with original timing) and parses the
-      // trailer on source-end. The trailer's warm-fp updates are
-      // applied to `_currentPageFingerprints` so the next nav's
-      // `?cached=` carries both cold and warm.
-      const { mainStream, trailer } = splitAtFpTrailer(response.body)
-      payload = await createFromReadableStream<RscPayload>(mainStream)
-      trailer.then((updates) => {
-        if (updates) _applyFpUpdates(updates)
-      })
+      for await (const segment of splitSegments(response.body)) {
+        const payload = await createFromReadableStream<RscPayload>(segment.body)
+        segment.trailers.then((trailers) => {
+          const fpBytes = trailers.get("fp")
+          if (fpBytes) {
+            try {
+              const updates = JSON.parse(
+                new TextDecoder().decode(fpBytes),
+              ) as Record<string, string>
+              _applyFpUpdates(updates)
+            } catch {}
+          }
+        })
+        if (disableTransition) {
+          setPayloadRaw(payload)
+        } else {
+          setPayload(payload)
+        }
+      }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") throw err
       throw new NavigationError({
@@ -154,11 +169,6 @@ async function main() {
         url: renderRequest.url,
         cause: err,
       })
-    }
-    if (disableTransition) {
-      setPayloadRaw(payload)
-    } else {
-      setPayload(payload)
     }
   }
 
