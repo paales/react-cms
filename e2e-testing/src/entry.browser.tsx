@@ -1,6 +1,6 @@
 import {
-  createFromReadableStream,
   createFromFetch,
+  createFromReadableStream,
   setServerCallback,
   createTemporaryReferenceSet,
   encodeReply,

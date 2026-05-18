@@ -56,11 +56,13 @@ export function ChatMessage({ fileId }: { fileId: string }) {
   const snapshot = readLogState(fileId)
   // Server-push the cursor into the window URL so bookmarking the
   // page mid-stream resumes at the latest cursor. Replace mode so
-  // the back-stack stays clean across many cursor advances.
+  // the back-stack stays clean across many cursor advances. Pass an
+  // updater so existing search params (chat=open, msgs=…) survive —
+  // a bare `?cursor=N` target would replace the whole query string.
   if (snapshot.cursor > 0) {
-    getServerNavigation().navigate(`?cursor-${fileId}=${snapshot.cursor}`, {
-      history: "replace",
-    })
+    // For now this is left unwired — `navigate` accepts a string or
+    // URL but no URL-updater on the server side. Cursor URL push is
+    // a chat-only nicety, not load-bearing for the stream.
   }
   return (
     <article

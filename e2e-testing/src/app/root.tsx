@@ -24,6 +24,7 @@ import { CmsDemoPage } from "./pages/cms-demo.tsx"
 import { DeferDemoPage } from "./pages/defer-demo.tsx"
 import { SelectorDemoPage } from "./pages/selector-demo.tsx"
 import { SentinelsDemoPage, NotFoundDemoPage, RedirectDemoPage } from "./pages/sentinels-demo.tsx"
+import { StreamingDemoPage } from "./pages/streaming-demo.tsx"
 import { FramesDemoPage } from "./pages/frames-demo.tsx"
 import { BarePage } from "./pages/bare-stream.tsx"
 import { ChatNotesPage } from "./pages/chat-notes.tsx"
@@ -57,6 +58,7 @@ export function Root() {
               <SentinelsDemoPage parent={ROOT} />
               <NotFoundDemoPage parent={ROOT} />
               <RedirectDemoPage parent={ROOT} />
+              <StreamingDemoPage parent={ROOT} />
               <FramesDemoPage parent={ROOT} />
               <BarePage parent={ROOT} />
               <ChatNotesPage parent={ROOT} />

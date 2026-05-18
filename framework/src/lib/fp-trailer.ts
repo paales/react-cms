@@ -220,14 +220,27 @@ export function wrapStreamWithCommitOnly(
   commit?: () => void,
 ): ReadableStream<Uint8Array> {
   deferRequestRegistryCommit()
+  // Capture the queued URL push at wrap time. By the time the
+  // TransformStream's flush fires, the request ALS may have
+  // unwound (the response stream is consumed by the HTTP server
+  // outside our scope). For action POSTs the action body has
+  // already finished and queued any `navigate()` updates by now;
+  // capturing here gets them safely before ALS exits.
+  let capturedUrlUpdate: ReturnType<typeof _consumePendingUrlUpdate> = null
+  try {
+    capturedUrlUpdate = _consumePendingUrlUpdate()
+  } catch {}
   return stream.pipeThrough(
     new TransformStream({
       transform(chunk, controller) {
         controller.enqueue(chunk)
       },
-      async flush() {
+      async flush(controller) {
         await Promise.allSettled(_drainPendingDefers())
         if (commit) commit()
+        if (capturedUrlUpdate) {
+          emitUrlUpdate(controller, capturedUrlUpdate)
+        }
       },
     }),
   )
@@ -315,10 +328,18 @@ export function wrapStreamWithFpTrailer(
       async flush(controller) {
         await Promise.allSettled(_drainPendingDefers())
         if (commit) commit()
-        // Emit `url` trailer first (cheap, no snapshot scan needed).
-        // Client applies the URL update on segment commit so the
-        // browser URL bar is in sync with what the server rendered.
-        const urlUpdate = _consumePendingUrlUpdate()
+        // Consume any URL push queued by `getServerNavigation().navigate(...)`
+        // from within the render. Flush runs in the same async
+        // context as the consumer, which inherits the request ALS
+        // through async_hooks; the consume call resolves the same
+        // store the render's navigate writes to.
+        const urlUpdate = (() => {
+          try {
+            return _consumePendingUrlUpdate()
+          } catch {
+            return null
+          }
+        })()
         if (urlUpdate) {
           emitUrlUpdate(controller, urlUpdate)
         }
