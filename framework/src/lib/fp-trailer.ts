@@ -151,18 +151,38 @@ function computeFoldFromSnapshots(
  * we don't have at flush time (e.g. the descendant's spec catalog is
  * not loaded). The snapshot-stored varyKey is what the descendant
  * itself just emitted, so it's already accurate for this request.
+ *
+ * The `|inv=N` suffix mirrors the live fold in
+ * `descendantContribution` (partial.tsx) — folds the descendant's
+ * latest matching `refreshSelector` ts so an ancestor's fp moves
+ * whenever any descendant's invalidation does. Required for cached-fp
+ * promotion to be safe under live partials: without it, a hot-bumping
+ * descendant could shift its own fp via `|inv=N` while its ancestor's
+ * fp stayed stable, and promoting the ancestor's fp to `?cached=`
+ * would then fp-skip the ancestor on the next segment and starve the
+ * descendant of a re-render.
  */
 function descendantContributionFromSnapshot(
   descId: string,
   snap: PartialSnapshot,
   request: Request,
 ): string {
-  // Same shape as the no-vary branch in `descendantContribution`
-  // (partial.tsx). For specs WITH vary, the snapshot's `varyKey`
-  // already captures the same value the descendant emitted on this
-  // request — re-running vary here would produce the identical string,
-  // so we skip the extra work.
-  return `${descId}:${snap.varyKey ?? ""}|${stableStringify(snap.props ?? null)}`
+  // Parse the snapshot's varyKey back into a record so
+  // `queryMatchingTs` can apply constraint matching the same way it
+  // does in `recomputeFp`. Sentinel-laden vary results (Date, Set,
+  // etc.) won't round-trip — null parsed inputs fall back to
+  // label-only matching (unconstrained entries still apply).
+  let parsedVaryInputs: Record<string, unknown> | null = null
+  if (snap.varyKey) {
+    try {
+      parsedVaryInputs = JSON.parse(snap.varyKey) as Record<string, unknown>
+    } catch {
+      parsedVaryInputs = null
+    }
+  }
+  const ts = queryMatchingTs(snap.labels ?? [], parsedVaryInputs)
+  const invKey = ts > 0 ? `|inv=${ts}` : ""
+  return `${descId}:${snap.varyKey ?? ""}|${stableStringify(snap.props ?? null)}${invKey}`
 }
 
 /**

@@ -61,27 +61,17 @@ test("cross-origin remote endpoint returns Flight + snapshot trailer", async ({
   expect(response.headers()["access-control-allow-origin"]).toBe("*")
 
   // Buffer the response and look for the snapshot trailer marker.
-  const bytes = new Uint8Array(await response.body().then((b) => b.buffer))
-  const marker = new Uint8Array([
-    0xff, 0xfe,
-    ...new TextEncoder().encode("snapshot"),
-    0xfd, 0xfc,
-  ])
-  let foundAt = -1
-  for (let i = 0; i <= bytes.length - marker.length; i++) {
-    let match = true
-    for (let j = 0; j < marker.length; j++) {
-      if (bytes[i + j] !== marker[j]) {
-        match = false
-        break
-      }
-    }
-    if (match) {
-      foundAt = i
-      break
-    }
-  }
-  expect(foundAt, "snapshot trailer marker must be present").toBeGreaterThanOrEqual(0)
+  // Wire shape per `fp-trailer-marker.ts`: one UTF-8-invalid lead
+  // byte (`\xFF`) followed by an ASCII bracketed header
+  // (`[parton:snapshots:<length>]\n`) and a length-prefixed JSON
+  // body. We scan for the readable header prefix — finding it
+  // confirms the remote endpoint is emitting the snapshot trailer.
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(
+    new Uint8Array(await response.body().then((b) => b.buffer)),
+  )
+  expect(text, "snapshot trailer marker must be present").toMatch(
+    /\[parton:snapshots:\d+\]/,
+  )
 })
 
 test("capability-scoped remote reads host-declared values", async ({ page }) => {

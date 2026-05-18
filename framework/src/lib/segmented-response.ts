@@ -83,39 +83,23 @@ export async function driveSegmentedResponse(
       reader.releaseLock()
     }
 
-    // `rewriteCachedFromSnapshots()` is the natural place to promote
-    // just-emitted fps into the request's `?cached=` set so the next
-    // segment's render fp-skips unchanged partials. Disabled for now:
-    // it breaks live partials whose ANCESTORS fp-skip them.
-    //
-    // Concretely: the chat's `chat-msg-${id}` partial folds the
-    // invalidation registry's ts into its own fp. The ancestor
-    // `chat-list`'s descendant-fold reads each descendant's `varyKey`
-    // — NOT its fp — so when only chat-msg's invalidation ts shifts
-    // and `varyKey` is unchanged, chat-list's fp stays stable. After
-    // segment 1 promotes chat-list's fp to cached, segment 2's
-    // chat-list fp matches → fp-skip → the body doesn't run → chat-msg
-    // never gets instantiated → no `markConnectionLive` → driver
-    // closes the connection. The chat stream dies after 2 segments.
-    //
-    // Two fixes possible:
-    //   1. Extend `descendantContributionFromSnapshot` to fold the
-    //      descendant's invalidation ts in, so ancestor fps move
-    //      whenever a descendant's invalidation does. Correct but
-    //      changes the fp formula across the framework.
-    //   2. Give live partials an opt-out from cached-fp promotion
-    //      (or a "this partial subscribes to a frequently-bumping
-    //      selector — don't bank on its fp lasting" annotation).
-    //
-    // Until one of those lands, segments re-emit all partials on
-    // cold connections. Acceptable cost for the demo cases; the
-    // chat case is the load-bearing one and it works without the
-    // optimization.
-    void rewriteCachedFromSnapshots
-
     if (onSegmentEnd) onSegmentEnd()
 
     if (!_isConnectionLive()) break
+
+    // Promote just-emitted (id, matchKey, fp) tokens into the
+    // request's `?cached=` so the NEXT segment's render fp-skips the
+    // unchanged partials. Gated on `_isConnectionLive()` so single-
+    // segment responses stay byte-identical to the pre-promotion
+    // path. Safe under live partials because the descendant-fold
+    // (both live in `descendantContribution` and snapshot-based in
+    // `descendantContributionFromSnapshot`) folds each descendant's
+    // invalidation ts in — when a hot-bumping descendant's `|inv=N`
+    // shifts, the ancestor's fold moves with it, the ancestor's fp
+    // moves, the promoted fp from the prior segment no longer
+    // matches, the ancestor body re-runs, and the descendant is
+    // re-instantiated.
+    rewriteCachedFromSnapshots()
 
     await _waitForNextBump(lastTs)
     lastTs = _currentTs()

@@ -602,7 +602,7 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   // No live spec → fall back to last-known varyKey. Prevents the
   // fold from becoming all-stable when the registry is warm but the
   // catalog is still hydrating; lag of one render in this corner.
-  if (!spec) return `${descId}:${snap.varyKey ?? ""}`
+  if (!spec) return `${descId}:${snap.varyKey ?? ""}${invalidationKeyFromSnap(snap)}`
 
   // Honor the descendant's framePath when re-resolving its vary. A
   // descendant rendered under a frame chain (e.g. MenuTabPartial under
@@ -617,14 +617,15 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   let params: Record<string, string> = {}
   if (spec.matchPattern) {
     const result = spec.matchPattern.exec(request.url)
-    if (result === null) return `${descId}:nomatch`
+    if (result === null) return `${descId}:nomatch${invalidationKeyFromSnap(snap)}`
     params = extractNamedParams(result)
   }
 
   if (!spec.vary) {
     // No vary → only match params + props contribute. propsKey from
     // the snapshot distinguishes per-instance call sites.
-    return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}`
+    const inv = invalidationKeyFor(snap.labels, params)
+    return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}${inv}`
   }
 
   // Build a vary scope from the current request and resolve.
@@ -649,11 +650,42 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
     // A vary that throws on the synthetic scope (e.g. relies on a
     // tracked accessor outside its expected request) just falls
     // back to the stored varyKey — same lag as missing-catalog.
-    return `${descId}:${snap.varyKey ?? ""}`
+    return `${descId}:${snap.varyKey ?? ""}${invalidationKeyFromSnap(snap)}`
   }
-  if (result === null) return `${descId}:varynull`
+  if (result === null) return `${descId}:varynull${invalidationKeyFromSnap(snap)}`
   const propsKey = stableStringify(snap.props ?? null)
-  return `${descId}:${stableStringify(result)}|${propsKey}`
+  const inv = invalidationKeyFor(snap.labels, result as Record<string, unknown> | null)
+  return `${descId}:${stableStringify(result)}|${propsKey}${inv}`
+}
+
+/**
+ * Query the invalidation registry for the descendant's labels +
+ * constraint-matched vary inputs and produce a `|inv=N` suffix when
+ * any entry has fired. Folded into descendant contributions so an
+ * ancestor's fp moves whenever a descendant's invalidation does —
+ * without this, an ancestor's `varyKey`-only fold stays stable when
+ * only a descendant's `|inv=N` shifted, the ancestor fp-skips, and
+ * the descendant's fresh content is starved on subsequent segments
+ * of a streaming response.
+ */
+function invalidationKeyFor(
+  labels: readonly string[],
+  varyInputs: Record<string, unknown> | null,
+): string {
+  const ts = queryMatchingTs(labels, varyInputs)
+  return ts > 0 ? `|inv=${ts}` : ""
+}
+
+function invalidationKeyFromSnap(snap: PartialSnapshot): string {
+  let parsed: Record<string, unknown> | null = null
+  if (snap.varyKey) {
+    try {
+      parsed = JSON.parse(snap.varyKey) as Record<string, unknown>
+    } catch {
+      parsed = null
+    }
+  }
+  return invalidationKeyFor(snap.labels, parsed)
 }
 
 /**
