@@ -130,6 +130,47 @@ function commitOne(parsed: ParsedSelector): void {
   const list = byName.get(parsed.name)
   if (list) list.push(entry)
   else byName.set(parsed.name, [entry])
+  notifyWaiters()
+}
+
+// ─── Event bus for the segment driver ─────────────────────────────────
+
+type Waiter = (ts: number) => void
+const waiters = new Set<Waiter>()
+
+function notifyWaiters(): void {
+  if (waiters.size === 0) return
+  const ts = nextTs - 1
+  const list = [...waiters]
+  waiters.clear()
+  for (const w of list) w(ts)
+}
+
+/**
+ * Returns the current registry timestamp. Pair with `_waitForNextBump`
+ * to wait for any future `refreshSelector` activity past this point.
+ */
+export function _currentTs(): number {
+  return nextTs - 1
+}
+
+/**
+ * Resolve when the next `refreshSelector` lands (any name, any
+ * constraints) with a `ts > sinceTs`. If a newer bump has already
+ * happened at call time, resolves on the next microtask.
+ *
+ * One-shot. Each call adds a fresh waiter; once notified, the waiter
+ * is removed. The segment driver re-arms by calling again with the
+ * latest seen `ts` after each segment.
+ */
+export function _waitForNextBump(sinceTs: number): Promise<number> {
+  if (nextTs - 1 > sinceTs) {
+    // Already past — return immediately on next microtask.
+    return Promise.resolve(nextTs - 1)
+  }
+  return new Promise<number>((resolve) => {
+    waiters.add(resolve)
+  })
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────

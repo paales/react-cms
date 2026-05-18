@@ -1,44 +1,25 @@
-import { Suspense } from "react"
-import { readLog, readLogPrefix } from "./log.ts"
-import { ResumeTail } from "./resume-tail.tsx"
-
 /**
- * Bounded linear recursion that emits a streaming message.
+ * Chat message rendering — append-only ChunkList + a wait sentinel.
+ *
+ * Each `<ChatMessage>` reads the log's current chunks synchronously
+ * (no per-chunk Suspense recursion), then mounts a Suspense boundary
+ * whose only child suspends on the NEXT chunk arrival. When the
+ * producer appends, `appendChunk` fires `refreshSelector` on the
+ * message label; the server-side segment driver wakes, re-renders
+ * the message partial with the new chunk in `ChunkList`, and the
+ * next sentinel suspends on the chunk after THAT.
+ *
+ * Liveness is structural: while `<ChunkSlot>` is awaiting, the
+ * render isn't done, so the segment driver knows there's pending
+ * work and keeps the connection open. When the producer signals done,
+ * `<ChunkSlot>` returns a "stream complete" tail synchronously and
+ * stops calling `markConnectionLive`, so the segment driver closes
+ * the connection naturally.
  */
-const MAX_DEPTH = 12
 
-export async function Piece({
-  fileId,
-  cursor,
-  depth,
-}: {
-  fileId: string
-  cursor: number
-  depth: number
-}) {
-  const read = await readLog(fileId, cursor)
-  if (read.done) {
-    return (
-      <span data-testid={`chat-done-${fileId}`} className="mt-1 block text-xs text-emerald-500">
-        ✓ stream complete ({cursor} chunks)
-      </span>
-    )
-  }
-  const nextCursor = cursor + 1
-  const nextDepth = depth + 1
-  return (
-    <>
-      <ChunkText text={read.text} />
-      {nextDepth >= MAX_DEPTH ? (
-        <ResumeTail fileId={fileId} cursor={nextCursor} />
-      ) : (
-        <Suspense fallback={null}>
-          <Piece fileId={fileId} cursor={nextCursor} depth={nextDepth} />
-        </Suspense>
-      )}
-    </>
-  )
-}
+import { Suspense } from "react"
+import { markConnectionLive } from "@parton/framework"
+import { readLogState, waitForNextChunk } from "./log.ts"
 
 function ChunkText({ text }: { text: string }) {
   return (
@@ -48,9 +29,7 @@ function ChunkText({ text }: { text: string }) {
   )
 }
 
-export function FlatPrefix({ fileId, cursor }: { fileId: string; cursor: number }) {
-  if (cursor <= 0) return null
-  const chunks = readLogPrefix(fileId, cursor)
+function ChunkList({ chunks }: { chunks: readonly string[] }) {
   return (
     <>
       {chunks.map((text, i) => (
@@ -60,31 +39,53 @@ export function FlatPrefix({ fileId, cursor }: { fileId: string; cursor: number 
   )
 }
 
-export function ChatMessage({ fileId, cursor }: { fileId: string; cursor: number }) {
-  const startCursor = Math.max(0, cursor)
+/**
+ * Wait sentinel — suspends until the log advances past the current
+ * cursor. Renders nothing on resolve; the new chunk shows up in
+ * `<ChunkList>` of the NEXT segment after the segment driver
+ * re-renders. `markConnectionLive()` tells the driver to keep the
+ * connection open after this segment closes.
+ */
+async function ChunkSlot({ fileId, cursor }: { fileId: string; cursor: number }) {
+  markConnectionLive()
+  await waitForNextChunk(fileId, cursor)
+  return null
+}
+
+export function ChatMessage({ fileId }: { fileId: string }) {
+  const snapshot = readLogState(fileId)
   return (
     <article
       data-testid={`chat-msg-${fileId}`}
-      data-cursor={startCursor}
+      data-cursor={snapshot.cursor}
       className="mb-2 rounded-lg border bg-background px-3 py-2"
     >
       <header className="mb-1.5 font-sans text-[0.7rem] uppercase tracking-wider text-emerald-300">
         {fileId}.md
       </header>
       <div data-testid={`chat-body-${fileId}`}>
-        <FlatPrefix fileId={fileId} cursor={startCursor} />
-        <Suspense
-          fallback={
-            <span
-              data-testid={`chat-pending-${fileId}`}
-              className="text-xs italic text-muted-foreground"
-            >
-              streaming…
-            </span>
-          }
-        >
-          <Piece fileId={fileId} cursor={startCursor} depth={0} />
-        </Suspense>
+        <ChunkList chunks={snapshot.chunks} />
+        {snapshot.done ? (
+          <span
+            data-testid={`chat-done-${fileId}`}
+            className="mt-1 block text-xs text-emerald-500"
+          >
+            ✓ stream complete ({snapshot.cursor} chunks)
+          </span>
+        ) : (
+          <Suspense
+            fallback={
+              <span
+                data-testid={`chat-pending-${fileId}`}
+                className="text-xs italic text-muted-foreground"
+              >
+                streaming…
+              </span>
+            }
+          >
+            <ChunkSlot fileId={fileId} cursor={snapshot.cursor} />
+          </Suspense>
+        )}
       </div>
     </article>
   )

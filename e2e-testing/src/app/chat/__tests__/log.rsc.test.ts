@@ -48,15 +48,19 @@ describe("chat log — markdown path resolution", () => {
     // vite.config-set env var — the source-tree fallback walks four
     // levels up from `log.ts` and lands on the repo `docs/`.
     process.chdir(WORKSPACE_ROOT)
-    const { readLog, _clearLogs } = await import("../log.ts")
+    const { waitForNextChunk, readLogState, _clearLogs } = await import("../log.ts")
     const { runWithRequestAsync } = await import(
       "@parton/framework/runtime/context.ts"
     )
     try {
       await runWithRequestAsync(new Request("http://t/"), async () => {
-        const read = await readLog("AA_CHAT_STREAMING", 0)
-        expect(read.done).toBe(false)
-        expect(read.text.length).toBeGreaterThan(0)
+        // Trigger the lazy producer via a state read, then wait for
+        // the first chunk to land — enough proof that path resolution
+        // worked.
+        readLogState("AA_CHAT_STREAMING")
+        await waitForNextChunk("AA_CHAT_STREAMING", 0)
+        const snap = readLogState("AA_CHAT_STREAMING")
+        expect(snap.chunks.length).toBeGreaterThan(0)
       })
     } finally {
       _clearLogs("all")
@@ -70,15 +74,16 @@ describe("chat log — markdown path resolution", () => {
     // finds the markdown.
     process.chdir(REPO_ROOT)
     process.env.DOCS_DIR = path.resolve(REPO_ROOT, "docs")
-    const { readLog, _clearLogs } = await import("../log.ts")
+    const { waitForNextChunk, readLogState, _clearLogs } = await import("../log.ts")
     const { runWithRequestAsync } = await import(
       "@parton/framework/runtime/context.ts"
     )
     try {
       await runWithRequestAsync(new Request("http://t/"), async () => {
-        const read = await readLog("AA_CHAT_STREAMING", 0)
-        expect(read.done).toBe(false)
-        expect(read.text.length).toBeGreaterThan(0)
+        readLogState("AA_CHAT_STREAMING")
+        await waitForNextChunk("AA_CHAT_STREAMING", 0)
+        const snap = readLogState("AA_CHAT_STREAMING")
+        expect(snap.chunks.length).toBeGreaterThan(0)
       })
     } finally {
       _clearLogs("all")

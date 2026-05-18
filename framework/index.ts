@@ -62,6 +62,7 @@ export {
   isTestMode,
   getScope,
   matchRoutePattern,
+  markConnectionLive,
 } from "./src/runtime/context.ts"
 
 // ── Navigation API (server-readable) ────────────────────────────────────

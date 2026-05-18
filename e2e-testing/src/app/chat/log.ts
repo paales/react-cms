@@ -19,7 +19,7 @@
 
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { getScope, isTestMode } from "@parton/framework"
+import { getScope, isTestMode, refreshSelector } from "@parton/framework"
 
 // Demo cadence (human-perceptible trickle). Playwright workers hit
 // the fast-path below so the e2e suite doesn't pay the 100 ms × 10 s
@@ -134,22 +134,37 @@ async function runProducer(
     const text = await readMarkdown(fileId)
     // Hard-slice into fixed-length chunks so the stream feels like
     // token-by-token reveal rather than paragraph drops. A word-boundary
-    // splitter would look nicer but variable chunk sizes make compaction
-    // timing unpredictable; fixed-size keeps the seam easy to reason about.
+    // splitter would look nicer but variable chunk sizes make append
+    // timing unpredictable; fixed-size keeps the segment seam easy to
+    // reason about.
     for (let i = 0; i < text.length; i += CHUNK_CHAR_SIZE) {
       if (log.aborted) return
       if (Date.now() - start >= streamBudgetMs) break
       await new Promise((r) => setTimeout(r, chunkDelayMs))
       if (log.aborted) return
-      log.chunks.push(text.slice(i, i + CHUNK_CHAR_SIZE))
-      wakeAll(log)
+      appendChunk(fileId, log, text.slice(i, i + CHUNK_CHAR_SIZE))
     }
   } catch (e) {
     log.error = e instanceof Error ? e : new Error(String(e))
   } finally {
     log.done = true
     wakeAll(log)
+    // Final refresh so the segment driver wakes one last time to emit
+    // the "stream complete" tail and close cleanly.
+    refreshSelector(`chat-msg-${fileId}`)
   }
+}
+
+/**
+ * Append one chunk to the log: wakes any pending `waitForNextChunk`
+ * waiters AND fires `refreshSelector` on the message's label so the
+ * server-side segment driver re-renders this message on the next
+ * tick.
+ */
+function appendChunk(fileId: string, log: MessageLog, chunk: string): void {
+  log.chunks.push(chunk)
+  wakeAll(log)
+  refreshSelector(`chat-msg-${fileId}`)
 }
 
 function wakeAll(log: MessageLog): void {
@@ -158,40 +173,41 @@ function wakeAll(log: MessageLog): void {
   for (const w of waiters) w()
 }
 
-export interface LogRead {
-  /** The chunk text, or empty string when `done`. */
-  text: string
-  /** True when no more chunks will ever be produced for this cursor. */
+/**
+ * Snapshot the log's current state. Returns the chunks produced so
+ * far, the cursor (= chunks.length), and whether the producer has
+ * finished. Lets the chat render the full message body synchronously
+ * without per-chunk Suspense awaits. Server-side starts the producer
+ * lazily on first call, same as `readLog`.
+ */
+export interface LogSnapshot {
+  chunks: readonly string[]
+  cursor: number
   done: boolean
 }
 
-/**
- * Await the chunk at `cursor`. Resolves when the producer has appended at
- * least `cursor + 1` chunks, OR the producer has finished with fewer chunks
- * (in which case `done: true`).
- */
-export async function readLog(fileId: string, cursor: number): Promise<LogRead> {
+export function readLogState(fileId: string): LogSnapshot {
   const log = ensureLog(fileId)
-  while (true) {
-    if (log.error) throw log.error
-    if (cursor < log.chunks.length) {
-      return { text: log.chunks[cursor], done: false }
-    }
-    if (log.done) return { text: "", done: true }
-    await new Promise<void>((resolve) => log.waiters.add(resolve))
-  }
+  return { chunks: log.chunks, cursor: log.chunks.length, done: log.done }
 }
 
 /**
- * Return the chunks already produced in range [0, cursor). Used for the flat
- * prefix render after a compaction reload. Never blocks — if fewer than
- * `cursor` chunks are available (reload landed before producer caught up),
- * the returned array is shorter, and the `<Piece>` chain starting at the
- * actual length will fill the rest.
+ * Resolve when the log has at least one chunk past `cursor` OR the
+ * producer is done with no more chunks coming. Used by the chat's
+ * `ChunkSlot` sentinel: it suspends until the log advances, then
+ * returns null, closing the current segment. The server-side segment
+ * driver, woken by the `refreshSelector` that `appendChunk` fires,
+ * renders the next segment with the freshly-appended chunk in
+ * `ChunkList`.
  */
-export function readLogPrefix(fileId: string, cursor: number): string[] {
+export async function waitForNextChunk(fileId: string, cursor: number): Promise<void> {
   const log = ensureLog(fileId)
-  return log.chunks.slice(0, Math.max(0, cursor))
+  while (true) {
+    if (cursor < log.chunks.length) return
+    if (log.done) return
+    if (log.aborted) return
+    await new Promise<void>((resolve) => log.waiters.add(resolve))
+  }
 }
 
 /**

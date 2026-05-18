@@ -23,6 +23,7 @@ import {
   wrapStreamWithCommitOnly,
   wrapSsrStreamWithFpTrailer,
 } from "@parton/framework/lib/fp-trailer.ts"
+import { driveSegmentedResponse } from "@parton/framework/lib/segmented-response.ts"
 import { runInvalidationTransaction } from "@parton/framework/runtime/invalidation-registry.ts"
 
 export type RscPayload = {
@@ -191,28 +192,61 @@ async function handleRequest(
     )
   }
 
-  const rscPayload: RscPayload = {
+  const buildRscPayload = (): RscPayload => ({
     root: <Root />,
     formState,
     returnValue,
-  }
-  const rscStream = renderToReadableStream<RscPayload>(rscPayload, {
-    temporaryReferences,
-    onError: silenceClientDisconnect,
   })
+  // RSC path renders inside the segment driver via `renderOnce`; it
+  // may be invoked multiple times if any render signals
+  // `markConnectionLive()`. SSR path renders once below (the rsc bytes
+  // are inlined into `<script>FLIGHT_DATA</script>` tags so we can't
+  // run multiple Flight documents through it).
+  const renderOnce = (): ReadableStream<Uint8Array> => {
+    const stream = renderToReadableStream<RscPayload>(buildRscPayload(), {
+      temporaryReferences,
+      onError: silenceClientDisconnect,
+    })
+    // Action POSTs skip the trailer — Flight stops reading once the
+    // root row resolves on the action-result path, and a splitter
+    // waiting for the trailer past that point can stall under
+    // backpressure. Non-action GETs get the length-prefixed binary
+    // fp-trailer.
+    const wrap = renderRequest.isAction ? wrapStreamWithCommitOnly : wrapStreamWithFpTrailer
+    return wrap(stream, _captureCommitHandle())
+  }
 
   if (renderRequest.isRsc) {
-    // RSC response: GET navs get the binary fp-trailer (length-
-    // prefixed segment after the main Flight bytes, parsed client-
-    // side by `splitAtFpTrailer`). Action POSTs skip the trailer —
-    // Flight stops reading once the root row resolves on the action-
-    // result path, and a splitter waiting for the trailer past that
-    // point can stall under backpressure.
-    const wrap = renderRequest.isAction ? wrapStreamWithCommitOnly : wrapStreamWithFpTrailer
-    return new Response(wrap(rscStream, _captureCommitHandle()), {
-      status: actionStatus,
-      headers: { "content-type": "text/x-component;charset=utf-8" },
-    })
+    // Single segment for action POSTs (one render + return). GETs get
+    // the multi-segment driver: if any render signals
+    // `markConnectionLive()` (e.g. the chat's ChunkSlot awaiting the
+    // next log entry), the response stays open and re-renders on every
+    // `refreshSelector` bump until a render finishes without signalling
+    // live. Single-segment GETs (the common case) emit one segment and
+    // close immediately — byte-identical to the pre-loop behavior.
+    if (renderRequest.isAction) {
+      return new Response(renderOnce(), {
+        status: actionStatus,
+        headers: { "content-type": "text/x-component;charset=utf-8" },
+      })
+    }
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            await driveSegmentedResponse(controller, renderOnce)
+          } catch (err) {
+            controller.error(err)
+            return
+          }
+          controller.close()
+        },
+      }),
+      {
+        status: actionStatus,
+        headers: { "content-type": "text/x-component;charset=utf-8" },
+      },
+    )
   }
 
   // SSR response: rscStream gets inlined into <script>FLIGHT_DATA</script>
@@ -232,8 +266,12 @@ async function handleRequest(
     "ssr",
     "index",
   )
+  const ssrRscStream = renderToReadableStream<RscPayload>(buildRscPayload(), {
+    temporaryReferences,
+    onError: silenceClientDisconnect,
+  })
   const ssrResult = await ssrEntryModule.renderHTML(
-    wrapStreamWithCommitOnly(rscStream, commit),
+    wrapStreamWithCommitOnly(ssrRscStream, commit),
     {
       formState,
       debugNojs: renderRequest.url.searchParams.has("__nojs"),

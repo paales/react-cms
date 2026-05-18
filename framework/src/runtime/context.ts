@@ -29,6 +29,13 @@ interface RequestStore {
    *  unless `deferRegistryCommit` was set. */
   commitRegistry?: () => void
   deferRegistryCommit?: boolean
+  /** Set by a server component during render (typically a wait
+   *  sentinel like the chat's ChunkSlot) to signal that the segment
+   *  driver should keep the connection open after this segment closes
+   *  and emit another segment when state changes. Without this, the
+   *  driver closes the connection after the first segment — same as
+   *  today's single-segment behavior. */
+  connectionLive?: boolean
 }
 
 const requestContext = new AsyncLocalStorage<RequestStore>()
@@ -80,6 +87,37 @@ export function _captureCommitHandle(): () => void {
   return () => {
     if (store.commitRegistry) store.commitRegistry()
   }
+}
+
+/**
+ * Signal that this render's connection should stay open after the
+ * current segment closes — the segment driver will wait for the next
+ * `refreshSelector` event and re-render. Used by streaming sentinels
+ * (e.g. the chat's `ChunkSlot`) to keep a long-poll connection alive
+ * across multiple Flight documents on the same TCP socket.
+ *
+ * Idempotent — multiple calls within one render are a no-op. The flag
+ * resets between segments, so each render must call this if it wants
+ * the next one to follow.
+ */
+export function markConnectionLive(): void {
+  const store = requestContext.getStore()
+  if (!store) return
+  store.connectionLive = true
+}
+
+/** Read the live flag set by the current segment's render. Used by
+ *  the segment driver after the segment's Flight stream closes. */
+export function _isConnectionLive(): boolean {
+  const store = requestContext.getStore()
+  return store?.connectionLive === true
+}
+
+/** Reset the live flag between segments so the next render starts
+ *  cold and must re-declare its liveness. */
+export function _clearConnectionLive(): void {
+  const store = requestContext.getStore()
+  if (store) store.connectionLive = false
 }
 
 function getStore(): RequestStore {

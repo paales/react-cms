@@ -58,11 +58,16 @@ function computeNextHref(msgIds: string[]): string | null {
 }
 
 // Pre-built message specs — one per fileId. Each gates by checking
-// whether its fileId is in the `?msgs=` list.
+// whether its fileId is in the `?msgs=` list. The cursor used to live
+// in the URL (carrying the ResumeTail compaction handoff); it's
+// gone now — `ChatMessage` reads the log's state directly and a
+// Suspense sentinel keeps the connection live until the producer
+// signals done. `refreshSelector(chat-msg-${fileId})` from
+// `log.ts::appendChunk` is what wakes the segment driver.
 const MessagePartials = AVAILABLE_FILES.map((fileId) =>
   parton(
-    function MessageRender({ cursor }: { cursor: number } & RenderArgs) {
-      return <ChatMessage fileId={fileId} cursor={cursor} />
+    function MessageRender() {
+      return <ChatMessage fileId={fileId} />
     },
     {
       selector: `#chat-msg-${fileId}`,
@@ -70,8 +75,7 @@ const MessagePartials = AVAILABLE_FILES.map((fileId) =>
         const { msgs: msgsRaw = null } = search
         const msgs = parseMsgs(msgsRaw)
         if (!msgs.includes(fileId)) return null
-        const cursor = Math.max(0, Number(search[`cursor-${fileId}`]) || 0)
-        return { cursor }
+        return {}
       },
     },
   ),
