@@ -9,54 +9,27 @@
  * miss → streaming-mode fallback.
  *
  * Fix: after the remote's render completes, collect the snapshots
- * it produced and ship them to the host as a trailing segment
- * after the Flight bytes. The host's `<RemoteFrame>` splits the
- * stream, decodes Flight as usual, parses the trailer, and re-
- * registers each snapshot in its own request registry. Selector-
- * targeted refetch now finds the id and runs through the normal
- * cache-mode path (the spec lookup hits the local catalog in
- * same-origin v1 and the remote endpoint in cross-origin v2).
+ * it produced and ship them to the host as a trailing entry after
+ * the Flight bytes. The host's `<RemoteFrame>` splits the stream,
+ * decodes Flight as usual, parses the trailer, and re-registers each
+ * snapshot in its own request registry.
  *
  * Wire format (concatenated, in order):
  *
- *   <Flight bytes...>
- *   <12-byte SNAPSHOT_TRAILER_MARKER>
- *   <4-byte big-endian length>
- *   <UTF-8 JSON of {id → serialized snapshot} map>
+ *   <Flight bytes…>
+ *   \n\xFF[parton:snapshots:N]\n
+ *   <N bytes of UTF-8 JSON {id → serialized snapshot}>
  *
- * Marker shape is identical to `fp-trailer-marker.ts`: leading
- * `\xFF\xFE` (invalid UTF-8 lead bytes — cannot appear inside
- * Flight's UTF-8 JSON output) + 8 ASCII tag bytes + trailing
- * `\xFD\xFC`. Tag is `snapshots` so a future generalised splitter
- * can dispatch on it.
- *
- * Mirrors the fp-trailer machinery (`framework/src/lib/fp-trailer.ts`
- * + `fp-trailer-split.ts`). Kept separate for now so the two
- * trailer types don't entangle; can be unified once a third use
- * case appears.
+ * Same shape as the fp / url / next trailer entries. Leading `\n`
+ * separates the marker visually in dumps; `\xFF` is the actual
+ * parse-time discriminator (invalid UTF-8 so it can't occur inside
+ * Flight payload bytes).
  */
 
 import type { PartialSnapshot } from "./partial-registry.ts"
+import { buildMarker, tryReadMarker } from "./fp-trailer-marker.ts"
 
-const SNAPSHOT_TRAILER_TAG = "snapshots"
-
-function buildMarker(): Uint8Array {
-  const bytes = new Uint8Array(12)
-  bytes[0] = 0xff
-  bytes[1] = 0xfe
-  const tag = new TextEncoder().encode(SNAPSHOT_TRAILER_TAG)
-  if (tag.length !== 8) {
-    // Tag must be exactly 8 ASCII chars to keep the 12-byte marker
-    // fixed-width. `snapshots` is 9 chars; encode handles that.
-  }
-  // Fill 8 tag bytes (truncate or pad with NULs if needed).
-  for (let i = 0; i < 8; i++) bytes[2 + i] = tag[i] ?? 0
-  bytes[10] = 0xfd
-  bytes[11] = 0xfc
-  return bytes
-}
-
-export const SNAPSHOT_TRAILER_MARKER: Readonly<Uint8Array> = buildMarker()
+const TAG_SNAPSHOTS = "snapshots"
 
 // ─── Snapshot serialization ────────────────────────────────────────────
 
@@ -118,6 +91,27 @@ export function deserializeSnapshot(ser: SerializedSnapshot): PartialSnapshot {
   }
 }
 
+/**
+ * Build the snapshot trailer bytes for `snapshots`. Returns a single
+ * Uint8Array containing the marker + JSON body, ready to enqueue.
+ * Exported so test fixtures can construct fake wire bytes.
+ */
+export function buildSnapshotTrailer(
+  snapshots: Map<string, PartialSnapshot>,
+): Uint8Array {
+  const serializable: Record<string, SerializedSnapshot> = {}
+  for (const [id, snap] of snapshots) {
+    serializable[id] = serializeSnapshot(snap)
+  }
+  const json = JSON.stringify(serializable)
+  const jsonBytes = new TextEncoder().encode(json)
+  const header = buildMarker(TAG_SNAPSHOTS, jsonBytes.byteLength)
+  const out = new Uint8Array(header.byteLength + jsonBytes.byteLength)
+  out.set(header, 0)
+  out.set(jsonBytes, header.byteLength)
+  return out
+}
+
 // ─── Server-side wrap ──────────────────────────────────────────────────
 
 /**
@@ -138,18 +132,7 @@ export function wrapStreamWithSnapshotTrailer(
     },
     flush(controller) {
       const snapshots = getSnapshots()
-      const serializable: Record<string, SerializedSnapshot> = {}
-      for (const [id, snap] of snapshots) {
-        serializable[id] = serializeSnapshot(snap)
-      }
-      const json = JSON.stringify(serializable)
-      const jsonBytes = new TextEncoder().encode(json)
-
-      controller.enqueue(SNAPSHOT_TRAILER_MARKER)
-      const lenBytes = new Uint8Array(4)
-      new DataView(lenBytes.buffer).setUint32(0, jsonBytes.length, false)
-      controller.enqueue(lenBytes)
-      controller.enqueue(jsonBytes)
+      controller.enqueue(buildSnapshotTrailer(snapshots))
     },
   })
   source.pipeTo(transformer.writable).catch(() => {
@@ -170,23 +153,26 @@ export interface SplitBuffer {
 /**
  * Splits a buffered response into Flight bytes + snapshot map.
  *
- * Buffer-then-split: the caller has to wait for the full remote
- * response before any Flight content can be decoded. Use when the
- * remote's payload is small or when within-remote streaming isn't
- * needed. For streaming, use `splitStreamAtSnapshotTrailer`.
+ * Scans for the first `\xFF` byte (the marker prefix), then parses
+ * the header to find the body length. Bytes before `\xFF` are Flight
+ * payload; bytes from the marker through the body terminate the
+ * trailer. Anything past that is ignored.
  */
 export function parseSnapshotTrailer(bytes: Uint8Array): SplitBuffer {
-  const idx = indexOfMarker(bytes, SNAPSHOT_TRAILER_MARKER)
-  if (idx < 0) return { flightBytes: bytes, snapshots: null }
-  const flightBytes = bytes.subarray(0, idx)
-  const after = bytes.subarray(idx + SNAPSHOT_TRAILER_MARKER.length)
-  if (after.length < 4) return { flightBytes, snapshots: null }
-  const len = new DataView(after.buffer, after.byteOffset + 0, 4).getUint32(0, false)
-  if (after.length < 4 + len) return { flightBytes, snapshots: null }
-  const jsonBytes = after.subarray(4, 4 + len)
+  const ffIdx = findSnapshotMarker(bytes)
+  if (ffIdx < 0) return { flightBytes: bytes, snapshots: null }
+  const flightBytes = bytes.subarray(0, ffIdx)
+  // We need the byte AT `\xFF` as the marker start. Pre-`\xFF` bytes
+  // (including the leading `\n` from buildMarker) are Flight.
+  const parsed = tryReadMarker(bytes, ffIdx)
+  if (typeof parsed !== "object") return { flightBytes, snapshots: null }
+  if (parsed.tag !== TAG_SNAPSHOTS) return { flightBytes, snapshots: null }
+  const bodyStart = ffIdx + parsed.headerSize
+  const bodyEnd = bodyStart + parsed.length
+  if (bytes.length < bodyEnd) return { flightBytes, snapshots: null }
   try {
     const raw = JSON.parse(
-      new TextDecoder().decode(jsonBytes),
+      new TextDecoder().decode(bytes.subarray(bodyStart, bodyEnd)),
     ) as Record<string, SerializedSnapshot>
     const out: Record<string, PartialSnapshot> = {}
     for (const [id, ser] of Object.entries(raw)) {
@@ -218,9 +204,11 @@ export interface SnapshotStreamSplit {
  * payload). The trailer promise resolves on source-end with the
  * snapshot map for host-side registration.
  *
- * Mirrors the shape of `splitAtFpTrailer` in `fp-trailer-split.ts`.
- * The marker + trailer bytes leak through to the consumer; Flight
- * ignores trailing non-Flight noise after the root row resolves.
+ * Implementation: every source chunk forwards through immediately
+ * to the main stream. A bounded tail buffer holds the last bytes
+ * for marker scanning at end-of-stream. The marker bytes leak
+ * through to Flight; Flight ignores trailing non-Flight noise
+ * after its root row resolves.
  */
 export function splitStreamAtSnapshotTrailer(
   source: ReadableStream<Uint8Array>,
@@ -235,63 +223,31 @@ export function splitStreamAtSnapshotTrailer(
     }
   })
 
-  const marker = SNAPSHOT_TRAILER_MARKER
-  let tail = new Uint8Array(0)
-  const TAIL_CAP = marker.length + 4 + 256 * 1024
+  // Cap the tail buffer at the largest plausible snapshot payload.
+  // 256 KB covers a few hundred snapshots; if a remote exceeds this
+  // its trailer won't parse and the host falls back to "no snapshots."
+  const TAIL_CAP = 256 * 1024
 
+  let tail = new Uint8Array(0)
   const transformer = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       controller.enqueue(chunk)
       if (chunk.length >= TAIL_CAP) {
-        const trimmed = new Uint8Array(TAIL_CAP)
-        trimmed.set(chunk.subarray(chunk.length - TAIL_CAP), 0)
-        tail = trimmed
+        tail = chunk.subarray(chunk.length - TAIL_CAP).slice()
       } else {
         const combined = new Uint8Array(tail.length + chunk.length)
         combined.set(tail, 0)
         combined.set(chunk, tail.length)
         if (combined.length > TAIL_CAP) {
-          const trimmed = new Uint8Array(TAIL_CAP)
-          trimmed.set(combined.subarray(combined.length - TAIL_CAP), 0)
-          tail = trimmed
+          tail = combined.subarray(combined.length - TAIL_CAP).slice()
         } else {
           tail = combined
         }
       }
     },
     flush() {
-      const idx = indexOfMarker(tail, marker)
-      if (idx < 0) {
-        resolveTrailer(null)
-        return
-      }
-      const trailerBytes = tail.subarray(idx + marker.length)
-      if (trailerBytes.length < 4) {
-        resolveTrailer(null)
-        return
-      }
-      const len = new DataView(
-        trailerBytes.buffer,
-        trailerBytes.byteOffset,
-        4,
-      ).getUint32(0, false)
-      if (trailerBytes.length < 4 + len) {
-        resolveTrailer(null)
-        return
-      }
-      const jsonBytes = trailerBytes.subarray(4, 4 + len)
-      try {
-        const raw = JSON.parse(
-          new TextDecoder().decode(jsonBytes),
-        ) as Record<string, SerializedSnapshot>
-        const out: Record<string, PartialSnapshot> = {}
-        for (const [id, ser] of Object.entries(raw)) {
-          out[id] = deserializeSnapshot(ser)
-        }
-        resolveTrailer(out)
-      } catch {
-        resolveTrailer(null)
-      }
+      const result = parseSnapshotTrailer(tail)
+      resolveTrailer(result.snapshots)
     },
   })
 
@@ -305,13 +261,21 @@ export function splitStreamAtSnapshotTrailer(
   }
 }
 
-function indexOfMarker(buffer: Uint8Array, marker: Uint8Array): number {
-  const last = buffer.length - marker.length
-  outer: for (let i = 0; i <= last; i++) {
-    for (let j = 0; j < marker.length; j++) {
-      if (buffer[i + j] !== marker[j]) continue outer
+// ─── Internal ──────────────────────────────────────────────────────────
+
+/** Locate the marker for a snapshots trailer — scans for the first
+ *  `\xFF` followed by a valid `[parton:snapshots:` header. Returns
+ *  the offset of the `\xFF` byte, or -1 if no valid marker present. */
+function findSnapshotMarker(bytes: Uint8Array): number {
+  let from = 0
+  while (from < bytes.length) {
+    const idx = bytes.indexOf(0xff, from)
+    if (idx < 0) return -1
+    const parsed = tryReadMarker(bytes, idx)
+    if (typeof parsed === "object" && parsed.tag === TAG_SNAPSHOTS) {
+      return idx
     }
-    return i
+    from = idx + 1
   }
   return -1
 }

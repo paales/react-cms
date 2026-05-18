@@ -39,7 +39,13 @@ const TEXT_ENCODER = new TextEncoder()
 const TEXT_DECODER = new TextDecoder()
 
 /** Build the marker + header bytes for a trailer entry. The caller
- *  enqueues this followed by exactly `bodyLength` body bytes. */
+ *  enqueues this followed by exactly `bodyLength` body bytes.
+ *
+ *  Format: `\xFF[parton:tag:length]\n`. `\xFF` is the parser's start
+ *  signal (invalid UTF-8 so it cannot appear inside Flight payload);
+ *  the rest is plain ASCII so the marker is readable in tcpdump /
+ *  curl. Flight rows end with `\n`, so the marker naturally appears
+ *  on its own line after the preceding row's terminator. */
 export function buildMarker(tag: string, bodyLength: number): Uint8Array {
   if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) {
     throw new Error(`Trailer tag must match /^[a-z][a-z0-9_-]{0,15}$/i, got: ${tag}`)

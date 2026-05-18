@@ -65,8 +65,8 @@ describe("buildMarker — readable wire format", () => {
   it("produces a marker readable in an ASCII dump", () => {
     const marker = buildMarker("fp", 42)
     const text = new TextDecoder("utf-8", { fatal: false }).decode(marker)
-    // Trim the leading `\xFF` (it's not valid UTF-8 so the decoder
-    // emits the replacement character) and check the header text.
+    // `\xFF` decodes to the replacement char; plain ASCII header
+    // and a trailing `\n` make the marker grep-able.
     expect(text).toContain("[parton:fp:42]")
     expect(text.endsWith("\n")).toBe(true)
   })
@@ -83,6 +83,15 @@ describe("buildMarker — readable wire format", () => {
   })
 })
 
+// Marker has a leading `\n` for visual separation in dumps. The
+// `\n` lands in the body stream (Flight tolerates trailing
+// whitespace). Tests strip it from body assertions for clarity.
+function bodyText(bytes: Uint8Array): string {
+  let s = new TextDecoder().decode(bytes)
+  while (s.endsWith("\n")) s = s.slice(0, -1)
+  return s
+}
+
 describe("splitSegments — single segment", () => {
   it("yields one segment with no trailers when source has only Flight bytes", async () => {
     const wire = bytes("flight-payload-bytes")
@@ -94,7 +103,7 @@ describe("splitSegments — single segment", () => {
       })
     }
     expect(segments).toHaveLength(1)
-    expect(new TextDecoder().decode(segments[0].body)).toBe("flight-payload-bytes")
+    expect(bodyText(segments[0].body)).toBe("flight-payload-bytes")
     expect(segments[0].trailers.size).toBe(0)
   })
 
@@ -111,7 +120,7 @@ describe("splitSegments — single segment", () => {
       })
     }
     expect(segments).toHaveLength(1)
-    expect(new TextDecoder().decode(segments[0].body)).toBe("flight-payload-bytes")
+    expect(bodyText(segments[0].body)).toBe("flight-payload-bytes")
     const fp = segments[0].trailers.get(TAG_FP_UPDATES)
     expect(fp).toBeDefined()
     expect(new TextDecoder().decode(fp!)).toBe('{"id":"warm-fp"}')
@@ -150,7 +159,7 @@ describe("splitSegments — multi-segment", () => {
     )
     const bodies: string[] = []
     for await (const seg of splitSegments(streamOf(wire))) {
-      bodies.push(new TextDecoder().decode(await collect(seg.body)))
+      bodies.push(bodyText(await collect(seg.body)))
       await seg.trailers
     }
     expect(bodies).toEqual(["flight-1", "flight-2", "flight-3"])
@@ -167,7 +176,7 @@ describe("splitSegments — multi-segment", () => {
     )
     const out: { body: string; trailers: Map<string, string> }[] = []
     for await (const seg of splitSegments(streamOf(wire))) {
-      const body = new TextDecoder().decode(await collect(seg.body))
+      const body = bodyText(await collect(seg.body))
       const trailers = new Map<string, string>()
       for (const [k, v] of await seg.trailers) {
         trailers.set(k, new TextDecoder().decode(v))
@@ -200,7 +209,7 @@ describe("splitSegments — chunk-boundary handling", () => {
       })
     }
     expect(segments).toHaveLength(1)
-    expect(new TextDecoder().decode(segments[0].body)).toBe("flight")
+    expect(bodyText(segments[0].body)).toBe("flight")
     expect(new TextDecoder().decode(segments[0].trailers.get(TAG_FP_UPDATES)!)).toBe(
       '{"x":"y"}',
     )
@@ -218,7 +227,7 @@ describe("splitSegments — chunk-boundary handling", () => {
     const bodies: string[] = []
     const trailerMaps: Map<string, string>[] = []
     for await (const seg of splitSegments(streamOf(...oneByteChunks))) {
-      bodies.push(new TextDecoder().decode(await collect(seg.body)))
+      bodies.push(bodyText(await collect(seg.body)))
       const map = new Map<string, string>()
       for (const [k, v] of await seg.trailers) {
         map.set(k, new TextDecoder().decode(v))
@@ -240,7 +249,7 @@ describe("splitAtFpTrailer — legacy single-segment shim", () => {
     const { mainStream, trailer } = splitAtFpTrailer(streamOf(wire))
     const body = await collect(mainStream)
     const fp = await trailer
-    expect(new TextDecoder().decode(body)).toBe("flight-payload")
+    expect(bodyText(body)).toBe("flight-payload")
     expect(fp).toEqual({ foo: "bar" })
   })
 

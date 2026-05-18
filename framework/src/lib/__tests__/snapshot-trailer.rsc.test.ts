@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest"
 import {
-  SNAPSHOT_TRAILER_MARKER,
   deserializeSnapshot,
   parseSnapshotTrailer,
   serializeSnapshot,
   wrapStreamWithSnapshotTrailer,
 } from "../snapshot-trailer.ts"
+import { buildMarker } from "../fp-trailer-marker.ts"
 import type { PartialSnapshot } from "../partial-registry.ts"
 
 const ENC = new TextEncoder()
@@ -144,12 +144,16 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
     expect(snapshots!.demo.emittedFp).toBe("fp-xyz")
   })
 
-  it("marker bytes are at the boundary between Flight and trailer", async () => {
+  it("flight bytes split cleanly from the trailer at the \\xFF byte", async () => {
     const source = makeStream('xyz\n')
     const wrapped = wrapStreamWithSnapshotTrailer(source, () => new Map())
     const bytes = await readAll(wrapped)
-    const idx = indexOfMarker(bytes, SNAPSHOT_TRAILER_MARKER)
-    expect(idx).toBe(4) // 'xyz\n' is 4 bytes
+    const { flightBytes, snapshots } = parseSnapshotTrailer(bytes)
+    // Flight bytes are 'xyz\n' (4 bytes). The marker starts at the
+    // first `\xFF` byte that follows.
+    expect(flightBytes.byteLength).toBe(4)
+    expect(new TextDecoder().decode(flightBytes)).toBe("xyz\n")
+    expect(snapshots).toEqual({})
   })
 
   it("returns null snapshots when input has no marker", () => {
@@ -160,17 +164,14 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
   })
 
   it("returns null snapshots when trailer length exceeds remaining bytes", () => {
-    // Construct a buffer with the marker + an absurd length declaration.
+    // Lie about the body length in the marker header.
     const flight = ENC.encode("flight\n")
-    const lenBytes = new Uint8Array(4)
-    new DataView(lenBytes.buffer).setUint32(0, 99999, false)
-    const out = new Uint8Array(
-      flight.length + SNAPSHOT_TRAILER_MARKER.length + 4 + 2,
-    )
+    const marker = buildMarker("snapshots", 99999)
+    const body = ENC.encode("ab") // only 2 bytes follow
+    const out = new Uint8Array(flight.length + marker.length + body.length)
     out.set(flight, 0)
-    out.set(SNAPSHOT_TRAILER_MARKER, flight.length)
-    out.set(lenBytes, flight.length + SNAPSHOT_TRAILER_MARKER.length)
-    // Only 2 bytes of trailer payload follow.
+    out.set(marker, flight.length)
+    out.set(body, flight.length + marker.length)
     const { snapshots } = parseSnapshotTrailer(out)
     expect(snapshots).toBeNull()
   })
@@ -178,15 +179,11 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
   it("returns null snapshots on JSON parse failure", () => {
     const flight = ENC.encode("flight\n")
     const junk = ENC.encode("not json {{{")
-    const lenBytes = new Uint8Array(4)
-    new DataView(lenBytes.buffer).setUint32(0, junk.length, false)
-    const out = new Uint8Array(
-      flight.length + SNAPSHOT_TRAILER_MARKER.length + 4 + junk.length,
-    )
+    const marker = buildMarker("snapshots", junk.length)
+    const out = new Uint8Array(flight.length + marker.length + junk.length)
     out.set(flight, 0)
-    out.set(SNAPSHOT_TRAILER_MARKER, flight.length)
-    out.set(lenBytes, flight.length + SNAPSHOT_TRAILER_MARKER.length)
-    out.set(junk, flight.length + SNAPSHOT_TRAILER_MARKER.length + 4)
+    out.set(marker, flight.length)
+    out.set(junk, flight.length + marker.length)
     const { snapshots } = parseSnapshotTrailer(out)
     expect(snapshots).toBeNull()
   })
@@ -207,13 +204,3 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
   })
 })
 
-function indexOfMarker(buffer: Uint8Array, marker: Uint8Array): number {
-  const last = buffer.length - marker.length
-  outer: for (let i = 0; i <= last; i++) {
-    for (let j = 0; j < marker.length; j++) {
-      if (buffer[i + j] !== marker[j]) continue outer
-    }
-    return i
-  }
-  return -1
-}
