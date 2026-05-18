@@ -1,5 +1,4 @@
 import {
-  createFromFetch,
   createFromReadableStream,
   setServerCallback,
   createTemporaryReferenceSet,
@@ -14,7 +13,6 @@ import { NavigationError } from "@parton/framework/runtime/navigation-error.ts"
 import { createRscRenderRequest } from "@parton/framework/runtime/request.tsx"
 import {
   _applyFpTrailerFromDocument,
-  _applyFpUpdates,
   _collectFramePaths,
   _dispatchFrameRefetch,
   _readFramesSnapshot,
@@ -22,6 +20,7 @@ import {
   isFrameworkSilentInfo,
 } from "@parton/framework/lib/partial-client.tsx"
 import { splitSegments } from "@parton/framework/lib/fp-trailer-split.ts"
+import { applyStandardTrailers } from "@parton/framework/lib/segment-trailers-client.ts"
 import { getNavigation } from "@parton/framework/runtime/navigation-api.ts"
 
 async function main() {
@@ -151,36 +150,7 @@ async function main() {
     try {
       for await (const segment of splitSegments(response.body)) {
         const payload = await createFromReadableStream<RscPayload>(segment.body)
-        segment.trailers.then((trailers) => {
-          const fpBytes = trailers.get("fp")
-          if (fpBytes) {
-            try {
-              const updates = JSON.parse(
-                new TextDecoder().decode(fpBytes),
-              ) as Record<string, string>
-              _applyFpUpdates(updates)
-            } catch {}
-          }
-          // Server-pushed URL update. Applied silently via
-          // history.{push,replace}State so the browser URL bar
-          // reflects the new state without re-entering the
-          // framework's own navigation handler (which would fire
-          // a fresh fetchRscPayload, redundant since we already
-          // have the rendered content).
-          const urlBytes = trailers.get("url")
-          if (urlBytes) {
-            try {
-              const update = JSON.parse(new TextDecoder().decode(urlBytes)) as {
-                window?: string
-                history?: "push" | "replace"
-              }
-              if (update.window) {
-                const mode = update.history === "push" ? "pushState" : "replaceState"
-                window.history[mode]({}, "", update.window)
-              }
-            } catch {}
-          }
-        })
+        segment.trailers.then(applyStandardTrailers).catch(() => {})
         if (disableTransition) {
           setPayloadRaw(payload)
         } else {
@@ -217,11 +187,38 @@ async function main() {
       id,
       body: await encodeReply(args, { temporaryReferences }),
     })
-    const payload = await createFromFetch<RscPayload>(fetch(renderRequest), {
-      temporaryReferences,
-    })
-    setPayload(payload)
-    const { ok, data } = payload.returnValue!
+    const response = await fetch(renderRequest)
+    if (!response.ok || !response.body) {
+      throw new NavigationError({
+        kind: "http",
+        url: renderRequest.url,
+        status: response.status,
+      })
+    }
+    // Same segmented-Flight decode as the GET path. Actions today
+    // produce a single segment (no `markConnectionLive` from action
+    // bodies), so the `for await` loops once — but the splitter is
+    // what lets us pick the trailers off the wire. Without it the
+    // url-trailer emitted by `getServerNavigation().navigate(...)`
+    // inside an action body never reaches the client and the URL
+    // never updates.
+    let firstPayload: RscPayload | undefined
+    for await (const segment of splitSegments(response.body)) {
+      const payload = await createFromReadableStream<RscPayload>(segment.body, {
+        temporaryReferences,
+      })
+      if (!firstPayload) firstPayload = payload
+      segment.trailers.then(applyStandardTrailers).catch(() => {})
+      setPayload(payload)
+    }
+    if (!firstPayload) {
+      throw new NavigationError({
+        kind: "decode",
+        url: renderRequest.url,
+        cause: new Error("Action response had no segments"),
+      })
+    }
+    const { ok, data } = firstPayload.returnValue!
     if (!ok) throw data
     return data
   })

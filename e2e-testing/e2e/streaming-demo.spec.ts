@@ -18,6 +18,19 @@ test.beforeEach(async ({ baseURL }) => {
   await ctx.dispose()
 })
 
+/**
+ * Wait for the page's use-client subtree to hydrate. The
+ * `LiveTickAutostart` useEffect stamps `data-streaming-demo-ready`
+ * on `<body>` after it runs — once present, every other use-client
+ * component on this page (BumpButton, PushUrlButton) also has its
+ * onClick handler attached. Without this Playwright's `.click()`
+ * can fire on the SSR-rendered DOM before React 19 finishes
+ * attaching event handlers, and the click is a no-op.
+ */
+async function waitForStreamingDemoReady(page: import("@playwright/test").Page): Promise<void> {
+  await page.locator("body[data-streaming-demo-ready]").waitFor({ timeout: 10000 })
+}
+
 test("live tick advances over time on one rolling response", async ({ page }) => {
   await page.goto("/streaming-demo")
   // The tick partial mounts; initial render shows tick #0 (or
@@ -43,21 +56,14 @@ test("live tick advances over time on one rolling response", async ({ page }) =>
   expect(seen.size).toBeGreaterThanOrEqual(2)
 })
 
-test.skip("bump button calls getServerNavigation().reload + partial re-renders", async ({
+test("bump button calls getServerNavigation().reload + partial re-renders", async ({
   page,
 }) => {
-  // Passes in isolation against a warm dev server; flakes in
-  // mixed runs (the cold-start first-test against Vite's
-  // auto-spawn doesn't see the action's response reach the DOM,
-  // most likely a dep-optimization round during cold start). The
-  // primitive itself is correct — server-side logs confirm the
-  // action fires and the bump-counter renders with the new value.
-  // Skipping for stability; manual smoke at /streaming-demo
-  // demonstrates the demo works for a user.
   await page.goto("/streaming-demo")
   await expect(page.locator('[data-testid="streaming-demo-bumps"]')).toContainText("Bumps: 0", {
     timeout: 10000,
   })
+  await waitForStreamingDemoReady(page)
 
   await page.locator('[data-testid="streaming-demo-bump-btn"]').click()
   await expect(page.locator('[data-testid="streaming-demo-bumps"]')).toContainText("Bumps: 1", {
@@ -70,32 +76,31 @@ test.skip("bump button calls getServerNavigation().reload + partial re-renders",
   })
 })
 
-test.skip("push-URL button advances ?seq= via server-side navigate", async ({ page }) => {
-  // Pending: the action-POST path uses `createFromFetch` which
-  // consumes the response as one Flight document. The url-trailer
-  // that `wrapStreamWithCommitOnly` emits at the end is not
-  // extracted, so the client never applies the URL push. A
-  // splitter-based setServerCallback was tried and worked for this
-  // test but regressed the bump-counter test (Flight backpressure
-  // interaction with my splitter). Needs a unified action-POST
-  // response decoder.
+test("push-URL button advances ?seq= via server-side navigate", async ({ page }) => {
   await page.goto("/streaming-demo")
   await expect(page.locator('[data-testid="streaming-demo-push-btn"]')).toBeVisible({
     timeout: 10000,
   })
+  await waitForStreamingDemoReady(page)
 
   // Before click: no ?seq= in the URL.
   expect(new URL(page.url()).searchParams.get("seq")).toBeNull()
 
+  // The action calls `getServerNavigation().navigate("?seq=N")`. The
+  // url-trailer is applied via `history.replaceState` on the client.
+  // `seq` is module-scope on the server (advances across calls) so we
+  // read the value from the URL after each click rather than asserting
+  // exact numbers — what matters is that the URL changes and that each
+  // click advances it.
   await page.locator('[data-testid="streaming-demo-push-btn"]').click()
-  // The action calls `getServerNavigation().navigate("?seq=1")`. The
-  // url-trailer is applied via history.replaceState on the client.
   await expect
     .poll(() => new URL(page.url()).searchParams.get("seq"), { timeout: 5000 })
-    .toBe("1")
+    .not.toBeNull()
+  const first = Number(new URL(page.url()).searchParams.get("seq"))
+  expect(first).toBeGreaterThan(0)
 
   await page.locator('[data-testid="streaming-demo-push-btn"]').click()
   await expect
-    .poll(() => new URL(page.url()).searchParams.get("seq"), { timeout: 5000 })
-    .toBe("2")
+    .poll(() => Number(new URL(page.url()).searchParams.get("seq")), { timeout: 5000 })
+    .toBe(first + 1)
 })

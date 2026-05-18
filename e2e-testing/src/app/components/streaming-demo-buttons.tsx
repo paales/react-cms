@@ -16,6 +16,12 @@ import { bumpDemoCounter, pushSeq } from "../pages/streaming-demo-actions.ts"
 export function LiveTickAutostart() {
   const [reload] = useNavigation().reload()
   useEffect(() => {
+    // Side-effect signal for e2e: once this useEffect runs we know
+    // the use-client subtree on /streaming-demo has hydrated (and
+    // therefore the BumpButton/PushUrlButton onClick handlers are
+    // attached). Tests wait for `data-streaming-demo-ready` on body
+    // before clicking.
+    document.body.setAttribute("data-streaming-demo-ready", "1")
     void reload({ selector: "streaming-demo-tick", disableTransition: true })
   }, [reload])
   return null

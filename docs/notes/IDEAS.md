@@ -77,14 +77,19 @@ new render's seen set.
 The fp trailer is orthogonal: at end-of-render the server
 recomputes each spec's fp against the now-populated snapshot
 registry, ships a `{id: warm_fp}` map down (HTML comment after
-`</html>` for SSR responses, length-prefixed binary segment after
-the main Flight bytes for RSC GET responses), and the client adds
-the warm fp to the most-recently-emitted variant's fp set. That
-fixes the cold→warm fp instability — the very next visit fp-skips
-against the warm value instead of paying a wasted re-render. Action
-POSTs skip the trailer (Flight stops reading once the result row
-resolves; a splitter past that point can stall) and fall back to
-single-round-trip warm-up via the wrapper's PEB-prop hydration.
+`</html>` for SSR responses, an `\xFF[parton:fp:N]\n<json>` trailer
+entry after the Flight bytes for RSC GET responses), and the client
+adds the warm fp to the most-recently-emitted variant's fp set.
+That fixes the cold→warm fp instability — the very next visit
+fp-skips against the warm value instead of paying a wasted
+re-render. Action POSTs omit the `fp` entry (Flight stops reading
+once the result row resolves, so any post-result payload is at risk
+of dropping under backpressure — we keep them single-segment and
+short) and fall back to single-round-trip warm-up via the wrapper's
+PEB-prop hydration. They DO carry a `url` entry when the action
+body called `getServerNavigation().navigate(...)`; the
+splitter-based `setServerCallback` extracts it and applies the URL
+push via `history.{push,replace}State`.
 
 Two extensions are still open:
 

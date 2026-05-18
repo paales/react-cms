@@ -249,23 +249,27 @@ Two transports, both at the same routeKey-bound flush hook:
   `_applyFpTrailerFromDocument` at hydration time, or — when the
   parser hasn't reached the trailing comment by then — on the
   subsequent `load` event.
-- **RSC GET response**: length-prefixed binary segment after the
-  main Flight bytes (see `wrapStreamWithFpTrailer` and
-  `splitAtFpTrailer`). The 12-byte sentinel
-  (`\xFF\xFE` + ASCII `fp-updates` + `\xFD\xFC`) marks the boundary;
-  invalid UTF-8 lead bytes make it impossible for the marker to
-  occur inside the Flight JSON. `splitAtFpTrailer` is a no-holdback
-  splitter — chunks forward to Flight immediately, so progressive
-  rows stream with their original timing, and the trailer is parsed
-  from a rolling tail buffer on source-end.
+- **RSC response (GET *and* action POST)**: per-segment trailer
+  entries after the Flight bytes (see `wrapStreamWithFpTrailer`,
+  `wrapStreamWithCommitOnly`, and `splitSegments`). Each entry is
+  framed as `\xFF[parton:tag:length]\n<length-byte body>` — one
+  UTF-8-invalid lead byte (`\xFF` cannot occur inside Flight JSON)
+  followed by an ASCII bracketed header readable in tcpdump / curl.
+  Tags today: `fp` (fp updates), `url` (server-pushed URL push),
+  `next` (segment delimiter, length 0). `splitSegments` is a
+  no-holdback splitter — chunks forward to Flight immediately, so
+  progressive rows stream with their original timing, and trailer
+  bytes are peeled off the tail as they arrive.
 
-Action POSTs (`renderRequest.isAction === true`) skip the trailer.
-Flight stops reading once the action result row resolves; a splitter
-waiting for the trailer past that point can stall under
-backpressure. The cold→warm path for action POSTs falls back to the
-same single-round-trip warm-up that any cold-without-trailer hits:
-the next visit registers warm fps via PEB-prop hydration on the
-fresh wrapper the action response emitted.
+Action POSTs use `wrapStreamWithCommitOnly`, which emits a `url`
+trailer when the action body called `getServerNavigation().navigate(...)`
+and otherwise emits no trailer entries. The browser-side
+`setServerCallback` runs the response through `splitSegments` (same
+splitter the GET path uses) so the `url` entry reaches the client
+and gets applied via `history.{push,replace}State`. Cold→warm fp
+drift on the action-response wrappers is still recovered via PEB-prop
+hydration on the next visit — action POSTs deliberately omit the
+`fp` trailer to keep the response single-segment and short.
 
 ## Stream-driven commit timing
 
