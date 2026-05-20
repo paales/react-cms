@@ -20,14 +20,25 @@ interface Props {
  *   <BrowserRoot />
  *   <LivePageHeartbeat />
  *
- * Why a component (not a top-level function): the heartbeat needs
- * to fire AFTER React's first commit so partial fingerprints from
- * `PartialErrorBoundary.render()` have populated
- * `_currentPageFingerprints`. A useEffect runs post-commit, which
- * gives us that ordering for free. Calling `startLivePageHeartbeat()`
- * synchronously after `hydrateRoot` runs ahead of React and the
- * first request goes out without `?cached=`, forcing a full re-
- * render on every page load.
+ * Why a component (not a top-level function): the first fire
+ * needs to happen AFTER two distinct events:
+ *   1. React's first commit, which is when
+ *      `PartialErrorBoundary.render()` has populated
+ *      `_currentPageFingerprints` with the cold fps. `useEffect`
+ *      gives us that ordering for free — it runs post-commit.
+ *   2. The browser `load` event, which is when the SSR HTML
+ *      trailer comment after `</html>` has been parsed and its
+ *      warm-fp drift corrections applied
+ *      (`_applyFpTrailerFromDocument` registers a `load` listener
+ *      that runs `tryApplyTrailerNow`). Without this, the
+ *      heartbeat's first request carries only cold fps; if a
+ *      parton's cold fp drifted from warm, the server doesn't
+ *      fp-skip and re-renders it. For partons with time-dependent
+ *      content (`new Date()`) that's a visible flash.
+ *
+ * (1) is satisfied by being inside a useEffect. (2) is satisfied
+ * by waiting on `document.readyState === "complete"` or a
+ * `load` listener.
  *
  * Behaviour:
  *   - Mount → fire one `reload({streaming: true})`. Batches with
@@ -68,8 +79,27 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         })
     }
 
-    fire()
-    const timer = setInterval(fire, intervalMs)
+    // Defer the initial fire until BOTH have happened:
+    //   1. React's first commit (we're here, that's done).
+    //   2. The browser `load` event (or already complete).
+    // (2) is what populates the warm-fp drift corrections from the
+    // SSR HTML comment after `</html>` — only the trailing-comment
+    // listener can fill those in. Firing before (2) means the
+    // heartbeat's first request carries only cold fps in `?cached=`,
+    // and any parton whose cold fp drifted from warm gets re-
+    // rendered. For partons with time-dependent content
+    // (`new Date()`) that's a visible flash on first heartbeat.
+    let timer: ReturnType<typeof setInterval> | null = null
+    const startCadence = () => {
+      if (!alive) return
+      fire()
+      timer = setInterval(fire, intervalMs)
+    }
+    if (typeof document === "undefined" || document.readyState === "complete") {
+      startCadence()
+    } else {
+      window.addEventListener("load", startCadence, { once: true })
+    }
 
     const nav = getNavigation()
     const onNavigate = () => {
@@ -79,7 +109,8 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
 
     return () => {
       alive = false
-      clearInterval(timer)
+      if (timer) clearInterval(timer)
+      window.removeEventListener("load", startCadence)
       nav?.removeEventListener("navigate", onNavigate)
       if (inFlight) inFlight.abort()
     }
