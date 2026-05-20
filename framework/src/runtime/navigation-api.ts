@@ -204,6 +204,15 @@ export interface FrameworkReloadOptions extends NavigationReloadOptions {
   streaming?: boolean
   /** See `FrameworkNavigateOptions.props`. */
   props?: Record<string, Record<string, unknown>>
+  /** Caller-supplied abort signal. Aborting before the reload
+   *  completes cancels the in-flight fetch on the client and the
+   *  long-poll stream on the server. Components that fire a
+   *  `streaming: true` reload from a `useEffect` should pass a
+   *  signal whose controller aborts in the effect's cleanup —
+   *  otherwise navigating away leaves the server-side segment
+   *  driver running until its next render finishes without
+   *  `markConnectionLive`. */
+  signal?: AbortSignal
 }
 
 // ─── Fire functions + progress tuple ──────────────────────────────

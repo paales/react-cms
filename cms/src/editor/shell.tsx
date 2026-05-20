@@ -34,7 +34,16 @@ import {
   type ContentFieldKind,
   type MatchClause,
   type RenderArgs,
+  type ResolvedCell,
 } from "@parton/framework"
+import {
+  editorAttachment,
+  editorDevice,
+  editorLeftTab,
+  editorPalette,
+  editorSurface,
+  editorTreeStyle,
+} from "./state.ts"
 import { CmsEditTreeLink } from "./components/tree-link.tsx"
 import { CmsEditAddBlock } from "./components/add-block.tsx"
 import { EditorCloseLink } from "./components/editor-close-link.tsx"
@@ -201,13 +210,14 @@ function readMultiTabs(currentUrl: URL): string[] {
 export const EditorTreePartial = parton(
   async function EditorTreeRender({
     selected,
-    treeStyle,
+    treeStyle: treeStyleCell,
     currentUrl: currentUrlRaw,
   }: {
     selected: string | null
-    treeStyle: "jsx" | "plain"
+    treeStyle: ResolvedCell<"jsx" | "plain">
     currentUrl: string
   } & RenderArgs) {
+    const treeStyle = treeStyleCell.value
     const currentUrl = new URL(currentUrlRaw)
     const catalog = await getCatalogManifest()
     const rootIds = renderedCmsIdsForPreviewedPage()
@@ -449,11 +459,11 @@ export const EditorTreePartial = parton(
   },
   {
     selector: "#cms-edit-tree",
-    vary: ({ url, search: { select = null }, session }) => ({
+    vary: ({ url, search: { select = null } }) => ({
       selected: select,
-      treeStyle: session.enum("editor-tree-style", ["jsx", "plain"], "plain"),
       currentUrl: url.toString(),
     }),
+    schema: () => ({ treeStyle: editorTreeStyle }),
   },
 )
 
@@ -1156,29 +1166,35 @@ export const EditorShell = parton(
   function EditorShellRender({
     editor,
     parent,
-    leftTab,
-    treeStyle,
+    leftTab: leftTabCell,
+    treeStyle: treeStyleCell,
     selected,
-    palette,
-    surface,
-    attachment,
-    device,
+    palette: paletteCell,
+    surface: surfaceCell,
+    attachment: attachmentCell,
+    device: deviceCell,
     currentUrl: currentUrlRaw,
     previewUrl,
     isPreviewFrameRefetch,
   }: {
     editor: boolean
-    leftTab: "layers" | "settings"
-    treeStyle: "jsx" | "plain"
+    leftTab: ResolvedCell<"layers" | "settings">
+    treeStyle: ResolvedCell<"jsx" | "plain">
     selected: string | null
-    palette: Palette
-    surface: Surface
-    attachment: Attachment
-    device: Device
+    palette: ResolvedCell<Palette>
+    surface: ResolvedCell<Surface>
+    attachment: ResolvedCell<Attachment>
+    device: ResolvedCell<Device>
     currentUrl: string
     previewUrl: string
     isPreviewFrameRefetch: boolean
   } & RenderArgs) {
+    const leftTab = leftTabCell.value
+    const treeStyle = treeStyleCell.value
+    const palette = paletteCell.value
+    const surface = surfaceCell.value
+    const attachment = attachmentCell.value
+    const device = deviceCell.value
     // Editor off — the partial emits nothing. The page renders on its
     // own; this partial is a sibling overlay placed at body level.
     if (!editor) return null
@@ -1306,12 +1322,7 @@ export const EditorShell = parton(
     )
   },
   {
-    vary: ({
-      url,
-      search: { select: selectedParam = null },
-      cookies,
-      session,
-    }) => {
+    vary: ({ url, search: { select: selectedParam = null }, cookies }) => {
       // Cookie is the sole source of truth for editor on/off.
       // Entry/exit (deep-links, click triggers, tests) all flow through
       // `nav.navigate(url, {cookies: {[EDITOR_COOKIE]: "1" | ""}})` —
@@ -1321,20 +1332,20 @@ export const EditorShell = parton(
       const isPreviewFrameRefetch = url.searchParams.getAll("__frame").includes("preview")
       return {
         editor,
-        leftTab: session.enum("editor-left-tab", ["layers", "settings"], "layers"),
-        treeStyle: session.enum("editor-tree-style", ["jsx", "plain"], "plain"),
         selected: selectedParam,
-        palette: session.enum("editor-palette", ["light", "dark"], "light"),
-        // Translucent ("blur") is the canonical surface; light + solid
-        // remain in the type for future toolbar wiring.
-        surface: session.enum("editor-surface", ["light", "translucent", "solid"], "translucent"),
-        attachment: session.enum("editor-attachment", ["floating", "docked"], "docked"),
-        device: session.enum("editor-device", ["desktop", "tablet", "mobile"], "desktop"),
         currentUrl: url.toString(),
         previewUrl: derivePreviewUrl(url),
         isPreviewFrameRefetch,
       }
     },
+    schema: () => ({
+      leftTab: editorLeftTab,
+      treeStyle: editorTreeStyle,
+      palette: editorPalette,
+      surface: editorSurface,
+      attachment: editorAttachment,
+      device: editorDevice,
+    }),
   },
 )
 

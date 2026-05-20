@@ -56,14 +56,18 @@ async function handler(request: Request): Promise<Response> {
         { clearRegistry },
         { _clearAllSessions },
         { _clearCmsDraft },
-        { _clearStreamingDemoState },
+        { getCellStorage },
+        { _clearInvalidationRegistry },
+        { _clearScheduledTasks },
       ] = await Promise.all([
         import("@parton/framework/lib/cache.tsx"),
         import("@parton/framework/lib/partial-cache.ts"),
         import("@parton/framework/lib/partial-registry.ts"),
         import("@parton/framework/runtime/session.ts"),
         import("@parton/framework/runtime/cms-runtime.ts"),
-        import("./app/pages/streaming-demo.tsx"),
+        import("@parton/framework/runtime/cell-storage.ts"),
+        import("@parton/framework/runtime/invalidation-registry.ts"),
+        import("@parton/framework/runtime/context.ts"),
       ])
       const all = url.searchParams.get("all") === "1"
       if (all) {
@@ -71,14 +75,17 @@ async function handler(request: Request): Promise<Response> {
         clearCache("all")
         clearRegistry("all")
         _clearAllSessions("all")
-        _clearStreamingDemoState("all")
+        getCellStorage().clear("all")
+        _clearInvalidationRegistry()
+        _clearScheduledTasks("all")
       } else {
         const scope = request.headers.get("x-test-scope") ?? "default"
         await _clearCache(scope)
         clearCache(scope)
         clearRegistry(scope)
         _clearAllSessions(scope)
-        _clearStreamingDemoState(scope)
+        getCellStorage().clear(scope)
+        _clearScheduledTasks(scope)
       }
       // CMS draft is process-global file-system state shared across
       // every test scope. Only wipe it when explicitly requested via

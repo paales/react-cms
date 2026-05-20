@@ -1,47 +1,37 @@
 /**
- * /streaming-demo — exercises the segmented-Flight server primitives.
+ * /streaming-demo — exercises the framework's live-update primitives.
  *
  * Three live demonstrations:
  *
- *  1. `<LiveTick>` — `markConnectionLive()` + a server-side ticker
- *     that fires `refreshSelector("streaming-demo-tick")` once per
- *     second. The segment driver re-renders on each tick; the
- *     client receives a new segment and `setPayload` updates the
- *     DOM. `Tick #N` advancing every second is the visible proof
- *     that the connection is staying open across many segments on
- *     one HTTP response.
+ *  1. `<LiveTick>` — pure time-vary partial. Its `vary` reads
+ *     `time` from scope, buckets it by second, and declares
+ *     `expiresAt: time.nextSecond`. The framework's `<LivePageHeartbeat>`
+ *     holds a streaming connection open; the segment driver wakes
+ *     at each second boundary, vary recomputes, the fp moves, and
+ *     a fresh segment ships. No cell, no setInterval, no autostart.
  *
- *  2. `<BumpCounter>` — vary reads scope state. A server action
- *     bumps the counter and calls
- *     `getServerNavigation().reload({selector: "bump-counter"})`.
- *     The invalidation registry's ts shifts the partial's fp so
- *     the action's response render emits fresh content. Demonstrates
- *     `.reload(selector)` replacing the legacy
- *     `return { invalidate: {selector} }` shape.
+ *  2. `<BumpCounter>` — `bumps` cell read via schema. The Bump
+ *     button (rendered inside the same parton) calls
+ *     `bumps.set(bumps.value + 1)` via the cell's Flight-serialized
+ *     server-action ref. The action's response refetches
+ *     `cell:demo.bumps`, which the cell layer auto-stamps onto this
+ *     parton's labels.
  *
  *  3. `<PushUrlButton>` — fires a server action that calls
- *     `getServerNavigation().navigate("?seq=N")`. The response
- *     trailer carries a `url`-tagged entry; the client applies it
- *     via `history.replaceState`. URL bar updates without
- *     re-triggering the navigation handler.
+ *     `getServerNavigation().navigate("?seq=N")`. URL pushed via
+ *     trailer; unrelated to cells.
  */
 
-import { markConnectionLive, parton, type RenderArgs } from "@parton/framework"
+import { parton, type RenderArgs, type ResolvedCell } from "@parton/framework"
 import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/components/ui/card"
 import {
   BumpButton,
-  LiveTickAutostart,
   PushUrlButton,
+  StreamingDemoReady,
 } from "../components/streaming-demo-buttons.tsx"
-import {
-  ensureTicker,
-  getScopeState,
-  readDemoBumps,
-} from "./streaming-demo-state.ts"
+import { bumps } from "./streaming-demo-state.ts"
 
-export { clearStreamingDemoState as _clearStreamingDemoState } from "./streaming-demo-state.ts"
-
-// ── Live tick partial — markConnectionLive + scheduled refreshSelector ──
+// ── Live tick partial — time-vary, no cell ──────────────────────────
 
 const LiveTick = parton(
   function LiveTickRender({ tick }: { tick: number } & RenderArgs) {
@@ -53,34 +43,29 @@ const LiveTick = parton(
   },
   {
     selector: "streaming-demo-tick",
-    vary: ({ headers }) => {
-      const scope = headers["x-test-scope"] ?? "default"
-      // Schedule the next tick from inside vary so it runs once per
-      // segment render. `markConnectionLive` keeps the connection
-      // open after this segment closes so the scheduled bump wakes
-      // the driver into another render.
-      ensureTicker(scope)
-      markConnectionLive()
-      return { tick: getScopeState(scope).tick }
-    },
+    vary: ({ time }) => ({
+      tick: Math.floor(time.now / 1000),
+      expiresAt: time.nextSecond,
+    }),
   },
 )
 
-// ── Bump counter — `.reload({selector})` driving fp invalidation ──────
+// ── Bump counter + button — cell-backed, button inline ──────────────
 
 const BumpCounter = parton(
-  function BumpCounterRender({ bumps }: { bumps: number } & RenderArgs) {
+  function BumpCounterRender({ bumps }: { bumps: ResolvedCell<number> } & RenderArgs) {
     return (
-      <div className="font-mono text-sm" data-testid="streaming-demo-bumps">
-        Bumps: {bumps}
+      <div className="flex flex-col gap-3">
+        <div className="font-mono text-sm" data-testid="streaming-demo-bumps">
+          Bumps: {bumps.value}
+        </div>
+        <BumpButton bumps={bumps} />
       </div>
     )
   },
   {
     selector: "bump-counter",
-    vary: ({ headers }) => ({
-      bumps: readDemoBumps(headers["x-test-scope"] ?? "default"),
-    }),
+    schema: () => ({ bumps }),
   },
 )
 
@@ -101,36 +86,36 @@ export const StreamingDemoPage = parton(
         <Card className="p-5">
           <CardHeader className="px-0">
             <CardTitle className="text-base">
-              1. <code>markConnectionLive()</code> — live tick
+              1. live tick (time-vary, framework heartbeat)
             </CardTitle>
           </CardHeader>
           <CardContent className="px-0">
             <p className="mb-2 text-xs text-muted-foreground">
-              Server-side ticker fires <code>refreshSelector</code>
-              every second; the segment driver wakes, re-renders, and
-              emits a new segment on the same connection.
+              <code>vary</code> reads <code>time.nextSecond</code> as
+              its <code>expiresAt</code>. The framework's heartbeat
+              holds the page's RSC connection open; the segment
+              driver wakes at each second boundary and re-renders,
+              shipping the next tick as a new segment.
             </p>
             <LiveTick parent={parent} />
-            <LiveTickAutostart />
           </CardContent>
         </Card>
 
         <Card className="p-5">
           <CardHeader className="px-0">
             <CardTitle className="text-base">
-              2. <code>{"getServerNavigation().reload({selector})"}</code> — bump
+              2. <code>cell.set()</code> — client-mutated counter
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3 px-0">
-            <p className="text-xs text-muted-foreground">
-              The Bump button fires a server action that mutates
-              scope state and calls{" "}
-              <code>{'getServerNavigation().reload({selector: "bump-counter"})'}</code>
-              . The action's response render sees the bumped fp and
-              emits fresh content.
+          <CardContent className="px-0">
+            <p className="mb-2 text-xs text-muted-foreground">
+              Bump button calls <code>bumps.set(bumps.value + 1)</code>{" "}
+              through the cell's Flight-serialized server-action ref.
+              The action's response refetches{" "}
+              <code>cell:demo.bumps</code>, which the cell layer
+              auto-stamps onto this parton's labels.
             </p>
             <BumpCounter parent={parent} />
-            <BumpButton />
           </CardContent>
         </Card>
 
@@ -151,6 +136,8 @@ export const StreamingDemoPage = parton(
             <PushUrlButton />
           </CardContent>
         </Card>
+
+        <StreamingDemoReady />
       </main>
     )
   },

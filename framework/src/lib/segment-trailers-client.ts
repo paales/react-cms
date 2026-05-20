@@ -17,12 +17,19 @@
  *     navigation handler (which would fire a fresh refetch, redundant
  *     since we already have the rendered content).
  *
+ *   - `live` trailer: liveness flag (`"0"` or `"1"`). Set by the
+ *     server when any rendered partial declared a finite
+ *     `expiresAt` or read a cell. Updates the module-scope
+ *     `liveSignal`; `<LivePageHeartbeat>` subscribes to decide
+ *     whether to keep its streaming connection open.
+ *
  * Unknown tags are ignored — forward-compatible with future trailer
  * types. Parse errors swallow silently; a corrupted trailer should
  * not break the rendered payload that already committed.
  */
 
 import { _applyFpUpdates } from "./partial-client.tsx"
+import { setLiveSignal } from "./live-signal.ts"
 
 interface UrlUpdate {
   window?: string
@@ -49,5 +56,11 @@ export function applyStandardTrailers(trailers: Map<string, Uint8Array>): void {
         window.history[mode]({}, "", update.window)
       }
     } catch {}
+  }
+
+  const liveBytes = trailers.get("live")
+  if (liveBytes) {
+    const value = decoder.decode(liveBytes)
+    setLiveSignal(value === "1")
   }
 }

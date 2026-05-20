@@ -38,6 +38,7 @@ import { getSessionFrameUrl } from "../runtime/session.ts"
 import {
   buildMarker,
   TAG_FP_UPDATES,
+  TAG_LIVE,
   TAG_NEXT_SEGMENT,
   TAG_URL_UPDATE,
 } from "./fp-trailer-marker.ts"
@@ -319,6 +320,11 @@ export function wrapSsrStreamWithFpTrailer(
         if (!request) return
         const routeKey = computeRouteKey(request.url)
         const snapshots = _readSnapshotsForRoute(scope, routeKey)
+        // Live-state comment is emitted on every SSR response (even
+        // when no fp updates) so the heartbeat can decide whether to
+        // open a streaming connection on initial page load.
+        const liveComment = `<!--parton-live:${computeLiveState(snapshots) ? "1" : "0"}-->`
+        controller.enqueue(new TextEncoder().encode(liveComment))
         if (snapshots.size === 0) return
         const updates = computeFpUpdates(snapshots, request)
         if (!updates) return
@@ -380,6 +386,11 @@ export function wrapStreamWithFpTrailer(
         if (!request) return
         const routeKey = computeRouteKey(request.url)
         const snapshots = _readSnapshotsForRoute(scope, routeKey)
+        // Emit the liveness trailer unconditionally — even on
+        // empty-snapshot routes, the client's heartbeat needs to
+        // hear "stay dormant" (`live: "0"`) explicitly to decide
+        // whether to keep its long-poll connection open.
+        emitLiveTrailer(controller, computeLiveState(snapshots))
         if (snapshots.size === 0) return
         const updates = computeFpUpdates(snapshots, request)
         if (!updates) return
@@ -394,6 +405,33 @@ function emitTrailer(
   updates: Record<string, string>,
 ): void {
   emitTrailerEntry(controller, TAG_FP_UPDATES, JSON.stringify(updates))
+}
+
+/**
+ * Return `true` when any snapshot in the map carries a finite
+ * `expiresAt` (time-based reactivity) or a `cell:*` selector label
+ * (write-driven). The client's `<LivePageHeartbeat>` uses this as
+ * the gate for whether to keep a streaming long-poll connection
+ * open.
+ */
+function computeLiveState(snapshots: Map<string, PartialSnapshot>): boolean {
+  for (const snap of snapshots.values()) {
+    if (snap.expiresAt !== undefined && Number.isFinite(snap.expiresAt)) return true
+    for (const label of snap.labels) {
+      if (label.startsWith("cell:")) return true
+    }
+  }
+  return false
+}
+
+/** Emit the `live` trailer entry. Always called from the flush path —
+ *  emitting `live: "0"` for non-live pages tells the client heartbeat
+ *  to stay dormant (or shut down if it was active). */
+function emitLiveTrailer(
+  controller: TransformStreamDefaultController<Uint8Array>,
+  live: boolean,
+): void {
+  emitTrailerEntry(controller, TAG_LIVE, live ? "1" : "0")
 }
 
 /** Emit one trailer entry (header + body) onto a controller. The

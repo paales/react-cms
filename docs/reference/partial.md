@@ -65,10 +65,10 @@ vary: ({ params }) => ({ id: Number(params.id) })
 ```tsx
 const ProductHero = parton(ProductHeroRender, {
   match: "/p/:slug",
-  cache: { maxAge: 60 },
-  vary: ({ params, search: { variant = "default" } }) => ({
+  vary: ({ params, search: { variant = "default" }, time }) => ({
     slug: params.slug,
     variant,
+    expiresAt: time.in(60_000),
   }),
 })
 

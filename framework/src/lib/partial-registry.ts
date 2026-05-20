@@ -90,11 +90,6 @@ export interface PartialSnapshot {
    *  and new fps to the client so the next visit fp-skips against the
    *  warm value rather than mismatching against the cold one. */
   emittedFp?: string
-  /** Session keys this spec's `vary` read through the `session.*`
-   *  surface. The `setSessionValue` server action walks snapshots
-   *  on each route and unions the specs whose deps include the
-   *  mutated key into a single `{invalidate: {selector}}` directive. */
-  sessionDeps?: readonly string[]
   /** Origin annotation for selector-targeted refetch routing.
    *
    *  Default (`undefined`) — the snapshot was registered by a
@@ -110,6 +105,25 @@ export interface PartialSnapshot {
    *  over the wire (the host stamps it when consuming a remote's
    *  trailer). */
   source?: SnapshotSource
+  /** Wall-clock timestamp after which this rendered output is no
+   *  longer fresh. Read from `vary`'s return — the framework
+   *  strips it from `varyResult` before fp/Render so it doesn't
+   *  shift the fingerprint every ms. Two consumers:
+   *
+   *    - The segment driver: races against `min(expiresAt across
+   *      route snapshots)` so live connections wake at the right
+   *      time without an external trigger.
+   *    - The byte cache: written entries store `expiresAt` and
+   *      serve cached bytes only while `now < expiresAt`.
+   *
+   *  Absent or `+Infinity` → no time-based wake; fp moves only
+   *  via `refreshSelector` (CRUD path). */
+  expiresAt?: number
+  /** Optional stale-while-revalidate boundary. When set, cached
+   *  bytes between `expiresAt` and `staleUntil` are served stale
+   *  while a background refresh runs. Absent → strict freshness
+   *  (no stale window). */
+  staleUntil?: number
 }
 
 /** Per-snapshot origin annotation. See `PartialSnapshot.source`. */

@@ -40,6 +40,21 @@ export {
   type ActivatorFire,
 } from "./partial-client.tsx"
 
+export {
+  cell,
+  buildResolvedCell,
+  computeCellPartitionKey,
+  getCellById,
+  isCellHandle,
+  isModuleCell,
+  type Cell,
+  type CellShape,
+  type CellVaryScope,
+  type ResolvedCell,
+} from "./cell.ts"
+
+export { type TimeScope } from "./time.ts"
+
 export type {
   FrameworkNavigation,
   FrameworkNavigateOptions,

@@ -13,15 +13,15 @@
 // ── Cross-`"use *"` re-export caveat ───────────────────────────────────
 // A `"use client"` file that needs symbols originating in another file
 // with a directive (`"use client"` hooks like `useNavigation`, OR
-// `"use server"` actions like `setSessionValue`) MUST import from the
+// `"use server"` actions like `__cellWrite`) MUST import from the
 // deep path, not through this server-side barrel. Pulling those
 // symbols through the barrel mis-resolves the Flight client/server
 // reference and surfaces at runtime as
 // `chunk.reason.enqueueModel is not a function`.
 //   ✗ import { useNavigation } from "@parton/framework"            (in "use client")
 //   ✓ import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
-//   ✗ import { setSessionValue } from "@parton/framework"          (in "use client")
-//   ✓ import { setSessionValue } from "@parton/framework/runtime/session-actions.ts"
+//   ✗ import { __cellWrite } from "@parton/framework"               (in "use client")
+//   ✓ import { __cellWrite } from "@parton/framework/runtime/cell-actions.ts"
 // Symbols from plain server modules (`getNavigation` from
 // `navigation-api.ts`, `notFound` from `errors.ts`) re-export through
 // this barrel cleanly.
@@ -84,6 +84,17 @@ export {
   parseSelectors,
 } from "./src/runtime/invalidation-registry.ts"
 
+// ── Cell storage (pluggable backend) ────────────────────────────────────
+export {
+  getCellStorage,
+  setCellStorage,
+  defaultCellsPath,
+  MemoryCellStorage,
+  JsonFileCellStorage,
+  type CellStorage,
+  type CellPartitionKey,
+} from "./src/runtime/cell-storage.ts"
+
 // ── CMS runtime (server) ────────────────────────────────────────────────
 export {
   EDITOR_COOKIE,
@@ -139,7 +150,9 @@ export {
   type RemoteManifestSpec,
 } from "./src/runtime/remote-endpoints.tsx"
 
-// `setSessionValue` (a server action) is deliberately NOT re-exported
+// `__cellWrite` (a server action) is deliberately NOT re-exported
 // here. `"use client"` files calling it must deep-import from
-// `@parton/framework/runtime/session-actions.ts` — see the
-// cross-`"use *"` caveat above.
+// `@parton/framework/runtime/cell-actions.ts` — see the
+// cross-`"use *"` caveat above. Most authors won't touch
+// `__cellWrite` directly; cell handles' `.set` rides Flight as a
+// bound server-action ref to the same action.

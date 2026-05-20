@@ -43,8 +43,11 @@ function ChunkList({ chunks }: { chunks: readonly string[] }) {
  * Wait sentinel — suspends until the log advances past the current
  * cursor. Renders nothing on resolve; the new chunk shows up in
  * `<ChunkList>` of the NEXT segment after the segment driver
- * re-renders. `markConnectionLive()` tells the driver to keep the
- * connection open after this segment closes.
+ * re-renders. `markConnectionLive()` opts this render into the
+ * framework's multi-segment keepalive — the producer-await pattern
+ * here doesn't use the `?streaming=1` URL flag because the same
+ * /chat-notes page render shows the sentinel; the server-side
+ * opt-in is the cleaner fit.
  */
 async function ChunkSlot({ fileId, cursor }: { fileId: string; cursor: number }) {
   markConnectionLive()

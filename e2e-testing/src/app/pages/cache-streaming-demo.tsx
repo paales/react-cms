@@ -78,14 +78,12 @@ const CachedRegion = parton(
   },
   {
     selector: "cached-region",
-    cache: {
-      maxAge: 600,
-      // Raw-bytes storage preserves Suspense structure end-to-end.
-      // Each section occupies ~5KB of stored Flight bytes (dev-mode
-      // overhead is large). 25ms × 256B gives roughly 500ms between
-      // section reveals — clearly staggered, total ~3s for a reload.
-      slowSource: { perChunkMs: 25, chunkBytes: 256 },
-    },
+    vary: ({ time }) => ({ expiresAt: time.in(600_000) }),
+    // Raw-bytes storage preserves Suspense structure end-to-end.
+    // Each section occupies ~5KB of stored Flight bytes (dev-mode
+    // overhead is large). 25ms × 256B gives roughly 500ms between
+    // section reveals — clearly staggered, total ~3s for a reload.
+    cache: { slowSource: { perChunkMs: 25, chunkBytes: 256 } },
     fallback: (
       <div data-testid="cached-region-fallback" className="rounded bg-muted p-3 text-sm italic">
         Loading cached region (slow stream replay)…

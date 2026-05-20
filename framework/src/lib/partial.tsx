@@ -33,6 +33,7 @@ import { stableStringify } from "./stable-stringify.ts"
 import { _childContext, ROOT, type PartialCtx } from "./partial-context.ts"
 import { PartialErrorBoundary } from "./partial-error-boundary.tsx"
 import { PartialsClient } from "./partial-client.tsx"
+import { LivePageHeartbeat } from "./live-page-heartbeat.tsx"
 import { Cache } from "./cache.tsx"
 import type { CacheOptions } from "./cache-options.ts"
 import { RemoteFrame } from "./remote-frame.tsx"
@@ -68,6 +69,17 @@ import {
   setSessionFrameUrl,
   type SessionReadSurface,
 } from "../runtime/session.ts"
+import {
+  buildResolvedCell,
+  computeCellPartitionKey,
+  isModuleCell,
+  type Cell,
+  type CellVaryScope,
+  type ResolvedCell,
+} from "./cell.ts"
+import { getCellStorage } from "../runtime/cell-storage.ts"
+import { getScope } from "../runtime/context.ts"
+import { buildTimeScope, type TimeScope } from "./time.ts"
 
 export { ROOT, type PartialCtx } from "./partial-context.ts"
 
@@ -117,6 +129,13 @@ export interface VaryScope {
    *  Sync; values are stored in the framework session store, written
    *  by the `setSessionValue` action. */
   session: SessionReadSurface
+  /** Wall-clock snapshot for the current request. Use the pre-
+   *  computed boundary fields (`time.nextSecond`, `time.nextMinute`,
+   *  …) or `time.in(ms)` to derive an `expiresAt` for a live tick or
+   *  TTL. The framework reads `expiresAt` / `staleUntil` off vary's
+   *  return as wake hints — they don't participate in the spec's
+   *  fingerprint and don't reach Render. See [[time-scope]]. */
+  time: TimeScope
   /** The rendered effective id for this placement. Slot-placed
    *  blocks receive their slot entry's id here; direct-JSX
    *  placements get the auto-derived `spec.id`-plus-props-hash.
@@ -138,6 +157,35 @@ function headersToRecord(h: Headers): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of h) out[k.toLowerCase()] = v
   return out
+}
+
+/** Split a vary result into the value-portion (data the rendered
+ *  output depends on; feeds fp + Render props) and the wake-hint
+ *  portion (`expiresAt` / `staleUntil` — TTL signals for the segment
+ *  driver and the byte cache, not part of fp). Returns the input
+ *  unchanged when neither reserved key is set. */
+export function stripReservedVaryKeys(varyResult: unknown): {
+  varyResult: unknown
+  expiresAt: number | undefined
+  staleUntil: number | undefined
+} {
+  if (!varyResult || typeof varyResult !== "object") {
+    return { varyResult, expiresAt: undefined, staleUntil: undefined }
+  }
+  const r = varyResult as Record<string, unknown>
+  if (typeof r.expiresAt !== "number" && typeof r.staleUntil !== "number") {
+    return { varyResult, expiresAt: undefined, staleUntil: undefined }
+  }
+  const { expiresAt: e, staleUntil: s, ...rest } = r as {
+    expiresAt?: number
+    staleUntil?: number
+    [k: string]: unknown
+  }
+  return {
+    varyResult: rest,
+    expiresAt: typeof e === "number" ? e : undefined,
+    staleUntil: typeof s === "number" ? s : undefined,
+  }
 }
 
 export interface RenderArgs {
@@ -165,6 +213,7 @@ export type PartialOptions<V> = Pick<
   InternalSpecConfig<V>,
   | "match"
   | "vary"
+  | "schema"
   | "cache"
   | "defer"
   | "fallback"
@@ -185,6 +234,15 @@ interface InternalSpecConfig<V> {
   /** Request-dimensions dependency surface. Sync; result is the
    *  cache-key surface and merged into Render's prop bag. */
   vary?: (scope: VaryScope) => V | null
+  /** Declared deps that need framework-mediated resolution — cell
+   *  handles in particular. Sync callback returning a record; each
+   *  entry whose value is a `Cell<T>` is resolved (own vary →
+   *  partition key → storage read) and replaced with a
+   *  `ResolvedCell<T>` (`{id, value, set}`) before being merged
+   *  into Render's prop bag. Cell deps auto-stamp `cell:<id>`
+   *  selector labels onto the partial so `refreshSelector` fires
+   *  on `cell.set`. See `docs/notes/cells.md`. */
+  schema?: () => Record<string, unknown>
   /** Refetch labels (whitespace string or array). First label is the
    *  spec catalog id; additional labels are extra fan-out targets.
    *  Auto-derives from `Render.name` when omitted. */
@@ -308,10 +366,15 @@ export type ParseRoute<T extends string> = T extends `${string}:${infer Rest}`
  * `params.id` into a Render that takes `{ id: string }` — no
  * `vary: ({ params }) => ({ id: params.id })` boilerplate.
  */
-export type InferV<Opts> = Opts extends string
+/** Reserved keys that the framework reads off `vary`'s return as
+ *  wake/TTL hints and strips before feeding the result into fp and
+ *  Render's prop bag. See `stripReservedVaryKeys` in partial.tsx. */
+type ReservedVaryKeys = "expiresAt" | "staleUntil"
+
+type InferVaryOrMatch<Opts> = Opts extends string
   ? ParseRoute<Opts>
   : Opts extends { vary: (scope: VaryScope) => infer R }
-    ? Exclude<R, null>
+    ? Omit<Exclude<R, null>, ReservedVaryKeys>
     : Opts extends { match: infer M }
       ? M extends string
         ? ParseRoute<M>
@@ -319,6 +382,25 @@ export type InferV<Opts> = Opts extends string
           ? ParseRoute<P>
           : object
       : object
+
+/**
+ * Map cell handles in a schema record to their `ResolvedCell<T>`
+ * counterparts — what Render actually receives after framework
+ * resolution. Authors write `schema: () => ({notes: productNotes})`
+ * where `productNotes: Cell<string>`; Render gets
+ * `{notes: ResolvedCell<string>}`.
+ */
+type ResolveSchemaProps<S> = {
+  [K in keyof S]: S[K] extends Cell<infer T> ? ResolvedCell<T> : S[K]
+}
+
+type InferSchema<Opts> = Opts extends { schema: () => infer S }
+  ? S extends Record<string, unknown>
+    ? ResolveSchemaProps<S>
+    : object
+  : object
+
+export type InferV<Opts> = Prettify<InferVaryOrMatch<Opts> & InferSchema<Opts>>
 
 /** Flatten a `T1 & T2 & …` intersection into a single object literal
  *  shape so editor hovers display the merged keys, not a chain. */
@@ -508,11 +590,11 @@ interface PartialBoundaryProps {
    *  so the fp-trailer flush can detect cold→warm drift and ship the
    *  warm fp to the client without an extra round-trip. */
   emittedFp?: string
-  /** Session keys this spec's `vary` read via the `session.*` surface.
-   *  Server-action invalidations (`setSessionValue`) walk every
-   *  registered snapshot and refetch the specs that recorded the
-   *  mutated key. */
-  sessionDeps?: readonly string[]
+  /** Wake/TTL hints stripped from `vary`'s return. Stored on the
+   *  snapshot so the segment driver can race against the earliest
+   *  expiry, and the byte cache can use it as a freshness boundary. */
+  expiresAt?: number
+  staleUntil?: number
   children: ReactNode
 }
 
@@ -529,7 +611,8 @@ export function PartialBoundary({
   varyKey,
   matchKey,
   emittedFp,
-  sessionDeps,
+  expiresAt,
+  staleUntil,
   children,
 }: PartialBoundaryProps): ReactNode {
   registerPartial(id, {
@@ -544,7 +627,8 @@ export function PartialBoundary({
     varyKey,
     matchKey,
     emittedFp,
-    sessionDeps,
+    expiresAt,
+    staleUntil,
   })
   return children
 }
@@ -648,7 +732,8 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
       // resolved `result` only (it's folded into the ancestor's fp).
       // Snapshot dep recording happens during the descendant's own
       // render pass, not here.
-      session: createSessionReadSurface(new Set()),
+      session: createSessionReadSurface(),
+      time: buildTimeScope(),
       instanceId: descId,
     })
   } catch {
@@ -658,9 +743,14 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
     return `${descId}:${snap.varyKey ?? ""}${invalidationKeyFromSnap(snap)}`
   }
   if (result === null) return `${descId}:varynull${invalidationKeyFromSnap(snap)}`
+  // Strip reserved keys from the descendant's vary result the same
+  // way the descendant's own render does — otherwise the fold would
+  // hash a moving wall-clock timestamp and the ancestor's fp would
+  // never stabilize even when no rendered data changed.
+  const { varyResult: cleanResult } = stripReservedVaryKeys(result)
   const propsKey = stableStringify(snap.props ?? null)
-  const inv = invalidationKeyFor(snap.labels, result as Record<string, unknown> | null)
-  return `${descId}:${stableStringify(result)}|${propsKey}${inv}`
+  const inv = invalidationKeyFor(snap.labels, cleanResult as Record<string, unknown> | null)
+  return `${descId}:${stableStringify(cleanResult)}|${propsKey}${inv}`
 }
 
 /**
@@ -1113,11 +1203,11 @@ function createSpecComponent<V>(
 
     // ── Vary phase ──
     // `vary` is request-dimensions only.
-    const sessionDepsSet = new Set<string>()
-    const session = createSessionReadSurface(sessionDepsSet)
+    const session = createSessionReadSurface()
+    const ourUrl = new URL(ourRequest.url)
+    const time = buildTimeScope()
     let varyResult: unknown
     if (opts.vary) {
-      const ourUrl = new URL(ourRequest.url)
       const v = opts.vary({
         url: ourUrl,
         pathname: ourUrl.pathname,
@@ -1126,6 +1216,7 @@ function createSpecComponent<V>(
         headers: headersToRecord(ourRequest.headers),
         params,
         session,
+        time,
         instanceId: id,
       })
       if (v === null) return emitParkedKeepalive(id, keepalive, requestState)
@@ -1141,6 +1232,67 @@ function createSpecComponent<V>(
       // every spec re-renders on URL changes by default.
       varyResult = { ...params }
     }
+
+    // ── Reserved keys: expiresAt / staleUntil ──
+    // Strip these from `varyResult` before it feeds the fp + the
+    // Render prop bag. They're wake hints for the segment driver
+    // (and TTLs for the byte cache), not data the rendered output
+    // depends on. Folding them into fp would make every wall-clock
+    // millisecond shift the fingerprint, defeating fp-skip.
+    const stripped = stripReservedVaryKeys(varyResult)
+    varyResult = stripped.varyResult
+    const expiresAt = stripped.expiresAt
+    const staleUntil = stripped.staleUntil
+
+    // ── Schema phase ──
+    // Resolve declared deps (cell handles in the schema record)
+    // against the same request scope as vary. Each cell handle
+    // becomes a ResolvedCell<T> for Render's prop bag; the cell's
+    // `cell:<id>` label stamps onto this spec so `refreshSelector`
+    // — and via it the fp-fold against `queryMatchingTs` — fires
+    // when the cell mutates. The cell's vary determines the
+    // storage partition (`getCellStorage().read(scope, id, partKey)`);
+    // a different partition (e.g. /product/A → /product/B for a
+    // cell varying on `params.productId`) reads a different slot
+    // and shifts the parton's fp transitively via `schemaKeyHash`.
+    let schemaResult: Record<string, unknown> = {}
+    const cellLabels: string[] = []
+    let schemaKeyHash = ""
+    if (opts.schema) {
+      const raw = opts.schema()
+      const cellScope: CellVaryScope = {
+        url: ourUrl,
+        pathname: ourUrl.pathname,
+        search: searchParamsToRecord(ourUrl.searchParams),
+        cookies: parseCookies(ourRequest),
+        headers: headersToRecord(ourRequest.headers),
+        params,
+        session,
+        time,
+      }
+      const resolutionParts: string[] = []
+      for (const key of Object.keys(raw)) {
+        const val = raw[key]
+        if (isModuleCell(val)) {
+          const c = val as Cell<unknown>
+          const partitionKey = computeCellPartitionKey(c, cellScope)
+          const stored = getCellStorage().read(getScope(), c.id, partitionKey)
+          const value = stored === undefined ? c.defaultValue : stored
+          const resolved: ResolvedCell<unknown> = buildResolvedCell(c, value)
+          schemaResult[key] = resolved
+          cellLabels.push(`cell:${c.id}`)
+          resolutionParts.push(`${c.id}:${partitionKey}:${stableStringify(value)}`)
+        } else {
+          schemaResult[key] = val
+        }
+      }
+      if (resolutionParts.length > 0) {
+        resolutionParts.sort()
+        schemaKeyHash = `|schema=${hash(resolutionParts.join("|"))}`
+      }
+    }
+    const expandedLabels =
+      cellLabels.length > 0 ? [...parsed.labels, ...cellLabels] : parsed.labels
 
     // ── Fingerprint ──
     // The spec's "own" fp captures only what THIS spec declared:
@@ -1174,12 +1326,12 @@ function createSpecComponent<V>(
     // and emit fresh content. No registry entries → 0 → no
     // contribution; same fp as before the registry existed.
     const invalidationTs = queryMatchingTs(
-      parsed.labels,
+      expandedLabels,
       varyResult as Record<string, unknown> | null | undefined,
     )
     const invalidationKey = invalidationTs > 0 ? `|inv=${invalidationTs}` : ""
     const ownStructuralFp = hash(
-      `${id}|matchKey=${matchKey}|vary=${varyKey}${propsKey}${invalidationKey}`,
+      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}`,
     )
     const descendantFold = computeDescendantFold(id)
     const structuralFp = hash(`${ownStructuralFp}${descendantFold}`)
@@ -1255,12 +1407,12 @@ function createSpecComponent<V>(
     const renderProps = {
       ...extraProps,
       ...(varyResult as object),
+      ...schemaResult,
       parent: childCtx,
       children: outerChildren,
       ...(effectiveInstanceId !== undefined ? { __instanceId: effectiveInstanceId } : {}),
     } as V & RenderArgs
     const fallback = opts.fallback ?? null
-    const sessionDeps = sessionDepsSet.size > 0 ? Array.from(sessionDepsSet).sort() : undefined
 
     if (shouldSkip) {
       // Wrap the placeholder in `<Activity mode="visible">` so the
@@ -1283,7 +1435,7 @@ function createSpecComponent<V>(
           id={id}
           type={spec.type}
           parentPath={parent.path}
-          labels={parsed.labels}
+          labels={expandedLabels}
           framePath={ourFrameChain}
           parentFrameChain={parent.frameChain}
           cache={opts.cache}
@@ -1292,7 +1444,8 @@ function createSpecComponent<V>(
           varyKey={varyKey}
           matchKey={matchKey}
           emittedFp={snapshotFp}
-          sessionDeps={sessionDeps}
+          expiresAt={expiresAt}
+          staleUntil={staleUntil}
         >
           {skipBody}
         </PartialBoundary>
@@ -1323,7 +1476,7 @@ function createSpecComponent<V>(
           id={id}
           type={spec.type}
           parentPath={parent.path}
-          labels={parsed.labels}
+          labels={expandedLabels}
           framePath={ourFrameChain}
           parentFrameChain={parent.frameChain}
           cache={opts.cache}
@@ -1332,7 +1485,8 @@ function createSpecComponent<V>(
           varyKey={varyKey}
           matchKey={matchKey}
           emittedFp={snapshotFp}
-          sessionDeps={sessionDeps}
+          expiresAt={expiresAt}
+          staleUntil={staleUntil}
         >
           {deferBody}
         </PartialBoundary>
@@ -1341,9 +1495,22 @@ function createSpecComponent<V>(
 
     let body: ReactNode = spec.Render(renderProps)
 
-    if (opts.cache !== undefined) {
+    // Caching is opt-in via `vary: ({time}) => ({…, expiresAt: …})`.
+    // The presence of any finite `expiresAt` activates byte caching;
+    // `time.never` (POSITIVE_INFINITY) caches forever. The `cache`
+    // prop on `parton` is now optional dev-debug only (slowSource).
+    const cacheActive =
+      expiresAt !== undefined && expiresAt > Date.now() || opts.cache?.slowSource !== undefined
+    if (cacheActive) {
       body = (
-        <Cache id={id} fingerprint={structuralFp} options={opts.cache} varyResult={varyResult}>
+        <Cache
+          id={id}
+          fingerprint={structuralFp}
+          options={opts.cache}
+          varyResult={varyResult}
+          expiresAt={expiresAt ?? Number.POSITIVE_INFINITY}
+          staleUntil={staleUntil}
+        >
           {body}
         </Cache>
       )
@@ -1407,7 +1574,7 @@ function createSpecComponent<V>(
         id={id}
         type={spec.type}
         parentPath={parent.path}
-        labels={parsed.labels}
+        labels={expandedLabels}
         framePath={ourFrameChain}
         parentFrameChain={parent.frameChain}
         cache={opts.cache}
@@ -1416,7 +1583,8 @@ function createSpecComponent<V>(
         varyKey={varyKey}
         matchKey={matchKey}
         emittedFp={snapshotFp}
-        sessionDeps={sessionDeps}
+        expiresAt={expiresAt}
+        staleUntil={staleUntil}
       >
         {body}
       </PartialBoundary>
@@ -1467,6 +1635,7 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
   const addressable =
     options.selector !== undefined ||
     options.vary !== undefined ||
+    options.schema !== undefined ||
     options.match !== undefined
 
   const spec: InternalSpec<V> = {
@@ -1848,7 +2017,12 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
       isPartialRefetch: false,
     }
     enterPartialState(streamState)
-    return <PartialsClient mode="streaming">{children}</PartialsClient>
+    return (
+      <PartialsClient mode="streaming">
+        {children}
+        <LivePageHeartbeat />
+      </PartialsClient>
+    )
   }
 
   // Already in cache-mode ctx from the pre-enter above.

@@ -2,11 +2,6 @@
 
 - [ ] A <Frame /> is the encapsulated page with it's own URL, what if nothing matches, shoudl a frame automatically be a route matcher as well that can iterate, interally rewrite, redirect or be a 404?
 
-- [ ] A <RemoteFrame />: Should an instance of the framework be able to just output RSC and let a second instance of the RSC pick that up. That means that we'd effectively get server side iframes?
-  - Evaluate of building a ServiceWorker compatible renderer makes sense here as well.
-  - Allow defining security semantics to implement this.
-  - This seems to look like cache, but the current cache solution doesn't allow streaming, right? OR is the partial stream cached here and we just don't see the stream?
-
 - [ ] A currently fictional 'client driven mode' allows us to send much more information to the server based on the browser context they are in; So for example we'd build a MediaQuery component that shows content conditionally based on the browsers viewport we could upgrade this component on the next fetch to not even return it.
 
 - [ ] What happens when client side context changes frequently, like multiple times a second, a new request doesn't make sense, should the server accepts streams of updates, like how a mouse cursor moves, it isn't much data, but it does become complicated how the streaming back should happen at the other side and I feel like the currently streaming chat doesn't properly handle the real streaming case properly. Since the response is multipart, can't we restart the stream when we're done with a new payload and split up the stream as separate updates? That would allow us to reallly stream, but what would happen op the server, how would the server know go to 'go again' instead of finishing the request? What is the server side event emitter or the event source that is streamed to completion? How woudl that event stream re-stream once it has reached the end? So the idea basically would be to split the stream on a special marker and split the stream on the client and do setPayload with each individual stream. Streaming to the server feels odd, we are streaming RSC down, but state up, maybe that is correct but does feel asymmetric?
@@ -27,14 +22,17 @@
 
 - [ ] Enable React.StrictMode always? Or why not?
 
-- [x] Have better sugar for this so we have a flat hook, and should we be able to resolve the loading state of in the actual component itsself? **Done** — `useNavigation().reload()` / `.navigate()` now return `[fire, isPending, error]` tuples; see `docs/reference/frames-navigation.md` §Navigation.
+- [x] Have better sugar for this so we have a flat hook, and should we be able to resolve the loading state of in the actual component itsself? **Done** — `useNavigation().reload()` / `.navigate()` return `[fire, progress]` tuples where `progress` is a `{ committed, streaming, finished }` triple of booleans, and the fire returns `NavigationMilestones` (three promises) synchronously. Errors bubble through `<NavigationErrorBubbler>` only — no third tuple slot. Selector refetches join a per-selector in-flight queue with deferred abort (older fires keep streaming into their Suspense boundaries until the newer fire's first segment lands). See `docs/reference/frames-navigation.md` §Navigation.
 
 ```tsx
-// New: tuple shape — no setState boilerplate
-const [reload, isPending, error] = useNavigation().reload()
+// Tuple: [fire, progress]; fire returns sync milestones object.
+const [reload, { committed, finished }] = useNavigation().reload()
 
 return (
-  <Button onClick={() => reload({ selector: ".price" })} disabled={isPending}>
+  <Button
+    onClick={() => reload({ selector: ".price" })}
+    disabled={committed && !finished}
+  >
     Refresh all prices
   </Button>
 )
@@ -46,4 +44,4 @@ return (
 
 - [ ] "Can you investigate the codebase deeply and after that I'd like to talk about tensions of multi frameworks that a shopify uses (liquid+react checkout/account), hyva alpine catalogs + checkout. Magento Luma server rendered + client side layered + layout checkout variable. admin html xml componetns, etc. All projects seem to abandon their base frameworks to go with a more advanced frameworks."
 
-- [ ] Lets create a fake chat stream like in a live stream situation that has bursts of 20 messages in a few seconds, generate a library that is completely random.
+- [ ] Lets create a fake chat stream like in a live stream situation that has bursts of 20 messages in a few seconds.

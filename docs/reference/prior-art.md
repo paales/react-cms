@@ -158,6 +158,183 @@ doesn't borrow:
 - The template-language constraints. Blocks are server components;
   full async, full data-loading, full type inference.
 
+## Incremental computation and content-addressed builds
+
+A separate lineage from the composition platforms — same dependency-graph
+shape, different domain. Each system here computes incrementally over a
+DAG of work whose nodes declare their inputs and short-circuit when an
+input hasn't moved.
+
+**Bazel / Nix / Buck / Make.** Content-addressed build graphs. Each
+action declares its inputs; the action's hash is `H(inputs ∪ tool ∪
+args)`; downstream actions re-derive only when an upstream hash moves.
+`framework/src/lib/partial.tsx::computeDescendantFold` is structurally
+a merkle-DAG: an ancestor's fingerprint folds every transitive
+descendant's contribution. Bazel's remote action cache maps onto
+`<Cache>`. The big difference: Bazel auto-tracks inputs via filesystem
+sandboxing; `parton` requires `vary` to be hand-declared. Simpler model,
+no sandbox overhead, but the author can break it by reading something
+they didn't declare.
+
+**Salsa (rust-analyzer's query engine).** The closest theoretical cousin
+in any modern production codebase. Queries are memoized; each query
+records what other queries it called; a revision counter tracks input
+mutations; re-derive walks the dependency graph and short-circuits when
+no transitive input moved. 1:1 mapping: spec ≡ query, vary ≡ inputs,
+fingerprint ≡ value hash, `descendantFold` ≡ `maybe_changed_after`
+walking dependents. Salsa auto-tracks via macro-generated proxy types;
+this framework declares. Same trade-off as Bazel.
+
+**Self-adjusting computation (Umut Acar, CMU).** The PhD lineage behind
+Salsa. Acar's thesis: computations that automatically update when their
+inputs change, via a *trace* recorded during first evaluation;
+re-derivation walks the trace and only re-runs nodes whose dependencies
+dirtied. The snapshot map + `descendantContribution` is a hand-written,
+per-request, JS-friendly version of this. The theoretical foundation
+for a reader who wants the underlying CS.
+
+**Differential dataflow (Frank McSherry) / Materialize.** Incremental
+view maintenance over collections that change over time; results update
+with provably correct asymptotic complexity. The framework's per-spec
+re-evaluation is "manual, coarser, per-request differential dataflow."
+McSherry's cost model — what does it cost to update a result when input
+deltas arrive — is the cost model `parton` is implicitly optimizing for.
+
+## Creative tools and node-graph evaluation
+
+The DCC (digital content creation) lineage. These systems built
+dependency tracking + dirty propagation + per-node caching at scale,
+with 25+ years of production hardening.
+
+**Houdini (SideFX).** Every node in a SOP/COP network has explicit
+inputs and outputs; the cook engine tracks dirty propagation; each node
+caches its output keyed by parameters + input cook signatures.
+Houdini's Take / Wedge system runs the same network under multiple
+parameter sets and caches each — that's `matchKey`-variant identity
+exactly. The HDA (Houdini Digital Asset) packaging maps onto `block`:
+define-step parameter schema + render body + reusability.
+
+**Maya — Dependency Graph (DG).** Same family. Maya's evaluation graph
+is the canonical example of dirty propagation in DCC. Nodes have
+attributes; attributes have connections; dirty flags propagate;
+evaluation is lazy and cached. `setAttr` / `connectAttr` is structurally
+"set vary input + auto-invalidate downstream specs."
+
+**Fusion 360 / Inventor / SolidWorks (parametric CAD).** Feature-based
+modeling: a part is a *history tree* of features (extrude, fillet,
+hole); changing an upstream parameter re-evaluates downstream features.
+The feature tree is the render tree; parameters are vary inputs; the
+rebuild operation is fp-driven re-render. CAD has dealt for 30 years
+with "ancestor cached, descendant stale" — their answer (parametric
+history with full dirty propagation) is what `descendantFold`
+approximates.
+
+**After Effects, Nuke, Blender (geometry nodes).** Same family.
+Compositions of nodes with cached outputs and dirty propagation. Names
+to drop when discussing the lineage with someone from VFX/animation.
+
+## Game engines and cross-process replication
+
+The lineage `<RemoteFrame>` lives in.
+
+**Unreal Engine — Actor replication.** Every `AActor` has a
+server-authoritative copy and zero or more client replicas. Replicated
+properties (`UPROPERTY(Replicated)`) auto-sync server→client; RPCs are
+explicitly annotated by authority (`Server` / `Client` / `NetMulticast`).
+`<RemoteFrame>` is the same-direction analog: remote (authoritative)
+renders its subtree; host embeds it; `capability` is the explicit
+host→remote channel. UE's `bOnlyRelevantToOwner` + relevance distance
+maps onto "what does the slot owner forward to the remote." 25 years
+of hardening on questions still open in `docs/notes/remote-frame-design.md`
+(signed properties, lag compensation, anti-cheat) — UE is the reading
+list for adversarial-input scenarios.
+
+**Unity — Addressables.** Content-addressed asset loading: any asset
+can be referenced by stable address; resolution can be local, CDN, or
+remote bundle; the same C# code works regardless of where bytes
+physically live. `Addressables.LoadAssetAsync<GameObject>("Enemy_Skeleton")`
+doesn't care whether the prefab is in the build or behind a CDN.
+`<RemoteFrame>` is the same idea applied to *rendered subtrees* —
+host writes `<MagentoPaymentSummary />`, doesn't care that resolution
+involves a cross-origin fetch + Flight decode + namespace rewrite.
+Both auto-derive their resolver from the address's registered location.
+
+**Godot — scene tree + NodePath.** Nodes are addressable by
+`/root/UI/HUD/HealthBar`-style paths; `get_node(path)` finds them;
+scenes are reusable subtrees with override semantics. `parent.path` is
+structurally a NodePath. Godot scenes ≈ blocks: reusable, instantiable,
+with overridable parameters.
+
+## Native UI frameworks with auto-tracked reads
+
+The mirror universe: what `parton(R, opts)` would feel like if the
+runtime auto-tracked reads instead of requiring explicit declaration.
+
+**Apple SwiftUI.** Pure-function-of-state views; `@State` /
+`@Observable` track property-level reads; body re-runs when read
+properties change. SwiftUI's view diff is structurally fp-skip — view
+body returns the same shape, framework reconciles, no actual remount.
+`NavigationStack` + `NavigationPath` is the frame-chain equivalent:
+independent navigation axis with its own back/forward, scoped to a
+region.
+
+**Android Jetpack Compose.** Same family; `@Composable` functions ≡
+`Render`; `remember` / `derivedStateOf` ≡ vary-cache-key analogues.
+Compose's "skippable functions" optimization *is* fp-skip — the
+compiler checks input equality and skips re-composition. Auto-tracked
+via compiler-rewritten code.
+
+**Cocoa Bindings + KVO (Objective-C, AppKit, 2003).** The forgotten
+ancestor. `NSObjectController` + `bind:toObject:withKeyPath:options:`
+declared the dependency surface up front; KVO emitted change
+notifications; bindings auto-updated UI. "Observed key path =
+invalidation surface" is precisely "vary = cache key surface." Apple
+effectively deprecated bindings in practice because auto-tracking
+proved too magic to debug — which is exactly the case for declaring
+`vary` explicitly. The 20-year lesson is folded in.
+
+## Adjacent server + collaborative systems
+
+**Phoenix LiveView (Elixir).** The closest non-React server-render
+cousin. `assigns` is the vary surface; templates re-render on assign
+change; the wire protocol patches the DOM at marked positions. Nested
+`LiveComponent` ≡ spec; `phx-update="ignore"` ≡ `keepalive: false`.
+The big architectural difference: LiveView holds an open websocket per
+session and pushes diffs; this framework renders per-request over plain
+HTTP and skips via fp. LiveView trades infrastructure cost (websocket
+per user) for latency; this framework trades latency for infrastructure
+simplicity.
+
+**Erlang + OTP.** Every spec addressable by selector ↔ every actor
+addressable by `pid`. Selector-targeted refetch ↔ message-pass to a
+specific actor. `<Frame>` as scope opener ↔ `gen_server` with private
+state. `<RemoteFrame>` is structurally distributed Erlang: different
+node, different process, same addressing scheme via namespacing.
+
+**Figma — plugin sandbox.** Plugins run in a separate JS Realm with no
+DOM access; communication with the host editor is via `postMessage`
+over a structured-clone bridge; capabilities are scoped by what the
+host explicitly exposes via `figma.*`. Exactly the RemoteFrame trust
+model: capability is the only channel, host decides what to forward.
+Figma uses Realm isolation in-process; this framework uses cross-origin
+fetch as the isolation boundary. Both arrive at the same security stance.
+
+**Linear — local-first sync engine.** Client maintains a local store
+of strongly-typed models; reads are entirely local; writes are
+optimistic + reconciled with the server. Closer to client-first
+reactivity (Solid, MobX) than to this framework's server-first model.
+But entity addressing is the same — every Issue / Project has a stable
+id; mutations name the id; cross-references are by id. Linear's typed
+Model class gives them auto-tracked reads (a view reading `issue.assignee`
+auto-subscribes); this framework chose declared `vary`. Different bets,
+internally consistent.
+
+**Notion.** Block-based document; every block is `{id, type, props,
+children}` — literally `cms/data/content.json`'s shape. Notion's
+"synced blocks" (one block referenced from many places) ≡ selector
+fan-out. Notion's database views with filter/sort ≡ CMS configs with
+match clauses.
+
 ## What's distinct in this framework
 
 Not novel; the combination is uncommon.

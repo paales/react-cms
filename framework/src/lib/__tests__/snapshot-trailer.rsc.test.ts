@@ -72,7 +72,6 @@ describe("serializeSnapshot / deserializeSnapshot", () => {
       varyKey: "vk123",
       matchKey: "mk456",
       emittedFp: "fp789",
-      sessionDeps: ["dep1", "dep2"],
     })
     const back = deserializeSnapshot(JSON.parse(JSON.stringify(serializeSnapshot(orig))))
     expect(back.framePath).toEqual(["frame1"])
@@ -81,13 +80,12 @@ describe("serializeSnapshot / deserializeSnapshot", () => {
     expect(back.varyKey).toBe("vk123")
     expect(back.matchKey).toBe("mk456")
     expect(back.emittedFp).toBe("fp789")
-    expect(back.sessionDeps).toEqual(["dep1", "dep2"])
   })
 
   it("drops non-serializable fields", () => {
     const orig = makeSnapshot({
       fallback: "would be JSX in real life",
-      cache: { maxAge: 60 },
+      cache: { slowSource: { perChunkMs: 25 } },
     })
     const ser = serializeSnapshot(orig)
     expect("fallback" in ser).toBe(false)
@@ -101,7 +99,6 @@ describe("serializeSnapshot / deserializeSnapshot", () => {
     expect("varyKey" in ser).toBe(false)
     expect("matchKey" in ser).toBe(false)
     expect("emittedFp" in ser).toBe(false)
-    expect("sessionDeps" in ser).toBe(false)
   })
 
   it("deserialized snapshot has fallback: null", () => {

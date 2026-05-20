@@ -130,13 +130,11 @@ export const HeaderPartial = parton(
 function makeSearchArea(scope: "page" | "frame") {
   const Stage1 = parton(SearchStage1Render, {
     selector: `#${scope}-stage-1`,
-    cache: {},
-    vary: ({ search: { q = "" } }) => ({ q }),
+    vary: ({ search: { q = "" }, time }) => ({ q, expiresAt: time.never }),
   })
   const Stage2 = parton(SearchStage2Render, {
     selector: `#${scope}-stage-2`,
-    cache: {},
-    vary: ({ search: { q = "" } }) => ({ q }),
+    vary: ({ search: { q = "" }, time }) => ({ q, expiresAt: time.never }),
     fallback: (
       <div data-testid="stage-2-fallback" className="p-2 text-muted-foreground">
         Loading stage 2...
@@ -145,8 +143,7 @@ function makeSearchArea(scope: "page" | "frame") {
   })
   const Stage3 = parton(SearchStage3Render, {
     selector: `#${scope}-stage-3`,
-    cache: {},
-    vary: ({ search: { q = "" } }) => ({ q }),
+    vary: ({ search: { q = "" }, time }) => ({ q, expiresAt: time.never }),
     fallback: (
       <div data-testid="stage-3-fallback" className="p-2 text-muted-foreground">
         Loading stage 3...

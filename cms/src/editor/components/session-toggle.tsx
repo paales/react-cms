@@ -1,19 +1,19 @@
 "use client"
 
 import type { ReactNode } from "react"
-// Deep-import is required: `setSessionValue` is a server action and
-// this file is `"use client"` — going through the cross-package barrel
-// mis-resolves the Flight reference. See the caveat in
+// Deep-import is required: `__cellWrite` is a server action and
+// this file is `"use client"` — going through the cross-package
+// barrel mis-resolves the Flight reference. See the caveat in
 // `framework/index.ts`.
-import { setSessionValue } from "@parton/framework/runtime/session-actions.ts"
+import { __cellWrite } from "@parton/framework/runtime/cell-actions.ts"
 
 /**
- * Editor tweak toggle backed by the framework's session-value
- * primitive. Click writes `name = value` via the `setSessionValue`
- * server action; the action returns an `{invalidate: ...}` directive
- * unioning every spec whose `vary` recorded a `session.*` read on
- * `name`, and the framework refetches that selector before the next
- * render.
+ * Editor tweak toggle backed by a cell. The toggle's `name` is the
+ * cell id (the editor cells in `state.ts` use the same id format
+ * the legacy `session.enum` names did — `"editor-palette"`,
+ * `"editor-tree-style"`, etc.) — so the toggle UI still addresses
+ * settings by name while the underlying write goes through
+ * `__cellWrite(id, value)`.
  *
  * Renders an `<a href="#">` so accessibility / focus / hover work,
  * but intercepts plain left-clicks. Modifier-clicks pass through to
@@ -42,7 +42,7 @@ export function SessionToggleLink({
       return
     }
     e.preventDefault()
-    void setSessionValue(name, value)
+    void __cellWrite(name, value)
   }
   return (
     <a

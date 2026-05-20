@@ -56,7 +56,6 @@ export interface SerializedSnapshot {
   varyKey?: string
   matchKey?: string
   emittedFp?: string
-  sessionDeps?: readonly string[]
 }
 
 export function serializeSnapshot(snap: PartialSnapshot): SerializedSnapshot {
@@ -71,7 +70,6 @@ export function serializeSnapshot(snap: PartialSnapshot): SerializedSnapshot {
   if (snap.varyKey !== undefined) out.varyKey = snap.varyKey
   if (snap.matchKey !== undefined) out.matchKey = snap.matchKey
   if (snap.emittedFp !== undefined) out.emittedFp = snap.emittedFp
-  if (snap.sessionDeps !== undefined) out.sessionDeps = [...snap.sessionDeps]
   return out
 }
 
@@ -87,7 +85,6 @@ export function deserializeSnapshot(ser: SerializedSnapshot): PartialSnapshot {
     ...(ser.varyKey !== undefined ? { varyKey: ser.varyKey } : {}),
     ...(ser.matchKey !== undefined ? { matchKey: ser.matchKey } : {}),
     ...(ser.emittedFp !== undefined ? { emittedFp: ser.emittedFp } : {}),
-    ...(ser.sessionDeps !== undefined ? { sessionDeps: ser.sessionDeps } : {}),
   }
 }
 

@@ -14,8 +14,8 @@
  *    validates client components inside a remote payload hydrate
  *    correctly in the host's browser.
  *
- * 4. A remote spec with `cache: { maxAge }` — second fetch hits the
- *    cache, returns immediately.
+ * 4. A remote spec with `vary: ({time}) => ({expiresAt: time.in(60_000)})`
+ *    — second fetch hits the cache, returns immediately.
  *
  * 5. A refresh button driving `nav.reload({selector: "..."})` to
  *    re-fetch a remote frame. Same-origin v1: this round-trips
@@ -104,15 +104,16 @@ const RemoteCachedGreeting = parton(
       <RemoteCard tone="pink" testid="remote-cached">
         <strong>Cached remote</strong> · 500ms cold · {new Date().toISOString()}
         <div className="mt-2 text-xs text-muted-foreground">
-          `cache: {`{ maxAge: 60 }`}` on the remote spec. The first request renders
-          fresh; subsequent same-key fetches hit the cache and return immediately.
+          `vary: ({"{time}"}) ⇒ ({"{expiresAt: time.in(60_000)}"})` on the remote spec. The
+          first request renders fresh; subsequent same-key fetches hit the cache and return
+          immediately.
         </div>
       </RemoteCard>
     )
   },
   {
     selector: "remote-cached",
-    cache: { maxAge: 60 },
+    vary: ({ time }) => ({ expiresAt: time.in(60_000) }),
   },
 )
 

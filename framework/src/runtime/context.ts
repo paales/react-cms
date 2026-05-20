@@ -29,12 +29,13 @@ interface RequestStore {
    *  unless `deferRegistryCommit` was set. */
   commitRegistry?: () => void
   deferRegistryCommit?: boolean
-  /** Set by a server component during render (typically a wait
-   *  sentinel like the chat's ChunkSlot) to signal that the segment
-   *  driver should keep the connection open after this segment closes
-   *  and emit another segment when state changes. Without this, the
-   *  driver closes the connection after the first segment — same as
-   *  today's single-segment behavior. */
+  /** Set by a server component during render (typically a Suspense
+   *  sentinel that awaits a producer event — e.g. the chat's
+   *  `ChunkSlot`) to signal that the segment driver should keep the
+   *  response open after this segment closes and emit another
+   *  segment when state changes. Without this — and without the
+   *  client's `?streaming=1` URL opt-in — the driver closes after
+   *  the first segment. */
   connectionLive?: boolean
   /** Queued URL push from `getServerNavigation(scope).navigate(...)`.
    *  Consumed (and cleared) at trailer-flush time, emitted as a
@@ -89,6 +90,67 @@ export function isTestMode(): boolean {
   return getStore().scope !== DEFAULT_SCOPE
 }
 
+// ─── Deferred-task scope capture ────────────────────────────────────────
+
+/** Per-scope dedup keys for currently-scheduled tasks. The key shape
+ *  is `<scope>:<dedupKey>`; the scope comes from the request the
+ *  task was scheduled in, the dedupKey is caller-supplied. */
+const _scheduledTaskKeys = new Set<string>()
+
+/**
+ * Schedule `fn` to run after `delayMs`, with the active request's
+ * full ALS context (request, scope, cookie accumulator, framework
+ * control flags) re-entered inside the callback. Background producers
+ * (a setInterval-style tick, a debounced cell write) can call
+ * `getScope()` / `getRequest()` / `cell.set` / `cell.peek` from the
+ * deferred callback as if they were still inside the originating
+ * request — without userspace having to thread scope through their
+ * own closures.
+ *
+ * Per-scope dedup: at most one task per `(scope, dedupKey)` is
+ * outstanding. A second call with the same dedupKey while the first
+ * is still scheduled is a no-op. The dedup flag clears just before
+ * `fn` runs, so the callback can re-schedule itself for a chained
+ * timer pattern.
+ *
+ * Caller must be inside a request context (vary callback, render
+ * body, action body). Throws otherwise.
+ */
+export function scheduleInScope(
+  fn: () => void | Promise<void>,
+  delayMs: number,
+  dedupKey: string,
+): void {
+  const captured = requestContext.getStore()
+  if (!captured) {
+    throw new Error(
+      "scheduleInScope: must be called inside a request context (vary / render / action body)",
+    )
+  }
+  const key = `${captured.scope}:${dedupKey}`
+  if (_scheduledTaskKeys.has(key)) return
+  _scheduledTaskKeys.add(key)
+  setTimeout(() => {
+    _scheduledTaskKeys.delete(key)
+    requestContext.run(captured, () => {
+      void fn()
+    })
+  }, delayMs)
+}
+
+/** Test-only — abort outstanding scheduled tasks. The setTimeouts
+ *  still fire (we don't track their ids) but the dedup flags clear
+ *  so subsequent schedules go through. */
+export function _clearScheduledTasks(scope?: string | "all"): void {
+  if (scope === undefined || scope === "all") {
+    _scheduledTaskKeys.clear()
+    return
+  }
+  for (const key of [..._scheduledTaskKeys]) {
+    if (key.startsWith(`${scope}:`)) _scheduledTaskKeys.delete(key)
+  }
+}
+
 export function runWithRequest<T>(request: Request, fn: () => T): { result: T; cookies: string[] } {
   const store: RequestStore = { request, cookies: [], scope: deriveScope(request) }
   const result = requestContext.run(store, fn)
@@ -125,15 +187,19 @@ export function _captureCommitHandle(): () => void {
 }
 
 /**
- * Signal that this render's connection should stay open after the
- * current segment closes — the segment driver will wait for the next
- * `refreshSelector` event and re-render. Used by streaming sentinels
- * (e.g. the chat's `ChunkSlot`) to keep a long-poll connection alive
- * across multiple Flight documents on the same TCP socket.
+ * Signal that this render's connection should stay open for the
+ * framework's keepalive window after the current segment closes —
+ * the segment driver will wait for the next `refreshSelector` event
+ * and re-render. Used by producer-await sentinels (e.g. the chat's
+ * `ChunkSlot`) to keep a long-poll connection alive across multiple
+ * Flight documents on the same TCP socket. The client's
+ * `?streaming=1` URL opt-in does the same thing for cell-driven
+ * live updates; this is the server-side equivalent for cases where
+ * the partial's render itself is what's holding state.
  *
- * Idempotent — multiple calls within one render are a no-op. The flag
- * resets between segments, so each render must call this if it wants
- * the next one to follow.
+ * Idempotent — multiple calls within one render are a no-op. The
+ * flag resets between segments, so each render must call this if
+ * it wants the next one to follow.
  */
 export function markConnectionLive(): void {
   const store = requestContext.getStore()

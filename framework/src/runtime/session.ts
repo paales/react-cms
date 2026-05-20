@@ -40,10 +40,6 @@ export interface FrameSessionState {
 export interface SessionState {
   /** Keys are dotted frame paths (e.g. `"cart"` or `"products.list"`). */
   frames: Record<string, FrameSessionState>
-  /** Per-key session values written via `setSessionValue` and read in
-   *  `vary` through the `session.*` surface. Values are
-   *  JSON-serialisable. */
-  values: Record<string, unknown>
 }
 
 /**
@@ -113,8 +109,8 @@ export function ensureSessionId(): string {
  */
 export function getSessionState(): SessionState {
   const id = getSessionId()
-  if (!id) return { frames: {}, values: {} }
-  return store().get(id) ?? { frames: {}, values: {} }
+  if (!id) return { frames: {} }
+  return store().get(id) ?? { frames: {} }
 }
 
 /**
@@ -133,7 +129,7 @@ export function getSessionFrameUrl(path: readonly string[]): string | null {
 export function setSessionFrameUrl(path: readonly string[], url: string): void {
   const id = ensureSessionId()
   const b = store()
-  const existing = b.get(id) ?? { frames: {}, values: {} }
+  const existing = b.get(id) ?? { frames: {} }
   existing.frames = { ...existing.frames, [pathKey(path)]: { url } }
   b.set(id, existing)
 }
@@ -154,74 +150,34 @@ export function clearSessionFrame(path: readonly string[]): void {
   b.set(id, existing)
 }
 
-// ── Per-key session values ─────────────────────────────────────────────
-//
-// `vary` reads values via the `session.*` surface (sync, deps-tracked);
-// client code writes via the `setSessionValue` server action which
-// fires implicit invalidation against every spec whose `vary` recorded
-// a read on that key.
-
 /**
- * Read one session value, or `undefined` if absent. Untyped at the
- * value layer; the read surface coerces and applies defaults.
- */
-export function getSessionValue(name: string): unknown {
-  return getSessionState().values[name]
-}
-
-/**
- * Write a session value. Creates the session (and Set-Cookies the ID)
- * if it doesn't exist yet. Internal — the public surface is the
- * `setSessionValue` server action.
- */
-export function _writeSessionValue(name: string, value: unknown): void {
-  const id = ensureSessionId()
-  const b = store()
-  const existing = b.get(id) ?? { frames: {}, values: {} }
-  existing.values = { ...existing.values, [name]: value }
-  b.set(id, existing)
-}
-
-/**
- * Sync read surface bound to the request's session. Each method
- * records its `name` in `deps` so the spec pipeline can store the
- * read keys on the partial's snapshot — server actions that mutate a
- * key then walk snapshots to fire targeted invalidations.
+ * Bare session identity — the only session surface vary and cells
+ * see. `cell.vary({session}) => ({sid: session.id})` is the
+ * canonical per-user partition pattern.
  *
- * Defaults: when the key is absent or the stored value's type doesn't
- * match the read shape, the surface returns the supplied default
- * (`""` / `0` / `false` / `values[0]`). Vary returns a stable shape
- * on first authoring without conditional defaults at every call site.
+ * Empty string when no session cookie yet AND no write has triggered
+ * cookie creation (read-only anon request) — cells should treat
+ * this as "no session" and either pick a different partition axis
+ * or accept the anon bucket.
  */
-export interface SessionReadSurface {
-  text(name: string, defaultValue?: string): string
-  number(name: string, defaultValue?: number): number
-  boolean(name: string, defaultValue?: boolean): boolean
-  enum<T extends string>(name: string, values: readonly T[], defaultValue?: T): T
+export interface SessionId {
+  readonly id: string
 }
 
-export function createSessionReadSurface(deps: Set<string>): SessionReadSurface {
+/**
+ * Session surface exposed to `vary` and `cell.vary` callbacks.
+ * Today this is just `SessionId` — the legacy named-key readers
+ * (`session.text/number/boolean/enum`) moved to the cell primitive.
+ * Kept as a separate type name for forward extensibility (a future
+ * `session.scopes` surface, etc.).
+ */
+export type SessionReadSurface = SessionId
+
+/** Sync, request-bound session-read surface for vary callbacks. */
+export function createSessionReadSurface(): SessionReadSurface {
   return {
-    text(name, defaultValue = "") {
-      deps.add(name)
-      const v = getSessionValue(name)
-      return typeof v === "string" ? v : defaultValue
-    },
-    number(name, defaultValue = 0) {
-      deps.add(name)
-      const v = getSessionValue(name)
-      return typeof v === "number" ? v : defaultValue
-    },
-    boolean(name, defaultValue = false) {
-      deps.add(name)
-      const v = getSessionValue(name)
-      return typeof v === "boolean" ? v : defaultValue
-    },
-    enum<T extends string>(name: string, values: readonly T[], defaultValue?: T): T {
-      deps.add(name)
-      const v = getSessionValue(name)
-      if (typeof v === "string" && (values as readonly string[]).includes(v)) return v as T
-      return (defaultValue ?? values[0]) as T
+    get id() {
+      return getSessionId() ?? ""
     },
   }
 }

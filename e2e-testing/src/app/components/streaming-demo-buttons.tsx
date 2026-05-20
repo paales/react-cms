@@ -1,38 +1,38 @@
 "use client"
 
 import { useEffect } from "react"
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
+import type { ResolvedCell } from "@parton/framework"
 import { Button } from "@parton/copies/components/ui/button"
-import { bumpDemoCounter, pushSeq } from "../pages/streaming-demo-actions.ts"
+import { pushSeq } from "../pages/streaming-demo-actions.ts"
 
 /**
- * Engages the segment loop on mount by firing a targeted RSC GET for
- * the live-tick partial. Without this, the initial SSR renders the
- * tick once and the page is static; with it, the client opens an RSC
- * GET that the server's segment driver keeps alive — each
- * `refreshSelector("streaming-demo-tick")` arrival re-renders the
- * partial and ships a new segment.
+ * Stamps `<body data-streaming-demo-ready>` on hydration so the
+ * Playwright spec can wait for React 19's event-replay to be
+ * installed before clicking. Without this, fast Playwright clicks
+ * land on the SSR DOM before `hydrateRoot` attached its delegated
+ * root listener and the click is a no-op.
+ *
+ * The previous design also kicked the live-tick stream open here.
+ * That's now framework-owned (the auto-injected `<LivePageHeartbeat>`
+ * inside `PartialsClient`), so this component is only a hydration
+ * signal for the test harness.
  */
-export function LiveTickAutostart() {
-  const [reload] = useNavigation().reload()
+export function StreamingDemoReady() {
   useEffect(() => {
-    // E2E hydration signal: stamps `<body data-streaming-demo-ready>`
-    // once this useEffect runs. Tests wait for the attribute before
-    // clicking. React 19's event-replay only catches clicks that
-    // fire AFTER `hydrateRoot` has installed its delegated root
-    // listener — Playwright's `.click()` on a Test-Id locator often
-    // races ahead of that window (the SSR HTML is in the DOM, but
-    // `await createFromReadableStream(rscStream)` is still resolving
-    // upstream of `hydrateRoot`). Without the signal the click hits
-    // bare DOM, no React handler attached, no replay queue, and the
-    // bump action never fires.
     document.body.setAttribute("data-streaming-demo-ready", "1")
-    void reload({ selector: "streaming-demo-tick", streaming: true })
-  }, [reload])
+  }, [])
   return null
 }
 
-export function BumpButton() {
+/**
+ * Bump button — receives the resolved `bumps` cell via Flight prop
+ * from `BumpCounter`'s schema. `.value` is the snapshot from the
+ * server's last render; `.set` is the bound server-action ref
+ * (`__cellWrite.bind(null, "demo.bumps")`). On commit, the action
+ * fires `getServerNavigation().reload({selector: "cell:demo.bumps"})`
+ * which refetches every parton carrying that label.
+ */
+export function BumpButton({ bumps }: { bumps: ResolvedCell<number> }) {
   return (
     <Button
       type="button"
@@ -40,7 +40,7 @@ export function BumpButton() {
       size="sm"
       data-testid="streaming-demo-bump-btn"
       onClick={() => {
-        void bumpDemoCounter()
+        void bumps.set(bumps.value + 1)
       }}
       className="w-fit"
     >

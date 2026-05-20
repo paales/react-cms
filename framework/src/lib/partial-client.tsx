@@ -688,6 +688,14 @@ let _template: ReactNode = null
  * accumulates within a single variant; cross-variant navigation
  * (`/pokemon/1` ↔ `/pokemon/2`) populates distinct matchKey slots.
  */
+/** Soft cap on fps tracked per (id, matchKey). The cold→warm
+ *  transition emits two fps per render cycle (one at boundary
+ *  mount, one from the trailer post-resolution); live partials
+ *  emit a fresh pair per segment. Keeping the LATEST few is
+ *  enough for the cold/warm fp-skip on the next nav; older fps
+ *  for the same variant are stale and only bloat `?cached=`. */
+const FP_CAP_PER_VARIANT = 4
+
 export function registerClientPartial(
   id: string,
   matchKey: string,
@@ -703,7 +711,16 @@ export function registerClientPartial(
     set = new Set()
     inner.set(matchKey, set)
   }
+  if (set.has(fingerprint)) return
   set.add(fingerprint)
+  // Evict the oldest entries (insertion order) once the cap is
+  // reached. Without this, a live partial that re-renders every
+  // segment would inflate `?cached=` unboundedly.
+  while (set.size > FP_CAP_PER_VARIANT) {
+    const oldest = set.values().next().value
+    if (oldest === undefined) break
+    set.delete(oldest)
+  }
 }
 
 /**
@@ -1005,15 +1022,19 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
     url.searchParams.set("partialProps", JSON.stringify(mergedProps))
   }
 
-  // Send cached fingerprints for the non-target set so the server can
-  // skip the unchanged ones via fingerprint-match placeholders. The
-  // client doesn't know the server-side id↔label mapping from here, so
-  // we strip cached tokens whose id prefix matches a wanted label.
-  // Specs whose id equals the wanted label hit; spec-with-label-only
-  // would slip through and just get re-rendered (cheap).
-  if (labelSet.size > 0) {
+  // Send cached fingerprints so the server can fp-skip unchanged
+  // partials. With a selector, strip cached tokens whose id prefix
+  // matches a wanted label (those entries are the explicit refetch
+  // targets — server must re-render them, not match-and-skip). With
+  // no selector (streaming heartbeat, full-page refetch), send every
+  // cached entry so the fp-skip cascade prunes the page to deltas.
+  const cachedIds = getCachedPartialIds()
+  if (cachedIds.length > 0) {
     const targetPrefixes = [...labelSet].map((l) => `${l}:`)
-    const cached = getCachedPartialIds().filter((t) => !targetPrefixes.some((p) => t.startsWith(p)))
+    const cached =
+      labelSet.size > 0
+        ? cachedIds.filter((t) => !targetPrefixes.some((p) => t.startsWith(p)))
+        : cachedIds
     if (cached.length > 0) url.searchParams.set("cached", cached.join(","))
   }
 
@@ -1840,16 +1861,34 @@ function buildWindowNavigationHandle(): ImperativeNavigation {
     const parsed = parseOptionsSelector(options)
     const m = makeMilestoneDeferreds()
 
-    if (parsed.labels.length > 0) {
-      // Targeted reload — same in-flight-queue behavior as
-      // selector-filtered navigate. No browser nav.navigate call;
-      // `committed` resolves immediately because the URL isn't
-      // changing.
-      const key = inFlightKey(parsed.labels)
-      const controller = key ? new AbortController() : undefined
-      const inFlightEntry: InFlightEntry | null =
-        key && controller ? { controller } : null
+    // Two ways to reach the in-place refetch path (no browser reload):
+    //
+    //   1. Selector filter (`reload({selector: "#cart"})`) — targeted
+    //      partial refetch. Existing behaviour.
+    //   2. Streaming opt-in (`reload({streaming: true})`) without a
+    //      selector — the framework heartbeat. Full-page top-down
+    //      re-render with fp-skip pruning unchanged partials; the
+    //      `?streaming=1` URL flag holds the connection open for live
+    //      updates.
+    //
+    // Only a bare `reload()` (no selector, no streaming) falls through
+    // to `nav.reload()` — that's the user-facing "reload this URL"
+    // command and IS supposed to do a real browser reload.
+    const wantsInPlace = parsed.labels.length > 0 || options?.streaming === true
+    if (wantsInPlace) {
+      const key = parsed.labels.length > 0 ? inFlightKey(parsed.labels) : null
+      const controller = new AbortController()
+      const inFlightEntry: InFlightEntry | null = key ? { controller } : null
       if (key && inFlightEntry) registerInFlight(key, inFlightEntry)
+      // Forward the caller's abort signal to the internal controller
+      // (so unmount-on-nav-away cancels the in-flight refetch). The
+      // internal controller still drives the predecessor-abort path
+      // for newer fires of the same selector; we just bridge a
+      // second signal source.
+      if (options?.signal) {
+        if (options.signal.aborted) controller.abort()
+        else options.signal.addEventListener("abort", () => controller.abort(), { once: true })
+      }
 
       m.committed.resolve(nav.currentEntry!)
       void (async () => {
@@ -1858,7 +1897,7 @@ function buildWindowNavigationHandle(): ImperativeNavigation {
             labels: parsed.labels,
             streaming: options?.streaming ?? false,
             props: options?.props,
-            signal: controller?.signal,
+            signal: controller.signal,
           })
           await refetch.streaming
           if (key && inFlightEntry) abortPredecessors(key, inFlightEntry)

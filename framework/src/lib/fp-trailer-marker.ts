@@ -121,6 +121,12 @@ export function tryReadMarker(buf: Uint8Array, offset = 0): ReadMarkerResult {
 export const TAG_FP_UPDATES = "fp"
 export const TAG_URL_UPDATE = "url"
 export const TAG_NEXT_SEGMENT = "next"
+/** Per-segment liveness signal. Body is a single byte: `"1"` if any
+ *  partial in the segment declared a finite `expiresAt` or a
+ *  `cell:*` label, `"0"` otherwise. The client's heartbeat reads it
+ *  to decide whether to keep the long-poll loop alive after the
+ *  current connection closes — `"0"` = go dormant, `"1"` = reopen. */
+export const TAG_LIVE = "live"
 
 /** Backward-compat alias the legacy `wrapStreamWithFpTrailer` caller
  *  used to build its sole trailer entry. Kept around for any out-of-

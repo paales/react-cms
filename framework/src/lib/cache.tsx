@@ -402,9 +402,21 @@ function registerDynamicSnapshots(snapshots: Map<string, PartialSnapshot>): void
 interface CacheProps {
   id: string
   fingerprint: string
-  options: CacheOptions
-  /** vary result from the spec — IS the cache-key surface. */
+  /** Dev/debug options. Optional — production paths set `expiresAt`
+   *  in `vary` and never need this prop. */
+  options?: CacheOptions
+  /** vary result from the spec — IS the cache-key surface (minus
+   *  `expiresAt` / `staleUntil`, which the framework strips before
+   *  feeding fp and cache lookups). */
   varyResult: unknown
+  /** Freshness deadline. Bytes are served as fresh while
+   *  `now < expiresAt`. `+Infinity` (the `time.never` sentinel) means
+   *  cache forever. */
+  expiresAt: number
+  /** Stale-while-revalidate deadline. Bytes between `expiresAt` and
+   *  `staleUntil` are served stale while a background refresh runs.
+   *  Defaults to `expiresAt` (strict freshness, no stale window). */
+  staleUntil?: number
   children: ReactNode
 }
 
@@ -473,10 +485,11 @@ export async function Cache({
   fingerprint,
   options,
   varyResult,
+  expiresAt,
+  staleUntil,
   children,
 }: CacheProps): Promise<ReactNode> {
-  if (options.bypass) return children
-  return cacheImpl(id, fingerprint, options, varyResult, children)
+  return cacheImpl(id, fingerprint, options ?? {}, varyResult, expiresAt, staleUntil, children)
 }
 
 async function cacheImpl(
@@ -484,13 +497,16 @@ async function cacheImpl(
   fingerprint: string,
   options: CacheOptions,
   varyResult: unknown,
+  expiresAt: number,
+  staleUntilArg: number | undefined,
   children: ReactNode,
 ): Promise<ReactNode> {
+  const staleUntil = staleUntilArg ?? expiresAt
   const { store, snapshotIndex, refreshing, inFlightMiss } = state()
 
   const { stripped, partials, ids } = stripPartials(children)
   const baseKey = `${id}:${fingerprint}:${hash(ids.join(","))}`
-  const key = `${baseKey}:${hashParts(varyResult, options.vary ?? null)}`
+  const key = `${baseKey}:${hashParts(varyResult)}`
   const now = Date.now()
 
   // ── Hit path ──
@@ -501,7 +517,7 @@ async function cacheImpl(
       registerDynamicSnapshots(existingSnapshots)
       if (existing.expiresAt <= now && !refreshing.has(key)) {
         refreshing.add(key)
-        void refreshEntry(baseKey, key, stripped, ids, options, varyResult)
+        void refreshEntry(baseKey, key, stripped, ids, expiresAt, staleUntil)
           .catch((err) => console.error(`[cache] SWR refresh failed for ${key}:`, err))
           .finally(() => refreshing.delete(key))
       }
@@ -540,7 +556,7 @@ async function cacheImpl(
   const staticIdSet = new Set(ids)
   let pending = inFlightMiss.get(baseKey)
   if (!pending) {
-    pending = renderMissAndStore(key, stripped, staticIdSet, options).finally(() =>
+    pending = renderMissAndStore(key, stripped, staticIdSet, expiresAt, staleUntil).finally(() =>
       inFlightMiss.delete(baseKey),
     )
     inFlightMiss.set(baseKey, pending)
@@ -553,7 +569,8 @@ async function renderMissAndStore(
   key: string,
   stripped: ReactNode,
   staticIds: Set<string>,
-  options: CacheOptions,
+  expiresAt: number,
+  staleUntil: number,
 ): Promise<{ liveTree: ReactNode; dynamicSnapshots: Map<string, PartialSnapshot> }> {
   const { store } = state()
   const stream = renderToReadableStream(stripped)
@@ -575,10 +592,7 @@ async function renderMissAndStore(
       // natural Suspense pacing. On hit, slow-replay or fast-replay
       // both let each inner Suspense reveal incrementally as bytes
       // arrive at the decoder. (cache-streaming-demo.tsx exercise.)
-      await store.set(
-        key,
-        freshEntry(rawBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
-      )
+      await store.set(key, freshEntry(rawBytes, expiresAt, staleUntil))
       setSnapshots(key, new Map())
       return new Map<string, PartialSnapshot>()
     }
@@ -592,10 +606,7 @@ async function renderMissAndStore(
     // resolved from one async query; pricing inside is the dynamic
     // bit we're keeping live).
     const cleanBytes = await renderAndBuffer(holeTree)
-    await store.set(
-      key,
-      freshEntry(cleanBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
-    )
+    await store.set(key, freshEntry(cleanBytes, expiresAt, staleUntil))
     setSnapshots(key, snapshots)
     return snapshots
   })()
@@ -613,8 +624,8 @@ async function refreshEntry(
   key: string,
   stripped: ReactNode,
   ids: string[],
-  options: CacheOptions,
-  _varyResult: unknown,
+  expiresAt: number,
+  staleUntil: number,
 ): Promise<void> {
   const { store } = state()
   const stream = renderToReadableStream(stripped)
@@ -623,29 +634,16 @@ async function refreshEntry(
   const rawResolved = await resolveLazies(rawDecoded)
   const { stripped: holeTree, snapshots } = stripDynamicWrappers(rawResolved, new Set(ids))
   if (snapshots.size === 0) {
-    await store.set(
-      key,
-      freshEntry(rawBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
-    )
+    await store.set(key, freshEntry(rawBytes, expiresAt, staleUntil))
     setSnapshots(key, new Map())
     return
   }
   const cleanBytes = await renderAndBuffer(holeTree)
-  await store.set(
-    key,
-    freshEntry(cleanBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
-  )
+  await store.set(key, freshEntry(cleanBytes, expiresAt, staleUntil))
   setSnapshots(key, snapshots)
 }
 
-function freshEntry(
-  bytes: Uint8Array,
-  maxAge: number | undefined,
-  swr: number | undefined,
-  now: number,
-): Entry {
-  const expiresAt = maxAge != null ? now + maxAge * 1000 : Number.POSITIVE_INFINITY
-  const staleUntil = swr != null && maxAge != null ? expiresAt + swr * 1000 : expiresAt
+function freshEntry(bytes: Uint8Array, expiresAt: number, staleUntil: number): Entry {
   return { bytes, expiresAt, staleUntil }
 }
 

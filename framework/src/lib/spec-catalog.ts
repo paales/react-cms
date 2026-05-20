@@ -21,6 +21,7 @@
 import type { FC } from "react"
 import type { PartialCtx } from "./partial-context.ts"
 import type { SessionReadSurface } from "../runtime/session.ts"
+import type { TimeScope } from "./time.ts"
 
 /** Catalog vary signature — kept loose because the catalog stores
  *  every spec's vary regardless of its `V`. Mirrors the public
@@ -33,6 +34,7 @@ export type SpecCatalogVary = (scope: {
   headers: Partial<Record<string, string>>
   params: Record<string, string>
   session: SessionReadSurface
+  time: TimeScope
   instanceId: string
 }) => unknown
 

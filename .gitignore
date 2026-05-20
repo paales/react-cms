@@ -22,5 +22,10 @@ playwright-report/
 # Published content lives in `cms/data/content.json` (committed).
 cms/data/draft.json
 
+# Cells — runtime-mutable per-process state. Default scope writes
+# through to disk so streaming-demo state survives HMR; test scopes
+# stay in memory. Don't commit; users get fresh state on first run.
+cms/data/cells.json
+
 # Claude Code harness runtime artifacts.
 .claude/
