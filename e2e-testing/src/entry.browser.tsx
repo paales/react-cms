@@ -21,7 +21,7 @@ import {
 } from "@parton/framework/lib/partial-client.tsx"
 import { splitSegments } from "@parton/framework/lib/fp-trailer-split.ts"
 import { applyStandardTrailers } from "@parton/framework/lib/segment-trailers-client.ts"
-import { startLivePageHeartbeat } from "@parton/framework/lib/live-page-heartbeat.ts"
+import { LivePageHeartbeat } from "@parton/framework/lib/live-page-heartbeat.tsx"
 import { getNavigation } from "@parton/framework/runtime/navigation-api.ts"
 
 async function main() {
@@ -77,7 +77,21 @@ async function main() {
       )
     }, [])
 
-    return payload.root
+    return (
+      <>
+        {payload.root}
+        {/* Opt-in live updates. The heartbeat holds a `?streaming=1`
+         *  long-poll connection open against the current URL; the
+         *  server's segment driver pushes refreshSelector /
+         *  expiresAt updates as they happen. Mounted here so its
+         *  useEffect runs AFTER React's first commit — by that
+         *  point `_currentPageFingerprints` is populated by the
+         *  rendered `PartialErrorBoundary`s and the first fetch's
+         *  `?cached=` carries them. See
+         *  `docs/internals/streaming.md`. */}
+        <LivePageHeartbeat />
+      </>
+    )
   }
 
   /**
@@ -290,12 +304,6 @@ async function main() {
       onRecoverableError: silenceTornStream,
     })
   }
-
-  // Opt-in live updates. Holds a `?streaming=1` long-poll connection
-  // open against the current URL; the server's segment driver
-  // pushes refreshSelector / expiresAt updates as they happen. See
-  // `docs/internals/streaming.md`.
-  startLivePageHeartbeat()
 
   if (import.meta.hot) {
     import.meta.hot.on("rsc:update", () => {

@@ -8,7 +8,7 @@
  * page.
  */
 
-import { expect, test, request as apiRequest } from "./fixtures.ts"
+import { expect, test, request as apiRequest, waitForRscIdle } from "./fixtures.ts"
 
 test.beforeEach(async ({ baseURL, context }) => {
   // Start from a cold editor state — the editor cookie must NOT be
@@ -25,14 +25,14 @@ test("clicking the app-nav 'Open Editor' link sets the editor cookie and renders
   baseURL,
 }) => {
   await page.goto("/")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Sanity: editor chrome is NOT visible yet (no cookie).
   await expect(page.getByTestId("cms-edit-tree-pane")).toHaveCount(0)
 
   // The nav entry is `<a>Open Editor</a>` — anchor name match.
   await page.getByRole("link", { name: "Open Editor" }).click()
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Editor chrome materialises on the destination page.
   await expect(page.getByTestId("cms-edit-tree-pane")).toBeVisible()

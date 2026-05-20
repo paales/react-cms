@@ -25,7 +25,7 @@
  *      Fix: key the form by `${selected}:${effectiveIndex}` so a
  *      config switch (or selection switch) remounts every input.
  */
-import { expect, test, request as apiRequest } from "./fixtures.ts"
+import { expect, test, request as apiRequest, waitForRscIdle } from "./fixtures.ts"
 
 test.beforeEach(async ({ baseURL, context }) => {
   // Editor on/off lives in the `__editor` cookie. There's no URL
@@ -41,7 +41,7 @@ test("click greeting → click slug=alpha config tab — form reflects alpha con
   page,
 }) => {
   await page.goto("/cms-demo")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   await page.getByTestId("cms-edit-tree-entry-cms-demo-greeting").click()
   await expect(page).toHaveURL(/select=cms-demo-greeting/)
@@ -62,7 +62,7 @@ test("click greeting → click slug=alpha config tab — form reflects alpha con
 
 test("switching back to default config restores default fields", async ({ page }) => {
   await page.goto("/cms-demo?select=cms-demo-greeting&config=0")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   await expect(page.getByTestId("cms-edit-field-input-headline")).toHaveValue("Hello, Alpha!")
 

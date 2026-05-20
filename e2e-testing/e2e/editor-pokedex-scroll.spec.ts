@@ -1,4 +1,4 @@
-import { expect, test, request as apiRequest } from "./fixtures.ts"
+import { expect, test, request as apiRequest, waitForRscIdle } from "./fixtures.ts"
 
 /**
  * Scrolling the Pokedex while the editor is open must keep the
@@ -33,7 +33,7 @@ test("editor preview keeps Pokedex grid visible after a LoadMore scroll", async 
     }
   })
 
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Page-2's first card (#25 pikachu) loaded into the same preview.
   await expect(preview.getByRole("link", { name: /#25\s+pikachu/i })).toBeVisible({

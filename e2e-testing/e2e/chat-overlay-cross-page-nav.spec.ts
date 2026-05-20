@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures"
+import { test, expect, waitForRscIdle } from "./fixtures"
 
 // Skipped: requires the `/chat-notes` route + the `defaultOpen`
 // plumbing on `<ChatOverlay/>`, neither of which is wired in
@@ -25,7 +25,7 @@ test.skip("opened chat overlay survives navigation from / to /magento", async ({
   // before clicking. Without this, a click can fire pre-hydration and
   // follow the plain `<a href="?chat=open">` fallback, which lands on
   // the window URL (not the frame URL) and leaves the session empty.
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Open the overlay.
   await page.locator('[data-testid="chat-open-pill"]').click()

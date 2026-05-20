@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test"
+import { waitForRscIdle } from "../fixtures.ts"
 
 /**
  * Prod-build version of the cart-badge-after-revisit regression
@@ -9,14 +10,14 @@ import { test, expect } from "@playwright/test"
 
 test("cart-badge updates after Add to Cart on re-visit (prod)", async ({ page }) => {
   await page.goto("/")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   await page.getByRole("link", { name: /Magento Store/ }).click()
   await page.waitForSelector("[data-testid=product-grid]", { timeout: 15000 })
 
   await page.getByRole("link", { name: /Pokemon$/ }).click()
   await page.waitForSelector("[data-testid=page-shell]", { timeout: 10000 })
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   await page.getByRole("link", { name: /Magento Store/ }).click()
   await page.waitForSelector("[data-testid=product-grid]", { timeout: 15000 })
@@ -36,7 +37,7 @@ test("cart-badge updates after Add to Cart on re-visit (prod)", async ({ page })
   const resp = await actionResp
   expect(resp.status(), `action POST returned ${resp.status()}`).toBeLessThan(400)
 
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
   await page.waitForTimeout(1000)
 
   const html1 = await page.content()

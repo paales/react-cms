@@ -25,7 +25,7 @@
  *       Menu fp-skips on a stale entry; tab body stays cached.
  */
 
-import { expect, test, request as apiRequest } from "./fixtures.ts"
+import { expect, test, request as apiRequest, waitForRscIdle } from "./fixtures.ts"
 
 test.beforeEach(async ({ baseURL }) => {
   // Clear caches so the registry starts cold each test — frame URLs
@@ -38,16 +38,16 @@ test.beforeEach(async ({ baseURL }) => {
 
 test("browser back from a product detail returns the main list", async ({ page }) => {
   await page.goto("/frames-demo")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
   await expect(page.getByTestId("main-list")).toBeVisible()
 
   await page.getByTestId("main-open-alpha").click()
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
   await expect(page.getByTestId("main-detail")).toBeVisible()
   await expect(page.getByTestId("main-detail")).toHaveAttribute("data-sku", "alpha")
 
   await page.goBack()
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
   expect(new URL(page.url()).search).toBe("")
   await expect(page.getByTestId("main-list")).toBeVisible()
   await expect(page.getByTestId("main-detail")).toHaveCount(0)
@@ -55,7 +55,7 @@ test("browser back from a product detail returns the main list", async ({ page }
 
 test("nested-frame tab nav inside the menu About view swaps the body", async ({ page }) => {
   await page.goto("/frames-demo")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Open the menu frame's About view — this places the nested
   // `menu.tab` frame with its `/general` initial body.

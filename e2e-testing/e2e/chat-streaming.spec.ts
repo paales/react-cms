@@ -1,4 +1,4 @@
-import { test, expect, request, type Page } from "./fixtures"
+import { test, expect, request, waitForRscIdle, type Page } from "./fixtures"
 
 /**
  * End-to-end coverage for the segment-loop chat. The chat overlay
@@ -55,7 +55,7 @@ test("clicking the open pill streams chunks progressively into the chat", async 
   await page.goto("/pokemon/1")
 
   // Open pill is a client component; wait until hydration is ready.
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Click the open pill — this fires `navigate("?chat=open",
   // {selector: "#chat-overlay"})`, which becomes an RSC GET against
@@ -144,7 +144,7 @@ test("closing the chat collapses the overlay back to the open pill mid-stream", 
   // fetch, the segment loop tears down, and the close-click
   // payload commits cleanly.
   await page.goto("/pokemon/1")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
   await page.locator('[data-testid="chat-open-pill"]').click()
   await expect(page.locator('[data-testid="chat-box"]')).toBeVisible({ timeout: 10000 })
 

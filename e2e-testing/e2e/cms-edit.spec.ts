@@ -1,4 +1,4 @@
-import { expect, test, request as apiRequest } from "./fixtures.ts"
+import { expect, test, request as apiRequest, waitForRscIdle } from "./fixtures.ts"
 
 // CMS editor tests mutate the shared draft.json file. Run them
 // serially so concurrent `/__test/clear-caches` calls (in another
@@ -176,7 +176,7 @@ test.describe("CMS editor — smoke", () => {
       // hydration boundary and end up double-submitting (React
       // reconciles the form during commit and the second click
       // surface inherits the same handler).
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       // Count the published children of the body slot via tree entries.
       const composedChildren = page.locator(
         '[data-testid="cms-edit-tree-entry-composed-hero-1"], ' +
@@ -319,7 +319,7 @@ test.describe("CMS editor — smoke", () => {
     // the preview keeps showing the old label until a full page nav
     // re-warms the cache.
     await page.goto("/cms-demo?select=app-nav-link-pokemon")
-    await page.waitForLoadState("networkidle")
+    await waitForRscIdle(page)
 
     const preview = page.getByTestId("page-shell")
     await expect(preview.locator('a[href="/"]').first()).toContainText("Pokemon")
@@ -359,7 +359,7 @@ test.describe("CMS editor — smoke", () => {
     // hits a server-rendered anchor with no listener and the browser
     // does a full-page nav, which is the very thing we're testing
     // against).
-    await page.waitForLoadState("networkidle")
+    await waitForRscIdle(page)
 
     // Capture every request fired during the click. The selector-
     // targeted nav goes through `enqueueRefetch` on a microtask after
@@ -427,7 +427,7 @@ test.describe("CMS editor — smoke", () => {
   // refresh the preview the same way saving a hero block does.
   test("save updates the preview for a slot-child rich-text block", async ({ page }) => {
     await page.goto("/cms-demo?select=composed-text-1")
-    await page.waitForLoadState("networkidle")
+    await waitForRscIdle(page)
     const preview = page.getByTestId("page-shell")
     await expect(preview.getByTestId("composed-rich-text").first()).toContainText(
       "rich-text block is the second entry",
@@ -527,7 +527,7 @@ test.describe("CMS editor — smoke", () => {
       page,
     }) => {
       await page.goto("/cms-demo")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // Editor chrome must be live to assert that a fresh page nav
       // doesn't tear it down.
@@ -551,11 +551,11 @@ test.describe("CMS editor — smoke", () => {
       // nav that carries the param forward keeps the form/tree in
       // sync with the previewed slug.
       await page.goto("/cms-demo?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await expect(page.getByTestId("cms-edit-selected-id")).toContainText("greeting")
 
       await page.goto("/cms-demo/alpha?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // Selection still on greeting after the address-bar nav.
       await expect(page.getByTestId("cms-edit-selected-id")).toContainText("greeting")
@@ -565,12 +565,12 @@ test.describe("CMS editor — smoke", () => {
 
     test("editor close button (×) clears editor mode on next render", async ({ page }) => {
       await page.goto("/cms-demo")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       // Editor chrome is visible.
       await expect(page.getByTestId("cms-edit-tree-pane")).toBeVisible()
 
       await page.getByTestId("cms-edit-close").click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // Chrome gone; the close button cleared the cookie via
       // `nav.navigate({cookies: {[EDITOR_COOKIE]: ""}})`.
@@ -583,7 +583,7 @@ test.describe("CMS editor — smoke", () => {
       // on every page (`app-nav`) appears everywhere; per-page roots
       // (`cms-demo-root`) appear only where their partial mounts.
       await page.goto("/cms-demo")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await expect(page.getByTestId("cms-edit-tree-entry-cms-demo-root")).toBeVisible()
       await expect(page.getByTestId("cms-edit-tree-entry-app-nav")).toBeVisible()
 
@@ -591,7 +591,7 @@ test.describe("CMS editor — smoke", () => {
       // mounts `<CmsDemoRootPartial>`. `app-nav` stays because the
       // app shell mounts it on every page.
       await page.goto("/")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await expect(page.getByTestId("cms-edit-tree-entry-app-nav")).toBeVisible()
       await expect(page.getByTestId("cms-edit-tree-entry-cms-demo-root")).toHaveCount(0)
     })
@@ -603,7 +603,7 @@ test.describe("CMS editor — smoke", () => {
       // match the slug-specific config — without an explicit
       // ?config= override.
       await page.goto("/cms-demo?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       const activeTab = page.locator('[data-testid^="cms-edit-config-tab-"][data-active="true"]')
       const headline = page.getByTestId("cms-edit-field-input-headline")
@@ -611,19 +611,19 @@ test.describe("CMS editor — smoke", () => {
       await expect(headline).toHaveValue("Default greeting")
 
       await page.goto("/cms-demo/alpha?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await expect(activeTab).toHaveText("slug=alpha", { timeout: 10000 })
       await expect(headline).toHaveValue("Hello, Alpha!")
 
       await page.goto("/cms-demo/beta?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await expect(activeTab).toHaveText("slug∈beta,gamma", {
         timeout: 10000,
       })
       await expect(headline).toHaveValue("Beta/Gamma view")
 
       await page.goto("/cms-demo/gamma?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       // beta and gamma share the {in:[beta,gamma]} clause → same tab,
       // same headline value.
       await expect(activeTab).toHaveText("slug∈beta,gamma", {
@@ -632,7 +632,7 @@ test.describe("CMS editor — smoke", () => {
       await expect(headline).toHaveValue("Beta/Gamma view")
 
       await page.goto("/cms-demo/zulu?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       // zulu doesn't match any slug-specific clause → falls back to
       // the Default config (and the default headline).
       await expect(activeTab).toHaveText("Default", { timeout: 10000 })
@@ -652,7 +652,7 @@ test.describe("CMS editor — smoke", () => {
       // baked-in pickRoute() return value) so cache-mode refetches
       // re-invoke the route handler.
       await page.goto("/")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // Page 1 is the only one rendered initially. Pokemon links use
       // `<a href="/pokemon/N">`. Count them, scroll, and assert the
@@ -734,7 +734,7 @@ test.describe("CMS editor — smoke", () => {
 
     test("editing a product-card field updates the preview live", async ({ page }) => {
       await page.goto("/cms-demo?select=product-card-1")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await page.getByTestId("cms-edit-field-input-title").fill("Editor-set title")
 
       const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
@@ -828,26 +828,26 @@ test.describe("CMS editor — smoke", () => {
       // page-slug-nav again, then ↓ a second time — after the
       // second move the preview pane goes blank.
       await page.goto("/cms-demo")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       await page.getByTestId("cms-edit-tree-entry-cms-demo-slug-nav").click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // First move: works. Tools are hover-revealed; surface them
       // before clicking.
       await page.getByTestId("cms-edit-tree-entry-cms-demo-slug-nav").hover()
       await page.locator('[aria-label="Move cms-demo-slug-nav down"]').click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       const preview = page.getByTestId("page-shell")
       await expect(preview).toContainText("Welcome to the CMS demo")
 
       // Re-select slug-nav, then move down again. Pre-fix: this
       // wipes the cms-demo-root subtree from the DOM.
       await page.getByTestId("cms-edit-tree-entry-cms-demo-slug-nav").click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       await page.getByTestId("cms-edit-tree-entry-cms-demo-slug-nav").hover()
       await page.locator('[aria-label="Move cms-demo-slug-nav down"]').click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // The preview MUST still show the demo content. Pre-fix the
       // cms-demo-root subtree disappears from the DOM entirely:
@@ -868,10 +868,10 @@ test.describe("CMS editor — smoke", () => {
       // show the greeting form (selection is workspace state, the
       // nav only swapped the previewed page).
       await page.goto("/cms-demo")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       await page.getByTestId("cms-edit-tree-entry-cms-demo-greeting").click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
       // The field pane renders the node's `displayName` ("#greeting"
       // here) when present, so we assert against that label rather
       // than the raw id.
@@ -880,7 +880,7 @@ test.describe("CMS editor — smoke", () => {
       // Cross-slug nav to /cms-demo/alpha — `?select=` is preserved on
       // the URL so the form stays focused on greeting.
       await page.goto("/cms-demo/alpha?select=cms-demo-greeting")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       // Selected partial should still be greeting. The form must
       // still show its inputs (they were dropping out when the
@@ -897,10 +897,10 @@ test.describe("CMS editor — smoke", () => {
       // doesn't update the preview. Without the alpha nav, the
       // same flow works fine.
       await page.goto("/cms-demo/alpha")
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       await page.getByTestId("cms-edit-tree-entry-cms-demo-hero").click()
-      await page.waitForLoadState("networkidle")
+      await waitForRscIdle(page)
 
       const newHeadline = "Edited via alpha-then-hero"
       await page.getByTestId("cms-edit-field-input-headline").fill(newHeadline)

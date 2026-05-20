@@ -2,6 +2,8 @@ import {
   request as pwRequest,
   test as base,
   type APIRequestNewContextOptions,
+  type Page,
+  type Request as PwRequest,
 } from "@playwright/test"
 
 /**
@@ -82,4 +84,83 @@ export const request = {
       },
     })
   },
+}
+
+/**
+ * Replacement for `page.waitForLoadState("networkidle")` that
+ * ignores the framework's live-update heartbeat connection.
+ *
+ * Why we can't use `networkidle`: `startLivePageHeartbeat()`
+ * (mounted in the browser entry) keeps one `?streaming=1` RSC
+ * long-poll connection open against the current URL for the
+ * lifetime of the page. The network is never idle by design —
+ * it's the channel for server-pushed updates.
+ *
+ * What this waits for: every non-streaming RSC request (the
+ * normal page-load / nav / partial-refetch / action flow)
+ * finishes AND no new ones land for `quietMs`. Streaming
+ * requests (`?streaming=1`) are excluded from the tracked set.
+ *
+ * Use this any place a test previously used
+ * `page.waitForLoadState("networkidle")` to sync on "the
+ * server-side response from my last action has applied."
+ */
+export async function waitForRscIdle(
+  page: Page,
+  opts: { quietMs?: number; timeout?: number } = {},
+): Promise<void> {
+  const quietMs = opts.quietMs ?? 300
+  const timeout = opts.timeout ?? 10_000
+
+  const isTracked = (url: string): boolean => {
+    // RSC endpoints have a `_.rsc` suffix on the path. Filter out
+    // the heartbeat's streaming connection — it's intentionally
+    // long-lived and would prevent the idle window from ever
+    // settling.
+    if (!url.includes("_.rsc")) return false
+    try {
+      const u = new URL(url)
+      return u.searchParams.get("streaming") !== "1"
+    } catch {
+      return false
+    }
+  }
+
+  const inFlight = new Set<string>()
+  let lastActivity = Date.now()
+
+  const onRequest = (req: PwRequest) => {
+    if (isTracked(req.url())) {
+      inFlight.add(req.url())
+      lastActivity = Date.now()
+    }
+  }
+  const onSettled = (req: PwRequest) => {
+    if (inFlight.delete(req.url())) {
+      lastActivity = Date.now()
+    }
+  }
+
+  page.on("request", onRequest)
+  page.on("requestfinished", onSettled)
+  page.on("requestfailed", onSettled)
+
+  try {
+    const deadline = Date.now() + timeout
+    while (Date.now() < deadline) {
+      if (inFlight.size === 0 && Date.now() - lastActivity >= quietMs) {
+        return
+      }
+      // 50ms poll — small enough to feel snappy, large enough to
+      // not pin a CPU under the event-listener firehose.
+      await page.waitForTimeout(50)
+    }
+    throw new Error(
+      `waitForRscIdle: timeout after ${timeout}ms; in-flight: ${[...inFlight].join(", ") || "(none, but lastActivity < quietMs)"}`,
+    )
+  } finally {
+    page.off("request", onRequest)
+    page.off("requestfinished", onSettled)
+    page.off("requestfailed", onSettled)
+  }
 }

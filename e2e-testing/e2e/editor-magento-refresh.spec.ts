@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test"
+import { test, expect, waitForRscIdle } from "./fixtures"
 
 test("editor mode + magento + refresh prices does not throw HoistingViolation", async ({
   page,
@@ -12,7 +12,7 @@ test("editor mode + magento + refresh prices does not throw HoistingViolation", 
   // the top of `MagentoPage` leaks into that nav-link's manifest
   // scope post-await — tripping `HoistingViolationError`.
   await page.goto("/magento")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   await context.addCookies([{ name: "__editor", value: "1", url: "http://localhost:5179" }])
 
@@ -29,7 +29,7 @@ test("editor mode + magento + refresh prices does not throw HoistingViolation", 
   })
 
   await page.goto("/magento")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // The editor docks side panels at `position: fixed; left/right: 0`
   // (each 320px). On the default Playwright viewport the page-shell's

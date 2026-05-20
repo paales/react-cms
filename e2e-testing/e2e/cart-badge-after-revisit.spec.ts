@@ -1,4 +1,4 @@
-import { test, expect, request } from "./fixtures"
+import { test, expect, request, waitForRscIdle } from "./fixtures"
 
 /**
  * Regression user reported 2026-05-13:
@@ -23,7 +23,7 @@ test.beforeEach(async ({ baseURL }) => {
 
 test("cart-badge updates after Add to Cart on /magento re-visit", async ({ page }) => {
   await page.goto("/")
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // 2. Magento (cold)
   await page.getByRole("link", { name: /Magento Store/ }).click()
@@ -32,7 +32,7 @@ test("cart-badge updates after Add to Cart on /magento re-visit", async ({ page 
   // 3. Back to home
   await page.getByRole("link", { name: /Pokemon$/ }).click()
   await page.waitForSelector("[data-testid=page-shell]", { timeout: 10000 })
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // 4. Forward back to Magento
   await page.getByRole("link", { name: /Magento Store/ }).click()
@@ -58,7 +58,7 @@ test("cart-badge updates after Add to Cart on /magento re-visit", async ({ page 
 
   // 6. The cart-badge should UPDATE without a hard refresh.
   // Wait a bit for the refetch+reconcile to complete.
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
   await page.waitForTimeout(1000)
 
   const html1 = await page.content()

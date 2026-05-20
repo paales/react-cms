@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test"
+import { waitForRscIdle } from "../fixtures.ts"
 
 /**
  * Cold→warm fp-trailer round-trip under `yarn build && yarn preview`.
@@ -57,7 +58,7 @@ test("re-visit to /magento fp-skips on the second visit (prod build)", async ({ 
   // Click back to home.
   await page.getByRole("link", { name: /Pokemon$/ }).click()
   await page.waitForSelector("[data-testid=page-shell]", { timeout: 10000 })
-  await page.waitForLoadState("networkidle")
+  await waitForRscIdle(page)
 
   // Click forward to Magento (second visit — should fp-skip via the
   // binary fp-trailer the cold RSC response just shipped).
