@@ -20,7 +20,10 @@
  * See `docs/notes/cells.md` for the live design doc.
  */
 
-import { __cellWrite as _cellWriteAction } from "../runtime/cell-actions.ts"
+import {
+  __cellWrite as _cellWriteAction,
+  __scopedCellWrite as _scopedCellWriteAction,
+} from "../runtime/cell-actions.ts"
 import { getCellStorage } from "../runtime/cell-storage.ts"
 import { getRequest, getScope, parseCookies } from "../runtime/context.ts"
 import { createSessionReadSurface } from "../runtime/session.ts"
@@ -103,11 +106,20 @@ export interface Cell<T> {
  * Carries the resolved `.value` plus the same bound `set` action
  * reference as the source `Cell<T>`. This is what Render receives
  * and what crosses Flight to client components.
+ *
+ * `partition` is set for scoped cells (declared inline in `schema({cell})`)
+ * — it's the parton's vary output (possibly narrowed by the descriptor's
+ * `vary` callback) used as the storage partition. Carried on the wire so
+ * the client batcher can include it in `__cellWriteBatch` entries; the
+ * resolved cell's `set` already has partition baked at resolution time
+ * for non-batched direct calls. Module-scope cells leave this undefined;
+ * their partition resolves from the action's request scope at write time.
  */
 export interface ResolvedCell<T> {
   readonly __cell: true
   readonly id: string
   readonly value: T
+  readonly partition?: Record<string, unknown>
   set(value: T, opts?: { vary?: Record<string, unknown> }): Promise<void>
 }
 
@@ -349,13 +361,30 @@ export const cell = {
  * resolution) — the resolved view is what Render receives and what
  * crosses Flight to client components.
  *
- * `.set` is the cell's bound server-action ref (one POST per call).
- * Client components that want auto-batched writes (multiple cell.set
- * calls in the same tick collapsed into one POST) + optimistic-aware
- * `.value` reach for the `useCell(cell)` hook instead — see
- * `lib/cell-client.tsx`.
+ * For module-scope cells: omit `partition`. The cell's `set` is the
+ * module-scope bound action (`__cellWrite.bind(null, id)`) — partition
+ * resolves from the action invocation's request scope.
+ *
+ * For scoped cells: pass `partition` (the parton's vary output, or the
+ * descriptor's vary-narrowed subset). The cell's `set` becomes
+ * `__scopedCellWrite.bind(null, id, partition)` — partition baked at
+ * resolution time so client calls land on the right partition
+ * regardless of URL changes between render and call.
  */
-export function buildResolvedCell<T>(handle: Cell<T>, value: T): ResolvedCell<T> {
+export function buildResolvedCell<T>(
+  handle: Cell<T>,
+  value: T,
+  partition?: Record<string, unknown>,
+): ResolvedCell<T> {
+  if (partition !== undefined) {
+    return {
+      __cell: true,
+      id: handle.id,
+      value,
+      partition,
+      set: _scopedCellWriteAction.bind(null, handle.id, partition) as ResolvedCell<T>["set"],
+    }
+  }
   return {
     __cell: true,
     id: handle.id,
@@ -369,4 +398,245 @@ export function buildResolvedCell<T>(handle: Cell<T>, value: T): ResolvedCell<T>
  *  full reset path. */
 export function _clearCellRegistry(): void {
   cellRegistry.clear()
+}
+
+// ─── Scoped cell descriptors ──────────────────────────────────────────
+//
+// A scoped cell is declared inline inside a parton's `schema` callback,
+// not as a module-scope export. It has no author-supplied `id`; the
+// framework derives `<partonId>/<schemaKey>` when the schema's return
+// record is processed. Its `vary` callback receives the parton's
+// resolved vary output — partition can NARROW the parton's dependency
+// surface but not expand beyond it.
+//
+// The factory inside the callback returns a `ScopedCellDescriptor<T>`.
+// The framework finalizes descriptors into `Cell<T>` handles + registers
+// them under the compound id during the schema-resolution phase in
+// `partial.tsx`.
+
+/**
+ * Descriptor returned by the schema-callback `cell.<shape>(...)` factory.
+ * Carries everything needed to finalize into a `Cell<T>` once the
+ * framework knows the schema key and the owning parton id.
+ *
+ * `varyFn` is optional. When omitted, the partition key is computed from
+ * the parton's full vary output (the cell partitions on every dimension
+ * the parton depends on). When provided, the function receives the
+ * parton's vary output and returns a subset — narrowing the partition.
+ */
+export interface ScopedCellDescriptor<T> {
+  readonly __scopedCellDescriptor: true
+  readonly shape: CellShape
+  readonly defaultValue: T
+  readonly varyFn?: (partonVary: never) => Record<string, unknown>
+  readonly write?: (value: T) => T
+  readonly validate: (value: unknown) => T
+}
+
+/** Type predicate for descriptors. Distinct from `isModuleCell` because
+ *  descriptors don't carry their own `id` or registered `vary` — they
+ *  need finalization. */
+export function isScopedCellDescriptor(
+  value: unknown,
+): value is ScopedCellDescriptor<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { __scopedCellDescriptor?: boolean }).__scopedCellDescriptor === true
+  )
+}
+
+interface ScopedCommonOpts<T, PV> {
+  initial: T
+  /** Optional partition narrower. Receives the parton's resolved vary
+   *  output; returns a subset object that hashes into the cell's
+   *  partition key. Omit to partition on the entire parton vary output. */
+  vary?: (partonVary: PV) => Record<string, unknown>
+  /** Server-side write-pipeline transform. Same semantic as module-scope
+   *  cells. Runs after `validate`, before storage. */
+  write?: (value: T) => T
+}
+
+/**
+ * Factory namespace passed as `{cell}` into a parton's `schema` callback.
+ * Mirrors the module-scope `cell` factory's surface (`string`, `number`,
+ * `boolean`, `enum`) but the options omit `id` (auto-derived from the
+ * schema key) and the `vary` callback narrows the parton's vary output
+ * instead of taking a request scope.
+ *
+ * Generic `PV` carries the parton's vary output type so the cell's
+ * `vary` callback parameter is typed correctly without manual generics.
+ */
+export interface ScopedCellFactories<PV> {
+  string(opts: ScopedCommonOpts<string, PV>): ScopedCellDescriptor<string>
+  number(opts: ScopedCommonOpts<number, PV>): ScopedCellDescriptor<number>
+  boolean(opts: ScopedCommonOpts<boolean, PV>): ScopedCellDescriptor<boolean>
+  enum<const T extends readonly string[]>(
+    values: T,
+    opts: ScopedCommonOpts<T[number], PV>,
+  ): ScopedCellDescriptor<T[number]>
+}
+
+function makeStringValidator(id: string): (v: unknown) => string {
+  return (v) => {
+    if (typeof v !== "string") {
+      throw new TypeError(`cell ${id}: expected string, got ${typeof v}`)
+    }
+    return v
+  }
+}
+function makeNumberValidator(id: string): (v: unknown) => number {
+  return (v) => {
+    if (typeof v !== "number" || Number.isNaN(v)) {
+      throw new TypeError(`cell ${id}: expected number, got ${typeof v}`)
+    }
+    return v
+  }
+}
+function makeBooleanValidator(id: string): (v: unknown) => boolean {
+  return (v) => {
+    if (typeof v !== "boolean") {
+      throw new TypeError(`cell ${id}: expected boolean, got ${typeof v}`)
+    }
+    return v
+  }
+}
+function makeEnumValidator<const T extends readonly string[]>(
+  id: string,
+  values: T,
+): (v: unknown) => T[number] {
+  const allowed: ReadonlySet<string> = new Set(values)
+  return (v) => {
+    if (typeof v !== "string" || !allowed.has(v)) {
+      throw new TypeError(
+        `cell ${id}: expected one of ${values.join(", ")}, got ${String(v)}`,
+      )
+    }
+    return v as T[number]
+  }
+}
+
+/**
+ * Build the `{cell}` factory bag for a parton's `schema` callback.
+ *
+ * The validators bake in a placeholder id ("scoped-cell"); finalization
+ * replaces the id with `<partonId>/<schemaKey>` before registration.
+ * The placeholder only surfaces in error messages thrown from a
+ * descriptor's `validate` before finalization, which shouldn't happen
+ * in normal flow.
+ */
+export function makeScopedCellFactories<PV>(): ScopedCellFactories<PV> {
+  return {
+    string: (opts) => ({
+      __scopedCellDescriptor: true,
+      shape: { kind: "string" },
+      defaultValue: opts.initial,
+      varyFn: opts.vary as ((pv: never) => Record<string, unknown>) | undefined,
+      write: opts.write,
+      validate: makeStringValidator("scoped-cell"),
+    }),
+    number: (opts) => ({
+      __scopedCellDescriptor: true,
+      shape: { kind: "number" },
+      defaultValue: opts.initial,
+      varyFn: opts.vary as ((pv: never) => Record<string, unknown>) | undefined,
+      write: opts.write,
+      validate: makeNumberValidator("scoped-cell"),
+    }),
+    boolean: (opts) => ({
+      __scopedCellDescriptor: true,
+      shape: { kind: "boolean" },
+      defaultValue: opts.initial,
+      varyFn: opts.vary as ((pv: never) => Record<string, unknown>) | undefined,
+      write: opts.write,
+      validate: makeBooleanValidator("scoped-cell"),
+    }),
+    enum: (values, opts) => ({
+      __scopedCellDescriptor: true,
+      shape: { kind: "enum", values },
+      defaultValue: opts.initial,
+      varyFn: opts.vary as ((pv: never) => Record<string, unknown>) | undefined,
+      write: opts.write,
+      validate: makeEnumValidator("scoped-cell", values),
+    }),
+  }
+}
+
+/**
+ * Finalize a scoped descriptor into a `Cell<T>` handle keyed by compound
+ * id `<partonId>/<schemaKey>`. Registered into the cell registry so
+ * `__cellWrite` / `__cellWriteBatch` can look it up by id (same path
+ * module-scope cells use). Subsequent renders re-run the schema
+ * callback, producing fresh descriptors that re-finalize and overwrite
+ * the registry entry — idempotent, matches HMR overwrite semantics.
+ *
+ * The finalized cell's `vary` callback is a no-op wrapper: scoped cells'
+ * partition is resolved against the parton's vary output (not request
+ * scope), so the runtime threads the parton vary through to the
+ * descriptor's `varyFn` directly. The Cell handle's own `vary` is
+ * `() => ({})` to keep module-scope-style API consistent, but it's
+ * never the partition source for scoped cells.
+ */
+export function finalizeScopedCell<T>(
+  descriptor: ScopedCellDescriptor<T>,
+  partonId: string,
+  schemaKey: string,
+): Cell<T> {
+  const id = `${partonId}/${schemaKey}`
+  const validate = (value: unknown): T => {
+    // Re-create validator with the real id so error messages are useful.
+    switch (descriptor.shape.kind) {
+      case "string":
+        return makeStringValidator(id)(value) as T
+      case "number":
+        return makeNumberValidator(id)(value) as T
+      case "boolean":
+        return makeBooleanValidator(id)(value) as T
+      case "enum":
+        return makeEnumValidator(id, descriptor.shape.values)(value) as T
+    }
+  }
+  const handle: Cell<T> = {
+    __cell: true,
+    id,
+    shape: descriptor.shape,
+    defaultValue: descriptor.defaultValue,
+    // Scoped cells' partition is the parton's vary output (possibly
+    // narrowed by descriptor.varyFn). This handle's `vary` is unused
+    // for partition resolution — the schema-phase code in partial.tsx
+    // computes the partition directly from descriptor.varyFn +
+    // partonVary. We keep this stub so the Cell<T> shape matches
+    // module-scope cells (for the registry's signature).
+    vary: () => ({}),
+    set: bindSetter(id) as Cell<T>["set"],
+    peek: () => {
+      // peek doesn't make sense for scoped cells outside their owning
+      // parton's render path — the partition depends on the parton's
+      // vary, which isn't reachable from a bare module context. If a
+      // caller really needs sync read, they should route through an
+      // action.
+      return descriptor.defaultValue
+    },
+    validate,
+    write: descriptor.write,
+  }
+  cellRegistry.set(id, handle as Cell<unknown>)
+  return handle
+}
+
+/**
+ * Compute the storage partition key for a scoped cell given the parton's
+ * resolved vary output. The descriptor's `varyFn` narrows the partition
+ * surface if provided; otherwise the parton's full vary output is the
+ * partition.
+ */
+export function computeScopedCellPartitionKey(
+  descriptor: ScopedCellDescriptor<unknown>,
+  partonVary: Record<string, unknown> | null | undefined,
+): string {
+  const base = partonVary ?? {}
+  const out = descriptor.varyFn
+    ? descriptor.varyFn(base as never)
+    : base
+  return hash(stableStringify(out))
 }

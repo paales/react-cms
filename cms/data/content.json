@@ -169,6 +169,19 @@
             ]
           },
           {
+            "id": "app-nav-link-forms-demo",
+            "type": "nav-link",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "href": "/forms-demo",
+                  "label": "Forms Demo"
+                }
+              }
+            ]
+          },
+          {
             "id": "app-nav-link-chat-notes",
             "type": "nav-link",
             "configs": [

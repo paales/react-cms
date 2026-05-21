@@ -117,6 +117,31 @@ export async function __cellWrite(
 }
 
 /**
+ * Scoped cell-write entry point. Scoped cells (declared inside a
+ * parton's `schema({cell})` callback) need partition baked at parton-
+ * resolution time — their partition is the parton's vary output (or a
+ * subset via the descriptor's `vary`), which isn't derivable from the
+ * action's request scope alone.
+ *
+ * The resolved scoped cell's `set` field binds to this action as
+ * `__scopedCellWrite.bind(null, cellId, partitionVary)` — both id and
+ * partition are baked. Client invokes `(value)`; server receives
+ * `(cellId, partitionVary, value)` and writes against the explicit
+ * partition.
+ *
+ * Same transaction + validation semantics as `__cellWrite`.
+ */
+export async function __scopedCellWrite(
+  cellId: string,
+  partitionVary: Record<string, unknown>,
+  value: unknown,
+): Promise<void> {
+  await runInvalidationTransaction(async () => {
+    writeOneCell(cellId, value, { vary: partitionVary })
+  })
+}
+
+/**
  * Batched cell-write entry point. Counterpart of `__cellWrite` for the
  * client-side microtask coalescer (`_cellSetBatched` in
  * `lib/cell-client.tsx`): instead of one POST per `cell.set` call, the

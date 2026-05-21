@@ -44,21 +44,39 @@ export {
   cell,
   buildResolvedCell,
   computeCellPartitionKey,
+  computeScopedCellPartitionKey,
+  finalizeScopedCell,
   getCellById,
   isCellHandle,
   isModuleCell,
+  isScopedCellDescriptor,
+  makeScopedCellFactories,
   type Cell,
   type CellShape,
   type CellVaryScope,
   type ResolvedCell,
+  type ScopedCellDescriptor,
+  type ScopedCellFactories,
 } from "./cell.ts"
 
 export {
   useCell,
+  usePartonAction,
   type CellInputBindings,
   type CellInputOpts,
   type ClientCell,
 } from "./cell-client.tsx"
+
+export {
+  getActionById,
+  getSchemaForParton,
+  isResolvedAction,
+  registerAction,
+  registerSchema,
+  type ActionHandler,
+  type ResolvedAction,
+  type SchemaCallback,
+} from "./parton-actions.ts"
 
 export { type TimeScope } from "./time.ts"
 

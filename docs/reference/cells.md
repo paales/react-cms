@@ -20,6 +20,26 @@ Use a cell when:
 For internals (storage adapters, wire shape, batcher mechanics) see
 [`../internals/cell-internals.md`](../internals/cell-internals.md).
 
+## Two construction sites
+
+Cells can live in two places:
+
+- **Module-scope** — exported from a module, identified by an explicit
+  `id`, partitioned by a `vary` callback over the request scope.
+  Reach for this when the cell is shared across partons or doesn't
+  belong to any one parton (palette, cart contents, maintenance flag,
+  featured product).
+- **Parton-scoped** — declared inline inside a parton's
+  `schema({cell})` callback. Wire id auto-derives as
+  `<partonId>/<schemaKey>`; partition derives from the parton's vary
+  output (optionally narrowed via the descriptor's `vary`). Reach for
+  this when the cell is owned by a specific parton (form fields,
+  per-instance UI state, draft data).
+
+Cross-tree sharing rule: if two unrelated partons need the cell, hoist
+to module-scope. Scoped cells flow strictly *down* from the owning
+parton via Render's prop bag.
+
 ## Surface
 
 ### Module-scope construction
@@ -78,6 +98,79 @@ survive HMR, and identify the cell on the wire.
 A `read` counterpart (server-side transform on every read) is
 designed but not yet shipped — deferred until a caller needs the
 split between stored canonical and display format.
+
+### Parton-scoped construction
+
+Declare the cell inline inside the parton's `schema` callback. The
+framework injects a `{cell}` factory whose options omit `id` (auto-
+derives) and whose `vary` narrows the parton's vary output rather
+than taking a request scope.
+
+```tsx
+const ProductPage = parton(
+  function ProductRender({ notes, sharedNotes, parent }) {
+    return <NotesEditor notes={notes} shared={sharedNotes} />
+  },
+  {
+    match: "/product/:id",
+    vary: ({ params, search: { lang = "en" } }) => ({
+      productId: params.id,
+      locale: lang,
+    }),
+    schema: ({ cell }) => ({
+      // Default: partitioned by the full parton vary (productId + locale)
+      notes: cell.string({ initial: "" }),
+
+      // Narrowed: shared across locales for the same product
+      sharedNotes: cell.string({
+        initial: "",
+        vary: ({ productId }) => ({ productId }),
+      }),
+    }),
+  },
+)
+```
+
+Key properties:
+
+- **Wire id**: `<partonId>/<schemaKey>` (auto-derived). For
+  `ProductPage` with selector "product-page", the cells are
+  `product-page/notes` and `product-page/sharedNotes`. Stable across
+  renders + HMR as long as the parton id + schema key don't change.
+- **Partition**: defaults to the parton's full vary output. Narrow
+  with `vary: (partonVary) => subset` to share values across other
+  dimensions. Can NOT expand beyond the parton's vary surface — fp-
+  skip safety would break otherwise.
+- **`set` binding**: the resolved cell's `set` is bound at parton
+  resolution time with the partition baked. Client invocations from
+  `useCell(scopedCell).set(v)` land on the right partition regardless
+  of URL changes between render and call.
+- **Schema mixing**: scoped descriptors and module-scope cell handles
+  coexist in the same schema record. The framework detects each shape
+  and resolves accordingly.
+
+### Type-inference caveat (v2)
+
+When a scoped cell narrows the parton's vary via `vary: ({foo}) =>
+({foo})`, the cascading inference is currently weak — TypeScript
+treats the cell's vary input as `object` rather than the parton's
+actual vary return type. Cast at the destructure if you want named
+keys:
+
+```ts
+schema: ({ cell }) => ({
+  sharedNotes: cell.string({
+    initial: "",
+    vary: (pv) => ({ productId: (pv as { productId: string }).productId }),
+  }),
+})
+```
+
+The runtime behavior is correct — the partition is computed from the
+narrowed return regardless. This is a typing limitation only.
+Tightening this requires reshaping `PartialOptions<V>`'s generic to
+propagate the parton's vary return through to schema's `cell`
+factory — tracked as a follow-up.
 
 ### Reading in a parton's `schema`
 
@@ -228,13 +321,52 @@ Options:
 
 | Option | Behaviour |
 |---|---|
-| `transform?(raw, caret) => {value, caret}` | Per-keystroke transform. Author returns the value to display (= what we send to `cell.set`) and the new caret position. Without this, the input is uncontrolled-by-author and raw `event.target.value` flows straight to `cell.set` (server's `write` is the only canonicalisation). |
-| `onCommit?(value)` | Fired after the local transform and after `cell.set` has been enqueued. Use for cross-cell triggers — e.g. firing a derived cell's `set` whenever this input changes. |
+| `mode?: 'onChange' \| 'onSubmit'` | Default `'onChange'`. `'onSubmit'` makes the input **uncontrolled**: bindings carry `defaultValue` (seeded from `cell.value`) + `ref` only — no `value` / `onChange` — so the DOM owns the input's state and **the hook does not re-render on every keystroke**. Harvest the current value at submit time via `cell.read()` (reads through the bound ref). See "Two write paths" below. |
+| `transform?(raw, caret) => {value, caret}` | Per-keystroke transform. Author returns the value to display (= what we send to `cell.set`) and the new caret position. Without this, the input is uncontrolled-by-author and raw `event.target.value` flows straight to `cell.set` (server's `write` is the only canonicalisation). **`'onChange'` mode only.** |
+| `onCommit?(value)` | Fired after the local transform and after `cell.set` has been enqueued. Use for cross-cell triggers — e.g. firing a derived cell's `set` whenever this input changes. **`'onChange'` mode only.** |
 
-Returned bindings (`value`, `onChange`, `ref`) cover the entire
-controlled-input lifecycle. The author writes the spread + a
-transform; the framework handles refs, layout effects, caret
-restoration, and the batched set call.
+Returned bindings cover the entire input lifecycle for whichever
+mode is active. The author spreads them onto the element; the
+framework handles refs, layout effects, caret restoration, and the
+batched set call. The `ref` is a callback that accepts either
+`HTMLInputElement` or `HTMLTextAreaElement`, so the same bindings
+work on both elements without a generic call signature.
+
+### Two write paths — `'onChange'` vs `'onSubmit'`
+
+The mode flag distinguishes two patterns that previously needed
+hand-rolled `useState` plumbing:
+
+- **`mode: 'onChange'`** — controlled. The cell is the source of
+  truth, every keystroke commits via the batcher. The bound input's
+  `.value` is optimistic-aware, so display is local-first while the
+  write is in flight. Use for autosave-on-type, draft fields that
+  persist across reloads, cross-tab broadcast state.
+
+- **`mode: 'onSubmit'`** — uncontrolled. The cell seeds the input's
+  `defaultValue` on first mount; further user edits live in DOM
+  state alone — no hook re-renders, no React state. The cell does
+  NOT update during typing. Read the current value at submit time via
+  `cell.read()`:
+
+  ```tsx
+  const name = useCell(cardName)
+  const nameInput = name.input({ mode: "onSubmit" })
+  // ...
+  <input {...nameInput} />
+  // Later:
+  await save({ cardName: name.read() })
+  ```
+
+  `read()` returns the DOM `<input>`'s `value` via the hook-owned
+  ref (or falls back to `cell.value` when no input is mounted). The
+  action's auto-write commits the value atomically.
+
+The two modes coexist on the same form. The `/forms-demo` example
+combines them: a `notes` textarea in `'onChange'` mode (every
+keystroke persists) and two card fields in `'onSubmit'` mode
+(committed via a `save` action that demonstrates transactional
+rollback on failure).
 
 The shape parallels react-hook-form's
 [`register()`](https://react-hook-form.com/docs/useform/register) —

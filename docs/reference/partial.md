@@ -448,6 +448,100 @@ export const NotFoundFallback = parton(
 The set is populated as a side-effect of every `parton(…,
 { match: … })` call; no explicit registration needed.
 
+## Actions
+
+Server-side handlers declared on a parton. Each action becomes a
+`ResolvedAction` in Render's prop bag — a Flight-portable server
+reference paired with a `writes` map for client-side optimistic
+tracking.
+
+```tsx
+const CheckoutForm = parton(
+  function Render({ cardName, cardCvc, saves, save, parent }) {
+    return <CheckoutClient cardName={cardName} cardCvc={cardCvc} saves={saves} onSave={save} />
+  },
+  {
+    match: "/checkout",
+    schema: ({ cell }) => ({
+      cardName: cell.string({ initial: "" }),
+      cardCvc:  cell.string({ initial: "" }),
+      saves:    cell.number({ initial: 0 }),
+    }),
+    actions: {
+      // Handler receives `(scope, args)` — scope is the same prop bag
+      // Render gets (resolved cells + vary output + parent); args is
+      // caller-supplied.
+      save: async ({ saves }, args: { cardName?: string; cardCvc?: string }) => {
+        await saves.set(saves.value + 1)
+        // No need to write cardName/cardCvc — args matching schema
+        // cell keys auto-write at commit time.
+      },
+    },
+  },
+)
+```
+
+### Auto-write semantic
+
+When the action commits successfully, the framework iterates `args`.
+For each key matching a schema cell, the framework writes `args[K]`
+to that cell — same name = same cell, no drift. Keys that don't
+match a cell are passed to the handler as opaque data.
+
+The handler's `scope` view is overlay-aware: `scope.cardName.value`
+reflects `args.cardName` if provided, otherwise the stored value.
+Subsequent `cell.set(v)` calls inside the handler further overlay the
+view — `set` then `value` reads back the new value.
+
+### Transactional commit / rollback
+
+The whole action body — auto-writes AND handler-explicit `cell.set`
+calls — is staged in a pending-writes map. The framework commits the
+map to storage AFTER the handler returns successfully. A throw
+discards the pending map; no storage write lands, no `cell:<id>`
+selector fires.
+
+Client-side, `usePartonAction` tracks the args in the optimistic-
+value map; on settle (success or failure), it clears the optimistic
+view. Success → server refetch carries the new value (committed)
+through Render's prop bag. Failure → server unchanged, the cell view
+falls back to the prior server value → optimistic UI rewinds.
+
+```tsx
+"use client"
+import { useCell, usePartonAction } from "@parton/framework/lib/cell-client.tsx"
+
+function CheckoutClient({ cardName, cardCvc, saves, onSave }) {
+  const save = usePartonAction(onSave)
+  const name = useCell(cardName)
+  const [draftName, setDraftName] = useState(name.serverValue)
+
+  return (
+    <form action={() => save({ cardName: draftName })}>
+      <input value={draftName} onChange={(e) => setDraftName(e.target.value)} />
+      <div>optimistic: {name.value}</div>
+      <div>server: {name.serverValue}</div>
+      <div>saves: {useCell(saves).value}</div>
+      <button>Save</button>
+    </form>
+  )
+}
+```
+
+### Action handler scope
+
+| Key | Source |
+|---|---|
+| `<every key from vary's return>` | author's `vary` callback |
+| `<every key from schema's return>` | scoped descriptors → `ResolvedCell`; module cells → `ResolvedCell`; plain values pass through |
+| `parent` | framework — `ROOT` for actions (no descendant render context) |
+| `args` | second parameter, caller-supplied |
+
+Cells in the handler scope have deferred-write `set`: the call
+pushes into the pending map instead of hitting storage directly.
+This is what makes the body transactional — the framework can
+discard the map on throw without partial commits leaking through.
+
 ## Sharp edges
 
 - **Slot-placeable units use `block`.** `parton`

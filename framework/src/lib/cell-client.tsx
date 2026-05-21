@@ -54,10 +54,10 @@ import {
   useRef,
   useSyncExternalStore,
   type ChangeEvent,
-  type RefObject,
 } from "react"
 import { __cellWriteBatch } from "../runtime/cell-actions.ts"
 import type { ResolvedCell } from "./cell.ts"
+import type { ResolvedAction } from "./parton-actions.ts"
 
 interface QueuedWrite {
   id: string
@@ -152,16 +152,37 @@ export interface ClientCell<T> {
     opts?: { vary?: Record<string, unknown> },
   ) => Promise<void>
   readonly input: (opts?: CellInputOpts) => CellInputBindings
+  /** Read the current input value via the bound ref. Returns the DOM
+   *  `<input>`'s `value` when the bindings are attached, falling back
+   *  to the optimistic-aware `.value` when no input is mounted. Use
+   *  at submit time to harvest an uncontrolled (`mode: 'onSubmit'`)
+   *  input without round-tripping through component state. */
+  readonly read: () => string
 }
 
 /** Options for `ClientCell.input()`. */
 export interface CellInputOpts {
+  /** Write mode for the returned bindings.
+   *
+   *  - `'onChange'` (default): every keystroke calls `cell.set` through
+   *    the microtask-coalesced batcher. Suited to live state the
+   *    framework should persist immediately (drafts, autosave-on-type,
+   *    cross-tab broadcast).
+   *  - `'onSubmit'`: the input is **uncontrolled by the cell**. The
+   *    cell's current value seeds the input as `defaultValue`; local
+   *    user edits track in a hook-internal `useState`, and the cell is
+   *    NOT written on every keystroke. Read `.value` on the returned
+   *    bindings at submit time and pass it through your action (which
+   *    will commit via the auto-write semantic). Use this for form
+   *    fields where the commit happens through an explicit save. */
+  mode?: "onChange" | "onSubmit"
   /** Per-keystroke transform applied to the raw `event.target.value`.
    *  Returns the value to display (= what we send to `cell.set`) and
    *  the caret position to restore after React commits. Without this,
    *  the input is uncontrolled-by-author — value flows straight from
    *  keystrokes to `cell.set` with no client-side cleanup, and the
-   *  server's `write` is the only place the value is canonicalised. */
+   *  server's `write` is the only place the value is canonicalised.
+   *  Applies in `'onChange'` mode only. */
   transform?: (
     raw: string,
     caret: number,
@@ -169,15 +190,30 @@ export interface CellInputOpts {
   /** Fired after the local transform and after `cell.set` has been
    *  enqueued. Use for cross-cell triggers (e.g. firing a derived
    *  cell's `set` whenever this input changes — see the card-form
-   *  demo's CVC stagger). */
+   *  demo's CVC stagger). Applies in `'onChange'` mode only. */
   onCommit?: (value: string) => void
 }
 
-/** Shape returned by `ClientCell.input()` — spread onto an `<input>`. */
+/** Shape returned by `ClientCell.input()` — spread onto an `<input>` or
+ *  `<textarea>`. The `value` / `onChange` pair is populated in
+ *  `'onChange'` mode (controlled); the `defaultValue` field is
+ *  populated in `'onSubmit'` mode (uncontrolled — the input owns its
+ *  own DOM state, the hook does NOT re-render on every keystroke,
+ *  and the current value is harvested via `cell.read()` at submit
+ *  time). React picks up whichever fields the spread provides; the
+ *  unused side is just absent.
+ *
+ *  `ref` is a callback ref typed contravariantly so the same bindings
+ *  work for both `<input>` and `<textarea>` without a generic call
+ *  signature — a function accepting `InputishElement | null` is
+ *  assignable to React's per-element `RefCallback<HTMLInputElement>`
+ *  / `RefCallback<HTMLTextAreaElement>`. */
+type InputishElement = HTMLInputElement | HTMLTextAreaElement
 export interface CellInputBindings {
-  value: string
-  onChange: (e: ChangeEvent<HTMLInputElement>) => void
-  ref: RefObject<HTMLInputElement | null>
+  ref: (el: InputishElement | null) => void
+  value?: string
+  defaultValue?: string
+  onChange?: (e: ChangeEvent<InputishElement>) => void
 }
 
 export function useCell<T>(cell: ResolvedCell<T>): ClientCell<T> {
@@ -192,15 +228,30 @@ export function useCell<T>(cell: ResolvedCell<T>): ClientCell<T> {
   )
   const hasPending = latestSentByCell.has(id)
   const value = (hasPending ? latestSentByCell.get(id) : cell.value) as T
+  const partition = cell.partition
   const set = useCallback(
-    (v: T, opts?: { vary?: Record<string, unknown> }) => enqueue(id, v, opts),
-    [id],
+    (v: T, opts?: { vary?: Record<string, unknown> }) => {
+      // Scoped cells carry their partition on the wire (bound at parton
+      // resolution time). Default the batcher's per-entry `partition`
+      // field to that partition so writes land on the right slot
+      // without the caller having to thread it through. Caller-supplied
+      // `opts.vary` overrides — useful for the rare cross-partition
+      // write from a controlled input bound to a scoped cell.
+      const effectiveOpts = opts ?? (partition ? { vary: partition } : undefined)
+      return enqueue(id, v, effectiveOpts)
+    },
+    [id, partition],
   )
 
   // ── Input bindings: ref + caret-restore plumbing the input() method
   // hands back as part of `{...cell.input()}`. The author never sees
   // any of this; it's the per-cell hook's job.
-  const inputRef = useRef<HTMLInputElement | null>(null)
+  //
+  // `inputRef` holds the bound element after React attaches it via
+  // the callback `ref` returned in bindings. Owned by the hook so
+  // `read()` can harvest the current value at submit time without
+  // the consumer needing to manage a separate ref.
+  const inputRef = useRef<InputishElement | null>(null)
   const pendingCaret = useRef<number | null>(null)
   useLayoutEffect(() => {
     if (pendingCaret.current == null || !inputRef.current) return
@@ -209,12 +260,19 @@ export function useCell<T>(cell: ResolvedCell<T>): ClientCell<T> {
     inputRef.current.setSelectionRange(c, c)
   }, [value])
 
+  // Stable callback ref. Spread into either `<input>` or `<textarea>`
+  // — React's per-element ref types accept a callback that takes the
+  // wider InputishElement union (contravariance).
+  const refCallback = useCallback((el: InputishElement | null): void => {
+    inputRef.current = el
+  }, [])
+
   // The `input` closure captures `set` and the refs. It needs the
   // current `value` for its returned `value` field, but the onChange
   // and ref handles are stable.
-  const onChange = useCallback(
+  const onChangeOnChange = useCallback(
     (
-      e: ChangeEvent<HTMLInputElement>,
+      e: ChangeEvent<InputishElement>,
       transform: CellInputOpts["transform"],
       onCommit: CellInputOpts["onCommit"],
     ) => {
@@ -229,15 +287,31 @@ export function useCell<T>(cell: ResolvedCell<T>): ClientCell<T> {
   )
 
   const input = useCallback(
-    (opts?: CellInputOpts): CellInputBindings => ({
-      value: value as unknown as string,
-      ref: inputRef,
-      onChange: (e) => onChange(e, opts?.transform, opts?.onCommit),
-    }),
-    [value, onChange],
+    (opts?: CellInputOpts): CellInputBindings => {
+      if (opts?.mode === "onSubmit") {
+        // Uncontrolled: the input owns its DOM state; the hook does
+        // NOT re-render on every keystroke. Value is harvested via
+        // `read()` at submit time.
+        return {
+          defaultValue: cell.value as unknown as string,
+          ref: refCallback,
+        }
+      }
+      return {
+        value: value as unknown as string,
+        ref: refCallback,
+        onChange: (e) => onChangeOnChange(e, opts?.transform, opts?.onCommit),
+      }
+    },
+    [value, cell.value, refCallback, onChangeOnChange],
   )
 
-  return { value, serverValue: cell.value, set, input }
+  const read = useCallback((): string => {
+    if (inputRef.current) return inputRef.current.value
+    return (cell.value as unknown as string) ?? ""
+  }, [cell.value])
+
+  return { value, serverValue: cell.value, set, input, read }
 }
 
 function enqueue(
@@ -252,6 +326,58 @@ function enqueue(
     flushScheduled = true
     queueMicrotask(flushQueue)
   })
+}
+
+/**
+ * `usePartonAction` — wraps a Render-prop `ResolvedAction` into a
+ * callable that adds optimistic-aware cell tracking around the action's
+ * invocation.
+ *
+ * The semantic: when `save({cardName: "Foo"})` fires,
+ *
+ *   1. For each arg key present in the action's `writes` map, push the
+ *      arg value into `latestSentByCell` and bump pending. The cells'
+ *      `useCell(cell).value` immediately surfaces the optimistic value
+ *      to any subscriber (controlled input, "server says" display, etc.).
+ *   2. Fire the bound server-action ref `prop.ref(args)`.
+ *   3. On settle (success or failure): decrement pending, clearing the
+ *      optimistic value when the count drops to zero. The cell's
+ *      `useCell.value` falls back to its `serverValue` — which is the
+ *      committed new value on success (the action's transaction landed,
+ *      the server refetch carried the new value through Render's prop
+ *      bag), or the prior server value on failure (transaction rolled
+ *      back, no server-side change).
+ *
+ * Net behavior: optimistic-then-commit-or-rewind via the same
+ * `latestSentByCell` infrastructure `useCell` already uses. No
+ * duplicate state, no separate optimistic store.
+ */
+export function usePartonAction<Args, R>(
+  action: ResolvedAction<Args, R>,
+): (args: Args) => Promise<R> {
+  return useCallback(
+    async (args: Args): Promise<R> => {
+      const writes = action.writes
+      const bumped: string[] = []
+      if (args && typeof args === "object") {
+        const argsObj = args as Record<string, unknown>
+        for (const argKey of Object.keys(argsObj)) {
+          const cellId = writes[argKey]
+          if (!cellId) continue
+          const value = argsObj[argKey]
+          if (value === undefined) continue
+          incrementPending(cellId, value)
+          bumped.push(cellId)
+        }
+      }
+      try {
+        return await action.ref(args)
+      } finally {
+        for (const cellId of bumped) decrementPending(cellId)
+      }
+    },
+    [action],
+  )
 }
 
 /**
