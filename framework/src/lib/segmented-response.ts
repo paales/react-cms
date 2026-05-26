@@ -148,13 +148,6 @@ export async function driveSegmentedResponse(
     if (result === IDLE_TIMEOUT) break
     lastTs = _currentTs()
     segmentIndex++
-    // Wipe the connection's ephemeral cell storage between segments.
-    // A wake-up means an invalidation fired SOMEWHERE — typically an
-    // action POST in a different request, or this connection's own
-    // local writes. The next segment must NOT serve stale ephemeral
-    // values cached when first loaded. gqlCell/fragmentCell loaders
-    // re-run on the cold reads; localCell (persistent) is unaffected.
-    _clearRequestEphemeralStorage()
   }
 }
 

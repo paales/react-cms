@@ -11,6 +11,13 @@
 
 import { test, expect } from "./fixtures"
 
+// Cart actions share Magento's backend state across all tests in this
+// file. Run serially to avoid cart cookie / cart-id contention under
+// the parallel-workers default — each test creates its own cart and
+// reasons about its own line-uids.
+test.describe.configure({ mode: "serial" })
+test.use({ actionTimeout: 30000 })
+
 async function addOneCartLine(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/magento")
   // Wait for the badge to settle (no "?" fallback).
@@ -54,7 +61,9 @@ test("badge updates immediately after Add to Cart", async ({ page, context }) =>
     })
   }
 
-  // Allow a brief window for the action's response render to commit.
+  // Allow time for the action's response render to commit. First-add
+  // creates the Magento cart + adds the product, which can take a
+  // while against a shared remote backend.
   await page.waitForFunction(
     () => {
       const header = document.querySelector("header")
@@ -65,7 +74,7 @@ test("badge updates immediately after Add to Cart", async ({ page, context }) =>
       }
       return false
     },
-    { timeout: 5000 },
+    { timeout: 15000 },
   )
 
   const qty = await readQty()

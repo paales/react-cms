@@ -70,6 +70,13 @@ export interface PartialSnapshot {
    *  proper fix is wiring props through the client so refetches
    *  carry the props they were originally rendered with. */
   props?: Record<string, unknown>
+  /** Bound-cell args resolved during this spec's render — captured
+   *  from both the `schema` callback (request-derived cell args) and
+   *  top-level JSX props (`.with(args)` placements). Merged into the
+   *  descendant-fold's constraint surface so partition-scoped
+   *  invalidation signals (`cell:<id>?<args>`) can match descendants
+   *  via their snapshot, not just via match-params/vary. */
+  constraintArgs?: Record<string, unknown>
   /** Hash of the spec's varyResult on its most-recent render —
    *  feeds the descendant-fp fold so an ancestor's fingerprint
    *  reflects every descendant's deps. Without it, a wrapper whose

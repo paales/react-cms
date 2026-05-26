@@ -652,6 +652,11 @@ interface PartialBoundaryProps {
    *  in the snapshot so partial-refetch in cache mode can replay
    *  them when re-rendering the spec without its parent. */
   props?: Record<string, unknown>
+  /** Resolved bound-cell args (schema + props). Snapshotted so the
+   *  descendant-fold can match partition-scoped invalidation signals
+   *  against the spec's effective constraint surface, not just its
+   *  match-params/vary. */
+  constraintArgs?: Record<string, unknown>
   /** Hash of the spec's varyResult — feeds the descendant fold so
    *  ancestors' fps reflect descendants' deps. */
   varyKey?: string
@@ -682,6 +687,7 @@ export function PartialBoundary({
   cache,
   fallback,
   props,
+  constraintArgs,
   varyKey,
   matchKey,
   emittedFp,
@@ -698,6 +704,7 @@ export function PartialBoundary({
     parentPath,
     cache,
     props,
+    constraintArgs,
     varyKey,
     matchKey,
     emittedFp,
@@ -785,13 +792,15 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   }
 
   if (!spec.vary) {
-    // No vary → match params + bound-cell args (from props) form the
-    // constraint surface for invalidation matching. Without folding
-    // bound args, partition-scoped `cell:<id>?<args>` signals can't
-    // match descendants that bind cells via JSX props (e.g.
-    // <CartLine item={cartItemCell.with({uid})}/>).
-    const boundArgs = extractBoundArgsFromProps(snap.props)
-    const constraints = { ...params, ...boundArgs }
+    // No vary → match params + bound-cell args form the constraint
+    // surface for invalidation matching. Bound args come from the
+    // snapshot's `constraintArgs` (populated during the live render
+    // from BOTH schema-resolved cells and prop-resolved BoundCells).
+    // Without folding bound args, partition-scoped `cell:<id>?<args>`
+    // signals can't match descendants that bind cells (e.g.
+    // <CartLine item={cartItemCell.with({uid})}/> or a parton with
+    // `schema: () => ({cart: cartCell})`).
+    const constraints = { ...params, ...(snap.constraintArgs ?? {}) }
     const inv = invalidationKeyFor(snap.labels, constraints)
     return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}${inv}`
   }
@@ -828,12 +837,11 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   // never stabilize even when no rendered data changed.
   const { varyResult: cleanResult } = stripReservedVaryKeys(result)
   const propsKey = stableStringify(snap.props ?? null)
-  // Merge bound-cell args from props into the constraint surface,
-  // same as the no-vary path. See the comment there.
-  const boundArgs = extractBoundArgsFromProps(snap.props)
+  // Merge bound-cell args from the snapshot's constraintArgs into the
+  // constraint surface, same as the no-vary path.
   const constraints = {
     ...(cleanResult as Record<string, unknown> | null),
-    ...boundArgs,
+    ...(snap.constraintArgs ?? {}),
   }
   const inv = invalidationKeyFor(snap.labels, constraints)
   return `${descId}:${stableStringify(cleanResult)}|${propsKey}${inv}`
@@ -1688,6 +1696,9 @@ function createSpecComponent<V>(
           cache={opts.cache}
           fallback={fallback}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
+          constraintArgs={
+            Object.keys(boundArgsMerged).length > 0 ? boundArgsMerged : undefined
+          }
           varyKey={varyKey}
           matchKey={matchKey}
           emittedFp={snapshotFp}
@@ -1729,6 +1740,9 @@ function createSpecComponent<V>(
           cache={opts.cache}
           fallback={fallback}
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
+          constraintArgs={
+            Object.keys(boundArgsMerged).length > 0 ? boundArgsMerged : undefined
+          }
           varyKey={varyKey}
           matchKey={matchKey}
           emittedFp={snapshotFp}
@@ -1814,6 +1828,9 @@ function createSpecComponent<V>(
         cache={opts.cache}
         fallback={fallback}
         props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
+        constraintArgs={
+          Object.keys(boundArgsMerged).length > 0 ? boundArgsMerged : undefined
+        }
         varyKey={varyKey}
         matchKey={matchKey}
         emittedFp={snapshotFp}
