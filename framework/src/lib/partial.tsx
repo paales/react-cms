@@ -785,9 +785,14 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   }
 
   if (!spec.vary) {
-    // No vary → only match params + props contribute. propsKey from
-    // the snapshot distinguishes per-instance call sites.
-    const inv = invalidationKeyFor(snap.labels, params)
+    // No vary → match params + bound-cell args (from props) form the
+    // constraint surface for invalidation matching. Without folding
+    // bound args, partition-scoped `cell:<id>?<args>` signals can't
+    // match descendants that bind cells via JSX props (e.g.
+    // <CartLine item={cartItemCell.with({uid})}/>).
+    const boundArgs = extractBoundArgsFromProps(snap.props)
+    const constraints = { ...params, ...boundArgs }
+    const inv = invalidationKeyFor(snap.labels, constraints)
     return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}${inv}`
   }
 
@@ -823,7 +828,14 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   // never stabilize even when no rendered data changed.
   const { varyResult: cleanResult } = stripReservedVaryKeys(result)
   const propsKey = stableStringify(snap.props ?? null)
-  const inv = invalidationKeyFor(snap.labels, cleanResult as Record<string, unknown> | null)
+  // Merge bound-cell args from props into the constraint surface,
+  // same as the no-vary path. See the comment there.
+  const boundArgs = extractBoundArgsFromProps(snap.props)
+  const constraints = {
+    ...(cleanResult as Record<string, unknown> | null),
+    ...boundArgs,
+  }
+  const inv = invalidationKeyFor(snap.labels, constraints)
   return `${descId}:${stableStringify(cleanResult)}|${propsKey}${inv}`
 }
 
@@ -843,6 +855,30 @@ function invalidationKeyFor(
 ): string {
   const ts = queryMatchingTs(labels, varyInputs)
   return ts > 0 ? `|inv=${ts}` : ""
+}
+
+/**
+ * Extract args from any `BoundCell` values in a props object. Used by
+ * the snapshot-based descendant-fold path so partition-scoped
+ * invalidation signals (`cell:<id>?<args>`) can match descendants
+ * that bind cells via JSX props rather than declaring them in `vary`.
+ *
+ * Mirrors what the live render path does in `createSpecComponent`:
+ * the props phase walks top-level props for `BoundCell`s and merges
+ * their args into the parton's effective constraint surface. The
+ * snapshot-based path needs the same treatment so an ancestor's
+ * descendant-fold sees the descendant's effective constraints — not
+ * just its match params.
+ */
+function extractBoundArgsFromProps(props: unknown): Record<string, unknown> {
+  if (!props || typeof props !== "object") return {}
+  const out: Record<string, unknown> = {}
+  for (const value of Object.values(props as Record<string, unknown>)) {
+    if (isBoundCell(value)) {
+      Object.assign(out, (value as BoundCell<unknown>).args)
+    }
+  }
+  return out
 }
 
 function invalidationKeyFromSnap(snap: PartialSnapshot): string {

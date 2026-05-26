@@ -364,7 +364,8 @@ export async function resolveCellValue<T>(
   args: CellArgs,
 ): Promise<T> {
   const partitionKey = hash(stableStringify(args))
-  const stored = cell.storage().read(getScope(), cell.id, partitionKey)
+  const storage = cell.storage()
+  const stored = storage.read(getScope(), cell.id, partitionKey)
   if (stored !== undefined) {
     try {
       return cell.validate(stored)

@@ -324,6 +324,23 @@ export function _getRequestEphemeralStorage(
   return store.ephemeralCellStorage
 }
 
+/**
+ * Drop the current request's ephemeral cell storage so the next
+ * access opens a fresh one. Used by the streaming-segment driver
+ * between segments — after an invalidation signal wakes the driver,
+ * the heartbeat's next render must NOT serve stale ephemeral-cell
+ * values that another scope (e.g. an action POST) wrote past. Wiping
+ * forces loaders to re-run on the next reads.
+ *
+ * No-op outside a request context, or when no ephemeral storage was
+ * opened yet for this request.
+ */
+export function _clearRequestEphemeralStorage(): void {
+  const store = requestContext.getStore()
+  if (!store) return
+  store.ephemeralCellStorage = null
+}
+
 export function getDefaultScope(): string {
   return DEFAULT_SCOPE
 }

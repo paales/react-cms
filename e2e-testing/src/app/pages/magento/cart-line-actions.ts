@@ -18,7 +18,14 @@ import { readCookie } from "@parton/framework"
 import { client } from "../../magento-data.ts"
 import { graphql } from "../../magento-graphql.ts"
 import { cartBadgeCell } from "./cart-badge-cell.ts"
-import { cartCell, cartItemCell, type CartItemValue, type CartValue } from "./cart-cells.ts"
+import {
+  cartCell,
+  cartItemCell,
+  hydrateCartFromResponse,
+  type CartItemValue,
+  type CartValue,
+  type FullCartItem,
+} from "./cart-cells.ts"
 
 const UpdateCartItemsMutation = graphql(`
   mutation UpdateCartItems($cartId: String!, $uid: ID!, $quantity: Float!) {
@@ -57,6 +64,17 @@ const RemoveCartItemMutation = graphql(`
       cart {
         items {
           uid
+          quantity
+          product {
+            name
+            sku
+          }
+          prices {
+            row_total {
+              value
+              currency
+            }
+          }
         }
         prices {
           grand_total {
@@ -133,28 +151,20 @@ export async function removeFromCart(uid: string): Promise<void> {
   if (!updated) throw new Error("removeItemFromCart returned null")
 
   const remainingItems = (updated.items ?? []).filter(
-    (i): i is NonNullable<typeof i> => i != null,
+    (i): i is FullCartItem => i != null,
   )
-  const remainingUids = remainingItems.map((i) => i.uid)
-  const grand = updated.prices?.grand_total?.value ?? 0
-  const currency = updated.prices?.grand_total?.currency ?? "USD"
-
-  // Update the badge cell with the new total quantity (sum of remaining
-  // lines' qty). Cheap upfront write avoids the header refetching from
-  // Magento.
+  // Total quantity for the badge.
   const remainingTotalQty = remainingItems.reduce((sum, i) => sum + i.quantity, 0)
   await cartBadgeCell.with({ cartId }).set({ total_quantity: remainingTotalQty })
 
-  // Reshape the cart's item list — this fp-shifts the cart parton so
-  // it re-renders with one fewer CartLine placement. The removed line
-  // disappears from the tree naturally.
-  await cartCell.with({ cartId }).set({
-    itemUids: remainingUids,
-    grandTotal: grand,
-    currency,
-  })
+  // Hydrate all remaining items + push the new aggregate. Same
+  // normalisation as cartCell.load; this is what makes the action's
+  // response render see the full set of remaining items in storage —
+  // without it, OTHER lines render as null because their per-line
+  // cells were never written in this request's scope.
+  const next = hydrateCartFromResponse(updated)
+  if (next) await cartCell.with({ cartId }).set(next)
 
-  // Free the orphaned line's storage slot — defaults to null going
-  // forward (matches the cell's initial).
+  // Free the removed line's storage slot.
   cartItemCell.with({ uid }).hydrate(null)
 }
