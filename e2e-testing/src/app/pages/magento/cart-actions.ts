@@ -4,7 +4,13 @@ import { client } from "../../magento-data.ts"
 import { graphql } from "../../magento-graphql.ts"
 import { readCookie, setCookie } from "@parton/framework"
 import { cartBadgeCell } from "./cart-badge-cell.ts"
-import { cartCell } from "./cart-cells.ts"
+import {
+  cartCell,
+  cartItemCell,
+  toCartItemValue,
+  type CartValue,
+  type FullCartItem,
+} from "./cart-cells.ts"
 
 const CreateEmptyCart = graphql(`
   mutation CreateEmptyCart {
@@ -12,11 +18,39 @@ const CreateEmptyCart = graphql(`
   }
 `)
 
+/**
+ * AddToCart returns the FULL post-mutation cart shape — the same
+ * fields cartCell's loader fetches — so the action can populate all
+ * three downstream cells (badge, cart, per-line) from a single
+ * upstream call. No follow-up cart query, no invalidation-driven
+ * refetch.
+ */
 const AddToCart = graphql(`
   mutation AddToCart($cartId: String!, $sku: String!, $quantity: Float!) {
     addProductsToCart(cartId: $cartId, cartItems: [{ sku: $sku, quantity: $quantity }]) {
       cart {
+        id
         total_quantity
+        items {
+          uid
+          quantity
+          product {
+            name
+            sku
+          }
+          prices {
+            row_total {
+              value
+              currency
+            }
+          }
+        }
+        prices {
+          grand_total {
+            value
+            currency
+          }
+        }
       }
       user_errors {
         code
@@ -45,16 +79,33 @@ export async function addToCart(sku: string, quantity: number): Promise<void> {
   if (errors.length > 0) {
     throw new Error(errors.map((e) => e.message).join("; "))
   }
-  // Push the updated total directly into the badge cell. Any tab
-  // showing the badge for this cartId sees the new value on its
-  // next render — no upstream re-fetch.
+  const updated = result.cart
+  if (!updated) throw new Error("addProductsToCart returned cart=null")
+
+  const items = (updated.items ?? []).filter((i): i is FullCartItem => i != null)
+  const itemUids = items.map((i) => i.uid)
+  const grandTotal = updated.prices?.grand_total?.value ?? 0
+  const currency = updated.prices?.grand_total?.currency ?? "USD"
+
+  // Hydrate per-line cells without firing partition signals — the
+  // CartLine placements aren't rendered on /magento, so a signal
+  // per-item would be noise. They'll resolve from warm storage next
+  // time /cart is visited.
+  for (const item of items) {
+    cartItemCell.with({ uid: item.uid }).hydrate(toCartItemValue(item))
+  }
+
+  // Write the cart aggregate — fires `cell:magento.cart?cartId=X`,
+  // refreshing any /cart placement currently rendering.
+  const next: CartValue = { itemUids, grandTotal, currency }
+  await cartCell.with({ cartId }).set(next)
+
+  // Push the updated total into the badge cell — fires
+  // `cell:magento.cart-badge?cartId=X`, refreshing the header on any
+  // magento page.
   await cartBadgeCell.with({ cartId }).set({
-    total_quantity: result.cart?.total_quantity ?? 0,
+    total_quantity: updated.total_quantity ?? 0,
   })
-  // Cart-line list shape may have changed (new line added or qty bump
-  // on an existing). The /cart page's cartCell needs to reload from
-  // upstream to pick up the new lines + totals — invalidate it.
-  await cartCell.with({ cartId }).invalidate()
 }
 
 export async function getCartId(): Promise<string | undefined> {

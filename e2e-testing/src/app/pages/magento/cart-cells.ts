@@ -48,7 +48,7 @@ const CartWithItemsQuery = graphql(`
 `)
 
 type FullCart = NonNullable<ResultOf<typeof CartWithItemsQuery>["cart"]>
-type FullCartItem = NonNullable<NonNullable<FullCart["items"]>[number]>
+export type FullCartItem = NonNullable<NonNullable<FullCart["items"]>[number]>
 
 export type CartItemValue = {
   uid: string
@@ -65,7 +65,7 @@ export type CartValue = {
   currency: string
 }
 
-function toCartItemValue(it: FullCartItem): CartItemValue {
+export function toCartItemValue(it: FullCartItem): CartItemValue {
   return {
     uid: it.uid,
     quantity: it.quantity,

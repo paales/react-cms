@@ -1,9 +1,15 @@
 /**
- * Pokemon detail cells — `Hero` / `Stats` / `Species` move off inline
- * `client.request` into gqlCell. Per-id partitions are placement-
- * bound via `.with({id})` from the parent. Storage caches per id
- * (Pokemon data is effectively immutable), so repeated nav to the
- * same id skips the upstream call.
+ * Pokemon cells — every PokeAPI read flows through a gqlCell.
+ * Storage caches per args; effectively-immutable data so no TTL.
+ *
+ * `pokemonHero / Stats / Species` — placement-bound per id from
+ * the detail page.
+ *
+ * `pokemonList` — placement-bound per page (limit/offset). One
+ * cell instance, 10 partitions for the 10 list pages.
+ *
+ * `pokemonSearch` — placement-bound per (pattern, offset, limit).
+ * Each search Stage binds different offsets.
  */
 
 import { gqlCell } from "@parton/framework"
@@ -80,4 +86,60 @@ export const pokemonSpeciesCell = gqlCell({
   id: "pokemon-species",
   client,
   doc: PokemonSpeciesQuery,
+})
+
+// ─── List + search cells (shared with pokemon.tsx) ─────────────────────
+
+export const PokemonListFields = graphql(`
+  fragment PokemonListFields on pokemon_v2_pokemon {
+    id
+    name
+    pokemon_v2_pokemonsprites {
+      sprites
+    }
+    pokemon_v2_pokemontypes {
+      pokemon_v2_type {
+        name
+      }
+    }
+  }
+`)
+
+const PokemonListQuery = graphql(
+  `
+    query PokemonList($limit: Int!, $offset: Int!) {
+      pokemon_v2_pokemon(limit: $limit, offset: $offset, order_by: { id: asc }) {
+        ...PokemonListFields
+      }
+    }
+  `,
+  [PokemonListFields],
+)
+
+const PokemonSearchQuery = graphql(
+  `
+    query SearchPokemon($pattern: String!, $offset: Int!, $limit: Int!) {
+      pokemon_v2_pokemon(
+        where: { name: { _ilike: $pattern } }
+        limit: $limit
+        offset: $offset
+        order_by: { id: asc }
+      ) {
+        ...PokemonListFields
+      }
+    }
+  `,
+  [PokemonListFields],
+)
+
+export const pokemonListCell = gqlCell({
+  id: "pokemon-list",
+  client,
+  doc: PokemonListQuery,
+})
+
+export const pokemonSearchCell = gqlCell({
+  id: "pokemon-search",
+  client,
+  doc: PokemonSearchQuery,
 })

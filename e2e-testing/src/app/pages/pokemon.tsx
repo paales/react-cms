@@ -2,66 +2,29 @@
  * Pokemon overview page — `/`.
  *
  * Outer wrapper spec gates the route once. Inner specs (header, search,
- * pokedex pages, load more) take their data via JSX props and `vary`,
- * with no per-spec `match` repetition.
+ * pokedex pages, load more) take their data via JSX-prop-bound
+ * gqlCells (see pokemon-cells.ts). The outer wrapper constructs the
+ * bound cells per page/stage; child Renders receive ResolvedCells.
  *
  * Detail page lives in `./pokemon-detail.tsx`; this file exports the
  * pieces it shares (header, search areas, sprite helper).
  */
 
-import { parton, type RenderArgs } from "@parton/framework"
+import { parton, type RenderArgs, type ResolvedCell } from "@parton/framework"
 import { Frame } from "@parton/framework/lib/frame.tsx"
-import { client } from "../data.ts"
-import { graphql, readFragment, type FragmentOf } from "../pokeapi-graphql.ts"
+import { readFragment, type FragmentOf } from "../pokeapi-graphql.ts"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"
 import { LoadMore as LoadMoreClient, PageSentinel } from "../components/load-more.tsx"
 import { PartialControls } from "../components/partial-controls.tsx"
 import { SearchToggle, SearchInput, SearchDialog } from "../components/search.tsx"
+import {
+  PokemonListFields,
+  pokemonListCell,
+  pokemonSearchCell,
+} from "./pokemon-cells.ts"
 
 const PAGE_SIZE = 24
-
-const PokemonListFields = graphql(`
-  fragment PokemonListFields on pokemon_v2_pokemon {
-    id
-    name
-    pokemon_v2_pokemonsprites {
-      sprites
-    }
-    pokemon_v2_pokemontypes {
-      pokemon_v2_type {
-        name
-      }
-    }
-  }
-`)
-
-const SearchPokemonQuery = graphql(
-  `
-    query SearchPokemon($pattern: String!, $offset: Int!, $limit: Int!) {
-      pokemon_v2_pokemon(
-        where: { name: { _ilike: $pattern } }
-        limit: $limit
-        offset: $offset
-        order_by: { id: asc }
-      ) {
-        ...PokemonListFields
-      }
-    }
-  `,
-  [PokemonListFields],
-)
-
-const PokemonListQuery = graphql(
-  `
-    query PokemonList($limit: Int!, $offset: Int!) {
-      pokemon_v2_pokemon(limit: $limit, offset: $offset, order_by: { id: asc }) {
-        ...PokemonListFields
-      }
-    }
-  `,
-  [PokemonListFields],
-)
 
 type SpriteJson = {
   front_default?: string | null
@@ -99,11 +62,6 @@ function TypeBadge({ type, className }: { type: string; className?: string }) {
 const POKEMON_GRID = "grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4"
 
 // ─── Header ─────────────────────────────────────────────────────────────
-//
-// `showControls` arrives as a JSX prop from whichever wrapper renders
-// the header — overview passes false, detail passes true. The cache key
-// folds it in automatically (call-site props are part of the
-// fingerprint).
 
 export const HeaderPartial = parton(
   function HeaderRender({
@@ -127,75 +85,14 @@ export const HeaderPartial = parton(
 
 // ─── Search areas (page + frame scopes) ────────────────────────────────
 
-function makeSearchArea(scope: "page" | "frame") {
-  const Stage1 = parton(SearchStage1Render, {
-    selector: `#${scope}-stage-1`,
-    cache: {},
-    vary: ({ search: { q = "" } }) => ({ q }),
-  })
-  const Stage2 = parton(SearchStage2Render, {
-    selector: `#${scope}-stage-2`,
-    cache: {},
-    vary: ({ search: { q = "" } }) => ({ q }),
-    fallback: (
-      <div data-testid="stage-2-fallback" className="p-2 text-muted-foreground">
-        Loading stage 2...
-      </div>
-    ),
-  })
-  const Stage3 = parton(SearchStage3Render, {
-    selector: `#${scope}-stage-3`,
-    cache: {},
-    vary: ({ search: { q = "" } }) => ({ q }),
-    fallback: (
-      <div data-testid="stage-3-fallback" className="p-2 text-muted-foreground">
-        Loading stage 3...
-      </div>
-    ),
-  })
-
-  const Body = parton(SearchBodyRender, {
-    selector: scope === "page" ? "#search-page .search-results" : "#search .search-results",
-    vary: ({ search: { search, q = "" } }) => ({ search, q }),
-  })
-
-  function SearchBodyRender({
-    search,
-    q,
-    parent,
-  }: { search: string | undefined; q: string } & RenderArgs) {
-    if (search == null) return null
-    return (
-      <SearchDialog open>
-        <SearchInput query={q} />
-        <Stage1 parent={parent} />
-        <Stage2 parent={parent} />
-        <Stage3 parent={parent} />
-      </SearchDialog>
-    )
-  }
-  return Body
+type PokemonListResult = {
+  pokemon_v2_pokemon: ReadonlyArray<FragmentOf<typeof PokemonListFields>>
 }
-
-export const SearchAreaPage = makeSearchArea("page")
-export const SearchAreaFrame = makeSearchArea("frame")
+type SearchCellValue = PokemonListResult | null
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 type SearchResult = { id: number; name: string; spriteUrl: string | null; types: string[] }
-
-async function fetchSearchResults(
-  query: string,
-  offset: number,
-  limit: number,
-): Promise<SearchResult[]> {
-  const data = await client.request(SearchPokemonQuery, {
-    pattern: `%${query}%`,
-    offset,
-    limit,
-  })
-  return data.pokemon_v2_pokemon.map(toSearchResult)
-}
 
 function toSearchResult(raw: FragmentOf<typeof PokemonListFields>): SearchResult {
   const pokemon = readFragment(PokemonListFields, raw)
@@ -233,82 +130,159 @@ function SearchResultGrid({ results, testId }: { results: SearchResult[]; testId
   )
 }
 
-async function SearchStage1Render({ q }: { q: string } & RenderArgs) {
-  if (!q) return <p className="mt-4 text-sm text-muted-foreground">Start typing to search...</p>
-  const results = await fetchSearchResults(q, 0, 6)
-  return (
-    <>
-      <h3 className="mt-4 text-xs text-muted-foreground">Stage 1 — instant</h3>
-      <SearchResultGrid results={results} testId="stage-1-content" />
-    </>
-  )
-}
-
-async function SearchStage2Render({ q }: { q: string } & RenderArgs) {
-  if (!q) return null
-  await delay(1000)
-  const results = await fetchSearchResults(q, 6, 6)
-  return (
-    <div>
-      <h3 className="text-xs text-muted-foreground">Stage 2 — 1s delay</h3>
-      <SearchResultGrid results={results} testId="stage-2-content" />
-    </div>
-  )
-}
-
-async function SearchStage3Render({ q }: { q: string } & RenderArgs) {
-  if (!q) return null
-  await delay(2000)
-  const results = await fetchSearchResults(q, 12, 8)
-  return (
-    <div>
-      <h3 className="text-xs text-muted-foreground">Stage 3 — 2s delay</h3>
-      <SearchResultGrid results={results} testId="stage-3-content" />
-    </div>
-  )
-}
-
-// ─── Pokedex list pages ─────────────────────────────────────────────────
-//
-// `#page-N` selectors stay explicit — the same Render is reused for
-// every page, so auto-deriving from the function name would collide.
-
-function makeListPagePartial(page: number) {
-  return parton(PokemonListPageRender, {
-    selector: `#page-${page}` as const,
-    vary: ({ search: { pages: pagesRaw } }) => {
-      const pages = Math.max(1, Number(pagesRaw) || 1)
-      if (page > pages) return null
-      return { page, isFirst: page === 1 }
+function makeSearchArea(scope: "page" | "frame") {
+  const Stage1 = parton(
+    function Stage1Render({
+      results,
+    }: { results: ResolvedCell<SearchCellValue> } & RenderArgs) {
+      const list = results.value?.pokemon_v2_pokemon ?? []
+      if (list.length === 0) {
+        return <p className="mt-4 text-sm text-muted-foreground">Start typing to search...</p>
+      }
+      return (
+        <>
+          <h3 className="mt-4 text-xs text-muted-foreground">Stage 1 — instant</h3>
+          <SearchResultGrid results={list.map(toSearchResult)} testId="stage-1-content" />
+        </>
+      )
     },
+    { selector: `#${scope}-stage-1`, cache: {} },
+  )
+
+  const Stage2 = parton(
+    async function Stage2Render({
+      results,
+      q,
+    }: { results: ResolvedCell<SearchCellValue>; q: string } & RenderArgs) {
+      if (!q) return null
+      // Artificial delay — preserves the streaming-UX demo. Real
+      // loads run instantly when storage is warm.
+      await delay(1000)
+      const list = results.value?.pokemon_v2_pokemon ?? []
+      return (
+        <div>
+          <h3 className="text-xs text-muted-foreground">Stage 2 — 1s delay</h3>
+          <SearchResultGrid results={list.map(toSearchResult)} testId="stage-2-content" />
+        </div>
+      )
+    },
+    {
+      selector: `#${scope}-stage-2`,
+      cache: {},
+      fallback: (
+        <div data-testid="stage-2-fallback" className="p-2 text-muted-foreground">
+          Loading stage 2...
+        </div>
+      ),
+    },
+  )
+
+  const Stage3 = parton(
+    async function Stage3Render({
+      results,
+      q,
+    }: { results: ResolvedCell<SearchCellValue>; q: string } & RenderArgs) {
+      if (!q) return null
+      await delay(2000)
+      const list = results.value?.pokemon_v2_pokemon ?? []
+      return (
+        <div>
+          <h3 className="text-xs text-muted-foreground">Stage 3 — 2s delay</h3>
+          <SearchResultGrid results={list.map(toSearchResult)} testId="stage-3-content" />
+        </div>
+      )
+    },
+    {
+      selector: `#${scope}-stage-3`,
+      cache: {},
+      fallback: (
+        <div data-testid="stage-3-fallback" className="p-2 text-muted-foreground">
+          Loading stage 3...
+        </div>
+      ),
+    },
+  )
+
+  function SearchBodyRender({
+    search,
+    q,
+    parent,
+  }: { search: string | undefined; q: string } & RenderArgs) {
+    if (search == null) return null
+    const pattern = `%${q}%`
+    return (
+      <SearchDialog open>
+        <SearchInput query={q} />
+        <Stage1
+          parent={parent}
+          results={pokemonSearchCell.with({ pattern, offset: 0, limit: 6 })}
+        />
+        <Stage2
+          parent={parent}
+          q={q}
+          results={pokemonSearchCell.with({ pattern, offset: 6, limit: 6 })}
+        />
+        <Stage3
+          parent={parent}
+          q={q}
+          results={pokemonSearchCell.with({ pattern, offset: 12, limit: 8 })}
+        />
+      </SearchDialog>
+    )
+  }
+
+  return parton(SearchBodyRender, {
+    selector: scope === "page" ? "#search-page .search-results" : "#search .search-results",
+    vary: ({ search: { search, q = "" } }) => ({ search, q }),
   })
 }
 
-async function PokemonListPageRender({
-  page,
-  isFirst,
-}: { page: number; isFirst: boolean } & RenderArgs) {
-  const offset = (page - 1) * PAGE_SIZE
-  const data = await client.request(PokemonListQuery, { limit: PAGE_SIZE, offset })
-  return (
-    <div>
-      <PageSentinel page={page} />
-      {isFirst && (
-        <>
-          <h1 className="mb-4 text-2xl font-semibold">Pokedex</h1>
-          <title>Pokedex</title>
-          <p className="mb-6 text-muted-foreground">
-            Browse pokemon from the PokeAPI GraphQL endpoint.
-          </p>
-        </>
-      )}
-      <div className={POKEMON_GRID}>
-        {data.pokemon_v2_pokemon.map((raw) => {
-          const pokemon = readFragment(PokemonListFields, raw)
-          return <PokemonCard key={pokemon.id} raw={raw} />
-        })}
-      </div>
-    </div>
+export const SearchAreaPage = makeSearchArea("page")
+export const SearchAreaFrame = makeSearchArea("frame")
+
+// ─── Pokedex list pages ─────────────────────────────────────────────────
+
+function makeListPagePartial(page: number) {
+  return parton(
+    function PokemonListPageRender({
+      page,
+      isFirst,
+      results,
+    }: {
+      page: number
+      isFirst: boolean
+      results: ResolvedCell<PokemonListResult | null>
+    } & RenderArgs) {
+      const list = results.value?.pokemon_v2_pokemon ?? []
+      return (
+        <div>
+          <PageSentinel page={page} />
+          {isFirst && (
+            <>
+              <h1 className="mb-4 text-2xl font-semibold">Pokedex</h1>
+              <title>Pokedex</title>
+              <p className="mb-6 text-muted-foreground">
+                Browse pokemon from the PokeAPI GraphQL endpoint.
+              </p>
+            </>
+          )}
+          <div className={POKEMON_GRID}>
+            {list.map((raw) => {
+              const pokemon = readFragment(PokemonListFields, raw)
+              return <PokemonCard key={pokemon.id} raw={raw} />
+            })}
+          </div>
+        </div>
+      )
+    },
+    {
+      selector: `#page-${page}` as const,
+      vary: ({ search: { pages: pagesRaw } }) => {
+        const pages = Math.max(1, Number(pagesRaw) || 1)
+        if (page > pages) return null
+        return { page, isFirst: page === 1 }
+      },
+    },
   )
 }
 
@@ -362,9 +336,17 @@ export const PokemonOverviewPage = parton(
         <Frame name="search" initialUrl="/" parent={parent}>
           {(p) => <SearchAreaFrame parent={p} />}
         </Frame>
-        {ListPagePartials.map((P, i) => (
-          <P key={`list-page-${i + 1}`} parent={parent} />
-        ))}
+        {ListPagePartials.map((P, i) => {
+          const page = i + 1
+          const offset = (page - 1) * PAGE_SIZE
+          return (
+            <P
+              key={`list-page-${page}`}
+              parent={parent}
+              results={pokemonListCell.with({ limit: PAGE_SIZE, offset })}
+            />
+          )
+        })}
         <LoadMorePartial parent={parent} />
       </>
     )

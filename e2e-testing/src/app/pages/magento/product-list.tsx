@@ -9,41 +9,16 @@
 
 import { Suspense } from "react"
 import { parton, type PartialCtx, type RenderArgs, type ResolvedCell } from "@parton/framework"
-import { client } from "../../magento-data.ts"
-import { graphql, type ResultOf } from "../../magento-graphql.ts"
 import { AddToCartButton } from "./add-to-cart-button.tsx"
 import { CartBadge } from "./cart-badge.tsx"
 import { cartBadgeCell, type CartBadgeData } from "./cart-badge-cell.ts"
 import { LivePricePartial, LivePriceFallback } from "./live-price.tsx"
 import { RefreshAllPricesButton } from "./refresh-all-prices-button.tsx"
+import { magentoProductsCell, type ProductsResult } from "./products-cell.ts"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 
-const ProductsQuery = graphql(`
-  query Products($pageSize: Int!) {
-    products(filter: {}, pageSize: $pageSize) {
-      items {
-        id
-        name
-        sku
-        small_image {
-          url
-          label
-        }
-        price_range {
-          minimum_price {
-            regular_price {
-              value
-              currency
-            }
-          }
-        }
-      }
-    }
-  }
-`)
-
 type ProductItem = NonNullable<
-  NonNullable<NonNullable<ResultOf<typeof ProductsQuery>["products"]>["items"]>[number]
+  NonNullable<NonNullable<ProductsResult["products"]>["items"]>[number]
 >
 
 const MagentoCartBadge = parton(
@@ -80,9 +55,14 @@ const MagentoHeader = parton(
 )
 
 const MagentoProducts = parton(
-  async function MagentoProductsRender({ q, parent }: { q: string } & RenderArgs) {
-    const data = await client.request(ProductsQuery, { pageSize: 12 })
-    const items = (data.products?.items ?? []).filter((item): item is ProductItem => item != null)
+  function MagentoProductsRender({
+    q,
+    parent,
+    products,
+  }: { q: string; products: ResolvedCell<ProductsResult | null> } & RenderArgs) {
+    const items = (products.value?.products?.items ?? []).filter(
+      (item): item is ProductItem => item != null,
+    )
     return (
       <div>
         <div className="mb-4 flex items-center justify-between">
@@ -105,7 +85,6 @@ const MagentoProducts = parton(
   },
   {
     selector: "#products",
-    cache: { maxAge: 12 },
     vary: ({ search: { q = "" } }) => ({ q }),
   },
 )
@@ -158,7 +137,7 @@ export const MagentoPage = parton(
     return (
       <>
         <MagentoHeader parent={parent} />
-        <MagentoProducts parent={parent} />
+        <MagentoProducts parent={parent} products={magentoProductsCell.with({ pageSize: 12 })} />
       </>
     )
   },
