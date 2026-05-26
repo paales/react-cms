@@ -2,8 +2,9 @@
 
 import { client } from "../../magento-data.ts"
 import { graphql } from "../../magento-graphql.ts"
-import { getServerNavigation, readCookie, setCookie } from "@parton/framework"
-import { invalidateByTags } from "@parton/framework/lib/partial-cache.ts"
+import { readCookie, setCookie } from "@parton/framework"
+import { cartBadgeCell } from "./cart-badge-cell.ts"
+import { cartCell } from "./cart-cells.ts"
 
 const CreateEmptyCart = graphql(`
   mutation CreateEmptyCart {
@@ -44,12 +45,16 @@ export async function addToCart(sku: string, quantity: number): Promise<void> {
   if (errors.length > 0) {
     throw new Error(errors.map((e) => e.message).join("; "))
   }
-  // Bust any GraphQL response cache tagged with "cart" so the next
-  // CartPartial render re-queries total_quantity, then bump the
-  // invalidation registry — scoped to THIS cartId so other users'
-  // cart partials don't refetch on their next nav.
-  invalidateByTags(["cart"])
-  getServerNavigation().reload({ selector: `cart?cart_id=${cartId}` })
+  // Push the updated total directly into the badge cell. Any tab
+  // showing the badge for this cartId sees the new value on its
+  // next render — no upstream re-fetch.
+  await cartBadgeCell.with({ cartId }).set({
+    total_quantity: result.cart?.total_quantity ?? 0,
+  })
+  // Cart-line list shape may have changed (new line added or qty bump
+  // on an existing). The /cart page's cartCell needs to reload from
+  // upstream to pick up the new lines + totals — invalidate it.
+  await cartCell.with({ cartId }).invalidate()
 }
 
 export async function getCartId(): Promise<string | undefined> {

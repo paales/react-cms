@@ -8,22 +8,15 @@
  */
 
 import { Suspense } from "react"
-import { parton, type PartialCtx, type RenderArgs } from "@parton/framework"
+import { parton, type PartialCtx, type RenderArgs, type ResolvedCell } from "@parton/framework"
 import { client } from "../../magento-data.ts"
 import { graphql, type ResultOf } from "../../magento-graphql.ts"
 import { AddToCartButton } from "./add-to-cart-button.tsx"
 import { CartBadge } from "./cart-badge.tsx"
+import { cartBadgeCell, type CartBadgeData } from "./cart-badge-cell.ts"
 import { LivePricePartial, LivePriceFallback } from "./live-price.tsx"
 import { RefreshAllPricesButton } from "./refresh-all-prices-button.tsx"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
-
-const CartQuery = graphql(`
-  query Cart($cartId: String!) {
-    cart(cart_id: $cartId) {
-      total_quantity
-    }
-  }
-`)
 
 const ProductsQuery = graphql(`
   query Products($pageSize: Int!) {
@@ -54,27 +47,37 @@ type ProductItem = NonNullable<
 >
 
 const MagentoCartBadge = parton(
-  async function MagentoCartBadgeRender({ cartId }: { cartId: string | undefined } & RenderArgs) {
-    await new Promise((r) => setTimeout(r, 100))
-    if (!cartId) return <CartBadge quantity={0} />
-    const data = await client.request(CartQuery, { cartId })
-    return <CartBadge quantity={data.cart?.total_quantity ?? 0} />
+  function MagentoCartBadgeRender({
+    cart,
+  }: { cart: ResolvedCell<CartBadgeData | null> } & RenderArgs) {
+    return <CartBadge quantity={cart.value?.total_quantity ?? 0} />
   },
   {
     selector: "#cart-badge .cart .header",
     fallback: <CartBadge quantity={"?"} />,
-    vary: ({ cookies: { cart_id: cartId } }) => ({ cartId }),
+    // No vary — cart binding flows from the parent via JSX prop
+    // (cartBadgeCell.with({cartId})). The cell handles per-cartId
+    // partitioning and the GraphQL load.
   },
 )
 
-const MagentoHeader = parton(function MagentoHeaderRender({ parent }: RenderArgs) {
-  return (
-    <header className="mb-4 flex items-center justify-between gap-4">
-      <span className="text-sm text-muted-foreground">{new Date().toLocaleString()}</span>
-      <MagentoCartBadge parent={parent} />
-    </header>
-  )
-})
+const MagentoHeader = parton(
+  function MagentoHeaderRender({ parent, cartId }: { cartId: string } & RenderArgs) {
+    return (
+      <header className="mb-4 flex items-center justify-between gap-4">
+        <span className="text-sm text-muted-foreground">{new Date().toLocaleString()}</span>
+        {cartId ? (
+          <MagentoCartBadge parent={parent} cart={cartBadgeCell.with({ cartId })} />
+        ) : (
+          <CartBadge quantity={0} />
+        )}
+      </header>
+    )
+  },
+  {
+    vary: ({ cookies: { cart_id: cartId } }) => ({ cartId: cartId ?? "" }),
+  },
+)
 
 const MagentoProducts = parton(
   async function MagentoProductsRender({ q, parent }: { q: string } & RenderArgs) {

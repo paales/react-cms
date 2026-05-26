@@ -1,75 +1,31 @@
 /**
  * /pokemon/:id — Pokemon detail page.
  *
- * One outer wrapper spec matches the URL once; inner specs (Hero,
- * Stats, …) take `id` as a JSX prop and cast it to a number
- * themselves. No per-spec `match` repetition, no per-spec `vary`
- * for id-validation.
+ * Hero / Stats / Species partons each read a gqlCell (see
+ * pokemon-cells.ts) bound to the placement's `id`. The outer wrapper
+ * constructs `cell.with({id})` once per child and passes the bound
+ * cell as a JSX prop — the framework auto-resolves into a
+ * ResolvedCell before Render. Storage caches per id; revisiting the
+ * same pokemon skips the upstream call.
  */
 
-import { parton, notFound, type RenderArgs } from "@parton/framework"
+import { parton, notFound, type RenderArgs, type ResolvedCell } from "@parton/framework"
+import type { ResultOf } from "../pokeapi-graphql.ts"
 import { Frame } from "@parton/framework/lib/frame.tsx"
-import { client } from "../data.ts"
-import { graphql } from "../pokeapi-graphql.ts"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"
 import { WhenVisible } from "../components/when-visible.tsx"
 import { HeaderPartial, SearchAreaPage, SearchAreaFrame, extractSprite } from "./pokemon.tsx"
+import {
+  pokemonHeroCell,
+  pokemonStatsCell,
+  pokemonSpeciesCell,
+} from "./pokemon-cells.ts"
 
-const PokemonHeroQuery = graphql(`
-  query PokemonHero($id: Int!) {
-    pokemon_v2_pokemon(where: { id: { _eq: $id } }, limit: 1) {
-      id
-      name
-      height
-      weight
-      pokemon_v2_pokemonsprites {
-        sprites
-      }
-      pokemon_v2_pokemontypes {
-        slot
-        pokemon_v2_type {
-          name
-        }
-      }
-    }
-  }
-`)
-
-const PokemonStatsQuery = graphql(`
-  query PokemonStats($id: Int!) {
-    pokemon_v2_pokemon(where: { id: { _eq: $id } }, limit: 1) {
-      pokemon_v2_pokemonstats {
-        base_stat
-        pokemon_v2_stat {
-          name
-        }
-      }
-    }
-  }
-`)
-
-const PokemonSpeciesQuery = graphql(`
-  query PokemonSpecies($id: Int!) {
-    pokemon_v2_pokemon(where: { id: { _eq: $id } }, limit: 1) {
-      pokemon_v2_pokemonspecy {
-        name
-        base_happiness
-        capture_rate
-        pokemon_v2_generation {
-          name
-        }
-        pokemon_v2_pokemonspeciesflavortexts(
-          where: { pokemon_v2_language: { name: { _eq: "en" } } }
-          limit: 1
-        ) {
-          flavor_text
-        }
-      }
-    }
-  }
-`)
+type HeroResult = NonNullable<Awaited<ReturnType<typeof pokemonHeroCell.load>>>
+type StatsResult = NonNullable<Awaited<ReturnType<typeof pokemonStatsCell.load>>>
+type SpeciesResult = NonNullable<Awaited<ReturnType<typeof pokemonSpeciesCell.load>>>
 
 const TYPE_COLORS: Record<string, string> = {
   grass: "bg-emerald-900/60 text-emerald-200",
@@ -95,13 +51,14 @@ function TypeBadge({ type, className }: { type: string; className?: string }) {
 }
 
 // ─── Inner specs ────────────────────────────────────────────────────────
-// All take `id: string` from the wrapper and cast to a number themselves.
-// No `match` (wrapper gates), no `vary` (id is supplied by the call site).
+// Each receives a bound gqlCell as a JSX prop. The framework resolves
+// it before Render (running the GraphQL query on cold-start, hitting
+// storage on warm reads).
 
-const Hero = parton(async function PokemonHeroRender({ id }: { id: string } & RenderArgs) {
-  const pokemonId = Number(id)
-  const data = await client.request(PokemonHeroQuery, { id: pokemonId })
-  const pokemon = data.pokemon_v2_pokemon[0]
+const Hero = parton(function PokemonHeroRender({
+  hero,
+}: { hero: ResolvedCell<HeroResult | null> } & RenderArgs) {
+  const pokemon = hero.value?.pokemon_v2_pokemon[0]
   if (!pokemon) notFound()
   const { name, height, weight } = pokemon
   const types = pokemon.pokemon_v2_pokemontypes.map((t) => ({
@@ -131,12 +88,12 @@ const Hero = parton(async function PokemonHeroRender({ id }: { id: string } & Re
   )
 })
 
-const Stats = parton(async function StatsRender({ id }: { id: string } & RenderArgs) {
-  const pokemonId = Number(id)
-  const data = await client.request(PokemonStatsQuery, { id: pokemonId })
-  const pokemon = data.pokemon_v2_pokemon[0]
+const Stats = parton(function StatsRender({
+  stats,
+}: { stats: ResolvedCell<StatsResult | null> } & RenderArgs) {
+  const pokemon = stats.value?.pokemon_v2_pokemon[0]
   if (!pokemon) return null
-  const stats = pokemon.pokemon_v2_pokemonstats.map((s) => ({
+  const list = pokemon.pokemon_v2_pokemonstats.map((s) => ({
     name: s.pokemon_v2_stat?.name ?? "",
     value: s.base_stat,
   }))
@@ -145,7 +102,7 @@ const Stats = parton(async function StatsRender({ id }: { id: string } & RenderA
     <Card className="mb-4 p-5">
       <CardContent className="flex flex-col gap-2 px-0">
         <h2 className="text-lg font-semibold">Base Stats</h2>
-        {stats.map((stat) => {
+        {list.map((stat) => {
           const color =
             stat.value >= 100 ? "bg-emerald-500" : stat.value >= 60 ? "bg-amber-400" : "bg-red-500"
           return (
@@ -168,18 +125,16 @@ const Stats = parton(async function StatsRender({ id }: { id: string } & RenderA
   )
 })
 
-const Species = parton(async function SpeciesRender({
-  id,
-}: { id: string } & RenderArgs) {
-  const pokemonId = Number(id)
-  const data = await client.request(PokemonSpeciesQuery, { id: pokemonId })
-  const species = data.pokemon_v2_pokemon[0]?.pokemon_v2_pokemonspecy
-  if (!species) return null
-  const englishEntry = species.pokemon_v2_pokemonspeciesflavortexts[0]
+const Species = parton(function SpeciesRender({
+  species,
+}: { species: ResolvedCell<SpeciesResult | null> } & RenderArgs) {
+  const speciesData = species.value?.pokemon_v2_pokemon[0]?.pokemon_v2_pokemonspecy
+  if (!speciesData) return null
+  const englishEntry = speciesData.pokemon_v2_pokemonspeciesflavortexts[0]
   return (
     <Card className="mb-4 p-5">
       <CardContent className="px-0">
-        <h2 className="text-lg font-semibold capitalize">Species: {species.name}</h2>
+        <h2 className="text-lg font-semibold capitalize">Species: {speciesData.name}</h2>
         {englishEntry && (
           <p className="mt-3 leading-relaxed text-foreground/80">
             {englishEntry.flavor_text.replace(/\f|\n/g, " ")}
@@ -188,15 +143,15 @@ const Species = parton(async function SpeciesRender({
         <div className="mt-4 text-sm text-muted-foreground">
           Generation:{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
-            {species.pokemon_v2_generation?.name}
+            {speciesData.pokemon_v2_generation?.name}
           </code>{" "}
           · Base Happiness:{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
-            {species.base_happiness}
+            {speciesData.base_happiness}
           </code>{" "}
           · Capture Rate:{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em] font-mono">
-            {species.capture_rate}
+            {speciesData.capture_rate}
           </code>
         </div>
       </CardContent>
@@ -237,10 +192,11 @@ const Trivia = parton(
   },
 )
 
-// ─── Outer wrapper — matches /pokemon/:id, threads id to children ─────
+// ─── Outer wrapper — matches /pokemon/:id, threads bound cells to children ─
 
 export const PokemonDetailPage = parton(
   function PokemonDetailRender({ id, parent }: { id: string } & RenderArgs) {
+    const pokemonId = Number(id)
     return (
       <>
         <HeaderPartial parent={parent} showControls={true} />
@@ -248,9 +204,9 @@ export const PokemonDetailPage = parton(
         <Frame name="search" initialUrl="/" parent={parent}>
           {(p) => <SearchAreaFrame parent={p} />}
         </Frame>
-        <Hero parent={parent} id={id} />
-        <Stats parent={parent} id={id} />
-        <Species parent={parent} id={id} />
+        <Hero parent={parent} hero={pokemonHeroCell.with({ id: pokemonId })} />
+        <Stats parent={parent} stats={pokemonStatsCell.with({ id: pokemonId })} />
+        <Species parent={parent} species={pokemonSpeciesCell.with({ id: pokemonId })} />
         <LazySpacer parent={parent} />
         <Trivia parent={parent} id={id} />
       </>

@@ -17,6 +17,7 @@
 import { readCookie } from "@parton/framework"
 import { client } from "../../magento-data.ts"
 import { graphql } from "../../magento-graphql.ts"
+import { cartBadgeCell } from "./cart-badge-cell.ts"
 import { cartCell, cartItemCell, type CartItemValue, type CartValue } from "./cart-cells.ts"
 
 const UpdateCartItemsMutation = graphql(`
@@ -79,6 +80,12 @@ export async function updateLineQty(uid: string, quantity: number): Promise<void
   // Find the updated line in the mutation response.
   const items = (updated.items ?? []).filter((i): i is NonNullable<typeof i> => i != null)
   const updatedLine = items.find((i) => i.uid === uid)
+  // Total quantity could change either way (qty change OR line
+  // removed). Push the new total to the badge cell so any header
+  // showing the badge updates without refetching.
+  const totalQuantity = items.reduce((sum, i) => sum + i.quantity, 0)
+  await cartBadgeCell.with({ cartId }).set({ total_quantity: totalQuantity })
+
   if (!updatedLine) {
     // Magento removed the line (qty went to 0). Bump cart so parent
     // refetches with the shorter item list.
@@ -125,11 +132,18 @@ export async function removeFromCart(uid: string): Promise<void> {
   const updated = r.removeItemFromCart?.cart
   if (!updated) throw new Error("removeItemFromCart returned null")
 
-  const remainingUids = (updated.items ?? [])
-    .filter((i): i is NonNullable<typeof i> => i != null)
-    .map((i) => i.uid)
+  const remainingItems = (updated.items ?? []).filter(
+    (i): i is NonNullable<typeof i> => i != null,
+  )
+  const remainingUids = remainingItems.map((i) => i.uid)
   const grand = updated.prices?.grand_total?.value ?? 0
   const currency = updated.prices?.grand_total?.currency ?? "USD"
+
+  // Update the badge cell with the new total quantity (sum of remaining
+  // lines' qty). Cheap upfront write avoids the header refetching from
+  // Magento.
+  const remainingTotalQty = remainingItems.reduce((sum, i) => sum + i.quantity, 0)
+  await cartBadgeCell.with({ cartId }).set({ total_quantity: remainingTotalQty })
 
   // Reshape the cart's item list — this fp-shifts the cart parton so
   // it re-renders with one fewer CartLine placement. The removed line

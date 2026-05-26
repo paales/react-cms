@@ -156,12 +156,15 @@ export interface BoundCell<T> {
    *  Reads via the cell's loader/storage; applies updater synchronously;
    *  writes result. */
   update(updater: (current: T) => T): Promise<void>
-  /** Wipe storage at this partition. Fires partition-scoped
-   *  invalidation. */
+  /** Reset storage to the cell's `defaultValue` and fire partition-
+   *  scoped invalidation. Use when the entity logically no longer
+   *  exists (cart line removed, draft discarded). */
   clear(): Promise<void>
-  /** Fire partition-scoped invalidation without touching storage.
-   *  Forces matching placements to re-resolve (and re-run the loader
-   *  if storage is empty). */
+  /** Wipe storage at this partition (next read is cold) and fire
+   *  partition-scoped invalidation. The next render at this partition
+   *  re-runs the loader. Use when upstream data has changed and the
+   *  cell must re-fetch (e.g. after a mutation that doesn't return
+   *  the full new value). */
   invalidate(): Promise<void>
   /** Sync write to storage at this partition WITHOUT firing the
    *  partition-scoped signal. Use during initial cold-load hydration
@@ -387,18 +390,17 @@ function buildBoundCell<T>(cell: Cell<T>, args: CellArgs): BoundCell<T> {
       await _scopedCellWriteAction(cellId, args, next)
     },
     async clear(): Promise<void> {
-      const partitionKey = hash(stableStringify(args))
-      getCellStorage().write(getScope(), cellId, partitionKey, undefined)
-      // Fire partition-scoped invalidation via the write action with
-      // `undefined` — but writing undefined is awkward. Use a dedicated
-      // clear path through the action layer instead. For now, signal
-      // via the scoped write with the default value as the cleared shape.
-      // Simpler: write defaultValue back.
+      // Reset to defaultValue — semantic: "this entity is gone, use
+      // the cell's empty shape." Fires partition-scoped invalidation
+      // through the write action.
       await _scopedCellWriteAction(cellId, args, cell.defaultValue)
     },
     async invalidate(): Promise<void> {
-      // Fire the partition-scoped signal without changing storage.
-      // Routes through __cellInvalidate (see cell-actions.ts).
+      // Wipe storage to cold so the next read re-runs the loader.
+      // Then fire the partition-scoped signal so connected viewers
+      // re-resolve (and hit the loader since storage is now empty).
+      const partitionKey = hash(stableStringify(args))
+      getCellStorage().write(getScope(), cellId, partitionKey, undefined)
       const { __cellInvalidate } = await import("../runtime/cell-actions.ts")
       await __cellInvalidate(cellId, args)
     },
