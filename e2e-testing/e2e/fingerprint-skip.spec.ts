@@ -6,7 +6,12 @@ import { test, expect, request } from "./fixtures"
  * `?cached=id:fp,…` list. The response should be substantially
  * smaller than a cold-cache nav.
  */
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async ({ baseURL, page }) => {
+  // This spec counts RSC responses for a single nav; the background
+  // streaming heartbeat would add an extra one. Opt out of it.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
+  })
   const ctx = await request.newContext()
   await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`)
   await ctx.dispose()

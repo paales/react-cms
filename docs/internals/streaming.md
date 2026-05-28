@@ -40,8 +40,8 @@ any selector-routing logic that could replace it.
 1. **A parton declares an `expiresAt` in `vary`** (time-based) or
    **reads a cell via `schema`** (write-driven via
    `refreshSelector("cell:<id>")`).
-2. **The app's browser entry called `startLivePageHeartbeat()`**
-   once after `hydrateRoot`. The heartbeat holds a `?streaming=1`
+2. **The app's browser entry mounts `<LivePageHeartbeat />`**
+   near the React root. After hydration it holds a `?streaming=1`
    long-poll open against the current URL.
 3. **Server-side segment driver runs.** For each rendered segment,
    it races three arms:
@@ -72,14 +72,15 @@ lifetime.
 ## The heartbeat is opt-in
 
 The framework doesn't auto-inject a heartbeat. Apps that want live
-updates call `startLivePageHeartbeat()` from their browser entry:
+updates mount `<LivePageHeartbeat />` from their browser entry,
+near the React root:
 
-```ts
+```tsx
 // entry.browser.tsx
-import { startLivePageHeartbeat } from "@parton/framework"
+import { LivePageHeartbeat } from "@parton/framework/lib/live-page-heartbeat.tsx"
 
-hydrateRoot(document, browserRoot, { … })
-startLivePageHeartbeat()
+// …alongside <BrowserRoot />
+<LivePageHeartbeat />
 ```
 
 Behaviour:
@@ -102,6 +103,14 @@ Behaviour:
 What this means for tests: sync on a specific selector / element /
 DOM state, not on `networkidle`. The latter assumes "all requests
 finished," which is false by design when a long-poll is open.
+
+A spec that asserts on an exact set of RSC requests ("this nav made
+exactly one refetch") or on interaction state can't tolerate the
+heartbeat's background streaming connection. Such specs set
+`window.__partonHeartbeatDisabled = true` via `page.addInitScript`
+before navigating; `<LivePageHeartbeat>` reads the flag in its effect
+and never opens the connection. Specs that exercise streaming itself
+(chat, streaming-demo) leave it on.
 
 ## Wire shape
 

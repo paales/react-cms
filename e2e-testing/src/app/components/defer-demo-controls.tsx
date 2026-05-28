@@ -28,6 +28,12 @@ export function ActivateButton({
 }) {
   const [reload, { committed, finished }] = useNavigation().reload()
   const pending = committed && !finished
+  // A `streaming` reload holds its connection open after the first
+  // segment commits (`finished` resolves only when the stream closes),
+  // so `committed && !finished` would pin the button disabled for the
+  // stream's lifetime. Streaming refetches are rapid-fire / last-wins,
+  // so they stay clickable; only one-shot reloads disable while loading.
+  const disabled = streaming ? false : pending
   return (
     <Button
       type="button"
@@ -35,7 +41,7 @@ export function ActivateButton({
       variant="outline"
       data-testid={testId ?? `activate-${partialId}`}
       onClick={() => reload({ selector: `#${partialId}`, streaming })}
-      disabled={pending}
+      disabled={disabled}
     >
       {pending ? "…" : (label ?? "Activate")}
     </Button>

@@ -16,7 +16,13 @@ import { test, expect, request } from "./fixtures"
  * happen simultaneously" and "what about race conditions".
  */
 
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async ({ baseURL, page }) => {
+  // These tests assert on the exact set of refetch RSC calls and on
+  // button-pending state; the background streaming heartbeat would
+  // inject extra calls and hold a connection open. Opt out of it.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
+  })
   const ctx = await request.newContext()
   await ctx.get(`${baseURL ?? "http://localhost:5173"}/__test/clear-caches`)
   await ctx.dispose()

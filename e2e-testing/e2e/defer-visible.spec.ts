@@ -13,6 +13,15 @@ import { test, expect } from "./fixtures"
  *  2. Scrolling the trivia partial into view triggers exactly ONE
  *     RSC refetch, and the real content appears.
  */
+test.beforeEach(async ({ page }) => {
+  // The assertion is "scrolling fires exactly one trivia refetch and
+  // nothing else"; the background streaming heartbeat is an unrelated
+  // call that would break it. Opt out of it.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
+  })
+})
+
 test("defer + VisibleTrigger activates the block when it enters the viewport", async ({ page }) => {
   const rscCalls: Array<{ url: string; partials: string | null }> = []
   page.on("request", (req) => {

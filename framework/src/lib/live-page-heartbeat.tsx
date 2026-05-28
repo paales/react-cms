@@ -61,6 +61,14 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
   const [reload] = useNavigation().reload()
 
   useEffect(() => {
+    // When `window.__partonHeartbeatDisabled` is set, the heartbeat
+    // holds no connection and never fires. e2e specs that assert on
+    // deterministic RSC traffic or interaction state set it (via
+    // `page.addInitScript`) so the periodic streaming connection
+    // doesn't add background requests they'd otherwise observe.
+    if ((window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled) {
+      return
+    }
     let alive = true
     let inFlight: AbortController | null = null
 
