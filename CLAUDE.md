@@ -1,11 +1,17 @@
 # parton — project instructions
 
-A React Server Components based framework layer for pages composed
-of independently re-renderable, addressable, cacheable subtrees.
-Research project — does this primitive shape hold up as a CMS data
-layer? The primitive is `parton(Render, options)` — a define-step
-constructor that returns a placeable React component; the contract
-and full surface live in [`docs/reference/`](./docs/reference/).
+A React Server Components framework for commerce-shaped UIs:
+server-owned state — `useState` on the server — with Flight as the
+communication layer, and independently re-renderable, addressable,
+cacheable subtrees as the unit. Research project — the bet is
+*dynamic range*: one primitive that stretches from the leanest,
+mobile-snappy storefront to a realtime streaming dashboard, so a
+commerce stack never has to bifurcate (Liquid + a React checkout,
+Luma/Hyvä + yet another React app) the way it must today. The
+primitive is `parton(Render, options)` — a define-step constructor
+that returns a placeable React component; the contract and full
+surface live in [`docs/reference/`](./docs/reference/). GraphQL and
+disk/local storage are pluggable tiers under the cell, not the point.
 
 This file is for working in this repo — structure, tooling,
 workflow. For framework architecture and APIs, read the docs.

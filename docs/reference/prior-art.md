@@ -7,7 +7,12 @@ borrows from and the systems the React ecosystem mostly didn't
 build.
 
 The framework's claim is not novelty. It's that **RSC finally makes
-this tractable in JavaScript**.
+this tractable in JavaScript** — and that a single primitive with
+this lineage can hold the dynamic range a commerce stack needs end
+to end, instead of splitting into a server-rendered catalog and a
+separate client app at the checkout boundary (Liquid + Hydrogen,
+Luma/Hyvä + a React checkout). See
+[`../notes/perspectives.md`](../notes/perspectives.md) § The thesis.
 
 ## Server-rendered composition platforms
 

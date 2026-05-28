@@ -1,14 +1,26 @@
 # Introduction
 
-A React Server Components based framework layer for pages composed
-of independently re-renderable, addressable, cacheable subtrees.
+An RSC-native framework for commerce-shaped UIs: server-owned state
+— `useState` on the server — with Flight as the communication layer,
+and independently re-renderable, addressable, cacheable subtrees as
+the unit of composition.
 
-The public surface is four things:
+The bet is **dynamic range** — one primitive that stretches from the
+leanest, mobile-snappy storefront (mostly static, fingerprint-skip
+everything, a few bytes on the wire) to a realtime streaming
+dashboard (segmented Flight, live server state), so a commerce stack
+never has to bifurcate the way Shopify (Liquid + a React checkout)
+or Magento (Luma/Hyvä + yet another React app) must today. See
+[`../notes/perspectives.md`](../notes/perspectives.md) § The thesis
+for the full framing.
+
+The public surface is five things:
 
 | | What it is | When you reach for it |
 |---|---|---|
 | `parton(R, opts)` | Addressable render unit. Optionally URL-gated via `match`. | Any subtree you want fingerprinted, cacheable, refetchable. The catch-all. |
 | `block(R, opts)` | Slot-placeable partial with a `schema` for CMS content. | Content blocks the CMS can place into slots or render directly as a singleton (storage row matches spec id). |
+| `cell` / `localCell` / `gqlCell` | Typed, identity-keyed slot of server-authoritative state; crosses Flight as `ResolvedCell<T>`. | Server-owned state a parton reads and clients mutate — cart, prefs, form drafts, GraphQL-loaded entities. |
 | `<Frame name initialUrl>` | Scope opener — extends `parent.frameChain` so descendants see the frame-resolved request. | Any region whose URL is independent of the window URL. |
 | `<RemoteFrame url capability>` | Cross-process composition — embeds a parton hosted by a different process (same- or cross-origin). | Federated UI: payment forms hosted by a payment provider, marketing widgets from a CMS, etc. |
 
@@ -74,10 +86,12 @@ placements.
 
 1. [`partial.md`](./partial.md) — the base constructor.
 2. [`block.md`](./block.md) — the CMS-slot-placeable constructor.
-3. [`cache.md`](./cache.md) — server-side render-output cache.
-4. [`cms.md`](./cms.md) — CMS layer + editor.
-5. [`frames-navigation.md`](./frames-navigation.md) — `<Frame>`
+3. [`cells.md`](./cells.md) — typed server-state slots (the data
+   primitive partons and blocks read).
+4. [`cache.md`](./cache.md) — server-side render-output cache.
+5. [`cms.md`](./cms.md) — CMS layer + editor.
+6. [`frames-navigation.md`](./frames-navigation.md) — `<Frame>`
    component and the `useNavigation` API.
-6. [`remote-frame.md`](./remote-frame.md) — `<RemoteFrame>` for
+7. [`remote-frame.md`](./remote-frame.md) — `<RemoteFrame>` for
    cross-process composition (same- or cross-origin partons
    stitched into the host's response).

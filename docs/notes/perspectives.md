@@ -1,5 +1,28 @@
 # Perspectives
 
+## The thesis
+
+parton is an RSC-native framework for commerce-shaped UIs:
+**server-owned state — `useState` on the server — with Flight as the
+communication layer**, and independently re-renderable, addressable,
+cacheable subtrees as the unit. The bet is **dynamic range**. One
+primitive should stretch from the leanest, mobile-snappy storefront
+— mostly static, fingerprint-skip everything, a few bytes on the
+wire — to a realtime streaming dashboard with live server state,
+*without changing frameworks partway up the page*. Every commerce
+stack bifurcates today: Shopify runs Liquid for the catalog and a
+separate React stack (Hydrogen, a bespoke checkout) past the cart;
+Magento runs Luma or Hyvä+Alpine for the storefront and yet another
+React app for checkout and account. The base gets abandoned the
+moment a region needs more dynamism than it can express. The
+research question is whether a single fingerprinted-subtree
+primitive — with state classified by where it actually lives (page
+URL, frame URL, session, cell, cache) — can hold that whole range,
+so the stack never has to split. GraphQL and disk / local storage
+are pluggable tiers under the cell, not the point.
+
+## One primitive, many lenses
+
 The unifying primitive is `parton(Render, options)`: a define-step constructor that returns a placeable React component for an addressable RSC subtree. Each partial has its own fingerprint, cache key, refetch path, and frame scope. `block` (slot-placeable, CMS-driven), `<Frame>` (URL scope opener), and `cell` (typed server-state slot) are specialisations on top of the same engine. See [`../reference/partial.md`](../reference/partial.md) and [`../reference/cells.md`](../reference/cells.md).
 
 Polysemic by design: the framework is intentionally explainable through Varnish, iframes, Livewire, RSC, and commerce rendering because each lens reveals a different constraint. The "Like" items below are doors into the same room; the "Not" items keep the room's shape sharp. Each item carries a leading **label** so they can be referred to without quoting the whole line.
