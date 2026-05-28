@@ -1,10 +1,15 @@
 import {
   request as pwRequest,
   test as base,
-  type APIRequestNewContextOptions,
   type Page,
   type Request as PwRequest,
 } from "@playwright/test"
+
+// `APIRequestNewContextOptions` is no longer a named export of
+// `@playwright/test`. Derive the options shape from the public
+// `request.newContext` signature instead — `NonNullable` because the
+// parameter is optional.
+type APIRequestNewContextOptions = NonNullable<Parameters<typeof pwRequest.newContext>[0]>
 
 /**
  * Playwright fixtures layer. Every e2e spec imports `test` / `expect`

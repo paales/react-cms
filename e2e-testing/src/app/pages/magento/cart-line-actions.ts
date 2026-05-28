@@ -62,6 +62,7 @@ const RemoveCartItemMutation = graphql(`
   mutation RemoveCartItem($cartId: String!, $uid: ID!) {
     removeItemFromCart(input: { cart_id: $cartId, cart_item_uid: $uid }) {
       cart {
+        id
         items {
           uid
           quantity

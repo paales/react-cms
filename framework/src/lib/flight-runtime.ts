@@ -15,6 +15,8 @@
  * test runs. We resolve the appropriate runtime once at module load.
  */
 
+/// <reference path="./react-server-dom-vendor.d.ts" />
+
 import * as ReactServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge"
 import * as ReactClient from "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge"
 

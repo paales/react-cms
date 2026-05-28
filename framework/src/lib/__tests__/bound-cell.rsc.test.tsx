@@ -206,7 +206,13 @@ describe("constraint surface merges vary + bound args", () => {
     seedCell("test.constraints.item", { itemId: "A" }, { v: 0 })
 
     const Mixed = parton(
-      function Render({ item }: { item: ResolvedCell<{ v: number } | null> } & RenderArgs) {
+      // `catId` is vary-derived (supplied by the framework from the
+      // route param); `item` is the bound-cell JSX prop. Both must be
+      // present on the Render type so it satisfies `R extends V &
+      // RenderArgs`.
+      function Render({
+        item,
+      }: { item: ResolvedCell<{ v: number } | null>; catId: string } & RenderArgs) {
         return <span>{item.value?.v ?? "—"}</span>
       },
       {

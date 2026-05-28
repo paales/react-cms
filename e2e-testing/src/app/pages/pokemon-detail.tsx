@@ -23,9 +23,14 @@ import {
   pokemonSpeciesCell,
 } from "./pokemon-cells.ts"
 
-type HeroResult = NonNullable<Awaited<ReturnType<typeof pokemonHeroCell.load>>>
-type StatsResult = NonNullable<Awaited<ReturnType<typeof pokemonStatsCell.load>>>
-type SpeciesResult = NonNullable<Awaited<ReturnType<typeof pokemonSpeciesCell.load>>>
+// Derive each result type from the cell's value type. A cell's `load`
+// is optional on `Cell<T>` (localCell / fragmentCell have none), so
+// `ReturnType<typeof cell.load>` can't be used — `load` widens to
+// `… | undefined`, which fails `ReturnType`'s callable constraint.
+// `cell.defaultValue` is `TResult | null`; strip the null.
+type HeroResult = NonNullable<typeof pokemonHeroCell.defaultValue>
+type StatsResult = NonNullable<typeof pokemonStatsCell.defaultValue>
+type SpeciesResult = NonNullable<typeof pokemonSpeciesCell.defaultValue>
 
 const TYPE_COLORS: Record<string, string> = {
   grass: "bg-emerald-900/60 text-emerald-200",

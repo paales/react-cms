@@ -65,10 +65,13 @@ export interface CmsStorage {
  * doesn't corrupt the on-disk state.
  */
 export class JsonFileStorage implements CmsStorage {
-  constructor(
-    public readonly publishedPath: string,
-    public readonly draftPath: string,
-  ) {}
+  public readonly publishedPath: string
+  public readonly draftPath: string
+
+  constructor(publishedPath: string, draftPath: string) {
+    this.publishedPath = publishedPath
+    this.draftPath = draftPath
+  }
 
   async loadPublished(): Promise<LoadedStore | null> {
     return this.#loadAsync(this.publishedPath)

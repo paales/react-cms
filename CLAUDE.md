@@ -99,8 +99,9 @@ yarn dev                # Vite 8 + RSC dev server (e2e-testing app)
 yarn dev:magento        # Same, but against the empty e2e-magento showcase (port 5181)
 yarn build              # Production build for e2e-testing
 yarn build:magento      # Production build for e2e-magento
-yarn test               # Vitest — node + rsc projects (fast), all workspaces
-yarn test:node          # node project only (jsdom)
+yarn typecheck          # tsc --noEmit across every workspace (runs first in `yarn test`)
+yarn test               # typecheck + Vitest node + rsc projects
+yarn test:node          # node project only (jsdom) — fast, skips typecheck
 yarn test:rsc           # rsc project only (in-process Flight)
 yarn test:browser       # Real Chromium via Vitest browser mode
 yarn test:all           # All three Vitest projects
@@ -115,9 +116,12 @@ The root `yarn dev` / `yarn build` scripts delegate via
 points at the shared content store regardless of which workspace the
 dev server runs from.
 
-`yarn test` and `yarn test:e2e` cover disjoint suites — both must
-pass before a change is done. Tier picking and harness mechanics
-are in [`docs/internals/testing.md`](./docs/internals/testing.md).
+`yarn test` (which type-checks every workspace, then runs the node +
+rsc Vitest projects) and `yarn test:e2e` cover disjoint suites — both
+must pass before a change is done. The typecheck is `tsc --noEmit` per
+package; `copies/`'s vendored, unused `ai-elements` is excluded (see
+its tsconfig). Tier picking and harness mechanics are in
+[`docs/internals/testing.md`](./docs/internals/testing.md).
 
 `yarn test:e2e` auto-starts a dev server if nothing's on port 5179.
 HMR dispose hooks clear cache + registry on edits, so server

@@ -343,7 +343,20 @@ export interface PartialComponentProps {
  * prop surface, `SpecExtraProps` collapses to `{}` and the call site
  * is just `<Spec parent={...} />`.
  */
-export type SpecExtraProps<R, V> = Omit<R, keyof RenderArgs | keyof V>
+/** A prop the Render receives as `ResolvedCell<T>` may be SUPPLIED at
+ *  the call site as a `BoundCell<T>` (`cell.with(args)`) or a `Cell<T>`
+ *  (module / scoped handle) — the framework resolves it to a
+ *  `ResolvedCell<T>` in the props phase before Render runs. Widen each
+ *  such prop so the JSX call site type-checks against what authors
+ *  actually pass. Non-cell props pass through unchanged. */
+type AcceptBindableCell<X> = [X] extends [ResolvedCell<infer T>]
+  ? ResolvedCell<T> | BoundCell<T> | Cell<T>
+  : X
+export type SpecExtraProps<R, V> = {
+  [K in keyof Omit<R, keyof RenderArgs | keyof V>]: AcceptBindableCell<
+    Omit<R, keyof RenderArgs | keyof V>[K]
+  >
+}
 
 /**
  * Read a URLPattern parameter name from the start of a string,

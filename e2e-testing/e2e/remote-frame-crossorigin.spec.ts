@@ -66,9 +66,11 @@ test("cross-origin remote endpoint returns Flight + snapshot trailer", async ({
   // (`[parton:snapshots:<length>]\n`) and a length-prefixed JSON
   // body. We scan for the readable header prefix — finding it
   // confirms the remote endpoint is emitting the snapshot trailer.
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(
-    new Uint8Array(await response.body().then((b) => b.buffer)),
-  )
+  // `response.body()` resolves to a Node Buffer (a Uint8Array
+  // subclass), which TextDecoder accepts directly — no need to reach
+  // through `.buffer`, which types as `ArrayBufferLike` (possibly a
+  // SharedArrayBuffer) and breaks the `Uint8Array` ctor overload.
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(await response.body())
   expect(text, "snapshot trailer marker must be present").toMatch(
     /\[parton:snapshots:\d+\]/,
   )
