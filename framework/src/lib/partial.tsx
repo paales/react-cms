@@ -805,31 +805,26 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
     return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}${inv}`
   }
 
-  // Build a vary scope from the current request and resolve.
+  // Resolve the descendant's `vary` against the current request,
+  // building the same `VaryScope` shape the live render path supplies
+  // (url / pathname / search / cookies / headers / params / session /
+  // time / instanceId). The result feeds the fold.
   const url = new URL(request.url)
-  let result: unknown
-  try {
-    result = spec.vary({
-      url,
-      pathname: url.pathname,
-      search: searchParamsToRecord(url.searchParams),
-      cookies: parseCookies(request),
-      headers: headersToRecord(request.headers),
-      params,
-      // Discard the deps set — the descendant fold consumes the
-      // resolved `result` only (it's folded into the ancestor's fp).
-      // Snapshot dep recording happens during the descendant's own
-      // render pass, not here.
-      session: createSessionReadSurface(),
-      time: buildTimeScope(),
-      instanceId: descId,
-    })
-  } catch {
-    // A vary that throws on the synthetic scope (e.g. relies on a
-    // tracked accessor outside its expected request) just falls
-    // back to the stored varyKey — same lag as missing-catalog.
-    return `${descId}:${snap.varyKey ?? ""}${invalidationKeyFromSnap(snap)}`
-  }
+  const result: unknown = spec.vary({
+    url,
+    pathname: url.pathname,
+    search: searchParamsToRecord(url.searchParams),
+    cookies: parseCookies(request),
+    headers: headersToRecord(request.headers),
+    params,
+    // Discard the deps set — the descendant fold consumes the
+    // resolved `result` only (it's folded into the ancestor's fp).
+    // Snapshot dep recording happens during the descendant's own
+    // render pass, not here.
+    session: createSessionReadSurface(),
+    time: buildTimeScope(),
+    instanceId: descId,
+  })
   if (result === null) return `${descId}:varynull${invalidationKeyFromSnap(snap)}`
   // Strip reserved keys from the descendant's vary result the same
   // way the descendant's own render does — otherwise the fold would
@@ -863,30 +858,6 @@ function invalidationKeyFor(
 ): string {
   const ts = queryMatchingTs(labels, varyInputs)
   return ts > 0 ? `|inv=${ts}` : ""
-}
-
-/**
- * Extract args from any `BoundCell` values in a props object. Used by
- * the snapshot-based descendant-fold path so partition-scoped
- * invalidation signals (`cell:<id>?<args>`) can match descendants
- * that bind cells via JSX props rather than declaring them in `vary`.
- *
- * Mirrors what the live render path does in `createSpecComponent`:
- * the props phase walks top-level props for `BoundCell`s and merges
- * their args into the parton's effective constraint surface. The
- * snapshot-based path needs the same treatment so an ancestor's
- * descendant-fold sees the descendant's effective constraints — not
- * just its match params.
- */
-function extractBoundArgsFromProps(props: unknown): Record<string, unknown> {
-  if (!props || typeof props !== "object") return {}
-  const out: Record<string, unknown> = {}
-  for (const value of Object.values(props as Record<string, unknown>)) {
-    if (isBoundCell(value)) {
-      Object.assign(out, (value as BoundCell<unknown>).args)
-    }
-  }
-  return out
 }
 
 function invalidationKeyFromSnap(snap: PartialSnapshot): string {
