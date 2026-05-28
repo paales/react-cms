@@ -46,15 +46,22 @@ any selector-routing logic that could replace it.
 3. **Server-side segment driver runs.** For each rendered segment,
    it races three arms:
    - `_waitForNextBump` — a `refreshSelector` lands (CRUD writes,
-     `cell.set`, server-action invalidations).
+     `cell.set`, server-action invalidations) **that is relevant to
+     this route**: it matches a rendered partial's labels + vary/args
+     (`_routeHasMatchingBump`, see `segment-relevance.ts`). A bump for
+     a different partition (another viewer's `cartId`, another
+     session's cell) re-arms the wait WITHOUT re-rendering — so one
+     viewer's write doesn't wake every open stream into a fp-skip
+     pass. The wake itself is global (`_waitForNextBump` resolves on
+     any bump); the relevance check is what gates the re-render.
    - `expiresAt` arm — the earliest `expiresAt` among the route's
      snapshots elapses.
    - Idle timeout (~20s) — the connection closes cleanly. The
      heartbeat's next interval tick (~5s default) reopens.
-4. **Whichever arm wins, the driver re-renders.** Unchanged
-   partials fp-skip to placeholder bytes; the partial that
-   triggered the wake emits its fresh content. Bytes go down the
-   open connection as a new segment.
+4. **On a relevant bump or an `expiresAt` boundary, the driver
+   re-renders.** Unchanged partials fp-skip to placeholder bytes; the
+   partial that triggered the wake emits its fresh content. Bytes go
+   down the open connection as a new segment.
 5. **Client per-segment trailer fires** `applyStandardTrailers`:
    updates the fp registry, updates the URL if a server-action
    navigated.

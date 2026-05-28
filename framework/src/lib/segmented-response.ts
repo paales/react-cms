@@ -38,6 +38,7 @@ import {
   getScope,
 } from "../runtime/context.ts"
 import { _currentTs, _waitForNextBump } from "../runtime/invalidation-registry.ts"
+import { _routeHasMatchingBump } from "./segment-relevance.ts"
 import { buildMarker, TAG_NEXT_SEGMENT } from "./fp-trailer-marker.ts"
 
 /** How long the driver holds the response open after each segment.
@@ -116,36 +117,13 @@ export async function driveSegmentedResponse(
     // re-instantiated.
     promoteSnapshotsToCachedOverride()
 
-    // Race three arms:
-    //   - `_waitForNextBump` — wakes on any `refreshSelector` activity
-    //     (CRUD writes, cell.set, server-action invalidations).
-    //   - `timeoutPromise` — keepalive cap. Idle for >KEEPALIVE_MS →
-    //     close and let the client's heartbeat reopen.
-    //   - `expiresAtPromise` — wakes at the earliest `expiresAt`
-    //     declared by any rendered partial's vary. Drives time-based
-    //     reactivity (clock displays, TTL banners) without any
-    //     userspace timer. Absent when no partial declared one.
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
-    const timeoutPromise = new Promise<typeof IDLE_TIMEOUT>((resolve) => {
-      timeoutId = setTimeout(() => resolve(IDLE_TIMEOUT), KEEPALIVE_MS)
-    })
-    const arms: Array<Promise<unknown>> = [_waitForNextBump(lastTs), timeoutPromise]
-    let expiresAtTimeoutId: ReturnType<typeof setTimeout> | null = null
-    const expiresAtDelay = computeNextExpiresAtDelay()
-    if (expiresAtDelay !== null) {
-      arms.push(
-        new Promise<typeof EXPIRES_AT_WAKE>((resolve) => {
-          expiresAtTimeoutId = setTimeout(
-            () => resolve(EXPIRES_AT_WAKE),
-            Math.max(0, expiresAtDelay),
-          )
-        }),
-      )
-    }
-    const result = await Promise.race(arms)
-    if (timeoutId) clearTimeout(timeoutId)
-    if (expiresAtTimeoutId) clearTimeout(expiresAtTimeoutId)
-    if (result === IDLE_TIMEOUT) break
+    // Wait for a reason to emit the next segment, or for the keepalive
+    // to elapse. Only a bump RELEVANT to this route's rendered partials
+    // (or an expiresAt boundary) emits another segment; bumps in other
+    // sessions/scopes — which this stream would only fp-skip — re-arm
+    // without re-rendering. See waitForSegmentWake.
+    const proceed = await waitForSegmentWake(lastTs)
+    if (!proceed) break
     lastTs = _currentTs()
     segmentIndex++
   }
@@ -153,6 +131,84 @@ export async function driveSegmentedResponse(
 
 const IDLE_TIMEOUT = Symbol("idle-timeout")
 const EXPIRES_AT_WAKE = Symbol("expires-at-wake")
+
+/**
+ * Wait for a reason to emit the next segment, or for the keepalive to
+ * elapse. Races three arms:
+ *   - a `refreshSelector` bump RELEVANT to the route — one matching a
+ *     rendered partial's labels + vary/args (`routeHasRelevantBump`).
+ *     A bump in another session/scope, or to a selector this route
+ *     doesn't render, would only fp-skip here, so it re-arms the wait
+ *     instead of driving a full re-render. This is what stops N
+ *     concurrent streams from re-rendering on every one of N peers'
+ *     mutations.
+ *   - the earliest `expiresAt` boundary (time-based reactivity).
+ *   - the keepalive cap, measured from the last segment so a run of
+ *     irrelevant bumps can't hold the connection open indefinitely.
+ *
+ * Returns `true` to emit another segment, `false` to close the stream
+ * (the client's heartbeat reopens on its next tick).
+ */
+async function waitForSegmentWake(sinceTs: number): Promise<boolean> {
+  const keepaliveDeadline = Date.now() + KEEPALIVE_MS
+  const expiresAtDelay = computeNextExpiresAtDelay()
+  const expiresAtDeadline =
+    expiresAtDelay !== null ? Date.now() + Math.max(0, expiresAtDelay) : null
+  let since = sinceTs
+  while (true) {
+    const keepaliveRemaining = keepaliveDeadline - Date.now()
+    if (keepaliveRemaining <= 0) return false
+    let kaTimer: ReturnType<typeof setTimeout> | null = null
+    let expTimer: ReturnType<typeof setTimeout> | null = null
+    const arms: Array<Promise<symbol | number>> = [
+      _waitForNextBump(since),
+      new Promise<symbol>((resolve) => {
+        kaTimer = setTimeout(() => resolve(IDLE_TIMEOUT), keepaliveRemaining)
+      }),
+    ]
+    if (expiresAtDeadline !== null) {
+      const expRemaining = Math.max(0, expiresAtDeadline - Date.now())
+      arms.push(
+        new Promise<symbol>((resolve) => {
+          expTimer = setTimeout(() => resolve(EXPIRES_AT_WAKE), expRemaining)
+        }),
+      )
+    }
+    const result = await Promise.race(arms)
+    if (kaTimer) clearTimeout(kaTimer)
+    if (expTimer) clearTimeout(expTimer)
+    if (result === IDLE_TIMEOUT) return false
+    if (result === EXPIRES_AT_WAKE) return true
+    // A bump won the race. Emit only if it touched something this route
+    // actually renders; otherwise advance the cursor and re-arm.
+    if (routeHasRelevantBump(since)) return true
+    since = _currentTs()
+  }
+}
+
+/**
+ * True iff some `refreshSelector` bump with `ts > sinceTs` matches any
+ * partial rendered on the current route — by label AND vary/args
+ * subset, the same surface the live fp folds in via `queryMatchingTs`.
+ * Mirrors `invalidationKeyFromSnap`: a snapshot's `varyKey` is the
+ * stable-stringified vary result, and `constraintArgs` carries any
+ * bound-cell args, so their union is the partial's effective
+ * constraint surface. Returns `true` on missing scope/snapshots — the
+ * safe default is to emit a segment rather than risk withholding one.
+ */
+function routeHasRelevantBump(sinceTs: number): boolean {
+  let request: Request
+  let scope: string
+  try {
+    request = getRequest()
+    scope = getScope()
+  } catch {
+    return true
+  }
+  const snapshots = _readSnapshotsForRoute(scope, computeRouteKey(request.url))
+  if (snapshots.size === 0) return true
+  return _routeHasMatchingBump(snapshots, sinceTs)
+}
 
 /**
  * Compute the delay (ms from now) until the earliest `expiresAt`
