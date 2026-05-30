@@ -23,7 +23,7 @@ import {
   parton,
   type CellValue,
   type PartialCtx,
-  type RenderArgs,
+  type PartonProps,
   type ResolvedCell,
 } from "@parton/framework"
 import { Card } from "@parton/copies/components/ui/card"
@@ -33,7 +33,7 @@ import { CartLineControls } from "./cart-line-controls.tsx"
 const CartLine = parton(
   function CartLineRender({
     item,
-  }: { item: ResolvedCell<CellValue<typeof cartItemCell>> } & RenderArgs) {
+  }: PartonProps<{ item: ResolvedCell<CellValue<typeof cartItemCell>> }>) {
     const line = item.value
     if (!line) {
       return (
@@ -76,16 +76,16 @@ const CartLine = parton(
       </Card>
     )
   },
-  {
-    selector: "cart-line",
-  },
+  // No selector: the auto-id from `CartLineRender` ("cart-line") is the
+  // same, and refetch is driven by the per-line `cell:magento.cart-item`
+  // label (stamped by the prop binding), not a selector reload.
 )
 
 const CartContents = parton(
   function CartContentsRender({
     cart,
     parent,
-  }: { cart: ResolvedCell<CellValue<typeof cartCell>> } & RenderArgs) {
+  }: PartonProps<{ cart: ResolvedCell<CellValue<typeof cartCell>> }>) {
     const c = cart.value?.cart
     // `items` are per-line BoundCells (the query result→cells rewrite) —
     // forward each straight to <CartLine>, no manual `.with({uid})`.
@@ -118,11 +118,12 @@ const CartContents = parton(
       </div>
     )
   },
-  { selector: "#cart-contents" },
+  // No selector: auto-id "cart-contents"; it refetches via its
+  // `cell:magento.cart` label, not a selector reload.
 )
 
 export const MagentoCartPage = parton(
-  function MagentoCartRender({ cartId, parent }: { cartId: string } & RenderArgs) {
+  function MagentoCartRender({ cartId, parent }: PartonProps<{ cartId: string }>) {
     return (
       <main className="py-4 space-y-4">
         <title>Magento cart — cell demo</title>

@@ -15,6 +15,7 @@ export {
   type SelectorTokens,
   type VaryScope,
   type RenderArgs,
+  type PartonProps,
   type ActivatorProps,
   type DeferSpec,
   type InferV,

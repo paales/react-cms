@@ -502,6 +502,15 @@ type Prettify<T> = { [K in keyof T]: T[K] } & {}
 export type InferRenderProps<Opts> = Prettify<InferV<Opts> & RenderArgs>
 
 /**
+ * A parton Render's prop bag: the author's own props `V` plus the
+ * framework-managed `RenderArgs` (`parent`, `children`, …). Reads better
+ * than spelling out `V & RenderArgs` at every Render:
+ *
+ *     function CartLineRender({ item }: PartonProps<{ item: ResolvedCell<…> }>) { … }
+ */
+export type PartonProps<V = object> = Prettify<V & RenderArgs>
+
+/**
  * Spec component type. The JSX call-site sees framework props AND
  * any Render prop the `vary` return doesn't already provide.
  *
