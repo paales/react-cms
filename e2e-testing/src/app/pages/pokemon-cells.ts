@@ -16,7 +16,7 @@ import { graphql } from "../pokeapi-graphql.ts"
 
 const pokemon = gqlCellBuilder({ client, graphql })
 
-export const pokemonHeroCell = pokemon.query(`
+export const pokemonHeroCell = pokemon.query(`#graphql
   query PokemonHero($id: Int!) {
     pokemon_v2_pokemon(where: { id: { _eq: $id } }, limit: 1) {
       id
@@ -36,7 +36,7 @@ export const pokemonHeroCell = pokemon.query(`
   }
 `)
 
-export const pokemonStatsCell = pokemon.query(`
+export const pokemonStatsCell = pokemon.query(`#graphql
   query PokemonStats($id: Int!) {
     pokemon_v2_pokemon(where: { id: { _eq: $id } }, limit: 1) {
       pokemon_v2_pokemonstats {
@@ -49,7 +49,7 @@ export const pokemonStatsCell = pokemon.query(`
   }
 `)
 
-export const pokemonSpeciesCell = pokemon.query(`
+export const pokemonSpeciesCell = pokemon.query(`#graphql
   query PokemonSpecies($id: Int!) {
     pokemon_v2_pokemon(where: { id: { _eq: $id } }, limit: 1) {
       pokemon_v2_pokemonspecy {
