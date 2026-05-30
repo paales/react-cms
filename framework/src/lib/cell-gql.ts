@@ -254,20 +254,16 @@ export interface FragmentCell<V> extends Cell<V | null> {
 // query/mutation spread sites also produce unmasked, directly-settable
 // values.
 
-export interface FragmentCellOpts<V> {
+export interface FragmentCellOpts<R, V> {
   /** Override the auto-derived wire id (default: kebab of the fragment
    *  name — `CartLine` → `cart-line`). */
   id?: string
-  /** Identity extractor — maps the fragment's data to its partition
-   *  args. Defaults to `(d) => ({ id: d.id })` when the fragment selects
-   *  an `id` field; REQUIRED otherwise (Magento's `uid`, composite keys).
-   *  Drives both `.with(...)` placement and value-keyed `.set(value)`.
-   *
-   *  `data` is typed `any` — TypeScript can't resolve `ResultOf<F>` in a
-   *  callback-parameter position for an inferred generic `F` (it
-   *  collapses to `never`). Annotate it explicitly with
-   *  `ResultOf<typeof YourFragment>` if you want the extra safety. */
-  key?: (data: any) => CellArgs
+  /** Identity extractor — maps the fragment's (unmasked) data to its
+   *  partition args. Defaults to `(d) => ({ id: d.id })` when the
+   *  fragment selects an `id` field; REQUIRED otherwise (Magento's
+   *  `uid`, composite keys). Drives both `.with(...)` placement and
+   *  value-keyed `.set(value)`. `data` is typed `ResultOf<fragment>`. */
+  key?: (data: R) => CellArgs
   /** Initial value before any hydration. Defaults to `null`. */
   initial?: V | null
 }
@@ -293,7 +289,7 @@ export interface FragmentCellOpts<V> {
  */
 export function fragmentCell<F extends TadaDocumentNode<any, any, any>, V = ResultOf<F>>(
   doc: F,
-  opts?: FragmentCellOpts<V>,
+  opts?: FragmentCellOpts<ResultOf<F>, V>,
 ): FragmentCell<V> {
   const fragName = fragmentNameOf(doc)
   if (!fragName) {
@@ -317,8 +313,9 @@ export function fragmentCell<F extends TadaDocumentNode<any, any, any>, V = Resu
   }
   const keyFn = key
 
-  // Runtime: fragment masking is type-only (readFragment is identity),
-  // so the value carries the key field directly.
+  // The stored value (V) is the fragment's result (ResultOf<F>) by
+  // default; even when an author overrides V it carries the key field at
+  // runtime, so the cast is sound.
   const keyOf = (value: V | null): CellArgs => {
     if (value == null) {
       throw new Error(
@@ -326,7 +323,7 @@ export function fragmentCell<F extends TadaDocumentNode<any, any, any>, V = Resu
           "Use `.with(args).clear()` to remove a partition.",
       )
     }
-    return keyFn(value)
+    return keyFn(value as unknown as ResultOf<F>)
   }
 
   const handle = buildEphemeralCell<V | null>(id, opts?.initial ?? null, undefined, keyOf)

@@ -18,7 +18,7 @@
 
 import { gqlCellBuilder, fragmentCell } from "@parton/framework"
 import { client } from "../../magento-data.ts"
-import { graphql } from "../../magento-graphql.ts"
+import { graphql, type ResultOf } from "../../magento-graphql.ts"
 
 const magentoQuery = gqlCellBuilder({ client, graphql, prefix: "magento" })
 
@@ -44,28 +44,16 @@ export const CartLineFragment = graphql(`
   }
 `)
 
-/**
- * The line value the cell stores. Structurally matches `CartLineFragment`
- * — hand-written rather than `ResultOf<typeof CartLineFragment>` because
- * `CartItemInterface` is abstract and gql.tada collapses `ResultOf` /
- * `FragmentOf` to `never` for bare fragments on abstract types.
- */
-export type CartLineValue = {
-  uid: string
-  quantity: number
-  product?: { name?: string | null; sku?: string | null } | null
-  prices?: {
-    row_total?: { value?: number | null; currency?: string | null } | null
-  } | null
-}
+/** The line value the cell stores — inferred from the fragment. */
+export type CartLineValue = ResultOf<typeof CartLineFragment>
 
-/** Per-line fragment cell — hydrated by the cart query's `...CartLine`
- *  spread (auto-hydration) and written per-partition by mutations via
+/** Per-line fragment cell — value type + `key` param both inferred from
+ *  `CartLineFragment`. Hydrated by the cart query's `...CartLine` spread
+ *  (auto-hydration) and written per-partition by mutations via
  *  `cartItemCell.set(line)` (keyed by uid). */
-export const cartItemCell = fragmentCell<typeof CartLineFragment, CartLineValue>(
-  CartLineFragment,
-  { key: (d) => ({ uid: d.uid }) },
-)
+export const cartItemCell = fragmentCell(CartLineFragment, {
+  key: (d) => ({ uid: d.uid }),
+})
 
 /**
  * The cart query — built via the `magentoQuery` builder, partitioned by
