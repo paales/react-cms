@@ -183,11 +183,12 @@ type SchemaLike = {
 }
 type ConfigLike = { isMaskingDisabled: boolean }
 
-/** A query's composition arg: a raw fragment document OR a `fragmentCell`
- *  (whose `.fragment` doc is extracted) — so call sites pass the *cell*,
- *  not the raw fragment, and never touch `graphql()` directly. */
-type FragmentInput = TadaDocumentNode<any, any, any> | FragmentCell<any, any>
-type FragDocOf<I> = I extends FragmentCell<any, infer F> ? F : I
+/** A query's composition arg is always a `fragmentCell` (whose `.fragment`
+ *  doc is extracted) — call sites pass the *cell*, never a raw `graphql()`
+ *  fragment doc. This is what forbids raw fragment composition in app code:
+ *  there is no document option to pass. */
+type FragmentInput = FragmentCell<any, any>
+type FragDocOf<I> = I extends FragmentCell<any, infer F> ? F : never
 
 function isFragmentCellInput(x: unknown): x is FragmentCell<unknown> {
   return typeof x === "object" && x !== null && "__cell" in x && "fragment" in x
@@ -233,20 +234,24 @@ export function gqlCellBuilder<Schema extends SchemaLike, Config extends ConfigL
     items?: Items,
     opts?: { id?: string },
   ) {
-    // Extract each item's fragment document (cells → `.fragment`, raw
-    // docs → themselves) for gql.tada composition.
-    const frags = (items ?? []).map((i) => (isFragmentCellInput(i) ? i.fragment : i)) as {
-      [K in keyof Items]: FragDocOf<Items[K]>
-    }
+    // Extract each item's `.fragment` doc for gql.tada composition. The
+    // type already forbids raw docs; the runtime guard turns a stray one
+    // into a clear error rather than a downstream gql.tada failure.
+    const cells = (items ?? []) as ReadonlyArray<FragmentInput>
+    const frags = cells.map((i) => {
+      if (!isFragmentCellInput(i)) {
+        throw new Error(
+          "query(): fragment composition takes fragment cells (builder.fragment(...)), not raw graphql() docs",
+        )
+      }
+      return i.fragment
+    }) as { [K in keyof Items]: FragDocOf<Items[K]> }
     const doc = config.graphql(input, frags)
     const id = deriveCellId(
       doc as TadaDocumentNode<unknown, Record<string, unknown>>,
       config.prefix,
       opts?.id,
     )
-    // The fragment cells among the items drive the result→cell rewrite:
-    // every `...Fragment` spread location becomes a forwardable BoundCell.
-    const cells = (items ?? []).filter(isFragmentCellInput) as ReadonlyArray<FragmentCell<unknown>>
     const handle = buildEphemeralCell<unknown>(id, null, async (args: CellArgs) => {
       const raw = await config.client.request(doc, args as never)
       return cells.length ? rewriteResultToCells(doc, cells, raw) : raw

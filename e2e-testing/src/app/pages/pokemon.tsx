@@ -10,21 +10,21 @@
  * pieces it shares (header, search areas, sprite helper).
  */
 
-import { parton, type RenderArgs, type ResolvedCell } from "@parton/framework"
+import {
+  parton,
+  type RenderArgs,
+  type ResolvedCell,
+  type BoundCell,
+  type CellValue,
+  type PartialCtx,
+} from "@parton/framework"
 import { Frame } from "@parton/framework/lib/frame.tsx"
-import { readFragment, type FragmentOf } from "../pokeapi-graphql.ts"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"
 import { LoadMore as LoadMoreClient, PageSentinel } from "../components/load-more.tsx"
 import { PartialControls } from "../components/partial-controls.tsx"
 import { SearchToggle, SearchInput, SearchDialog } from "../components/search.tsx"
-import {
-  PokemonListFields,
-  pokemonListCell,
-  pokemonSearchCell,
-} from "./pokemon-cells.ts"
-
-const PAGE_SIZE = 24
+import { pokemonCardCell, pokemonListCell, pokemonSearchCell } from "./pokemon-cells.ts"
 
 type SpriteJson = {
   front_default?: string | null
@@ -85,56 +85,75 @@ export const HeaderPartial = parton(
 
 // ─── Search areas (page + frame scopes) ────────────────────────────────
 
-type PokemonListResult = {
-  pokemon_v2_pokemon: ReadonlyArray<FragmentOf<typeof PokemonListFields>>
-}
-type SearchCellValue = PokemonListResult | null
-
+// List/search cell values have their `pokemon_v2_pokemon` spread sites
+// rewritten to per-card BoundCells (result → cells); the value types come
+// straight off the cells inline (CellValue<typeof …>), no aliases.
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-type SearchResult = { id: number; name: string; spriteUrl: string | null; types: string[] }
-
-function toSearchResult(raw: FragmentOf<typeof PokemonListFields>): SearchResult {
-  const pokemon = readFragment(PokemonListFields, raw)
-  const spriteUrl = extractSprite(pokemon.pokemon_v2_pokemonsprites[0]?.sprites)
-  const types = pokemon.pokemon_v2_pokemontypes.map((t) => t.pokemon_v2_type?.name ?? "")
-  return { id: pokemon.id, name: pokemon.name, spriteUrl, types }
-}
-
-function SearchResultGrid({ results, testId }: { results: SearchResult[]; testId: string }) {
-  if (results.length === 0) return null
+// One per-card parton, fed a forwarded BoundCell. `compact` switches the
+// search-dialog sizing; list cards are the larger default.
+const PokemonCard = parton(function PokemonCardRender({
+  item,
+  compact,
+}: { item: ResolvedCell<CellValue<typeof pokemonCardCell>>; compact?: boolean } & RenderArgs) {
+  const p = item.value
+  if (!p) return null
+  const types = p.pokemon_v2_pokemontypes.map((t) => t.pokemon_v2_type?.name ?? "")
+  const spriteUrl = extractSprite(p.pokemon_v2_pokemonsprites[0]?.sprites)
   return (
-    <div data-testid={testId}>
-      <div className={POKEMON_GRID}>
-        {results.map((r) => (
-          <a
-            key={r.id}
-            href={`/pokemon/${r.id}`}
-            className="block rounded-xl bg-card p-5 ring-1 ring-border/50 transition-colors hover:bg-muted"
-          >
-            {r.spriteUrl && (
-              <img src={r.spriteUrl} alt={r.name} loading="lazy" className="h-16 w-16" />
-            )}
-            <h2 className="mt-1 text-base capitalize">
-              #{r.id} {r.name}
-            </h2>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {r.types.map((t) => (
-                <TypeBadge key={t} type={t || "default"} />
-              ))}
-            </div>
-          </a>
+    <a
+      href={`/pokemon/${p.id}`}
+      className="block rounded-xl bg-card p-5 ring-1 ring-border/50 transition-colors hover:bg-muted"
+    >
+      {spriteUrl && (
+        <img
+          src={spriteUrl}
+          alt={p.name}
+          loading="lazy"
+          className={compact ? "h-16 w-16" : "h-24 w-24"}
+        />
+      )}
+      <h2 className={cn("capitalize", compact ? "mt-1 text-base" : "mt-2 text-lg")}>
+        #{p.id} {p.name}
+      </h2>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {types.map((t) => (
+          <TypeBadge key={t} type={t || "default"} />
         ))}
       </div>
+    </a>
+  )
+})
+
+// Forward a list of per-card BoundCells to PokemonCard partons.
+function PokemonCardGrid({
+  items,
+  parent,
+  compact,
+  testId,
+}: {
+  items: ReadonlyArray<BoundCell<CellValue<typeof pokemonCardCell>>>
+  parent: PartialCtx
+  compact?: boolean
+  testId?: string
+}) {
+  if (items.length === 0) return null
+  const grid = (
+    <div className={POKEMON_GRID}>
+      {items.map((item) => (
+        <PokemonCard key={String(item.args.id)} parent={parent} item={item} compact={compact} />
+      ))}
     </div>
   )
+  return testId ? <div data-testid={testId}>{grid}</div> : grid
 }
 
 function makeSearchArea(scope: "page" | "frame") {
   const Stage1 = parton(
     function Stage1Render({
       results,
-    }: { results: ResolvedCell<SearchCellValue> } & RenderArgs) {
+      parent,
+    }: { results: ResolvedCell<CellValue<typeof pokemonSearchCell>> } & RenderArgs) {
       const list = results.value?.pokemon_v2_pokemon ?? []
       if (list.length === 0) {
         return <p className="mt-4 text-sm text-muted-foreground">Start typing to search...</p>
@@ -142,7 +161,7 @@ function makeSearchArea(scope: "page" | "frame") {
       return (
         <>
           <h3 className="mt-4 text-xs text-muted-foreground">Stage 1 — instant</h3>
-          <SearchResultGrid results={list.map(toSearchResult)} testId="stage-1-content" />
+          <PokemonCardGrid items={list} parent={parent} compact testId="stage-1-content" />
         </>
       )
     },
@@ -153,7 +172,8 @@ function makeSearchArea(scope: "page" | "frame") {
     async function Stage2Render({
       results,
       q,
-    }: { results: ResolvedCell<SearchCellValue>; q: string } & RenderArgs) {
+      parent,
+    }: { results: ResolvedCell<CellValue<typeof pokemonSearchCell>>; q: string } & RenderArgs) {
       if (!q) return null
       // Artificial delay — preserves the streaming-UX demo. Real
       // loads run instantly when storage is warm.
@@ -162,7 +182,7 @@ function makeSearchArea(scope: "page" | "frame") {
       return (
         <div>
           <h3 className="text-xs text-muted-foreground">Stage 2 — 1s delay</h3>
-          <SearchResultGrid results={list.map(toSearchResult)} testId="stage-2-content" />
+          <PokemonCardGrid items={list} parent={parent} compact testId="stage-2-content" />
         </div>
       )
     },
@@ -181,14 +201,15 @@ function makeSearchArea(scope: "page" | "frame") {
     async function Stage3Render({
       results,
       q,
-    }: { results: ResolvedCell<SearchCellValue>; q: string } & RenderArgs) {
+      parent,
+    }: { results: ResolvedCell<CellValue<typeof pokemonSearchCell>>; q: string } & RenderArgs) {
       if (!q) return null
       await delay(2000)
       const list = results.value?.pokemon_v2_pokemon ?? []
       return (
         <div>
           <h3 className="text-xs text-muted-foreground">Stage 3 — 2s delay</h3>
-          <SearchResultGrid results={list.map(toSearchResult)} testId="stage-3-content" />
+          <PokemonCardGrid items={list} parent={parent} compact testId="stage-3-content" />
         </div>
       )
     },
@@ -248,10 +269,11 @@ function makeListPagePartial(page: number) {
       page,
       isFirst,
       results,
+      parent,
     }: {
       page: number
       isFirst: boolean
-      results: ResolvedCell<PokemonListResult | null>
+      results: ResolvedCell<CellValue<typeof pokemonListCell>>
     } & RenderArgs) {
       const list = results.value?.pokemon_v2_pokemon ?? []
       return (
@@ -266,12 +288,7 @@ function makeListPagePartial(page: number) {
               </p>
             </>
           )}
-          <div className={POKEMON_GRID}>
-            {list.map((raw) => {
-              const pokemon = readFragment(PokemonListFields, raw)
-              return <PokemonCard key={pokemon.id} raw={raw} />
-            })}
-          </div>
+          <PokemonCardGrid items={list} parent={parent} />
         </div>
       )
     },
@@ -283,29 +300,6 @@ function makeListPagePartial(page: number) {
         return { page, isFirst: page === 1 }
       },
     },
-  )
-}
-
-function PokemonCard({ raw }: { raw: FragmentOf<typeof PokemonListFields> }) {
-  const pokemon = readFragment(PokemonListFields, raw)
-  const { id, name } = pokemon
-  const types = pokemon.pokemon_v2_pokemontypes.map((t) => t.pokemon_v2_type?.name ?? "")
-  const spriteUrl = extractSprite(pokemon.pokemon_v2_pokemonsprites[0]?.sprites)
-  return (
-    <a
-      href={`/pokemon/${id}`}
-      className="block rounded-xl bg-card p-5 ring-1 ring-border/50 transition-colors hover:bg-muted"
-    >
-      {spriteUrl && <img src={spriteUrl} alt={name} loading="lazy" className="h-24 w-24" />}
-      <h2 className="mt-2 text-lg capitalize">
-        #{id} {name}
-      </h2>
-      <div className="mt-2 flex flex-wrap gap-1">
-        {types.map((t) => (
-          <TypeBadge key={t} type={t || "default"} />
-        ))}
-      </div>
-    </a>
   )
 }
 
@@ -338,12 +332,12 @@ export const PokemonOverviewPage = parton(
         </Frame>
         {ListPagePartials.map((P, i) => {
           const page = i + 1
-          const offset = (page - 1) * PAGE_SIZE
+          const offset = (page - 1) * 24
           return (
             <P
               key={`list-page-${page}`}
               parent={parent}
-              results={pokemonListCell.with({ limit: PAGE_SIZE, offset })}
+              results={pokemonListCell.with({ limit: 24, offset })}
             />
           )
         })}

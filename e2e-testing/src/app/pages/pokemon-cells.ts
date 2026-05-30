@@ -72,10 +72,11 @@ export const pokemonSpeciesCell = pokemon.query(`#graphql
 
 // ─── List + search cells (shared with pokemon.tsx) ─────────────────────
 
-// A composition-only fragment (read via `readFragment` in pokemon.tsx),
-// not an entity cell — so it stays a plain `graphql()` doc and is passed
-// to the queries that spread it.
-export const PokemonListFields = graphql(`
+// The per-card entity cell. Keyed by `id` (default — `id` is selected).
+// Queries that spread `...PokemonListFields` get this cell's BoundCell at
+// each spread site (result → cells), so pokemon.tsx forwards each card to
+// the PokemonCard parton instead of reading a masked fragment.
+export const pokemonCardCell = pokemon.fragment(`#graphql
   fragment PokemonListFields on pokemon_v2_pokemon {
     id
     name
@@ -91,18 +92,18 @@ export const PokemonListFields = graphql(`
 `)
 
 export const pokemonListCell = pokemon.query(
-  `
+  `#graphql
     query PokemonList($limit: Int!, $offset: Int!) {
       pokemon_v2_pokemon(limit: $limit, offset: $offset, order_by: { id: asc }) {
         ...PokemonListFields
       }
     }
   `,
-  [PokemonListFields],
+  [pokemonCardCell],
 )
 
 export const pokemonSearchCell = pokemon.query(
-  `
+  `#graphql
     query PokemonSearch($pattern: String!, $offset: Int!, $limit: Int!) {
       pokemon_v2_pokemon(
         where: { name: { _ilike: $pattern } }
@@ -114,5 +115,5 @@ export const pokemonSearchCell = pokemon.query(
       }
     }
   `,
-  [PokemonListFields],
+  [pokemonCardCell],
 )
