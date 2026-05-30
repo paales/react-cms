@@ -4,7 +4,7 @@ import { client } from "../../magento-data.ts"
 import { graphql } from "../../magento-graphql.ts"
 import { hydrateFragmentsFromResult, readCookie, setCookie } from "@parton/framework"
 import { cartBadgeCell } from "./cart-badge-cell.ts"
-import { cartCell, cartAggregate, CartLineFragment } from "./cart-cells.ts"
+import { cartCell, CartLineFragment } from "./cart-cells.ts"
 
 const CreateEmptyCart = graphql(`
   mutation CreateEmptyCart {
@@ -79,10 +79,9 @@ export async function addToCart(sku: string, quantity: number): Promise<string[]
   // warm storage next time /cart is visited.
   hydrateFragmentsFromResult(AddToCart, data)
 
-  // Write the cart aggregate — fires `cell:magento.cart?cartId=X`,
+  // Write the raw cart into the cart cell — fires `cell:magento.cart?cartId=X`,
   // refreshing any /cart placement currently rendering.
-  const next = cartAggregate(updated)
-  if (next) await cartCell.with({ cartId }).set(next)
+  await cartCell.with({ cartId }).set({ cart: updated })
 
   // Push the updated total into the badge cell — fires
   // `cell:magento.cart-badge?cartId=X`, refreshing the header on any

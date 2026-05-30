@@ -20,13 +20,29 @@
 
 import { parton, type PartialCtx, type RenderArgs, type ResolvedCell } from "@parton/framework"
 import { Card } from "@parton/copies/components/ui/card"
-import {
-  cartCell,
-  cartItemCell,
-  type CartLineValue,
-  type CartValue,
-} from "./cart-cells.ts"
+import { cartCell, cartItemCell, type CartData, type CartLineValue } from "./cart-cells.ts"
 import { CartLineControls } from "./cart-line-controls.tsx"
+
+/** View aggregate derived from the raw cart cell value (app-space — the
+ *  cell stores the raw query result, the view reduces it). */
+type CartView = { itemUids: string[]; grandTotal: number; currency: string }
+
+type CartShape = {
+  items?: ReadonlyArray<{ uid: string } | null> | null
+  prices?: {
+    grand_total?: { value?: number | null; currency?: string | null } | null
+  } | null
+}
+
+function cartAggregate(cart: CartShape | null | undefined): CartView | null {
+  if (!cart) return null
+  const items = (cart.items ?? []).filter((i): i is { uid: string } => i != null)
+  return {
+    itemUids: items.map((i) => i.uid),
+    grandTotal: cart.prices?.grand_total?.value ?? 0,
+    currency: cart.prices?.grand_total?.currency ?? "USD",
+  }
+}
 
 const CartLine = parton(
   function CartLineRender({
@@ -77,8 +93,8 @@ const CartContents = parton(
   function CartContentsRender({
     cart,
     parent,
-  }: { cart: ResolvedCell<CartValue | null> } & RenderArgs) {
-    const v = cart.value
+  }: { cart: ResolvedCell<CartData | null> } & RenderArgs) {
+    const v = cartAggregate(cart.value?.cart)
     if (!v || v.itemUids.length === 0) {
       return (
         <div data-testid="cart-empty" className="rounded border p-6 text-center text-muted-foreground">
@@ -104,12 +120,11 @@ const CartContents = parton(
   },
   {
     selector: "#cart-contents",
-    schema: () => ({ cart: cartCell }),
   },
 )
 
 export const MagentoCartPage = parton(
-  function MagentoCartRender({ parent }: RenderArgs) {
+  function MagentoCartRender({ cartId, parent }: { cartId: string } & RenderArgs) {
     return (
       <main className="py-4 space-y-4">
         <title>Magento cart — cell demo</title>
@@ -119,9 +134,13 @@ export const MagentoCartPage = parton(
           remove a line — only the matching line refetches; other
           lines keep their fp. The cart totals refetch on every change.
         </p>
-        <CartContents parent={parent as PartialCtx} />
+        <CartContents parent={parent as PartialCtx} cart={cartCell.with({ cartId })} />
       </main>
     )
   },
-  { match: "/magento/cart" },
+  {
+    match: "/magento/cart",
+    // cart_id cookie → the cell's `.with({ cartId })` input param.
+    vary: ({ cookies }) => ({ cartId: cookies.cart_id ?? "" }),
+  },
 )

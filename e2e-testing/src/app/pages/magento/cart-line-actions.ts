@@ -19,7 +19,7 @@ import { hydrateFragmentsFromResult, readCookie } from "@parton/framework"
 import { client } from "../../magento-data.ts"
 import { graphql } from "../../magento-graphql.ts"
 import { cartBadgeCell } from "./cart-badge-cell.ts"
-import { cartCell, cartItemCell, cartAggregate, CartLineFragment } from "./cart-cells.ts"
+import { cartCell, cartItemCell, CartLineFragment } from "./cart-cells.ts"
 
 const UpdateCartItemsMutation = graphql(
   `
@@ -91,31 +91,18 @@ export async function updateLineQty(uid: string, quantity: number): Promise<void
   const totalQuantity = items.reduce((sum, i) => sum + i.quantity, 0)
   await cartBadgeCell.with({ cartId }).set({ total_quantity: totalQuantity })
 
-  if (!updatedLine) {
-    // Magento removed the line (qty went to 0). Bump cart so parent
-    // refetches with the shorter item list; free the line's slot.
-    const next = cartAggregate(updated)
-    if (next) await cartCell.with({ cartId }).set(next)
+  if (updatedLine) {
+    // Value-keyed write: `set` reads uid off the line itself, so only the
+    // matching `<CartLine uid={uid}>` placement refetches.
+    await cartItemCell.set(updatedLine)
+  } else {
+    // Magento removed the line (qty went to 0) — free its slot.
     cartItemCell.with({ uid }).hydrate(null)
-    return
   }
 
-  // Value-keyed write: `set` reads uid off the line itself, so only the
-  // matching `<CartLine uid={uid}>` placement refetches. The cart
-  // parton's item list didn't change, so its fp stays put.
-  await cartItemCell.set(updatedLine)
-
-  // Grand total lives on the cart cell. Update it functionally without
-  // touching the item list — the cart parton's fp shifts (totals UI
-  // refetches) but per-line placements that didn't change stay still.
-  await cartCell.with({ cartId }).update((current) => {
-    if (!current) return current
-    return {
-      ...current,
-      grandTotal: updated.prices?.grand_total?.value ?? current.grandTotal,
-      currency: updated.prices?.grand_total?.currency ?? current.currency,
-    }
-  })
+  // Refresh the cart cell with the raw post-mutation cart (totals +
+  // item list); the view re-derives its aggregate from this.
+  await cartCell.with({ cartId }).set({ cart: updated })
 }
 
 export async function removeFromCart(uid: string): Promise<void> {
@@ -133,9 +120,9 @@ export async function removeFromCart(uid: string): Promise<void> {
   const remainingTotalQty = items.reduce((sum, i) => sum + i.quantity, 0)
   await cartBadgeCell.with({ cartId }).set({ total_quantity: remainingTotalQty })
 
-  // Push the new aggregate (shorter item list + new grand total).
-  const next = cartAggregate(updated)
-  if (next) await cartCell.with({ cartId }).set(next)
+  // Refresh the cart cell with the raw post-mutation cart (shorter item
+  // list + new totals); the view re-derives its aggregate.
+  await cartCell.with({ cartId }).set({ cart: updated })
 
   // Free the removed line's storage slot (no signal — its placement is
   // gone from the parent's render now that the uid left the item list).
