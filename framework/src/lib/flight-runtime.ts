@@ -19,6 +19,18 @@
 
 import * as ReactServer from "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge"
 import * as ReactClient from "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge"
+import { reportServerRenderError } from "../runtime/errors.ts"
+
+// `<Cache>` subtrees and remote frames render through this Flight
+// runtime, not the app entry's `renderToReadableStream`. Without an
+// `onError`, a throw inside a cached subtree reaches React with no
+// server-side log and an empty digest — that's the `[ssr] … digest=''`
+// line in production with no real message. Route it through the same
+// reporter the rsc/ssr entry paths use so the real error + stack is
+// logged server-side under a digest.
+function onCacheRenderError(error: unknown): string | undefined {
+  return reportServerRenderError("rsc", error)
+}
 
 const IS_TEST =
   typeof process !== "undefined" &&
@@ -54,8 +66,14 @@ const STUB_SERVER_CONSUMER_MANIFEST = {
 // bakes in the real client-reference manifest. We import it lazily so
 // test-mode module load doesn't trip on its `virtual:` modules.
 
+type FlightRenderOptions = { onError?: (error: unknown) => string | undefined }
+
 type ProdRuntime = {
-  renderToReadableStream: <T>(data: T) => ReadableStream<Uint8Array>
+  renderToReadableStream: <T>(
+    data: T,
+    clientManifest?: unknown,
+    options?: FlightRenderOptions,
+  ) => ReadableStream<Uint8Array>
   createFromReadableStream: <T>(stream: ReadableStream<Uint8Array>) => Promise<T>
 }
 
@@ -77,9 +95,13 @@ async function loadProdRuntime(): Promise<ProdRuntime> {
 
 export function renderToReadableStream<T>(data: T): ReadableStream<Uint8Array> {
   if (IS_TEST) {
-    return ReactServer.renderToReadableStream(data, STUB_CLIENT_MANIFEST)
+    return ReactServer.renderToReadableStream(data, STUB_CLIENT_MANIFEST, {
+      onError: onCacheRenderError,
+    })
   }
-  if (_prodRuntime) return _prodRuntime.renderToReadableStream(data)
+  if (_prodRuntime) {
+    return _prodRuntime.renderToReadableStream(data, undefined, { onError: onCacheRenderError })
+  }
   // Sync caller, async load — kick off the load and stream once it
   // resolves. Vite's plugin-rsc resolves synchronously after first
   // import in practice; subsequent calls hit the cached `_prodRuntime`.
@@ -87,7 +109,9 @@ export function renderToReadableStream<T>(data: T): ReadableStream<Uint8Array> {
     async start(controller) {
       try {
         const runtime = await loadProdRuntime()
-        const stream = runtime.renderToReadableStream(data)
+        const stream = runtime.renderToReadableStream(data, undefined, {
+          onError: onCacheRenderError,
+        })
         const reader = stream.getReader()
         while (true) {
           const { done, value } = await reader.read()
