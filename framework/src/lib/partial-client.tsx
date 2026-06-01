@@ -810,12 +810,12 @@ function applyFpUpdates(updates: Record<string, string>): void {
     // during walk; the next render will re-register).
     const matchKeys = Array.from(inner.keys())
     const latestMk = matchKeys[matchKeys.length - 1]
-    let set = inner.get(latestMk)
-    if (!set) {
-      set = new Set()
-      inner.set(latestMk, set)
-    }
-    set.add(fp)
+    // Route through registerClientPartial so the per-variant fp cap is
+    // enforced. A raw `set.add(fp)` here accumulated one warm fp per
+    // refetch unbounded — a wrapper whose `vary` changes every request
+    // (e.g. the search page wrapper varying on `?q=`) grew its
+    // `?cached=` footprint without limit across a session.
+    registerClientPartial(id, latestMk, fp)
   }
 }
 
@@ -3019,7 +3019,42 @@ export function PartialsClient({ mode = "cache", children }: PartialsClientProps
   cacheFromStreamingChildren(children, cache)
 
   const rendered = renderTemplate(_template, cache)
+
+  // Bound both client maps to what's actually on the page. `rendered`
+  // is the FULL page (template + cache), so `harvestPartialIds` over it
+  // yields every (id, matchKey) currently displayed OR parked (hidden
+  // Activity placeholders are harvested too). Anything in the maps but
+  // not here was superseded — a churned-away instance id (props pass a
+  // new value → new effective id), an evicted variant — and the client
+  // can no longer restore it, so it must stop being advertised in
+  // `?cached=`. Without this, the maps only ever grew on the cache-mode
+  // (in-app refetch) path — the streaming-mode prune above runs only on
+  // a full page load, which never happens mid-session. Identity-method
+  // agnostic: bounds props / vary / cell / match alike, because it
+  // keys on "still in the rendered/parked tree", not on how data is
+  // passed. Un-refetched partials (header, list pages) and live sibling
+  // instances stay — they're present in `rendered`.
+  const live = new Map<string, Set<string>>()
+  harvestPartialIds(rendered, live)
+  pruneToLive(live)
+
   return renderChildren(rendered)
+}
+
+function pruneToLive(live: Map<string, Set<string>>): void {
+  for (const map of [_currentPagePartials, _currentPageFingerprints]) {
+    for (const [id, byMatchKey] of map) {
+      const liveMks = live.get(id)
+      if (!liveMks) {
+        map.delete(id)
+        continue
+      }
+      for (const mk of [...byMatchKey.keys()]) {
+        if (!liveMks.has(mk)) byMatchKey.delete(mk)
+      }
+      if (byMatchKey.size === 0) map.delete(id)
+    }
+  }
 }
 
 /**
