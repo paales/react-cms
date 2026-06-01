@@ -115,12 +115,16 @@ export function reportServerRenderError(
   error: unknown,
 ): string | undefined {
   if (isExpectedRenderError(error)) return undefined
-  const propagated =
-    typeof error === "object" &&
-    error !== null &&
-    typeof (error as { digest?: unknown }).digest === "string"
-      ? (error as { digest: string }).digest
+  // A propagated digest counts only if NON-EMPTY. React stamps some
+  // errors with `digest: ""` (empty) before they reach this phase;
+  // treating that as "already has a digest" forwarded the empty string
+  // AND skipped the re-log — the `digest: ''` with no message. An empty
+  // digest is no digest: mint a real one and log.
+  const incoming =
+    typeof error === "object" && error !== null
+      ? (error as { digest?: unknown }).digest
       : undefined
+  const propagated = typeof incoming === "string" && incoming.length > 0 ? incoming : undefined
   const digest =
     propagated ?? `render-${Date.now().toString(36)}-${(renderErrorSeq++).toString(36)}`
   if (!(phase === "ssr" && propagated)) {
