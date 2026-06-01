@@ -133,7 +133,11 @@ product detail under a constant matchKey — see
 [`partial-client.tsx::cacheStore`](../../framework/src/lib/partial-client.tsx))
 and the next nav can fp-skip against a stale entry while the cache
 slot points at fresh content, surfacing the wrong subtree on
-substitution.
+substitution. The async warm-fp trailer upholds the same invariant by
+aliasing its warm fp onto the slot still holding the matching cold fp
+rather than the latest-rendered one (see *Cold → warm fp drift* below) —
+so a trailer from a query a concurrent refetch already superseded is
+dropped, not mis-attached.
 
 The fp folds in:
 
@@ -215,11 +219,13 @@ different `fp_warm`. Without intervention, the client sends `fp_cold`
 on the next visit, the server computes `fp_warm`, mismatch — and the
 client pays a wasted body re-run.
 
-The **fp-trailer** ships `fp_warm` to the client in the SAME response.
-It rides as an HTML comment after `</html>`:
+The **fp-trailer** ships the cold→warm drift to the client in the SAME
+response. Each entry is a `{from, to}` pair — `from` is the cold fp the
+body emitted, `to` the recomputed warm fp (see `FpUpdate` in
+`fp-trailer-marker.ts`). It rides as an HTML comment after `</html>`:
 
 ```html
-</html><!--fp-trailer:{"magento":"<fp_warm>","magento-header":"<fp_warm>"}-->
+</html><!--fp-trailer:{"magento":{"from":"<fp_cold>","to":"<fp_warm>"}}-->
 ```
 
 The server-side machinery (`wrapSsrStreamWithFpTrailer` in
@@ -230,18 +236,34 @@ The server-side machinery (`wrapSsrStreamWithFpTrailer` in
    re-reads the route's snapshot set from the canonical store and
    recomputes each spec's fp via `recomputeFp` — same formula as the
    render-time path, but against the post-commit snapshot map.
-3. For every spec where `recomputed !== emittedFp`, emits the drift
-   into the trailer JSON. Specs with no descendants (leaves) typically
-   produce no drift; specs with descendants typically do.
+3. For every spec where `recomputed !== emittedFp`, emits
+   `{from: emittedFp, to: recomputed}` into the trailer JSON. Specs
+   with no descendants (leaves) typically produce no drift; specs with
+   descendants typically do.
 
 The client-side `_applyFpTrailerFromDocument` (in
 `framework/src/lib/partial-client.tsx`) scans `document.childNodes` +
-`document.documentElement.childNodes` for the comment, parses the
-JSON, and calls `registerClientPartial` for each entry — adding to
-the Set rather than overwriting, so the client carries BOTH `fp_cold`
-(from PEB hydration) and `fp_warm` (from the trailer). The next nav's
-`?cached=` carries both, and the server's `shouldSkip` matches
-whichever applies.
+`document.documentElement.childNodes` for the comment, parses the JSON,
+and for each entry aliases `to` (warm) onto whichever `(id, matchKey)`
+slot's fp set still holds `from` (cold) — matched by CONTENT, not by
+"most recently rendered". The slot now carries BOTH `fp_cold` (from PEB
+hydration) and `fp_warm` (from the trailer); the next nav's `?cached=`
+carries both and the server's `shouldSkip` matches whichever applies.
+
+Matching by `from` is load-bearing for concurrency. The trailer is
+async — it lands after its response's body has committed. A concurrent
+refetch for a DIFFERENT query against the same stable `(id, matchKey)`
+(e.g. two search queries sharing a vary+cell stage's constant matchKey)
+can overwrite the slot — and clear its fp set — between the body commit
+and the trailer. A "latest matchKey" heuristic would then pin this warm
+fp onto the superseded slot, so `?cached=` would advertise a fingerprint
+whose content the slot no longer holds; a server fp-skip on it restores
+the wrong node. Content-matching drops such a superseded trailer (no
+slot holds `from`), keeping the advertised fp-set in lockstep with the
+node each slot actually holds — the invariant that makes every fp-skip
+safe. This is exactly the search type→backspace stale-result guard in
+`e2e-testing/e2e/search-result-ordering.spec.ts` and the unit
+reproduction in `partial-client-fp-desync.test.tsx`.
 
 Comment-after-`</html>` is parsed late under streaming HTML — by the
 time hydration runs the comment may not yet be in the DOM.

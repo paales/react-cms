@@ -136,7 +136,7 @@ Each segment's bytes look like:
 
 ```
 <flight rows…>
-\xFF[parton:fp:N]\n<N-byte JSON: id→warm_fp>
+\xFF[parton:fp:N]\n<N-byte JSON: id→{from: cold_fp, to: warm_fp}>
 \xFF[parton:url:M]\n<M-byte JSON: {window?, frames?, history?}>
 \xFF[parton:next:0]\n
 <flight rows for next segment…>

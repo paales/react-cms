@@ -40,6 +40,7 @@ import {
   TAG_FP_UPDATES,
   TAG_NEXT_SEGMENT,
   TAG_URL_UPDATE,
+  type FpUpdatesPayload,
 } from "./fp-trailer-marker.ts"
 
 /**
@@ -62,7 +63,7 @@ import {
 function computeFpUpdates(
   snapshots: Map<string, PartialSnapshot>,
   request: Request,
-): Record<string, string> | null {
+): FpUpdatesPayload | null {
   // Per-snapshot side-data we compute once and reuse across folds +
   // own-fp recompute. parsedVaryInputs goes into queryMatchingTs;
   // contribution is the descendant's contribution string the fold
@@ -107,7 +108,7 @@ function computeFpUpdates(
     folds.set(ancestorId, `|desc=${hash(parts.join(","))}`)
   }
 
-  const updates: Record<string, string> = {}
+  const updates: FpUpdatesPayload = {}
   for (const [id, snap] of snapshots) {
     if (!snap.emittedFp) continue
     const side = sideById.get(id)!
@@ -119,7 +120,10 @@ function computeFpUpdates(
       side.selfRequest.url,
     )
     if (recomputed !== snap.emittedFp) {
-      updates[id] = recomputed
+      // `from` is the cold fp the body emitted; `to` the recomputed warm
+      // fp. The client aliases `to` onto the slot still holding `from`,
+      // matched by content — see `FpUpdate` in fp-trailer-marker.ts.
+      updates[id] = { from: snap.emittedFp, to: recomputed }
     }
   }
   if (Object.keys(updates).length === 0) return null
@@ -391,7 +395,7 @@ export function wrapStreamWithFpTrailer(
 
 function emitTrailer(
   controller: TransformStreamDefaultController<Uint8Array>,
-  updates: Record<string, string>,
+  updates: FpUpdatesPayload,
 ): void {
   emitTrailerEntry(controller, TAG_FP_UPDATES, JSON.stringify(updates))
 }

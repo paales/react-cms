@@ -57,6 +57,7 @@ import {
   type ReloadStatus,
 } from "../runtime/navigation-api.ts"
 import { NavigationError, toNavigationError } from "../runtime/navigation-error.ts"
+import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
 
 /**
  * Return true if the node looks like the outermost wrapper a
@@ -785,37 +786,39 @@ export function registerClientPartial(
 
 /**
  * Apply an fp-updates trailer (parsed JSON from the wire) to the
- * client's fingerprint map. Each `id → warm_fp` entry is attached
- * to the most-recently-inserted variant for that id — the trailer
- * fires only for ids whose body the server JUST emitted in this
- * response, so insertion order pins the right variant without
- * having to wire matchKey through the trailer payload.
+ * client's fingerprint map. Each entry is a `{from, to}` cold→warm
+ * pair (see {@link FpUpdate}); `to` is aliased onto whichever
+ * `(id, matchKey)` slot still holds `from`.
  *
  * See `lib/fp-trailer.ts` for the server-side emission, and
- * `lib/fp-trailer-marker.ts` for the wire sentinel.
+ * `lib/fp-trailer-marker.ts` for the wire sentinel + payload shape.
  */
-export function _applyFpUpdates(updates: Record<string, string>): void {
+export function _applyFpUpdates(updates: FpUpdatesPayload): void {
   applyFpUpdates(updates)
 }
 
-function applyFpUpdates(updates: Record<string, string>): void {
-  for (const [id, fp] of Object.entries(updates)) {
+function applyFpUpdates(updates: FpUpdatesPayload): void {
+  for (const [id, { from, to }] of Object.entries(updates)) {
     const inner = _currentPageFingerprints.get(id)
-    if (!inner || inner.size === 0) continue
-    // Pick the most-recently-inserted matchKey — that's the variant
-    // the just-emitted body belongs to. Map iteration is
-    // insertion-ordered, so `Array.from(...keys()).at(-1)` is the
-    // freshest. Trailer is a no-op if the client hasn't registered
-    // any variant for the id yet (e.g. the wrapper was unreachable
-    // during walk; the next render will re-register).
-    const matchKeys = Array.from(inner.keys())
-    const latestMk = matchKeys[matchKeys.length - 1]
-    // Route through registerClientPartial so the per-variant fp cap is
-    // enforced. A raw `set.add(fp)` here accumulated one warm fp per
-    // refetch unbounded — a wrapper whose `vary` changes every request
-    // (e.g. the search page wrapper varying on `?q=`) grew its
-    // `?cached=` footprint without limit across a session.
-    registerClientPartial(id, latestMk, fp)
+    if (!inner) continue
+    // Alias the warm fp `to` onto the variant slot whose set still
+    // holds the cold fp `from` — matched by CONTENT. The trailer is
+    // async: it lands after its response's body committed, by which
+    // point a concurrent refetch for a DIFFERENT query against the same
+    // stable `(id, matchKey)` may have overwritten the slot — and
+    // cleared its fp-set (see `cacheStore`). Anchoring on `from` means
+    // such a superseded trailer finds no slot and is dropped, so the
+    // advertised fp-set stays in lockstep with the node the slot
+    // actually holds — the invariant that makes every server fp-skip
+    // restore the content the server matched it against. `from` folds in
+    // matchKey, so it pins exactly one slot. registerClientPartial
+    // enforces the per-variant fp cap.
+    for (const [mk, set] of inner) {
+      if (set.has(from)) {
+        registerClientPartial(id, mk, to)
+        break
+      }
+    }
   }
 }
 
@@ -853,7 +856,7 @@ function tryApplyTrailerNow(): boolean {
     if (!text.startsWith(tag)) continue
     try {
       const json = text.slice(tag.length).replace(/-\\-/g, "--")
-      const updates = JSON.parse(json) as Record<string, string>
+      const updates = JSON.parse(json) as FpUpdatesPayload
       applyFpUpdates(updates)
       return true
     } catch {

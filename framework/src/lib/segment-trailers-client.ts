@@ -32,6 +32,7 @@
  */
 
 import { _applyFpUpdates, _windowNav } from "./partial-client.tsx"
+import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
 
 interface UrlUpdate {
   window?: string
@@ -44,7 +45,7 @@ export function applyStandardTrailers(trailers: Map<string, Uint8Array>): void {
   const fpBytes = trailers.get("fp")
   if (fpBytes) {
     try {
-      const updates = JSON.parse(decoder.decode(fpBytes)) as Record<string, string>
+      const updates = JSON.parse(decoder.decode(fpBytes)) as FpUpdatesPayload
       _applyFpUpdates(updates)
     } catch {}
   }

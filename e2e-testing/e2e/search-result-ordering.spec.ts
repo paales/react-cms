@@ -15,14 +15,28 @@ import { test, expect, request } from "./fixtures"
  * Typing fires a `.search-results` refetch per keystroke; the stages
  * have artificial 0/1/2s server delays so several refetches overlap.
  *
- * TWO INVARIANTS this file guards:
+ * TWO INVARIANTS this file guards, both upheld:
  *   1. BOUNDED CACHE — `?cached=` must not grow without limit as queries
- *      accumulate. This is FIXED and asserted as a passing test below.
+ *      accumulate. The client commit prunes both client maps to the
+ *      live/parked tree, so superseded entries stop being advertised.
  *   2. RESULT ORDERING — the committed stages must reflect the LATEST
- *      query, never a superseded one whose response landed late. This is
- *      NOT yet fixed; the cases are captured as `test.fixme` so the
- *      suite stays green while pinning the bug for pickup. See the
- *      INVESTIGATION LOG before the fixme block.
+ *      query, never a superseded one whose response landed late.
+ *
+ * The ordering invariant rests on a framework-level fingerprint
+ * invariant: the client only ever advertises a fingerprint in `?cached=`
+ * that it can correctly restore — i.e. the advertised fp-set for a
+ * `(id, matchKey)` slot stays in lockstep with the node the slot holds.
+ * The subtle break this file pins: the warm-fp trailer (an async
+ * cold→warm fp update) used to attach to the "most recently rendered"
+ * matchKey. A trailer from a superseded query landing AFTER a newer
+ * query overwrote a stable slot then advertised that newer slot's fp as
+ * the OLD query's — so a re-typed old query fp-skipped and restored the
+ * newer (stale) node. Fixed by carrying the cold fp in the trailer
+ * (`{from, to}`) and aliasing the warm fp onto the slot still holding
+ * `from`, matched by content; a superseded trailer finds no slot and is
+ * dropped. See `applyFpUpdates` in `partial-client.tsx` and the
+ * deterministic unit reproduction in
+ * `framework/src/lib/__tests__/partial-client-fp-desync.test.tsx`.
  */
 
 test.beforeEach(async ({ baseURL }) => {
@@ -92,83 +106,24 @@ test("?cached= stays bounded across many distinct queries", async ({ page }) => 
   ).toBeLessThanOrEqual(6)
 })
 
-// ─── Invariant 2: result ordering (NOT YET FIXED — see log) ─────────
+// ─── Invariant 2: result ordering ──────────────────────────────────
 //
-// INVESTIGATION LOG (so the next session can resume without redoing it):
+// Both cases exercise the stable-slot fp-skip path: stage-2 (vary+cell)
+// and the `.search-results` wrapper keep a CONSTANT matchKey across
+// queries, so every query shares one cache slot. The danger is a
+// re-typed earlier query (`po`) fp-skipping against a fingerprint the
+// slot no longer backs (`pokem` overwrote it), restoring the stale node.
+// The content-matched warm-fp trailer (see this file's header) keeps the
+// advertised fp-set in lockstep with the slot, so the re-typed query
+// either fp-skips to its OWN content or re-renders fresh — never stale.
 //
-// SYMPTOM: rapid type "pokem" then backspace to "po" sometimes leaves
-// all three stages showing data-q="pokem" (a superseded query) after
-// everything settles, even though the input is "po". Reproduces ~2/2 at
-// 40ms/key in dev; does NOT reproduce at realistic typing speed
-// (150ms/key) with a settle — needs many overlapping in-flight fires
-// against the artificial 1-2s stage delays.
-//
-// CONFIRMED MECHANISM (via response-body + wire inspection):
-//   - The whole-root commit ordering IS correct: a per-fire monotonic
-//     check showed the LAST committed payload is the final `q=po` one
-//     (the page-URL guard + commit order are fine).
-//   - The stale content rides INSIDE that correct `po` commit: the
-//     server fp-SKIPPED the stage (sent a placeholder, no fresh
-//     wrapper), so the client filled it from `_currentPagePartials`,
-//     whose slot for the stable (id,matchKey) held the `pokem` node
-//     (last write wins; same stable identity across queries).
-//   - Root: the cache SLOT (one ReactNode per id×matchKey) and the
-//     advertised FINGERPRINT set desync. The slot ends holding the
-//     `pokem` node while `?cached=` still advertises a `po` fp (an
-//     earlier `po` fire's fp, retained under FP_CAP_PER_VARIANT=4 or
-//     re-added by an async warm-fp trailer). Server matches the `po`
-//     fp → fp-skips → client restores the slot's `pokem` node. The
-//     advertised fp is not atomic with the slot's node.
-//   - NOTE the props stage (stage-1) churns its React id per query, so
-//     on HEAD (all-props search) this stale case does NOT occur — the
-//     id-churn MASKS it by giving each query a distinct subtree. The
-//     stable-identity rework (needed for bounded cache) EXPOSES it.
-//     That's the deliberate trade the project wants: don't mask, fix.
-//
-// WHAT WAS TRIED (and why each was insufficient):
-//   - pageUrlKey() commit guard (LANDED, in entry.browser.tsx): drops a
-//     whole-root commit whose page URL moved on. Necessary (fixes the
-//     escape-during-fetch reopen) but does NOT fix this — the URL churns
-//     back to `?q=po`, so a stale `po`-keyed commit passes, and anyway
-//     the stale content is intra-payload (fp-skip restore), not a wrong
-//     whole-root commit.
-//   - Per-selector monotonic "newest-issued-wins" seq guard (REVERTED):
-//     dropped superseded same-selector commits. Sound in principle but
-//     didn't fix this — the stale node is already in the cache from a
-//     fire that committed while it WAS newest; gating later commits
-//     doesn't evict it, and the fp-skip still restores it.
-//   - Lowering FP_CAP_PER_VARIANT 4→2 (REVERTED): made it WORSE (10/10)
-//     — the cap is load-bearing for the legit cold→warm fp pair; cutting
-//     it broke valid fp-skips.
-//   - Seq-gating the async warm-fp trailer (REVERTED): no effect; the
-//     desync also arises on the synchronous cache-store path.
-//   - Re-running these two cases WITH the per-selector seq guard active
-//     (2nd attempt): the rapid type→backspace case crashed the page
-//     (`Target page … closed`), not just stale data-q — so a superseded
-//     fire's stream is being DECODED (and throwing) even when its commit
-//     is gated. That decode/crash path is upstream of the commit guard
-//     (`createFromReadableStream` / `splitSegments` of a superseded
-//     fire), confirming the ordering fix must also stop superseded fires
-//     from decoding, not just from committing. The bounded-cache test in
-//     this file still PASSED in that run.
-//
-// LIKELY REAL FIX (task #4): make the advertised fingerprint atomic with
-// the slot's node — store the fp WITH the node in `_currentPagePartials`
-// and derive `?cached=` from that single source of truth, so a slot can
-// never advertise a fp that doesn't match the node it currently holds.
-// Then a stale `po` fp can't survive once the slot moves to `pokem`, the
-// server won't fp-skip, and it re-renders fresh.
-//
-// HARNESS NOTE: the dev server is easily overloaded by parallel headless
-// probes (input never hydrates → false "skip"/timeout). Run these
-// single-worker against a freshly-warmed dev server. A route-timing
-// variant (delay the `q=pokem` response past `q=po`) made the page crash
-// into the error boundary on `route.continue()` after a long hold — a
-// SEPARATE fragility (late `.search-results` segment committing into a
-// torn stream) worth its own test once the primary ordering bug is
-// fixed.
+// The first case reproduces via raw timing (rapid keystrokes overlap the
+// 1-2s stage delays); the second forces it deterministically by delaying
+// the `q=pokem` refetch response past `q=po`. Run single-worker — the
+// dev server's real PokeAPI fetches throttle under parallel headless
+// load.
 
-test.fixme(
+test(
   "rapid type→backspace must not leave stages on a superseded query",
   async ({ page }) => {
     await page.goto("/?search=url")
@@ -199,12 +154,12 @@ test.fixme(
   },
 )
 
-test.fixme(
+test(
   "a late superseded query response must not clobber the newer result",
   async ({ page }) => {
-    // Deterministic: delay the long query's response so it lands after
-    // the final one. (Currently also crashes the page into the error
-    // boundary — see HARNESS NOTE — so this pins two issues at once.)
+    // Deterministic: delay the `q=pokem` refetch response so it lands
+    // after the final `q=po` one — forcing the late-superseded commit
+    // the rapid-timing case hits only by luck.
     await page.route(/_\.rsc\?.*partials=search-results/, async (route) => {
       if (new URL(route.request().url()).searchParams.get("q") === "pokem") {
         await new Promise((r) => setTimeout(r, 2500))

@@ -122,6 +122,34 @@ export const TAG_FP_UPDATES = "fp"
 export const TAG_URL_UPDATE = "url"
 export const TAG_NEXT_SEGMENT = "next"
 
+/**
+ * Body shape of an `fp` trailer entry (JSON). Maps each spec id whose
+ * fingerprint drifted cold→warm this render to that pair:
+ *
+ *   - `from` — the COLD fp the spec's body actually emitted. Identifies
+ *     WHICH cached node the warm fp belongs to: the client aliases `to`
+ *     onto whichever `(id, matchKey)` slot still holds `from`, matched
+ *     by content rather than by "most recently rendered".
+ *   - `to`   — the WARM fp the server recomputes once descendants have
+ *     registered (the value the next `?cached=` should carry).
+ *
+ * Carrying `from` (not just `to`) is what keeps the advertised fp-set in
+ * lockstep with the slot's node: a trailer is async, so a concurrent
+ * refetch for a different query against the same stable slot can
+ * overwrite — and clear — the slot between this response's body commit
+ * and its trailer. Matching by `from` means such a superseded trailer
+ * finds no slot and is dropped, so the client never advertises a
+ * fingerprint it can no longer correctly restore. See `applyFpUpdates`
+ * in `partial-client.tsx` (client) and `computeFpUpdates` in
+ * `fp-trailer.ts` (server).
+ */
+export interface FpUpdate {
+  from: string
+  to: string
+}
+
+export type FpUpdatesPayload = Record<string, FpUpdate>
+
 /** Backward-compat alias the legacy `wrapStreamWithFpTrailer` caller
  *  used to build its sole trailer entry. Kept around for any out-of-
  *  tree code that imported the constant directly; new code should use
