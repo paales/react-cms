@@ -322,6 +322,59 @@ Frame handles also write to `document.cookie` — a global write, the
 same any other handle would do. There is no per-frame cookie scope
 today.
 
+### Preload — warm a destination before the click
+
+`useNavigation().preload(target)` warms a destination's partials into
+the client cache **without navigating** — the forward-looking
+counterpart to keepalive. Keepalive parks the subtree you just left so
+going back is instant; `preload` warms the subtree you're about to reach
+so going forward is instant. Same machinery (the partial cache +
+fp-skip), pointed forward in time.
+
+Unlike `reload` / `navigate`, `preload` is a **plain imperative
+method**, not a hook — call it from an event handler (typically
+pointer-enter on a link):
+
+```tsx
+const nav = useNavigation()
+<a href={href} onPointerEnter={() => void nav.preload(href)}>{label}</a>
+```
+
+It issues a read-only RSC GET for `target` carrying the client's current
+`?cached=` set, then walks the response into the client partial cache —
+populating the subtrees and the fingerprints that `?cached=` advertises.
+It does **not** commit: no visible swap, no URL / history change,
+nothing mounts, no effects run (a GET render mutates no server state
+either). Because it sends `?cached=`, the warm render fp-skips shared
+chrome (nav, layout) and parked off-route partials — only the
+destination-specific partials come back fresh and land in the cache.
+
+The click stays an ordinary navigation that **always revalidates**
+against the server — it just starts warm: the warmed partials fp-skip,
+`renderTemplate` substitutes them from cache on the first commit, and
+only genuine deltas stream. Nothing about the click path changes;
+`preload` only fills the cache ahead of it.
+
+- **Coalescing.** At most one preload is in flight per page — a newer
+  `preload()` aborts the prior one, so sweeping the pointer across a nav
+  bar doesn't pile up live fetches.
+- **Best-effort.** Failures are swallowed; a dropped warm just means the
+  next navigation pays full freight. Fire-and-forget — the returned
+  promise settles when warming finishes, but callers normally ignore it.
+- **Window-scoped today.** A frame handle's `preload` is a no-op
+  (warming a frame's destination would need the
+  `?__frame=&__frameUrl=` round-trip; deferred until a caller needs it).
+
+> Browser-native prefetch (the **Speculation Rules API**) is not a
+> substitute here. It operates on cross-document (MPA) navigations and
+> is bypassed by same-document `intercept()` — the mode every parton
+> `<Link>` uses — so it never warms the client RSC cache: an activated
+> prerender is a cold parton boot, and a prefetch warms the document
+> HTTP entry, not the `?cached=` RSC request. `preload` is the
+> parton-native path. Speculation Rules stays a complementary
+> cross-document enhancement (cold first paint, cross-origin links) —
+> see `docs/notes/IDEAS.md`.
+
 ## Frame URL on the wire
 
 ```

@@ -70,6 +70,34 @@ returning raw children. Matching shapes there keep the partials
 [`streaming.md`](./streaming.md) and `PartialsClient` in
 `partial-client.tsx`.
 
+## Preload (warm-only client commit)
+
+`useNavigation().preload(target)` (see
+[`frames-navigation.md`](../reference/frames-navigation.md) §Preload)
+adds **no server mode**. Its server render is an ordinary
+**streaming-mode** render of the destination URL, issued with the
+client's current `?cached=` set — so shared chrome and parked off-route
+partials fp-skip and only the destination-specific partials come down
+fresh.
+
+What's new is a **third client commit path** alongside streaming and
+cache mode. The browser entry decodes the preload response and hands
+each payload to `_warmCacheFromPayload`, which runs the same cache walk
+(`cacheFromStreamingChildren`) the streaming-mode commit uses — filling
+`_currentPagePartials` (subtrees) and `_currentPageFingerprints` (the fp
+set `?cached=` advertises) — but **without** `setPayload`, without
+deriving a `_template`, and without touching the visible tree. Nothing
+mounts; no effects run. A later navigation to the destination then
+fp-skips the warmed partials (their fps are now in `?cached=`) and
+`renderTemplate` substitutes them from cache on the first commit, while
+the nav revalidates against the server as usual.
+
+Once warmed, the destination's ids ride in `?cached=` on every
+subsequent request, so the cross-route keepalive path emits hidden
+`<Activity>` placeholders for them on the current page's next render
+(e.g. the heartbeat) — the preloaded subtree pre-mounts (DOM present,
+effects deferred) ahead of the click, for free.
+
 ## Snapshot shape
 
 ```ts

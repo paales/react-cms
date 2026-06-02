@@ -16,6 +16,7 @@ import {
   _collectFramePaths,
   _dispatchFrameRefetch,
   _readFramesSnapshot,
+  _warmCacheFromPayload,
   getCachedPartialIds,
   isFrameworkSilentInfo,
 } from "@parton/framework/lib/partial-client.tsx"
@@ -266,6 +267,54 @@ async function main() {
     return { streaming, finished }
   }
 
+  /**
+   * Preload transport: warm a destination's partials into the client
+   * cache WITHOUT committing. Mirrors `fetchRscPayload`'s fetch +
+   * segmented decode, but instead of `setPayload` it walks each decoded
+   * payload into `_currentPagePartials` / `_currentPageFingerprints`
+   * via `_warmCacheFromPayload`. Nothing renders; the current page is
+   * untouched. A later navigation to this URL fp-skips the warmed
+   * partials and substitutes them from cache instantly.
+   *
+   * Sends `?cached=` (current client fps) so the warm render fp-skips
+   * shared chrome and parked off-route partials — only the
+   * destination-specific partials come back fresh and land in the cache.
+   */
+  async function warmRscPayload(overrideUrl: string, signal?: AbortSignal): Promise<void> {
+    const url = new URL(overrideUrl, window.location.origin)
+    // Hovering a link to the page you're already on warms nothing new.
+    if (pageUrlKey(url.href) === pageUrlKey()) return
+    if (!url.searchParams.has("cached")) {
+      const cachedIds = getCachedPartialIds()
+      if (cachedIds.length > 0) url.searchParams.set("cached", cachedIds.join(","))
+    }
+    const renderRequest = createRscRenderRequest(url.toString())
+    let response: Response
+    try {
+      response = await fetch(renderRequest)
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return
+      throw new NavigationError({ kind: "network", url: renderRequest.url, cause: err })
+    }
+    if (!response.ok || !response.body) {
+      throw new NavigationError({
+        kind: "http",
+        url: renderRequest.url,
+        status: response.status,
+      })
+    }
+    // Same segmented-Flight decode as the nav path. Each segment's tree
+    // is walked into the cache; trailers (cold→warm fp drift) are applied
+    // so the warmed fps match what a later nav will compute. The signal
+    // aborts cooperatively at a segment boundary (via `splitSegments`),
+    // so a superseding preload tears this one down cleanly.
+    for await (const segment of splitSegments(response.body, signal)) {
+      const payload = await createFromReadableStream<RscPayload>(segment.body)
+      _warmCacheFromPayload(payload.root)
+      segment.trailers.then(applyStandardTrailers).catch(() => {})
+    }
+  }
+
   // Navigation handles (useNavigation / frame) dispatch targeted
   // refetches by calling this handler with a fully-formed URL.
   // Exposed on `window` directly to avoid module-instance duplication
@@ -275,6 +324,11 @@ async function main() {
     url: string,
     signal?: AbortSignal,
   ) => fetchRscPayload(url, signal)
+  // Preload counterpart: warm-only, no commit. See `warmRscPayload`.
+  ;(window as any).__rsc_partial_preload = (
+    url: string,
+    signal?: AbortSignal,
+  ) => warmRscPayload(url, signal)
 
   setServerCallback(async (id, args) => {
     const temporaryReferences = createTemporaryReferenceSet()

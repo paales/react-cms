@@ -19,12 +19,20 @@ export function NavLinkActive({
   label: string
   className?: string
 }) {
-  const { currentEntry } = useNavigation()
+  const nav = useNavigation()
+  const { currentEntry } = nav
   const active =
     currentEntry?.url != null && isActivePath(new URL(currentEntry.url).pathname, href)
   return (
     <a
       href={href}
+      // Hover-eager preload: warm the destination's partials into the
+      // client cache before the click. The click is still an ordinary
+      // navigation that revalidates against the server — it just starts
+      // warm, so the fp-skipped partials substitute from cache instantly.
+      onPointerEnter={() => {
+        void nav.preload(href)
+      }}
       className={active ? `${className ?? ""} bg-accent text-accent-foreground`.trim() : className}
       aria-current={active ? "page" : undefined}
       data-active={active ? "" : undefined}

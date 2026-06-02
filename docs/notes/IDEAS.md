@@ -155,46 +155,50 @@ Open questions:
   rows; if no, stale snapshots accumulate. Probably: deactivation
   freezes the snapshot, reactivation runs `vary` fresh.
 
-### Speculation Rules API for partial prefetch
+### Speculation Rules API — cross-document prefetch complement
 
-Browsers now ship the [Speculation Rules API][spec-rules] — declarative,
-JSON-config-driven prerender/prefetch of same-origin URLs, with CSS
-selector matching and eagerness hints (`conservative` / `moderate` /
-`eager`). The framework already has the right wire shape: targeted
-refetches are GET requests at `?partials=#id&cached=…`, so a
-speculation rule that fires on hover/mousedown can warm exactly the
-partial bytes the user is about to need — without a client event
-handler, because Speculation Rules matches CSS selectors natively.
+**Shipped — the in-app path.** `useNavigation().preload(target)` warms a
+destination's partials into the client RSC cache on hover: a
+same-document, warm-only GET (`?cached=`) walked into
+`_currentPagePartials` without committing, so the subsequent click
+fp-skips and substitutes from cache. See
+[`../reference/frames-navigation.md`](../reference/frames-navigation.md)
+§Preload and
+[`../internals/render-pipeline.md`](../internals/render-pipeline.md)
+§"Preload (warm-only client commit)". That covers the common case (hover
+a `<Link>`, arrive warm) entirely in framework JS.
 
-Research spike before designing a surface. Open questions:
+What it does NOT cover is the **cross-document** case — the only thing
+the [Speculation Rules API][spec-rules] can help with, and the two don't
+overlap:
 
-- **Per-spec rules from the server.** Authors declare prefetch intent
-  on the spec (`prefetch: { on: "hover" }`); the framework emits a
-  `<script type="speculationrules">` block targeting the selectors
-  that resolve to that spec. Composes with `match` patterns — same
-  shape works for full-page nav (`<Link>`) and partial refetch.
-- **Prerender vs prefetch.** Prefetch (just bytes) is safe; prerender
-  (full hidden render) executes RSC actions if any fire on mount,
-  can mutate session cookies, can write to the frame URL store.
-  Need a policy — probably "prefetch by default, opt in to prerender."
-- **Cache priming.** A speculation-rules prefetch lands in HTTP cache,
-  not in client-side `_cache`. To get instant-paint behaviour the
-  client needs to also seed `_cache` from the prefetched response —
-  may want a `?primeCache=1` flag the server echoes back, or a
-  Service Worker pulling it in.
-- **Hover-without-JS.** Speculation Rules can fire on `:hover` /
-  `:active` selectors with zero client JS. This is the differentiator
-  vs an Inertia-style `<Link prefetch>` wrapper that pairs a client
-  event handler with `useNavigation().reload`.
-- **Eagerness budget + safety.** Browsers cap concurrent speculations
-  and self-throttle. Framework should probably emit `eagerness:
-  "moderate"` by default and let authors override per spec; also
-  document the rules around side-effecting GETs (none today, but a
-  future "log this view" action would be problematic on prerender).
-- **Composes with `defer`.** A deferred partial that activates on
-  `<WhenVisible>` could ALSO have a speculation-prefetch rule that
-  fires before the viewport intersection, so the activation hit is
-  cache-warm.
+- Speculation Rules acts on cross-document (MPA) navigations: `prerender`
+  loads a whole document into a hidden tab; `prefetch` warms the
+  document's HTTP-cache entry.
+- Parton `<Link>`s are **same-document** — they `intercept()` the nav
+  and issue an RSC `?cached=` GET. `intercept()` only applies to
+  same-document navigations, so a speculation never fires for an
+  intercepted link; and even when one does fire (a nav parton doesn't
+  intercept), an activated prerender is a *cold* parton boot (fresh
+  `_currentPagePartials`) and a prefetch warms the *document* entry, not
+  the RSC request. So Speculation Rules can't warm the client RSC cache
+  — that's exactly the gap `preload` fills.
+
+Where it still adds value (research spike, lower priority now the in-app
+path ships): genuinely cross-document entry points — cold first paint of
+a deep link, cross-origin links, a hard-nav fallback before JS boots.
+Open questions for that surface:
+
+- **Per-link rules from the server.** Emit a
+  `<script type="speculationrules">` block (prefetch by default; opt in
+  to prerender, which executes RSC actions / can mutate session). Borrow
+  the `eagerness` model (`moderate` default) and the
+  `Sec-Speculation-Tags` header for server-side attribution.
+- **Hover-without-JS.** Speculation Rules fire on `:hover` selectors
+  with zero client JS — the one thing `preload`'s pointer-enter handler
+  can't do (it needs hydration). Useful for the pre-hydration window.
+- **Composes with `defer`.** A `<WhenVisible>` partial could carry a
+  prefetch rule firing before the intersection, so activation is warm.
 
 [spec-rules]: https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API
 

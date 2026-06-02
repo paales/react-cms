@@ -916,6 +916,27 @@ export function getCachedPartialIds(): string[] {
   return out
 }
 
+/**
+ * Warm the client partial cache from a decoded preload payload WITHOUT
+ * committing it to the React root. Walks the tree exactly like the
+ * streaming-mode commit's cache step (`cacheFromStreamingChildren`):
+ * each partial wrapper's subtree lands in `_currentPagePartials` and
+ * its fingerprint in `_currentPageFingerprints`, while placeholders
+ * (the server's fp-skips for partials the client already holds) are
+ * left untouched. The destination's partials are now cached, so a later
+ * navigation to it fp-skips them and `renderTemplate` substitutes them
+ * from cache on the first commit. Nothing mounts and `_template` is
+ * untouched — the current page keeps rendering until the user actually
+ * navigates.
+ *
+ * Called by the browser entry's preload transport
+ * (`window.__rsc_partial_preload`), once per decoded segment. Pairs
+ * with `useNavigation().preload(target)`.
+ */
+export function _warmCacheFromPayload(node: ReactNode): void {
+  cacheFromStreamingChildren(node, _currentPagePartials)
+}
+
 // ─── Framework-internal navigation info ───────────────────────────
 //
 // The Navigation API's `info` option is a one-shot payload delivered
@@ -2595,12 +2616,72 @@ function attachMilestoneWatchers(
   milestones.finished.then(onSuccess("finished"), onRejection)
 }
 
+// ─── Preload (warm-only fetch, no commit) ─────────────────────────
+//
+// `useNavigation().preload(target)` warms a destination's partials into
+// the client cache without navigating. The browser entry's
+// `__rsc_partial_preload` transport fetches `target` as a read-only
+// render and walks the response into `_currentPagePartials` /
+// `_currentPageFingerprints` (via `_warmCacheFromPayload`), with NO
+// `setPayload`. Nothing mounts, no effects run, the URL is untouched.
+// A later navigation to `target` then fp-skips the warmed partials and
+// `renderTemplate` substitutes them from cache on the first commit
+// while the fresh render revalidates in the background.
+
+/** At most one preload is in flight at a time. A newer `preload()`
+ *  aborts the prior one so a pointer sweeping across a nav bar doesn't
+ *  leave a trail of live warm-fetches. Immediate abort is safe — a
+ *  preload never commits to the React root, so cancelling mid-decode
+ *  just stops the warm and discards partial bytes. */
+let _preloadController: AbortController | null = null
+
+function doPreload(target: NavigateTarget, frameName: string | null): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve()
+  const handler = (
+    window as Window & {
+      __rsc_partial_preload?: (url: string, signal?: AbortSignal) => Promise<void>
+    }
+  ).__rsc_partial_preload
+  if (!handler) return Promise.resolve()
+  // Window-scoped only today: a frame handle's preload is a no-op.
+  // Warming a frame's destination would need the `?__frame=&__frameUrl=`
+  // round-trip; deferred until a caller needs it. preload is a
+  // best-effort hint, so an unsupported scope degrades silently rather
+  // than throwing into an event handler.
+  if (frameName !== null) return Promise.resolve()
+  let url: string
+  try {
+    url = resolveWindowTarget(target)
+  } catch {
+    return Promise.resolve()
+  }
+  // Coalesce: a newer preload supersedes any still in flight, so a
+  // pointer sweeping across a nav bar doesn't pile up live fetches.
+  // Immediate abort is safe — a preload never commits to the React
+  // root; cancelling mid-decode just discards partial bytes. The warm
+  // walk is per-partial atomic (each wrapper's `cacheStore` +
+  // `registerClientPartial` run together), so a navigation reading the
+  // maps concurrently always sees whole entries, never a torn one —
+  // hover-then-immediately-click stays correct without special-casing.
+  if (_preloadController) _preloadController.abort()
+  const controller = new AbortController()
+  _preloadController = controller
+  return handler(url, controller.signal)
+    .catch(() => {
+      // preload is a hint — failures (network / decode / supersede) are
+      // swallowed; the next navigation just pays full freight.
+    })
+    .finally(() => {
+      if (_preloadController === controller) _preloadController = null
+    })
+}
+
 /**
  * Wrap an imperative handle so its `reload` / `navigate` properties
- * are hooks returning the `[fire, progress]` tuple. Every other
- * property passes straight through to the imperative handle (which
- * itself is a Proxy over `window.navigation` — see
- * `buildWindowNavigationHandle`).
+ * are hooks returning the `[fire, progress]` tuple, and `preload` is a
+ * plain imperative method. Every other property passes straight through
+ * to the imperative handle (which itself is a Proxy over
+ * `window.navigation` — see `buildWindowNavigationHandle`).
  *
  * The returned wrapper is itself a Proxy; `useNavigation()` memoizes
  * one of these per resolved frame path so effects with the handle in
@@ -2617,6 +2698,15 @@ function wrapWithHooks(imperative: ImperativeNavigation): FrameworkNavigation {
       if (prop === "navigate") {
         return function navigate(): NavigateStatus {
           return useNavigateHook(target as ImperativeNavigation)
+        }
+      }
+      if (prop === "preload") {
+        // `preload` is NOT a hook — it returns the imperative warm fn
+        // directly, callable from an event handler. Scope (window vs
+        // frame) comes off the underlying handle's `name`.
+        const frameName = (target as ImperativeNavigation).name
+        return function preload(navTarget: NavigateTarget): Promise<void> {
+          return doPreload(navTarget, frameName)
         }
       }
       return Reflect.get(target, prop, receiver)

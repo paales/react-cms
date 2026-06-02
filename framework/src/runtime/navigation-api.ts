@@ -323,6 +323,28 @@ export interface FrameworkNavigation extends Omit<
   readonly name: string | null
   navigate(): NavigateStatus
   reload(): ReloadStatus
+  /**
+   * Warm a destination's partials into the client cache without
+   * navigating — the forward-looking counterpart to keepalive
+   * (keepalive parks what you left; preload parks what you're about to
+   * reach). Unlike `navigate` / `reload`, `preload` is a plain
+   * imperative method, not a hook: call it from an event handler —
+   * typically pointer-enter on a link. It fetches `target` as a
+   * read-only render and walks the response into the client cache; it
+   * does NOT commit (no visible swap, no URL / history change, nothing
+   * mounts, no effects run). A later navigation to `target` then
+   * fp-skips the warmed partials and substitutes them from cache on the
+   * first commit while the fresh render revalidates — the
+   * always-revalidate-on-click path is unchanged, it just starts warm.
+   *
+   * At most one preload is in flight per page: a newer `preload()`
+   * aborts the prior one, so sweeping the pointer across a nav bar
+   * doesn't pile up live fetches. Window-scoped only today — a frame
+   * handle's `preload` is a no-op. Returns a promise that settles when
+   * warming finishes; failures are swallowed (preload is a hint), so
+   * callers fire-and-forget.
+   */
+  preload(target: NavigateTarget): Promise<void>
 }
 
 // ─── ImperativeNavigation (internal, non-React call sites) ────────
