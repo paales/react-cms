@@ -2,9 +2,12 @@
 
 A **frame** is a server-iframe — a region of the page whose URL
 scope is independent of the window URL. Wrap a subtree in `<Frame
-name initialUrl>` to open a frame scope. Partials inside see the
-frame-resolved request via their normal `vary` (the framework
-swaps the request URL via the ambient frame chain).
+name initialUrl>` to open a frame scope. Partials inside resolve
+against the frame URL — both `match` and `vary` see the frame-resolved
+request (the framework swaps the request URL via the ambient frame
+chain). So a framed spec routes *and* keys on its frame's URL, not the
+page's: `match: "/cart/open"` placed in a cart frame gates on the
+frame, exactly like `vary` reading the frame's `pathname`.
 
 ```tsx
 const CartContent = parton(CartContentRender, {
