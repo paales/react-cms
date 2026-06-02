@@ -182,6 +182,32 @@
             ]
           },
           {
+            "id": "app-nav-link-deferred-demo",
+            "type": "nav-link",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "href": "/deferred-demo",
+                  "label": "Deferred Demo"
+                }
+              }
+            ]
+          },
+          {
+            "id": "app-nav-link-cursors",
+            "type": "nav-link",
+            "configs": [
+              {
+                "match": {},
+                "fields": {
+                  "href": "/cursors",
+                  "label": "Cursors"
+                }
+              }
+            ]
+          },
+          {
             "id": "app-nav-link-forms-demo",
             "type": "nav-link",
             "configs": [
