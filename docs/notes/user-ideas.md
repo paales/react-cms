@@ -2,8 +2,6 @@
 
 - [ ] A <Frame /> is the encapsulated page with it's own URL, what if nothing matches, shoudl a frame automatically be a route matcher as well that can iterate, interally rewrite, redirect or be a 404?
 
-- [ ] A currently fictional 'client driven mode' allows us to send much more information to the server based on the browser context they are in; So for example we'd build a MediaQuery component that shows content conditionally based on the browsers viewport we could upgrade this component on the next fetch to not even return it.
-
 - [ ] What happens when client side context changes frequently, like multiple times a second, a new request doesn't make sense, should the server accepts streams of updates, like how a mouse cursor moves, it isn't much data, but it does become complicated how the streaming back should happen at the other side and I feel like the currently streaming chat doesn't properly handle the real streaming case properly. Since the response is multipart, can't we restart the stream when we're done with a new payload and split up the stream as separate updates? That would allow us to reallly stream, but what would happen op the server, how would the server know go to 'go again' instead of finishing the request? What is the server side event emitter or the event source that is streamed to completion? How woudl that event stream re-stream once it has reached the end? So the idea basically would be to split the stream on a special marker and split the stream on the client and do setPayload with each individual stream. Streaming to the server feels odd, we are streaming RSC down, but state up, maybe that is correct but does feel asymmetric?
 
 - [ ] In a multiplayer game what is actually send to the server and what state is returned, the DOM can be thought of the positions of other entities in a game, streamed over the network. Client components are the local bit. This loop is quick and streaming both directions simultaneously we should dig into multiple streams happening at the same time.
@@ -21,26 +19,3 @@
 - [ ] So the page template editor ALSO can be the content of a wysiwyg editor, we don't want to build a wysiwyg editor, but there is overlap. In Shopify for example you quickly need to create separate blog templates to do something special because the wysiwyg editor doesn't give you enough leverage. Sooo, the block editor should be able to do recursive block editors? Where a template nests in another template?
 
 - [ ] Enable React.StrictMode always? Or why not?
-
-- [x] Have better sugar for this so we have a flat hook, and should we be able to resolve the loading state of in the actual component itsself? **Done** — `useNavigation().reload()` / `.navigate()` return `[fire, progress]` tuples where `progress` is a `{ committed, streaming, finished }` triple of booleans, and the fire returns `NavigationMilestones` (three promises) synchronously. Errors bubble through `<NavigationErrorBubbler>` only — no third tuple slot. Selector refetches join a per-selector in-flight queue with deferred abort (older fires keep streaming into their Suspense boundaries until the newer fire's first segment lands). See `docs/reference/frames-navigation.md` §Navigation.
-
-```tsx
-// Tuple: [fire, progress]; fire returns sync milestones object.
-const [reload, { committed, finished }] = useNavigation().reload()
-
-return (
-  <Button onClick={() => reload({ selector: ".price" })} disabled={committed && !finished}>
-    Refresh all prices
-  </Button>
-)
-```
-
-- [ ] Wrap fetch and then hoist all queries that are pure based on vary into a preload step so we can start of N+1 queries. Sooo, how can we make this pure? How can we survive 3 layers of indirection and still detect it correctly? Should the preload be explicit?
-
-- [ ] Create a prefetch primitive that allows us to prefetch partials with <Activity mode="hidden"> and place them in the DOM without any effects being run.
-
-- [ ] "Can you investigate the codebase deeply and after that I'd like to talk about tensions of multi frameworks that a shopify uses (liquid+react checkout/account), hyva alpine catalogs + checkout. Magento Luma server rendered + client side layered + layout checkout variable. admin html xml componetns, etc. All projects seem to abandon their base frameworks to go with a more advanced frameworks."
-
-- [ ] If we can stream cache, we have a clear ALS boundary location that can we can use to pass 'context' down? That would mean we could automatically pass the parent={} down without the manual wiring? That would effectively let parton always use the same code path as the cache path?
-
-- [ ] The /cache-page uses the refetch with props but let us consider if this feature shouldn't just be replaced by using a correctly scoped cell?
