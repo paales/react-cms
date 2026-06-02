@@ -85,32 +85,40 @@ interface TimeScope {
 ## Cache key
 
 ```ts
-key = hash([
-  spec.id,
-  structuralFingerprint,    // function-ref-derived shape salt
-  innerPartialIds.sorted,   // Partials nested inside the cached subtree
-  spec.varyResult,          // the dependency surface declared by `vary`,
-                            // minus stripped `expiresAt` / `staleUntil`
-])
+key = `${spec.id}:${structuralFingerprint}:${hash([spec.varyResult])}`
 ```
 
-The cache key surface is `vary`'s return value (minus the reserved
-keys). Whatever `vary` returns IS what the cache keys on.
+`structuralFingerprint` already folds `vary`, schema reads, call-site
+props, invalidation bumps, and the descendant fold — so it moves
+whenever any of those change (including an inner partial added or
+removed). The trailing `varyResult` hash is a stable, legible axis on
+top of that. `expiresAt` / `staleUntil` are stripped from `vary`'s
+return before it reaches the fingerprint, so a per-millisecond wake
+hint never shifts the key.
 
 ## Composition with inner partials
 
 A cached spec may contain other specs in its rendered output. Those
-inner partials must stay live across cache hits — refetching them
-shouldn't have to wait for the outer spec's TTL.
+inner partials stay live across cache hits — they re-render fresh per
+request, and refetching them never waits for the outer spec's TTL.
 
-`<Cache>` (an internal wrapper applied when `cache` is set):
+This happens at the Flight **wire** level, never by decoding the
+cached bytes to a tree (which would force every Suspense boundary to
+resolve). `<Cache>` (internal, applied when `cache` is set):
 
-1. Walks the rendered tree, replaces every `PartialBoundary` with a
-   `<i hidden data-partial>` placeholder.
-2. Stores the placeholder-bearing tree as Flight bytes.
-3. On hit: decodes the cached bytes, re-injects current live
-   `PartialBoundary` elements at each placeholder. Inner partials
-   render through their normal pipeline (vary, fingerprint, skip).
+1. **On store:** strips every inner-parton boundary in the rendered
+   bytes to an `<i hidden data-partial-id>` placeholder row and drops
+   the content it referenced — the stored payload is the lean
+   scaffolding.
+2. **On hit:** streams the scaffolding back row by row and, at each
+   placeholder, splices a freshly-rendered parton (renumbered so the
+   parent's reference resolves to it). The inner parton's own Suspense
+   streams as its bytes arrive — the cached frame is byte-replayed
+   while its holes render live.
+
+A region with no inner partials strips to zero holes and replays as a
+pure byte passthrough — same path, streaming intact. See
+[`docs/internals/cache-internals.md`](../internals/cache-internals.md).
 
 ## Stale-while-revalidate
 

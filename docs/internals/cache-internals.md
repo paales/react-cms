@@ -4,68 +4,104 @@
 in its options. It sits between the spec's body and the rendered
 output; authors don't render it directly.
 
-## Auto-detect: streaming vs dynamic-refresh
+## One path: strip on store, splice on hit
 
-Cached subtrees compose with inner partons OR stream — pick one,
-and the cache picks automatically. The storage branch always
-decodes the just-rendered tree and walks it for dynamic-wrapper
-elements (PartialBoundary instances the framework emitted around
-inner partons). The walk's result drives the path:
+A cached region is stored once and replayed once — there is no
+"streaming vs dynamic" mode choice. The mechanism is byte-level, in
+`framework/src/lib/flight-graph.ts`, and never decodes the cached
+bytes to a React tree (which would force every Suspense boundary to
+resolve — the flatten):
 
-- **No dynamic wrappers found** → **streaming-preservation path**.
-  Store the raw user-branch bytes verbatim. They retain Flight's
-  natural Suspense pacing. On hit, the bytes feed the decoder
-  through `flight-rewrite.ts`'s passthrough rewriter; inner
-  Suspense boundaries stay lazy and resolve as bytes arrive. The
-  outer Flight encoder sees them as suspended subtrees and streams
-  them to the client incrementally.
+- **Store (miss).** Render the body to Flight bytes, then
+  `stripHoles`: find every inner-parton boundary, replace it with an
+  `<i hidden data-partial-id>` placeholder row, and GC the content it
+  referenced. The stored payload is the lean, stable scaffolding.
+- **Hit.** `spliceHoles` streams the stored scaffolding back row by
+  row and, at each placeholder, splices a freshly-rendered parton —
+  renumbered into a private id block (its root takes the placeholder's
+  seam id, so the parent's `$L` reference resolves to the fresh
+  render) and deduped against the scaffold's client-module / symbol
+  rows. The fresh render's own Suspense streams as its bytes arrive.
 
-- **Dynamic wrappers present** → **dynamic-refresh path**. Strip
-  + re-encode like before. Each wrapper becomes a placeholder in
-  the stored bytes; on hit, `reinjectDynamic` substitutes a fresh
-  `<Component>` JSX call at each placeholder so the inner parton
-  re-renders per request. Trade-off accepted: re-encoding flattens
-  Suspense structure inside the cached region. Regions with inner
-  partons typically have no internal streaming worth preserving
-  (e.g. a product grid resolved from one async query; pricing
-  inside is the dynamic bit kept live).
+A region with no inner partons strips to zero holes, and `spliceHoles`
+degenerates to passing the stored bytes straight through — the
+streaming-preservation case, same path. So the cached frame is always
+byte-replayed (Suspense pacing intact) while any dynamic holes inside
+it re-render live per request.
 
-The streaming-preservation path was introduced together with
-`<RemoteFrame>` (both consumers of `flight-rewrite.ts`); the
-`/cache-streaming-demo` page validates it end-to-end.
+Both the cache and `<RemoteFrame>` stitch at the wire level;
+`flight-graph.ts` is the cache's row-graph layer, `flight-rewrite.ts`
+the shared line-level one. `/cache-streaming-demo` exercises the
+no-hole streaming replay; `/magento` (`#products` cached, per-card
+`.price` partons as live holes) exercises the splice end-to-end
+(`cache-dynamic-partial-holes.spec.ts`).
 
-## Strip + reinject (dynamic-refresh path)
+## The row-graph rewriter (`flight-graph.ts`)
 
-When the auto-detect picks the dynamic-refresh path, two side-
-tables back the strip + reinject machinery:
+A Flight row references other rows by id — `$<id>`, `$L<id>`,
+`$@<id>`, each optionally carrying a `:deref.path` suffix
+(`$1:props:parent:path`). A rendered subtree is the transitive
+closure of one root row's references. Ref rewriting JSON-walks each
+row's data and remaps only true ref-strings; a literal value
+beginning with `$` is escaped on the wire as `$$…`, so a price string
+like `"$5.00"` is never mistaken for a reference (this is why the
+rewrite can't be a regex over the text).
 
-1. **Strip on store.** Walk the resolved tree; replace every
-   `PartialBoundary` (and any element whose `key` resolves to a
-   registered partial id) with a `<i hidden data-partial>`
-   placeholder. Store the placeholder-bearing tree as Flight bytes
-   via `renderAndBuffer`.
-2. **Reinject on hit.** Decode the cached bytes back to a tree;
-   walk it and replace placeholders with the current live
-   `PartialBoundary` elements (static) or fresh `<Component>` JSX
-   (dynamic). Inner partials render through their normal pipeline.
+- **Hole detection.** In the cached body every `partialId` belongs to
+  an inner hole — the cached spec's own boundary sits *outside* the
+  `<Cache>` wrap, and async/Suspended partons outline to their own
+  row. So a row whose top-level data is an element carrying a
+  `partialId` is a hole root.
+- **Strip + GC.** Rewrite each hole root to the placeholder element,
+  then mark-and-sweep from the root (`0`): rows no longer reachable —
+  the frozen hole content — are dropped, so the stored payload never
+  carries content the splice will replace.
+- **Renumber + dedup.** Each spliced hole's rows are offset into a
+  private id block keyed by document order; refs are remapped by the
+  same offset. Rows the scaffold already declares (client-module `I`
+  rows, `$S` symbol rows — matched by data string) are dropped and the
+  fresh refs routed to the scaffold's id, so splicing doesn't grow the
+  payload. Precomputed-at-store-time facts (`maxId`, the shared-row
+  map) ride in the entry as `SpliceMeta` so the splice never has to
+  rebuffer the scaffold.
 
-Two side-tables back this:
+## Entry shape
 
-- **`store: CacheStore`** — bytes per cache key (default in-memory
-  LRU, swappable for Redis / KV).
-- **`snapshotIndex: Map<key, Map<id, snapshot>>`** — for each cache
-  entry, the dynamic-partial snapshots registered during that
-  render. On hit, those snapshots are re-registered into the
-  current request's registry so `PartialRoot`'s cache-mode reads
-  find them. Empty map on the streaming-preservation path (signal
-  to the hit path to skip the resolveLazies walk).
+```ts
+interface Entry {
+  bytes: Uint8Array          // stripped scaffolding (holes are placeholders)
+  holes: StoredHole[]        // inner partons to splice live, in document order
+  meta: SpliceMeta           // { maxId, shared } — renumber/dedup facts
+  expiresAt: number
+  staleUntil: number
+}
+interface StoredHole {       // HoleRef + the registry snapshot
+  rowId: string              // the seam id the parent `$L`s
+  partialId: string
+  snapshot: PartialSnapshot  // parentPath/frameChain drive the fresh render
+}
+```
+
+On a hit, `replayEntry` first `registerPartial`s each hole's snapshot,
+so the parton stays addressable for `reload({selector})` and
+cache-mode reads even though the cached spec's body was
+short-circuited. Each hole then renders via `partialFromSnapshot`
+(the same reconstruction an isolated partial-refetch uses — right
+Component via the `type` fallback, parent from the snapshot, props
+replay, and `__instanceId` so the re-render keeps its per-instance
+wire id).
 
 ## Cache key derivation
 
 ```ts
-key = baseKey + ":" + hash(stableStringify([varyResult, options.vary]))
-baseKey = `${spec.id}:${structuralFp}:${hash(innerPartialIds.sorted)}`
+key = `${spec.id}:${structuralFp}:${hash(stableStringify([varyResult]))}`
 ```
+
+`structuralFp` is the spec's fingerprint folded with its descendant
+fold, so it already moves when `vary`, schema, props, an invalidation
+bump, or any descendant's deps change — including a descendant added
+or removed (via the fold). The trailing `varyResult` hash is a stable,
+legible axis on top of that.
 
 `hash()` is a 64-bit composite — two independent 32-bit mixers
 (djb2-with-xor + FNV-1a) each run through MurmurHash3's `fmix32` and
@@ -75,11 +111,6 @@ hash input — distinct sentinels for `undefined` / `NaN` / `±Infinity`
 / `BigInt`, ms-encoded `Date`, sorted-content `Set` / `Map`, and
 `<circular>` for self-referential structures so a malformed
 `vary` result fails loudly instead of recursing forever.
-
-`innerPartialIds` lives in `baseKey` so adding/removing an inner
-partial inside the cached subtree invalidates the cache
-automatically (the placeholder set the cached bytes hold no longer
-matches the tree being rendered).
 
 ## Stale-while-revalidate
 
@@ -98,18 +129,15 @@ matches the tree being rendered).
 
 ## Miss path
 
-`renderMissAndStore` tees the Flight stream of the stripped subtree:
+`renderMissAndStore` tees the Flight stream of the rendered body:
 
 1. **User branch** — decoded immediately, returned to the outer
    render. Inner Suspense boundaries stay lazy so the client paints
-   fallbacks while async work resolves.
-2. **Storage branch** — buffered, decoded, walked for dynamic
-   wrappers. Branches on snapshot-map size:
-   - Empty (no inner partons) → store the raw user-branch bytes
-     verbatim. Streaming preserved on hit.
-   - Non-empty → strip + re-encode via `renderAndBuffer`. Inner
-     partons re-render fresh on hit.
-   Runs in the background; doesn't block the user-facing latency.
+   fallbacks while async work resolves — the cold render streams
+   exactly like an uncached one.
+2. **Storage branch** — buffered, `stripHoles`'d, stored with each
+   hole enriched by its registry snapshot. Runs in the background;
+   doesn't block the user-facing latency.
 
 Cold-miss dedupe lives in `inFlightMiss: Map<baseKey, Promise>` —
 multiple concurrent requests for the same cold key share one
@@ -118,22 +146,21 @@ in-flight render.
 ## Slow-source diagnostic
 
 `CacheOptions.slowSource: { perChunkMs, chunkBytes? }` (dev-only)
-emits stored bytes through the hit-path decoder in fixed-size
-chunks separated by a delay. Drove the validation work for the
-streaming-preservation path: with raw bytes stored, slow replay
-correctly staggers each inner Suspense reveal as its bytes arrive.
-The same mechanism stands in for the latency profile a future
-`<RemoteFrame>` fetches from a remote endpoint.
+feeds the splice's scaffold stream in fixed-size chunks separated by a
+delay. Because `spliceHoles` forwards scaffold rows at feed pace, slow
+replay staggers each row's arrival at the decoder — standing in for
+the latency profile a slow source (or `<RemoteFrame>` cross-origin
+fetch) would produce. `/cache-streaming-demo` drives it.
 
 ## Per-scope state
 
-The cache, snapshot index, refresh set, and in-flight-miss map all
-live under `ScopeState` keyed by `getScope()`. Production: every
-request → `"default"` → one bucket. Dev: Playwright workers stamp
-per-worker `x-test-scope` headers so parallel runs don't contend.
+The cache store, refresh set, and in-flight-miss map all live under
+`ScopeState` keyed by `getScope()`. Production: every request →
+`"default"` → one bucket. Dev: Playwright workers stamp per-worker
+`x-test-scope` headers so parallel runs don't contend.
 
 ## HMR + clear
 
-`vite:beforeUpdate` and `vite:beforeFullReload` fire `_clearCache()`
-to drop every scope. Test-only `/__test/clear-caches` endpoint
-forwards a per-request scope token (or `?all=1` for everything).
+`vite:beforeFullReload` fires `_clearCache()` to drop every scope.
+Test-only `/__test/clear-caches` endpoint forwards a per-request scope
+token (or `?all=1` for everything).

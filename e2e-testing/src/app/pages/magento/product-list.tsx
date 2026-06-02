@@ -90,6 +90,11 @@ const MagentoProducts = parton(
   },
   {
     selector: "#products",
+    // Byte-cache the product grid; the per-card LivePrice (`.price`)
+    // partons stay live as dynamic holes — re-rendered fresh on every
+    // cache hit and streamed in over their 1s load. Exercises the
+    // row-level cache splice end-to-end (cache-dynamic-partial-holes spec).
+    cache: { maxAge: 60 },
     vary: ({ search: { q = "" } }) => ({ q }),
   },
 )
