@@ -155,6 +155,16 @@ export interface CellInterface<T, A extends CellArgs = CellArgs> {
   validate(value: unknown): T
   /** Internal — server-side write-pipeline transform. */
   write?(value: T): T
+  /** When set, a write to this cell does NOT make the action POST
+   *  carry a re-render: the response root is omitted and the new value
+   *  propagates only via the already-open streaming connection (the
+   *  heartbeat's `?streaming=1` segment). For high-frequency,
+   *  last-write-wins broadcast state — cursor / scroll / presence —
+   *  where the writer paints locally and other viewers catch up on the
+   *  stream, so paying a full action-response render per keystroke (and
+   *  committing it back over the optimistic value) is pure waste. See
+   *  `docs/reference/cells.md` § "Deferred (stream-only) writes". */
+  readonly deferred?: boolean
 }
 
 /**
@@ -476,6 +486,12 @@ export interface LocalCellOpts<S extends CellShapeSpec, T = ValueOfShape<S>> {
    *  flows from upstream and shouldn't persist to disk). Pass a
    *  function for any custom backend. */
   storage?: CellStorage | (() => CellStorage)
+  /** Skip the action-response re-render on every write to this cell;
+   *  let the open streaming connection carry the new value instead.
+   *  See `CellInterface.deferred`. Pair with a process-global in-memory
+   *  storage (so the value is visible across connections without
+   *  hitting disk) for cursor / presence broadcast. */
+  deferred?: boolean
 }
 
 /**
@@ -520,6 +536,7 @@ export function localCell<S extends CellShapeSpec, T = ValueOfShape<S>>(
     peek: buildPeek(opts.id, storage, validate, opts.initial, varyFn),
     validate,
     write: opts.write,
+    deferred: opts.deferred,
   }
   return registerCell(handle)
 }

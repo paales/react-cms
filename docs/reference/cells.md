@@ -201,6 +201,7 @@ const cardName = localCell({
 | `vary` | Optional. `(scope) => CellArgs`. Output hashes into the partition key. Omit for a cell whose partition comes entirely from `.with()`. |
 | `load` | Optional async `(args) => T`. Runs on cold-start (storage miss) — result is validated, written to storage, then returned. Storage stays the source of truth thereafter. |
 | `write` | Optional `(T) => T`. Server-side canonicalisation. Runs after `validate` and before storage on every write. |
+| `deferred` | Optional `boolean`. When set, a write to this cell makes the action POST return **no re-render** — the new value propagates only over the open streaming connection. See [Deferred (stream-only) writes](#deferred-stream-only-writes). |
 
 ## Surface — `gqlCellBuilder`
 
@@ -493,6 +494,82 @@ the auto-hydration path — e.g. to clear a removed line's slot
 `.value`, microtask-batched `set`, and controlled-input bindings.
 See [`./useCell` section below](#client-side-mutation) — unchanged from
 prior versions.
+
+## Deferred (stream-only) writes
+
+A normal cell write commits on the action POST: the server re-renders,
+the new bytes come back on the POST response, and the client reconciles
+them. For high-frequency, last-write-wins broadcast state — cursor
+position, scroll offset, presence — that round-trip is wasted work. The
+writer is already painting locally, every viewer (the writer included)
+is going to catch up over the open streaming connection anyway, and
+committing the POST's re-render back over the optimistic value just
+costs a render and a reconcile per keystroke.
+
+`deferred: true` removes it:
+
+```ts
+export const cursor = localCell({
+  id: "cursor",
+  shape: "opaque",
+  vary: () => ({}),                 // global — one shared partition
+  initial: { x: 0, y: 0 } as { x: number; y: number },
+  deferred: true,
+})
+```
+
+A write to a deferred cell still validates, still writes storage, and
+still fires its partition-scoped `cell:<id>` bump — so every parton
+reading it re-renders on the next stream segment exactly as usual. What
+changes is the **action POST response**: when every write in a request
+was to a deferred cell, the framework omits the response root (no
+re-render on the POST), and the client skips committing it. The bump
+reaches the page only through the already-open
+[`<LivePageHeartbeat>`](../internals/streaming.md) connection.
+
+The up-channel is the regular `cell.set` POST (fire it as fast as you
+like — `useCell(cell).set` is single-inflight + replace-coalesce, so it
+self-throttles to one round-trip at a time and only ever sends the
+latest value); the down-channel is the heartbeat stream that propagates
+to every viewer. Fire up, stream down.
+
+Constraints and edges:
+
+- **Storage must be visible across connections.** The write POST and a
+  viewer's heartbeat are different connections. Default `localCell`
+  storage is process-global (and in-memory for non-default test
+  scopes), so it broadcasts. **Do not** pair `deferred` with
+  `getEphemeralCellStorage` — that storage is request-scoped, so the
+  write would be invisible to every other connection's heartbeat.
+- **Mixed batches still render.** If one action writes both a deferred
+  and a non-deferred cell, the response renders normally — the
+  non-deferred cell needs the POST commit. `deferred` only suppresses
+  the render when *every* write in the request was deferred.
+- **No POST-time reconciliation.** The writer's own view updates from
+  local state (e.g. pointer events) or via the stream a beat later, not
+  from the POST. Don't bind a control to a deferred cell's
+  `serverValue` expecting the action response to reconcile it — for
+  that, use a normal (non-deferred) cell.
+- **Requires the heartbeat.** With no open streaming connection (the
+  heartbeat off, or a page that never mounts one), a deferred write
+  lands on the server but nothing on the page moves. Deferred state is
+  a live-updates feature.
+
+**Multiplayer presence (every viewer's cursor).** The single-value
+example above reacts to *one* shared cursor. To show *all* viewers'
+cursors, hold the whole set in **one map cell keyed by viewer id** —
+`Record<viewerId, {x, y, …}>` — and merge your own entry on write
+(read-modify-write in the action). A map, not one partition per viewer,
+because cells are point-read by partition and the set of partitions
+isn't enumerable, so a viewer can't "read every cursor partition." Each
+viewer writes its key; every viewer renders the whole map off the
+heartbeat. The e2e-testing app's `/cursors` page is a worked two-tab
+example (`pages/cursors-state.ts`, `cursors-actions.ts`,
+`components/cursor-layer.tsx`).
+
+See [`../internals/streaming.md`](../internals/streaming.md) §
+"Deferred (stream-only) writes" for the wire mechanics (the null-root
+action response and the client's skip-commit guard).
 
 ## Controlled-input discipline (four rules)
 

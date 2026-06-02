@@ -365,7 +365,13 @@ async function main() {
       })
       if (!firstPayload) firstPayload = payload
       segment.trailers.then(applyStandardTrailers).catch(() => {})
-      setPayload(payload)
+      // A deferred-only action returns `root: null` (no re-render): the
+      // already-open streaming connection carries the update instead.
+      // Committing a null root would blank the page, so skip the commit
+      // — `returnValue` is still captured below and trailers (e.g. a
+      // `url` push) still apply. A null root is never committable, so
+      // this guard is safe for every action, not just deferred ones.
+      if (payload.root != null) setPayload(payload)
     }
     if (!firstPayload) {
       throw new NavigationError({

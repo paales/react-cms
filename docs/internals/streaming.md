@@ -86,6 +86,50 @@ alternating commits would remount the whole page on each seam. See
 [`render-pipeline.md`](./render-pipeline.md) ("Both modes share one
 payload root").
 
+## Deferred (stream-only) writes
+
+A normal action POST still carries a re-render: the changed partials'
+bytes come back on the response and the client commits them, *and* the
+bump wakes the heartbeat which ships the same change to every other
+viewer. For a write whose only job is to broadcast — a cursor / scroll /
+presence firehose — the POST-side render is pure duplication of what the
+heartbeat already delivers, and committing it back over the writer's
+optimistic/local view costs a reconcile per keystroke.
+
+A cell declared [`deferred: true`](../reference/cells.md#deferred-stream-only-writes)
+opts its writes out of the POST-side commit. The wire mechanics are a
+null root:
+
+1. **Server accounting.** `writeOneCell` calls `_recordCellWrite(cell.deferred)`
+   on every write; `_actionSuppressesCommit()` is true when the request
+   made at least one cell write and **every** write was to a deferred
+   cell (a mixed batch is false — the non-deferred cell still needs its
+   render). Both live on the request-scoped store in `context.ts`.
+2. **Null-root response.** The app's RSC entry builds the action payload
+   as `root: isAction && actionStatus === undefined && _actionSuppressesCommit() ? null : <Root/>`.
+   A suppressed action renders no tree — the POST body is just the
+   `returnValue`. Errored actions (`actionStatus` set) always render so
+   the failure surfaces.
+3. **Client skip-commit.** `setServerCallback` still captures
+   `returnValue` (so the `cell.set` promise resolves and the optimistic
+   overlay reconciles) but guards the commit: `if (payload.root != null)
+   setPayload(payload)`. A null root is never committable — committing
+   it would blank the page — so the guard is safe for every action, not
+   just deferred ones.
+
+The bump itself is unchanged: it lands in the invalidation registry
+exactly as a non-deferred write's would, so the **already-open
+heartbeat** wakes on it (relevance-gated like any other), re-renders,
+and ships the new value as the next segment — to the writer and every
+other viewer alike. The asymmetry is the point: the write goes up on a
+cheap one-shot POST, the value comes down on the shared stream.
+
+Storage caveat: a deferred cell must use storage visible across
+connections (the write POST and a viewer's heartbeat are different
+connections). Default `localCell` storage is process-global; the
+request-scoped `getEphemeralCellStorage` is **not** a valid pairing —
+the write would never reach another connection's render.
+
 ## The heartbeat is opt-in
 
 The framework doesn't auto-inject a heartbeat. Apps that want live

@@ -12,6 +12,7 @@ import { NotFoundPage } from "./app/pages/not-found.tsx"
 import { createRemoteHandler } from "@parton/framework"
 import { parseRenderRequest } from "@parton/framework/runtime/request.tsx"
 import {
+  _actionSuppressesCommit,
   _captureCommitHandle,
   getFrameworkControl,
   runWithRequestAsync,
@@ -158,8 +159,19 @@ async function handleRequest(
     }
   }
 
+  // A deferred-only action — every write went to a `deferred` cell —
+  // omits its response re-render (`root: null`). The new value rides the
+  // already-open streaming connection (the heartbeat's `?streaming=1`
+  // segment); the client skips committing a null root. Mixed batches and
+  // errored actions (`actionStatus` set) still render so non-deferred
+  // writes and failures surface on the POST. See
+  // `docs/internals/streaming.md` § "Deferred (stream-only) writes".
+  const suppressRoot =
+    renderRequest.isAction === true &&
+    actionStatus === undefined &&
+    _actionSuppressesCommit()
   const buildRscPayload = (): RscPayload => ({
-    root: <Root />,
+    root: suppressRoot ? null : <Root />,
     formState,
     returnValue,
   })

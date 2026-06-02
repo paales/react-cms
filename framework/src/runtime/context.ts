@@ -71,6 +71,14 @@ interface RequestStore {
    *  `url.toString()` + `new Request(...)` per segment — ~7% of CPU in
    *  the streaming case. */
   cachedOverride?: CachedOverride
+  /** Per-request cell-write accounting for the deferred-commit
+   *  decision. `total` counts every successful cell write made during
+   *  this request; `deferred` counts those whose cell declared
+   *  `deferred: true`. When an action's writes are ALL deferred
+   *  (`total > 0 && total === deferred`) its response omits the
+   *  re-render and the open streaming connection propagates the change.
+   *  Lazily created on the first write. */
+  cellWrites?: { total: number; deferred: number }
 }
 
 /** In-memory mirror of `?cached=…`. Same identity Maps shared across
@@ -236,6 +244,33 @@ export function _isConnectionLive(): boolean {
 export function _clearConnectionLive(): void {
   const store = requestContext.getStore()
   if (store) store.connectionLive = false
+}
+
+// ─── Deferred-commit accounting ─────────────────────────────────────
+
+/** Record one successful cell write for the active request's
+ *  deferred-commit decision. `deferred` reflects whether the written
+ *  cell declared `deferred: true`. Called from the cell write path
+ *  (`writeOneCell`) after the value lands in storage. No-op outside a
+ *  request context. */
+export function _recordCellWrite(deferred: boolean): void {
+  const store = requestContext.getStore()
+  if (!store) return
+  const w = store.cellWrites ?? { total: 0, deferred: 0 }
+  w.total += 1
+  if (deferred) w.deferred += 1
+  store.cellWrites = w
+}
+
+/** True when this request performed at least one cell write and EVERY
+ *  write was to a `deferred` cell — so the action response should omit
+ *  its re-render (`root`) and let the open streaming connection carry
+ *  the change. A mixed batch (any non-deferred write) returns false:
+ *  the non-deferred cells still rely on the action-response render.
+ *  Consulted by the app's RSC entry when building the action payload. */
+export function _actionSuppressesCommit(): boolean {
+  const w = requestContext.getStore()?.cellWrites
+  return !!w && w.total > 0 && w.total === w.deferred
 }
 
 /** Merge a URL update fragment into the request's pending URL update.

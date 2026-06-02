@@ -37,7 +37,7 @@ import { stableStringify } from "../lib/stable-stringify.ts"
 import { getRegisteredMatchPatterns } from "../lib/partial.tsx"
 import { buildTimeScope } from "../lib/time.ts"
 import { createSessionReadSurface } from "./session.ts"
-import { getRequest, getScope, parseCookies } from "./context.ts"
+import { _recordCellWrite, getRequest, getScope, parseCookies } from "./context.ts"
 import { runInvalidationTransaction } from "./invalidation-registry.ts"
 import { getServerNavigation } from "./server-navigation.ts"
 import { _getCellWriteDelay } from "./cell-write-delay.ts"
@@ -250,6 +250,10 @@ function writeOneCell(
   }
   const partitionKey = hash(stableStringify(args))
   cell.storage().write(getScope(), cellId, partitionKey, stored)
+  // Count the write for the deferred-commit decision. A write to a
+  // `deferred` cell lets the action response skip its re-render — the
+  // open streaming connection carries the new value instead.
+  _recordCellWrite(cell.deferred === true)
   getServerNavigation().reload({ selector: buildCellSelector(cellId, args) })
 }
 

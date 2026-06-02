@@ -363,6 +363,14 @@ drift on the action-response wrappers is still recovered via PEB-prop
 hydration on the next visit — action POSTs deliberately omit the
 `fp` trailer to keep the response single-segment and short.
 
+An action whose every cell write went to a [`deferred`](../reference/cells.md#deferred-stream-only-writes)
+cell takes this further: the entry renders `root: null` (no tree at
+all), and the client's `setServerCallback` skips the commit
+(`if (payload.root != null) setPayload(payload)`) while still reading
+`returnValue`. The change reaches the page over the open heartbeat
+stream instead. See [`streaming.md`](./streaming.md) § "Deferred
+(stream-only) writes".
+
 ## Stream-driven commit timing
 
 `commitRequestRegistry` runs on stream flush — not when the request

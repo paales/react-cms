@@ -24,6 +24,10 @@ write(validated)             ← optional cell-declared canonicalisation
 storage.write(scope, id,     ← writes to the active scope's bucket
               partKey, v)
 ↓
+_recordCellWrite(            ← tallies this write (and whether the cell
+  cell.deferred === true)      is `deferred`) on the request store, for
+                               the deferred-commit decision (below)
+↓
 refreshSelector(             ← bumps the invalidation registry with
   "cell:" + id +               partition-scoped constraints encoded
   "?<argsEncoded>")            as the query-string fragment
@@ -48,6 +52,17 @@ fragment cells: the identity lives in the value, so `cell.set(value)`
 needs no restated args) → `cell.vary(scope)` (request-derived). `keyOf` is
 set by `fragmentCell` from its `key` option and runs against the validated
 + `write`-transformed value.
+
+**Deferred-commit accounting.** `_recordCellWrite(cell.deferred === true)`
+increments a per-request `{total, deferred}` tally on the context store.
+After the action body runs, `_actionSuppressesCommit()` reads it: true iff
+`total > 0 && total === deferred` — at least one write, all to `deferred`
+cells. The app's RSC entry consults it to emit a **null-root** action
+response (no re-render; the value rides the open heartbeat stream
+instead), and the client skips committing a null root. A mixed batch
+(`total !== deferred`) renders normally. See
+[`../reference/cells.md`](../reference/cells.md#deferred-stream-only-writes)
+and [`./streaming.md`](./streaming.md) § "Deferred (stream-only) writes".
 
 Three server actions wrap the pipeline:
 
