@@ -2,45 +2,54 @@
  * Server-side render-output caching.
  *
  * `<Cache>` wraps a spec's body with the spec's `varyResult` as the
- * cache-key surface. On miss it renders to Flight bytes and stores
- * them; on hit it decodes the stored bytes back into a tree.
+ * cache-key surface. On miss it renders the body to Flight bytes,
+ * strips every inner-parton boundary to an `<i hidden data-partial-id>`
+ * placeholder (`flight-graph.stripHoles`), and stores the lean
+ * scaffolding. On hit it streams the scaffolding back and splices a
+ * freshly-rendered parton at each placeholder (`flight-graph.spliceHoles`)
+ * — so the cached frame is byte-replayed (Suspense pacing intact) while
+ * its dynamic holes re-render live per request.
  *
- * Cache is an internal detail of `parton(...)` when the
- * spec sets `cache={…}`. Authors don't render `<Cache>` directly.
+ * Cache is an internal detail of `parton(...)` when the spec sets
+ * `cache={…}`. Authors don't render `<Cache>` directly.
  *
- * ── Composition with partials ─────────────────────────────────────
+ * ── One path ──────────────────────────────────────────────────────────
  *
- * Cached Flight bytes capture the rendered subtree as-is. If the
- * subtree contains a `<PartialBoundary>`, the partial's content gets
- * frozen in the bytes — refetching the partial wouldn't refresh until
- * the cache entry expires. To make Cache and Partial compose, we strip
- * inner partials to placeholders before serializing and re-inject the
- * current live elements on the way out. Result: cache captures the
- * stable scaffolding, partials stay live.
+ * There's a single store + replay path. A region with no inner partons
+ * strips to zero holes; `spliceHoles` then degenerates to passing the
+ * stored bytes straight through (the streaming-preservation case). A
+ * region with inner partons gets each one spliced live. No decode /
+ * `resolveLazies` / re-encode round-trip — the rewrite is row-level, so
+ * inner Suspense never flattens.
  */
 
-import {
-  Fragment,
-  Suspense,
-  cloneElement,
-  createElement,
-  isValidElement,
-  type ReactElement,
-  type ReactNode,
-} from "react"
+import type { ReactNode } from "react"
 import { createFromReadableStream, renderToReadableStream } from "./flight-runtime.ts"
-import { passthroughRewriter, rewriteFlightStream } from "./flight-rewrite.ts"
+import { spliceHoles, stripHoles, type HoleRef, type SpliceMeta } from "./flight-graph.ts"
 import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
-import { PartialBoundary, getSpecComponentById } from "./partial.tsx"
+import { partialFromSnapshot } from "./partial.tsx"
 import { getScope } from "../runtime/context.ts"
 import { lookupPartial, registerPartial, type PartialSnapshot } from "./partial-registry.ts"
 import type { CacheOptions } from "./cache-options.ts"
 
 // ─── Store ─────────────────────────────────────────────────────────────
 
+/** An inner parton hole, enriched at store time with the snapshot the
+ *  hit path needs: its `parentPath` / `frameChain` drive the fresh
+ *  render, and re-registering the snapshot keeps the parton addressable
+ *  for selector refetches even though its producer didn't run. */
+interface StoredHole extends HoleRef {
+  snapshot: PartialSnapshot
+}
+
 interface Entry {
+  /** Stripped scaffolding bytes (holes are inert placeholders). */
   bytes: Uint8Array
+  /** Inner partons to splice live on a hit, in document order. */
+  holes: StoredHole[]
+  /** Renumber/dedup facts the splice needs without rebuffering. */
+  meta: SpliceMeta
   expiresAt: number
   staleUntil: number
 }
@@ -92,16 +101,10 @@ class MemoryCacheStore implements CacheStore {
   }
 }
 
-const SNAPSHOT_INDEX_MAX = 10_000
-
 interface ScopeState {
   store: CacheStore
-  snapshotIndex: Map<string, Map<string, PartialSnapshot>>
   refreshing: Set<string>
-  inFlightMiss: Map<
-    string,
-    Promise<{ liveTree: ReactNode; dynamicSnapshots: Map<string, PartialSnapshot> }>
-  >
+  inFlightMiss: Map<string, Promise<{ liveTree: ReactNode }>>
 }
 
 const scopes = new Map<string, ScopeState>()
@@ -111,7 +114,6 @@ function state(scope: string = getScope()): ScopeState {
   if (!s) {
     s = {
       store: new MemoryCacheStore(),
-      snapshotIndex: new Map(),
       refreshing: new Set(),
       inFlightMiss: new Map(),
     }
@@ -120,295 +122,11 @@ function state(scope: string = getScope()): ScopeState {
   return s
 }
 
-function setSnapshots(key: string, snaps: Map<string, PartialSnapshot>): void {
-  const { snapshotIndex } = state()
-  snapshotIndex.delete(key)
-  snapshotIndex.set(key, snaps)
-  while (snapshotIndex.size > SNAPSHOT_INDEX_MAX) {
-    const oldest = snapshotIndex.keys().next().value
-    if (oldest === undefined) break
-    snapshotIndex.delete(oldest)
-  }
-}
-
 function hashParts(...parts: unknown[]): string {
   return hash(stableStringify(parts))
 }
 
-// ─── Lazy-ref resolution ───────────────────────────────────────────────
-
-const LAZY_SYMBOL_STR = "Symbol(react.lazy)"
-
-async function awaitLazy(node: unknown): Promise<unknown> {
-  const n = node as {
-    $$typeof?: symbol
-    _payload?: { _status?: number; _result?: unknown }
-    _init?: (payload: unknown) => unknown
-  }
-  if (typeof n.$$typeof !== "symbol") return node
-  if (n.$$typeof.toString() !== LAZY_SYMBOL_STR) return node
-  const payload = n._payload
-  if (payload && payload._status === 1) return payload._result
-  try {
-    const init = n._init
-    if (typeof init === "function") return init(payload)
-  } catch (pending) {
-    if (pending && typeof (pending as { then?: unknown }).then === "function") {
-      await pending
-      const init = n._init
-      if (typeof init === "function") {
-        try {
-          return init(payload)
-        } catch (err) {
-          if (err && typeof (err as { then?: unknown }).then === "function") {
-            await err
-            return n._init?.(payload)
-          }
-          throw err
-        }
-      }
-    }
-    throw pending
-  }
-  return node
-}
-
-async function resolveLazies(node: ReactNode): Promise<ReactNode> {
-  if (node == null || typeof node === "boolean") return node
-  if (typeof node === "string" || typeof node === "number") return node
-  if (Array.isArray(node)) {
-    const out = await Promise.all(node.map((c) => resolveLazies(c)))
-    return out
-  }
-  if (typeof node === "object" && node !== null) {
-    const n = node as { $$typeof?: symbol }
-    if (typeof n.$$typeof === "symbol" && n.$$typeof.toString() === LAZY_SYMBOL_STR) {
-      const resolved = await awaitLazy(node)
-      return resolveLazies(resolved as ReactNode)
-    }
-  }
-  if (!isValidElement(node)) return node
-
-  const children = (node.props as { children?: ReactNode }).children
-  if (children == null) return node
-  const newChildren = await resolveLazies(children)
-  if (newChildren === children) return node
-  return Array.isArray(newChildren)
-    ? cloneElement(node, {}, ...newChildren)
-    : cloneElement(node, {}, newChildren)
-}
-
-// ─── Partial strip / reinject ──────────────────────────────────────────
-
-function placeholderFor(id: string): ReactElement {
-  return createElement("i", {
-    key: id,
-    hidden: true,
-    "data-partial": true,
-    "data-partial-id": id,
-  })
-}
-
-function isExistingPlaceholder(node: ReactElement): boolean {
-  return node.type === "i" && (node.props as Record<string, unknown>)["data-partial"] === true
-}
-
-function placeholderIdOf(node: ReactElement): string | null {
-  const props = node.props as { ["data-partial-id"]?: unknown }
-  if (typeof props["data-partial-id"] === "string") return props["data-partial-id"]
-  return node.key != null ? String(node.key) : null
-}
-
-function partialIdOf(node: ReactElement): string | null {
-  if (node.key == null) return null
-  const keyStr = String(node.key)
-  const hashIdx = keyStr.indexOf("#")
-  const candidate = hashIdx >= 0 ? keyStr.slice(0, hashIdx) : keyStr
-  return lookupPartial(candidate) ? candidate : null
-}
-
-function stripPartials(node: ReactNode): {
-  stripped: ReactNode
-  partials: Map<string, ReactElement>
-  ids: string[]
-} {
-  const partials = new Map<string, ReactElement>()
-
-  const walk = (n: ReactNode): ReactNode => {
-    if (n == null || typeof n === "boolean") return n
-    if (typeof n === "string" || typeof n === "number") return n
-    if (Array.isArray(n)) {
-      let changed = false
-      const out = n.map((c) => {
-        const w = walk(c)
-        if (w !== c) changed = true
-        return w
-      })
-      return changed ? out : n
-    }
-    if (!isValidElement(n)) return n
-
-    if (n.type === PartialBoundary) {
-      const id = (n.props as { id: string }).id
-      partials.set(id, n)
-      return placeholderFor(id)
-    }
-
-    if (isExistingPlaceholder(n)) {
-      partials.set(String(n.key), n)
-      return n
-    }
-
-    const partialId = partialIdOf(n)
-    if (partialId != null && !partials.has(partialId)) {
-      partials.set(partialId, n)
-      return placeholderFor(partialId)
-    }
-
-    const kids = (n.props as { children?: ReactNode }).children
-    if (kids == null) return n
-    const nk = walk(kids)
-    if (nk === kids) return n
-    return Array.isArray(nk) ? cloneElement(n, {}, ...nk) : cloneElement(n, {}, nk)
-  }
-
-  const stripped = walk(node)
-  return { stripped, partials, ids: [...partials.keys()].sort() }
-}
-
-function reinject(node: ReactNode, partials: Map<string, ReactElement>): ReactNode {
-  if (partials.size === 0) return node
-  if (node == null || typeof node === "boolean") return node
-  if (typeof node === "string" || typeof node === "number") return node
-  if (Array.isArray(node)) {
-    let changed = false
-    const out = node.map((c) => {
-      const r = reinject(c, partials)
-      if (r !== c) changed = true
-      return r
-    })
-    return changed ? out : node
-  }
-  if (!isValidElement(node)) return node
-
-  if (isExistingPlaceholder(node)) {
-    const id = placeholderIdOf(node)
-    if (id) {
-      const live = partials.get(id)
-      if (live) return live
-    }
-    return node
-  }
-
-  const kids = (node.props as { children?: ReactNode }).children
-  if (kids == null) return node
-  const nk = reinject(kids, partials)
-  if (nk === kids) return node
-  return Array.isArray(nk) ? cloneElement(node, {}, ...nk) : cloneElement(node, {}, nk)
-}
-
-// ─── Dynamic partial strip / reinject ────────────────────────────────────
-
-function renderedWrapperId(node: ReactElement): string | null {
-  const props = node.props as { partialId?: unknown }
-  if (typeof props.partialId === "string") return props.partialId
-  if (node.type === Suspense && node.key != null) return String(node.key)
-  return null
-}
-
-function stripDynamicWrappers(
-  node: ReactNode,
-  skipIds: Set<string>,
-): { stripped: ReactNode; snapshots: Map<string, PartialSnapshot> } {
-  const snapshots = new Map<string, PartialSnapshot>()
-
-  const walk = (n: ReactNode): ReactNode => {
-    if (n == null || typeof n === "boolean") return n
-    if (typeof n === "string" || typeof n === "number") return n
-    if (Array.isArray(n)) {
-      let changed = false
-      const out = n.map((c) => {
-        const w = walk(c)
-        if (w !== c) changed = true
-        return w
-      })
-      return changed ? out : n
-    }
-    if (!isValidElement(n)) return n
-
-    const wid = renderedWrapperId(n)
-    if (wid && !skipIds.has(wid)) {
-      const snap = lookupPartial(wid)
-      if (snap) {
-        snapshots.set(wid, snap)
-        return placeholderFor(wid)
-      }
-    }
-
-    const kids = (n.props as { children?: ReactNode }).children
-    if (kids == null) return n
-    const nk = walk(kids)
-    if (nk === kids) return n
-    return Array.isArray(nk) ? cloneElement(n, {}, ...nk) : cloneElement(n, {}, nk)
-  }
-
-  return { stripped: walk(node), snapshots }
-}
-
-function reinjectDynamic(node: ReactNode, snapshots: Map<string, PartialSnapshot>): ReactNode {
-  if (snapshots.size === 0) return node
-  if (node == null || typeof node === "boolean") return node
-  if (typeof node === "string" || typeof node === "number") return node
-  if (Array.isArray(node)) {
-    let changed = false
-    const out = node.map((c) => {
-      const r = reinjectDynamic(c, snapshots)
-      if (r !== c) changed = true
-      return r
-    })
-    return changed ? out : node
-  }
-  if (!isValidElement(node)) return node
-
-  if (isExistingPlaceholder(node)) {
-    const id = placeholderIdOf(node)
-    if (id) {
-      const snap = snapshots.get(id)
-      if (snap) {
-        // Use the spec component registry to reconstruct.
-        const Component = getSpecComponentById(id)
-        if (Component) {
-          const parent = { path: snap.parentPath, frameChain: snap.parentFrameChain }
-          return createElement(Fragment, { key: node.key ?? id }, createElement(Component, { parent }))
-        }
-      }
-    }
-    return node
-  }
-
-  const kids = (node.props as { children?: ReactNode }).children
-  if (kids == null) return node
-  const nk = reinjectDynamic(kids, snapshots)
-  if (nk === kids) return node
-  return Array.isArray(nk) ? cloneElement(node, {}, ...nk) : cloneElement(node, {}, nk)
-}
-
-function registerDynamicSnapshots(snapshots: Map<string, PartialSnapshot>): void {
-  for (const [sId, snap] of snapshots) registerPartial(sId, snap)
-}
-
-// ─── Cache component ────────────────────────────────────────────────────
-
-interface CacheProps {
-  id: string
-  fingerprint: string
-  options: CacheOptions
-  /** vary result from the spec — IS the cache-key surface (minus
-   *  `expiresAt` / `staleUntil` reserved keys, which the framework
-   *  strips before feeding fp and cache lookups). */
-  varyResult: unknown
-  children: ReactNode
-}
+// ─── Stream helpers ─────────────────────────────────────────────────────
 
 async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader()
@@ -440,9 +158,10 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 
 /**
  * Dev-only. Emits stored bytes in fixed-size chunks separated by
- * `perChunkMs`. Lets the cache hit path act as a streaming source so
- * the outer render observes incremental arrival — the same shape a
- * `<RemoteFrame>` will see from a slow cross-origin Flight payload.
+ * `perChunkMs`. Feeds the splice's scaffold stream slowly so the hit
+ * path acts as a throttled source — the same shape a `<RemoteFrame>`
+ * sees from a slow cross-origin Flight payload, and what the
+ * `/cache-streaming-demo` page exercises end-to-end.
  */
 function slowBytesToStream(
   bytes: Uint8Array,
@@ -465,9 +184,55 @@ function slowBytesToStream(
   })
 }
 
-async function renderAndBuffer(children: ReactNode): Promise<Uint8Array> {
-  const stream = renderToReadableStream(children)
-  return await readAll(stream)
+// ─── Hole render / replay ────────────────────────────────────────────────
+
+/** Enrich the byte-level holes with their registry snapshot, captured
+ *  while the producing render is still warm. A hole whose spec didn't
+ *  register (shouldn't happen for a rendered parton) is dropped — its
+ *  placeholder then stays inert on replay. */
+function enrichHoles(holes: HoleRef[]): StoredHole[] {
+  const out: StoredHole[] = []
+  for (const h of holes) {
+    const snapshot = lookupPartial(h.partialId)
+    if (!snapshot) continue
+    out.push({ ...h, snapshot })
+  }
+  return out
+}
+
+/** Render one hole fresh to its own Flight stream. `partialFromSnapshot`
+ *  reconstructs the parton from stored data exactly as an isolated
+ *  partial-refetch does — right Component (via `type` fallback), parent
+ *  from the snapshot (no live ancestor on a hit), props replay, and
+ *  `__instanceId` so the re-render keeps its per-instance wire id. A spec
+ *  absent from this process resolves to `null` → an inert seam. */
+function renderHoleStream(hole: StoredHole): ReadableStream<Uint8Array> {
+  return renderToReadableStream(partialFromSnapshot(hole.partialId, hole.snapshot))
+}
+
+async function replayEntry(entry: Entry, options: CacheOptions): Promise<ReactNode> {
+  // Re-register every hole so `reload({selector})` + cache-mode reads
+  // resolve it even though the cached spec's body was short-circuited.
+  for (const hole of entry.holes) registerPartial(hole.partialId, hole.snapshot)
+
+  const feed = options.slowSource
+    ? slowBytesToStream(entry.bytes, options.slowSource.perChunkMs, options.slowSource.chunkBytes ?? 64)
+    : bytesToStream(entry.bytes)
+  const spliced = spliceHoles(feed, entry.holes, entry.meta, renderHoleStream)
+  return await createFromReadableStream<ReactNode>(spliced)
+}
+
+// ─── Cache component ────────────────────────────────────────────────────
+
+interface CacheProps {
+  id: string
+  fingerprint: string
+  options: CacheOptions
+  /** vary result from the spec — IS the cache-key surface (minus
+   *  `expiresAt` / `staleUntil` reserved keys, which the framework
+   *  strips before feeding fp and cache lookups). */
+  varyResult: unknown
+  children: ReactNode
 }
 
 export async function Cache({
@@ -487,166 +252,90 @@ async function cacheImpl(
   varyResult: unknown,
   children: ReactNode,
 ): Promise<ReactNode> {
-  const { store, snapshotIndex, refreshing, inFlightMiss } = state()
+  const { store, refreshing, inFlightMiss } = state()
 
-  const { stripped, partials, ids } = stripPartials(children)
-  const baseKey = `${id}:${fingerprint}:${hash(ids.join(","))}`
+  // The fingerprint already folds vary + schema + props + invalidation +
+  // descendant deps, so it carries the cache-key surface; `varyResult` is
+  // appended for legibility / a stable explicit axis.
+  const baseKey = `${id}:${fingerprint}`
   const key = `${baseKey}:${hashParts(varyResult)}`
   const now = Date.now()
 
   // ── Hit path ──
   const existing = await store.get(key)
-  const existingSnapshots = existing ? snapshotIndex.get(key) : undefined
-  if (existing && existingSnapshots) {
-    if (existing.expiresAt > now || existing.staleUntil > now) {
-      registerDynamicSnapshots(existingSnapshots)
-      if (existing.expiresAt <= now && !refreshing.has(key)) {
-        refreshing.add(key)
-        void refreshEntry(baseKey, key, stripped, ids, options)
-          .catch((err) => console.error(`[cache] SWR refresh failed for ${key}:`, err))
-          .finally(() => refreshing.delete(key))
-      }
-      const rawStream = options.slowSource
-        ? slowBytesToStream(
-            existing.bytes,
-            options.slowSource.perChunkMs,
-            options.slowSource.chunkBytes ?? 64,
-          )
-        : bytesToStream(existing.bytes)
-      // Pipe stored bytes through the row-level rewriter before
-      // decoding. Today: a passthrough. Future: module-ref rewrite
-      // for `<RemoteFrame>` plus wire-level wrapper substitution.
-      const sourceStream = rewriteFlightStream(rawStream, passthroughRewriter)
-      const decoded = await createFromReadableStream<ReactNode>(sourceStream)
-      if (existingSnapshots.size > 0) {
-        // Dynamic-wrapper path: bytes were stored post-strip + re-encode,
-        // so they have no internal Suspense streaming anyway. Resolve
-        // every lazy then substitute placeholders with fresh
-        // `<Component>` JSX so dynamic partons re-render per request.
-        const resolved = await resolveLazies(decoded)
-        const withStatic = reinject(resolved, partials)
-        return reinjectDynamic(withStatic, existingSnapshots)
-      }
-      // Streaming-preservation path: bytes are raw (no dynamic
-      // partons inside). Skip `resolveLazies` so inner Suspense
-      // boundaries stay lazy. `reinject` walks only resolved
-      // elements; lazies pass through unharmed and the outer encoder
-      // emits them as suspended subtrees that resolve as the inner
-      // stream's bytes arrive.
-      return reinject(decoded, partials)
+  if (existing && (existing.expiresAt > now || existing.staleUntil > now)) {
+    if (existing.expiresAt <= now && !refreshing.has(key)) {
+      refreshing.add(key)
+      void refreshEntry(key, children, options)
+        .catch((err) => console.error(`[cache] SWR refresh failed for ${key}:`, err))
+        .finally(() => refreshing.delete(key))
     }
+    return replayEntry(existing, options)
   }
 
   // ── Miss path ──
-  const staticIdSet = new Set(ids)
   let pending = inFlightMiss.get(baseKey)
   if (!pending) {
-    pending = renderMissAndStore(key, stripped, staticIdSet, options).finally(() =>
+    pending = renderMissAndStore(key, children, options).finally(() =>
       inFlightMiss.delete(baseKey),
     )
     inFlightMiss.set(baseKey, pending)
   }
   const { liveTree } = await pending
-  return reinject(liveTree, partials)
+  return liveTree
 }
 
 async function renderMissAndStore(
   key: string,
-  stripped: ReactNode,
-  staticIds: Set<string>,
+  children: ReactNode,
   options: CacheOptions,
-): Promise<{ liveTree: ReactNode; dynamicSnapshots: Map<string, PartialSnapshot> }> {
+): Promise<{ liveTree: ReactNode }> {
   const { store } = state()
-  const stream = renderToReadableStream(stripped)
+  const stream = renderToReadableStream(children)
   const [userBranch, storageBranch] = stream.tee()
 
+  // Storage: buffer the rendered bytes, strip holes, capture snapshots.
+  // Runs in the background — doesn't block the user-facing render.
   const storagePromise = (async () => {
     const rawBytes = await readAll(storageBranch)
-
-    // Auto-detect path: decode the just-rendered tree and walk it
-    // for dynamic-wrapper elements (PartialBoundary children that
-    // the framework emitted around inner partons).
-    const rawDecoded = await createFromReadableStream<ReactNode>(bytesToStream(rawBytes))
-    const rawResolved = await resolveLazies(rawDecoded)
-    const { stripped: holeTree, snapshots } = stripDynamicWrappers(rawResolved, staticIds)
-
-    if (snapshots.size === 0) {
-      // Streaming-preservation path: no inner partons to keep live.
-      // Store the raw user-branch bytes verbatim — they retain Flight's
-      // natural Suspense pacing. On hit, slow-replay or fast-replay
-      // both let each inner Suspense reveal incrementally as bytes
-      // arrive at the decoder. (cache-streaming-demo.tsx exercise.)
-      await store.set(
-        key,
-        freshEntry(rawBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
-      )
-      setSnapshots(key, new Map())
-      return new Map<string, PartialSnapshot>()
-    }
-
-    // Dynamic-wrapper path: inner partons were stripped to placeholders.
-    // Store the re-encoded `holeTree` so on hit we can substitute live
-    // `<Component>` JSX at each placeholder and re-render fresh. The
-    // re-encode flattens Suspense structure inside the cached region —
-    // tolerable here because regions with dynamic partons typically
-    // have no internal streaming worth preserving (e.g. a product grid
-    // resolved from one async query; pricing inside is the dynamic
-    // bit we're keeping live).
-    const cleanBytes = await renderAndBuffer(holeTree)
+    const { bytes, holes, meta } = stripHoles(rawBytes)
     await store.set(
       key,
-      freshEntry(cleanBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
+      freshEntry(bytes, enrichHoles(holes), meta, options.maxAge, options.staleWhileRevalidate, Date.now()),
     )
-    setSnapshots(key, snapshots)
-    return snapshots
   })()
-
   storagePromise.catch((err) => {
     console.error(`[cache] storage finalize failed for ${key}:`, err)
   })
 
+  // User branch: decode immediately and return the live tree. Inner
+  // Suspense stays lazy so the client paints fallbacks while async work
+  // resolves — the cold render streams exactly like an uncached one.
   const liveTree = await createFromReadableStream<ReactNode>(userBranch)
-  return { liveTree, dynamicSnapshots: new Map() }
+  return { liveTree }
 }
 
-async function refreshEntry(
-  _baseKey: string,
-  key: string,
-  stripped: ReactNode,
-  ids: string[],
-  options: CacheOptions,
-): Promise<void> {
+async function refreshEntry(key: string, children: ReactNode, options: CacheOptions): Promise<void> {
   const { store } = state()
-  const stream = renderToReadableStream(stripped)
-  const rawBytes = await readAll(stream)
-  const rawDecoded = await createFromReadableStream<ReactNode>(bytesToStream(rawBytes))
-  const rawResolved = await resolveLazies(rawDecoded)
-  const { stripped: holeTree, snapshots } = stripDynamicWrappers(rawResolved, new Set(ids))
-  if (snapshots.size === 0) {
-    await store.set(
-      key,
-      freshEntry(rawBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
-    )
-    setSnapshots(key, new Map())
-    return
-  }
-  const cleanBytes = await renderAndBuffer(holeTree)
+  const rawBytes = await readAll(renderToReadableStream(children))
+  const { bytes, holes, meta } = stripHoles(rawBytes)
   await store.set(
     key,
-    freshEntry(cleanBytes, options.maxAge, options.staleWhileRevalidate, Date.now()),
+    freshEntry(bytes, enrichHoles(holes), meta, options.maxAge, options.staleWhileRevalidate, Date.now()),
   )
-  setSnapshots(key, snapshots)
 }
 
 function freshEntry(
   bytes: Uint8Array,
+  holes: StoredHole[],
+  meta: SpliceMeta,
   maxAge: number | undefined,
   swr: number | undefined,
   now: number,
 ): Entry {
   const expiresAt = maxAge != null ? now + maxAge * 1000 : Number.POSITIVE_INFINITY
   const staleUntil = swr != null && maxAge != null ? expiresAt + swr * 1000 : expiresAt
-  return { bytes, expiresAt, staleUntil }
+  return { bytes, holes, meta, expiresAt, staleUntil }
 }
 
 export function _cacheStats(): Promise<{ size: number; keys: string[] }> {

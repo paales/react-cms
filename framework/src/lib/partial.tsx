@@ -2120,7 +2120,7 @@ function resolveSelectorToIds(partialsParam: string | null): Set<string> | null 
   return ids.size > 0 ? ids : null
 }
 
-function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNode {
+export function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNode {
   const parent: PartialCtx = {
     path: snap.parentPath,
     frameChain: snap.parentFrameChain,
