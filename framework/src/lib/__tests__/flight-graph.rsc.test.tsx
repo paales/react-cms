@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { Suspense } from "react"
 import { parton, ROOT, type RenderArgs } from "../partial.tsx"
 import { renderWithRequest, renderServerToFlight } from "../../test/rsc-server.ts"
-import { stripHoles, spliceHoles, scaffoldMeta } from "../flight-graph.ts"
+import { stripHoles, spliceHoles, scaffoldMeta, spliceMarkers } from "../flight-graph.ts"
 
 const DEC = new TextDecoder()
 const ENC = new TextEncoder()
@@ -158,5 +158,54 @@ describe("flight-graph spliceHoles (synthetic rows)", () => {
     expect(importCount).toBe(1)
     expect(out).toContain("$L9")
     expect(out).not.toContain("$L4")
+  })
+})
+
+describe("flight-graph spliceMarkers (recursive boundary reassembly)", () => {
+  const resolver = (m: Record<string, string>) => (bid: string): Uint8Array | null =>
+    bid in m ? ENC.encode(m[bid]) : null
+
+  it("splices a body onto its marker's seam", () => {
+    const root = ENC.encode(
+      `1:["$","i",null,{"hidden":true,"data-boundary-id":"B1"}]\n` +
+        `0:["$","div",null,{"children":[["$","h1",null,{"children":"HDR"}],"$L1"]}]\n`,
+    )
+    const out = DEC.decode(
+      spliceMarkers(root, resolver({ B1: `0:["$","span",null,{"children":"BODY_B1"}]\n` })),
+    )
+    expect(out).toContain("BODY_B1")
+    expect(out).not.toContain("data-boundary-id") // marker consumed
+    expect(out).toContain(`1:["$","span"`) // body root took the seam id (1)
+    expect(out).toContain("$L1") // parent ref intact → resolves to the body
+  })
+
+  it("recursively splices nested markers", () => {
+    const root = ENC.encode(
+      `1:["$","i",null,{"data-boundary-id":"B1"}]\n` +
+        `0:["$","div",null,{"children":["$L1"]}]\n`,
+    )
+    const out = DEC.decode(
+      spliceMarkers(
+        root,
+        resolver({
+          B1:
+            `2:["$","i",null,{"data-boundary-id":"B2"}]\n` +
+            `0:["$","section",null,{"children":["$L2"]}]\n`,
+          B2: `0:["$","b",null,{"children":"DEEP_B2"}]\n`,
+        }),
+      ),
+    )
+    expect(out).toContain("DEEP_B2")
+    expect(out).toContain("section")
+    expect(out).not.toContain("data-boundary-id") // every marker consumed
+  })
+
+  it("leaves an unresolved marker inert", () => {
+    const root = ENC.encode(
+      `1:["$","i",null,{"data-boundary-id":"B9"}]\n` +
+        `0:["$","div",null,{"children":["$L1"]}]\n`,
+    )
+    const out = DEC.decode(spliceMarkers(root, () => null))
+    expect(out).toContain("B9") // preserved when resolve returns null
   })
 })

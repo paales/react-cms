@@ -431,3 +431,92 @@ async function spliceOne<H extends HoleRef>(
   }
   if (buffer.length > 0) handleLine(buffer)
 }
+
+// ─── Recursive marker splice (universal parton boundary) ───────────────
+//
+// Every parton renders its body as its own Flight document (so an ALS
+// `parent` scope can wrap that render) and leaves a marker element in its
+// parent's output. `spliceMarkers` reassembles the tree: at each marker
+// it splices the resolved body doc, recursively (a body carries markers
+// for its own inner partons), renumbered onto the marker's seam id.
+//
+// The marker is `<i hidden data-boundary-id=…>` — the same inert-element
+// shape as a cache placeholder, tagged distinctly so a payload that's
+// never spliced still decodes to nothing.
+
+/** Boundary id carried by a marker row, or null. */
+function markerOf(row: FlightRow): string | null {
+  const data = tryParse(row.data)
+  if (!Array.isArray(data) || data[0] !== "$" || data[1] !== "i") return null
+  const props = data[3]
+  if (props === null || typeof props !== "object") return null
+  const bid = (props as Record<string, unknown>)["data-boundary-id"]
+  return typeof bid === "string" ? bid : null
+}
+
+function maxIdOf(rows: FlightRow[]): number {
+  let max = 0
+  for (const row of rows) {
+    const n = parseInt(row.id, 16)
+    if (!Number.isNaN(n) && n > max) max = n
+  }
+  return max
+}
+
+/**
+ * Reassemble a parton tree from per-boundary body docs.
+ *
+ * `resolve(boundaryId)` returns a boundary's body bytes (its own Flight
+ * doc, rooted at `0`). Walks the root doc and at each marker splices the
+ * resolved body — recursively — renumbered so the body's root takes the
+ * marker's seam id (the parent's `$L<seam>` then resolves to it) and
+ * every other body row gets a fresh collision-free id.
+ *
+ * Buffered for now: bodies fully resolve before emit. Streaming + shared-
+ * row dedup are the follow-up optimizations (see the header).
+ */
+export function spliceMarkers(
+  rootBytes: Uint8Array,
+  resolve: (boundaryId: string) => Uint8Array | null,
+): Uint8Array {
+  let next = maxIdOf(splitRows(rootBytes).map(parseRow)) + 1
+  const allocId = (): string => toHex(next++)
+  return joinRows(spliceInto(rootBytes, resolve, allocId))
+}
+
+function spliceInto(
+  bytes: Uint8Array,
+  resolve: (boundaryId: string) => Uint8Array | null,
+  allocId: () => string,
+): string[] {
+  const out: string[] = []
+  for (const row of splitRows(bytes).map(parseRow)) {
+    const bid = markerOf(row)
+    const body = bid != null ? resolve(bid) : null
+    if (bid != null && body != null) {
+      // Resolve the body's own markers first → a self-contained doc, then
+      // rebase it onto this marker's seam id.
+      const resolvedBody = joinRows(spliceInto(body, resolve, allocId))
+      out.push(...renumberBody(resolvedBody, row.id, allocId))
+    } else {
+      out.push(serializeRow(row))
+    }
+  }
+  return out
+}
+
+/** Rebase a self-contained body doc onto a seam: root `0` → `seamId`,
+ *  every other id → a fresh unique id, all refs remapped to match. */
+function renumberBody(bodyBytes: Uint8Array, seamId: string, allocId: () => string): string[] {
+  const rows = splitRows(bodyBytes).map(parseRow)
+  const idMap = new Map<string, string>()
+  for (const row of rows) {
+    if (!idMap.has(row.id)) idMap.set(row.id, row.id === "0" ? seamId : allocId())
+  }
+  const remap = (id: string): string => idMap.get(id) ?? id
+  return rows.map((row) => {
+    const data = tryParse(row.data)
+    const newData = data === undefined ? row.data : JSON.stringify(remapRefs(data, remap))
+    return serializeRow({ ...row, id: remap(row.id), data: newData })
+  })
+}
