@@ -77,6 +77,36 @@ describe("flight-graph stripHoles (real payload)", () => {
   })
 })
 
+describe("flight-graph stripHoles — sync-inlined safety", () => {
+  it("strips an async Activity>PEB row but leaves a content row that inlines a sync parton", () => {
+    // root div: children = [ $L1 (async hole, its own row), an inline
+    // sync Activity>PEB ]. The async hole must be stripped; the content
+    // div (with the sync parton inlined among its children) must NOT be
+    // mis-stripped — the sync parton freezes as cached content.
+    const payload =
+      `2:"$Sreact.activity"\n` +
+      `9:I["/peb.tsx#PEB",[],"*"]\n` +
+      `5:"ASYNC_CONTENT"\n` +
+      `1:["$","$2",null,{"children":["$","$L9","async-key",{"partialId":"async:y","children":"$5"}]}]\n` +
+      `0:["$","div",null,{"children":["$L1",["$","$2",null,{"children":["$","$L9","sync-key",{"partialId":"sync:x"}]}]]}]\n`
+
+    const { bytes, holes } = stripHoles(ENC.encode(payload))
+    const out = DEC.decode(bytes)
+
+    // Exactly one hole: the async, outlined parton.
+    expect(holes.map((h) => h.partialId)).toEqual(["async:y"])
+
+    // Async hole row replaced by a placeholder; its content GC'd.
+    expect(out).toContain(`"data-partial-id":"async:y"`)
+    expect(out).not.toContain("ASYNC_CONTENT")
+
+    // The content div survives intact, and the inlined sync parton is
+    // still there (frozen) — the whole row was NOT swallowed.
+    expect(out).toContain(`"$","div",null`)
+    expect(out).toContain(`"partialId":"sync:x"`)
+  })
+})
+
 describe("flight-graph spliceHoles (synthetic rows)", () => {
   it("reuses the seam id, renumbers into a private block, and streams fresh content", async () => {
     // Scaffold: root div references holes via $L1 / $L2; rows 1 & 2 are

@@ -126,44 +126,51 @@ function tryParse(data: string): unknown {
 
 // ─── Hole detection ────────────────────────────────────────────────────
 
-/** Find the first `{partialId: string, …}` object anywhere in a parsed
- *  value — the props of a `PartialErrorBoundary` element. Returns the
- *  partialId + matchKey, or null. */
-function findPartialProps(value: unknown): { partialId: string; matchKey?: string } | null {
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const found = findPartialProps(v)
-      if (found) return found
+/** Walk an element down its wrapper chain to a `PartialErrorBoundary`
+ *  (the element whose props carry `partialId`), descending only through
+ *  single-child wrapper elements — `<Activity>` / `<Suspense>` / the PEB
+ *  import, all of which serialize with a `$…` reference as their type. A
+ *  parton's wire element is exactly this chain, and an async/Suspended
+ *  parton outlines it to its own row.
+ *
+ *  The chain ends at content: a string-typed (HTML) element like `div`,
+ *  or a wrapper whose `children` is a multi-element array rather than a
+ *  single nested element. So a content row that merely *inlines* a
+ *  synchronous parton among its children returns null here — that parton
+ *  stays frozen in the cached bytes (static content) instead of
+ *  mis-stripping the whole content row. Dynamic holes fetch, hence
+ *  suspend, hence always outline — so this never costs a real hole. */
+function findTopLevelHole(data: unknown): { partialId: string; matchKey?: string } | null {
+  if (!Array.isArray(data) || data[0] !== "$") return null
+  const props = data[3]
+  if (props === null || typeof props !== "object") return null
+  const p = props as Record<string, unknown>
+  if (typeof p.partialId === "string") {
+    return {
+      partialId: p.partialId,
+      matchKey: typeof p.partialMatchKey === "string" ? p.partialMatchKey : undefined,
     }
-    return null
   }
-  if (value !== null && typeof value === "object") {
-    const obj = value as Record<string, unknown>
-    if (typeof obj.partialId === "string") {
-      return {
-        partialId: obj.partialId,
-        matchKey: typeof obj.partialMatchKey === "string" ? obj.partialMatchKey : undefined,
-      }
-    }
-    for (const k of Object.keys(obj)) {
-      const found = findPartialProps(obj[k])
-      if (found) return found
-    }
+  // Wrapper element — its type is a `$…` reference, not an HTML tag.
+  // Descend its single element child; a content child or multi-child
+  // array ends the chain.
+  const type = data[1]
+  if (typeof type === "string" && asRef(type)) {
+    const children = p.children
+    if (Array.isArray(children) && children[0] === "$") return findTopLevelHole(children)
   }
   return null
 }
 
-/** Is this row a parton's wire element? In the cached body, every
- *  `partialId` belongs to an inner hole (the cached spec's own boundary
- *  sits outside the `<Cache>` wrap), and async/Suspended partons outline
- *  to their own row — so a row whose top-level data is an element
- *  carrying a `partialId` is a hole root. */
+/** Is this row a parton's wire element — the strip unit the splice
+ *  replaces wholesale? True only when the row's top-level element is the
+ *  wrapper chain down to a PEB (see `findTopLevelHole`). In the cached
+ *  body every such `partialId` belongs to an inner hole; the cached
+ *  spec's own boundary sits outside the `<Cache>` wrap. */
 function holeOf(row: FlightRow): HoleRef | null {
-  const data = tryParse(row.data)
-  if (!Array.isArray(data) || data[0] !== "$") return null
-  const props = findPartialProps(data)
-  if (!props) return null
-  return { rowId: row.id, partialId: props.partialId, matchKey: props.matchKey }
+  const found = findTopLevelHole(tryParse(row.data))
+  if (!found) return null
+  return { rowId: row.id, partialId: found.partialId, matchKey: found.matchKey }
 }
 
 /** Placeholder element row: `<i hidden data-partial-id=…>`. Reuses the
