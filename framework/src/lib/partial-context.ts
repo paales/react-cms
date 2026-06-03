@@ -1,14 +1,21 @@
 /**
- * Partial parent context — explicit threading.
+ * Partial parent context.
  *
- * `<Spec>` components receive `parent: PartialCtx` as a prop and pass a
- * derived child context to their `render` function as `parent`.
+ * A parton needs its `parent` — the ancestor id path + frame chain — to
+ * derive its own identity and to scope its descendants. Parent flows
+ * through an `AsyncLocalStorage` scope, not a prop: each parton renders
+ * its body inside `runWithParent(childCtx, …)` at its boundary (the
+ * parton boundary in `partial.tsx`), and descendants read it via
+ * `getAmbientParent()`.
  *
- * No ALS / React.cache cell here — every parent/descendant edge flows
- * through props. The `capturePartialContext()` getter and the render-
- * tree-tracking cell from the previous design are gone; if a component
- * needs ancestor context it accepts it as a prop.
+ * Run-based ALS is the only mechanism that works here: it's
+ * interleave-safe and survives the async render across the boundary's
+ * `renderToReadableStream` (the same way request context does). A
+ * Provider-style `enterWith` cross-contaminates sibling partons under
+ * React's breadth-first async traversal — see `als-parent-probe`.
  */
+
+import { AsyncLocalStorage } from "node:async_hooks"
 
 export interface PartialCtx {
   /** Effective ids of ancestor Partials, outer-first. */
@@ -25,7 +32,24 @@ export const ROOT: PartialCtx = Object.freeze({
   frameChain: EMPTY,
 })
 
-/** Build the child context a spec passes to its render fn. Frame
+const parentContext = new AsyncLocalStorage<PartialCtx>()
+
+/** The current ambient parent — set by the enclosing parton's boundary.
+ *  `ROOT` at the top of a render, or wherever no boundary is active. */
+export function getAmbientParent(): PartialCtx {
+  return parentContext.getStore() ?? ROOT
+}
+
+/** Run `fn` with `ctx` as the ambient parent. A parton's boundary wraps
+ *  its body render in this so descendants read `ctx`. Must enclose the
+ *  boundary's `renderToReadableStream` call — the ALS scope propagates
+ *  through the render's async continuations, not through lazily-rendered
+ *  JSX children, so the body has to render *inside* the callback. */
+export function runWithParent<T>(ctx: PartialCtx, fn: () => T): T {
+  return parentContext.run(ctx, fn)
+}
+
+/** Build the child context a spec scopes its descendants under. Frame
  *  scope opening lives on `<Frame>`, not on partial specs — `parent`'s
  *  `frameChain` flows through unchanged. */
 export function _childContext(parent: PartialCtx, selfId: string): PartialCtx {

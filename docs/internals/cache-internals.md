@@ -47,11 +47,17 @@ beginning with `$` is escaped on the wire as `$$…`, so a price string
 like `"$5.00"` is never mistaken for a reference (this is why the
 rewrite can't be a regex over the text).
 
-- **Hole detection.** In the cached body every `partialId` belongs to
-  an inner hole — the cached spec's own boundary sits *outside* the
-  `<Cache>` wrap, and async/Suspended partons outline to their own
-  row. So a row whose top-level data is an element carrying a
-  `partialId` is a hole root.
+- **Hole detection.** A hole root is a row whose *top-level* element is
+  the wrapper chain — `<Activity>` / `<Suspense>` (both `$…`-ref-typed)
+  descending through single-element children — down to a
+  `PartialErrorBoundary` (the element carrying `partialId`). In the
+  cached body every such `partialId` is an inner hole; the cached spec's
+  own boundary sits *outside* the `<Cache>` wrap. The descent stops at
+  content (a string-typed HTML element, or a multi-child array), so a
+  content row that merely *inlines* a synchronous parton among its
+  children isn't mis-stripped — that parton freezes as cached content.
+  Dynamic holes fetch, hence suspend, hence always outline, so this
+  never costs a real hole.
 - **Strip + GC.** Rewrite each hole root to the placeholder element,
   then mark-and-sweep from the root (`0`): rows no longer reachable —
   the frozen hole content — are dropped, so the stored payload never

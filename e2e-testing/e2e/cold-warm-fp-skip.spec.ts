@@ -70,7 +70,13 @@ test("re-visit to a route fp-skips on the very next nav after cold", async ({ pa
   // streaming connection open continuously, so the network never
   // goes idle. Pokedex heading appearing means the trailer round-
   // trip is complete.
-  await page.getByRole("heading", { name: "Pokedex" }).waitFor({ timeout: 10000 })
+  //
+  // Generous timeout: this is a full client nav round-trip (away-nav
+  // fetch + heartbeat teardown/reopen), and on a cold dev server the
+  // Pokemon route's first Vite dep-optimization pass can push it past
+  // 10s — all retries then land in the same cold window. Warm it is a
+  // few seconds; the headroom only matters on first boot.
+  await page.getByRole("heading", { name: "Pokedex" }).waitFor({ timeout: 25000 })
 
   // Nav back to /magento.
   await page.getByRole("link", { name: /Magento Store/ }).click()
