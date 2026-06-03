@@ -329,8 +329,8 @@ export interface FragmentCellOpts<R, V> {
  *       key: (d) => ({ uid: d.uid }),   // CartItem has no `id`
  *     })
  *
- *     // placement (parent maps the aggregate's uid list):
- *     <CartLine item={cartLine.with({ uid })} parent={parent} />
+ *     // placement (the host maps the aggregate's uid list):
+ *     <CartLine item={cartLine.with({ uid })} />
  *     // value-keyed write from a mutation that colocates ...CartLine:
  *     cartLine.set(r.updateCartItems.cart.items[0])
  */

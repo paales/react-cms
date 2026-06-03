@@ -28,7 +28,7 @@
  * Place inside a Suspense boundary if the remote may be slow:
  *
  *   <Suspense fallback={<Spinner />}>
- *     <RemoteFrame url="/__remote/payment-form" parent={parent} />
+ *     <RemoteFrame url="/__remote/payment-form" />
  *   </Suspense>
  */
 
@@ -220,7 +220,6 @@ export async function RemoteFrame({
  *
  *     // host call site
  *     <MagentoPaymentSummary
- *       parent={parent}
  *       capability={{ cart_id: "...", currency: "EUR", total: 127.45 }}
  *     />
  *

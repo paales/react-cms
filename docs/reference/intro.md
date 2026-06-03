@@ -21,7 +21,7 @@ The public surface is five things:
 | `parton(R, opts)` | Addressable render unit. Optionally URL-gated via `match`. | Any subtree you want fingerprinted, cacheable, refetchable. The catch-all. |
 | `block(R, opts)` | Slot-placeable partial with a `schema` for CMS content. | Content blocks the CMS can place into slots or render directly as a singleton (storage row matches spec id). |
 | `cell` / `localCell` / `gqlCell` | Typed, identity-keyed slot of server-authoritative state; crosses Flight as `ResolvedCell<T>`. | Server-owned state a parton reads and clients mutate — cart, prefs, form drafts, GraphQL-loaded entities. |
-| `<Frame name initialUrl>` | Scope opener — extends `parent.frameChain` so descendants see the frame-resolved request. | Any region whose URL is independent of the window URL. |
+| `<Frame name initialUrl>` | Scope opener — extends the ambient frame chain so descendants see the frame-resolved request. | Any region whose URL is independent of the window URL. |
 | `<RemoteFrame url capability>` | Cross-process composition — embeds a parton hosted by a different process (same- or cross-origin). | Federated UI: payment forms hosted by a payment provider, marketing widgets from a CMS, etc. |
 
 A spec is constructed once at module scope; every dependency it has on
@@ -31,11 +31,11 @@ blocks' `schema`).
 ```tsx
 const PokemonPage = parton(PokemonRender, "/pokemon/:id")
 
-function PokemonRender({ id, parent }: { id: string } & RenderArgs) {
+function PokemonRender({ id }: { id: string } & RenderArgs) {
   return <article>...{id}...</article>
 }
 
-<PokemonPage parent={ROOT} />
+<PokemonPage />
 ```
 
 A spec is:

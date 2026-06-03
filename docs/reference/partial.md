@@ -19,12 +19,12 @@ import { parton, ROOT, type RenderArgs } from "./lib"
 
 const PokemonPage = parton(PokemonRender, "/pokemon/:id")
 
-function PokemonRender({ id, parent }: { id: string } & RenderArgs) {
+function PokemonRender({ id }: { id: string } & RenderArgs) {
   return <article>...{id}...</article>
 }
 
 // Anywhere in JSX:
-<PokemonPage parent={ROOT} />
+<PokemonPage />
 ```
 
 ## Tier 1 — pattern-match shorthand
@@ -73,10 +73,10 @@ const ProductHero = parton(ProductHeroRender, {
 })
 
 async function ProductHeroRender({
-  slug, variant, parent,
+  slug, variant,
 }: { slug: string; variant: string } & RenderArgs) {
   const product = await getProduct(slug)
-  return <Hero parent={parent} product={product} variant={variant} />
+  return <Hero product={product} variant={variant} />
 }
 ```
 
@@ -154,20 +154,22 @@ content into the fingerprint.
 ## `Render` props
 
 `Render` receives, in order: any extra props passed at the JSX call
-site, the `vary` result spread, the framework-injected
-`parent`/`children`. Vary keys win on collision.
+site, the `vary` result spread, and the framework-injected `children`.
+Vary keys win on collision.
 
 | Key | Source |
 |---|---|
-| `<JSX call-site props>` | parent spec, e.g. `<Hero parent={p} pokemonId={id} />` |
+| `<JSX call-site props>` | placing spec, e.g. `<Hero pokemonId={id} />` |
 | `<every key from vary's return>` | author |
-| `parent` | framework — fresh `PartialCtx` for descendants |
 | `children` | framework — passes outer JSX children through |
 
-`parent` is what nested specs and slot hosts use. There is no
-`id` prop on the Render surface — CMS-bound blocks
-([`block.md`](./block.md)) get their content via `schema` reads,
-and the framework binds the read surface to the right row internally.
+A parton neither receives nor threads a `parent` — nested specs and
+slot hosts read their parent (id path + frame chain) from server
+context (the ambient parton; see
+[`server-context.md`](../internals/server-context.md)). There is no
+`id` prop on the Render surface either — CMS-bound blocks
+([`block.md`](./block.md)) get their content via `schema` reads, and
+the framework binds the read surface to the right row internally.
 
 ### `typeof Spec.props` — derive the prop bag from the spec
 
@@ -212,17 +214,17 @@ it just orders the type plumbing differently to dodge the cycle.
 `parton(Render, …)` feels like `React.memo(Render)`: the
 returned component's prop signature is Render's prop signature minus
 the keys `vary` already provides minus the framework-injected keys.
-TypeScript subtracts both, so the call site is exactly the props the
-parent has to supply.
+TypeScript subtracts both, so the call site is exactly the props you
+still have to supply.
 
 ```tsx
-// vary fills `pokemonId` → call site only takes `parent`
+// vary fills `pokemonId` → call site takes nothing
 const Hero = parton(HeroRender, {
   match: "/pokemon/:id",
   vary: ({ params }) => ({ pokemonId: Number(params.id) }),
 })
 function HeroRender({ pokemonId }: { pokemonId: number } & RenderArgs) { … }
-<Hero parent={ROOT} />
+<Hero />
 ```
 
 ```tsx
@@ -230,7 +232,7 @@ function HeroRender({ pokemonId }: { pokemonId: number } & RenderArgs) { … }
 const Hero = parton(function HeroRender({
   pokemonId,
 }: { pokemonId: number } & RenderArgs) { … })
-<Hero parent={parent} pokemonId={9} />
+<Hero pokemonId={9} />
 ```
 
 This is what makes nested wrappers work: an outer wrapper matches
@@ -239,12 +241,12 @@ forcing each child to re-parse the URL.
 
 ```tsx
 const PokemonDetailPage = parton(
-  function PokemonDetailRender({ id, parent }: { id: string } & RenderArgs) {
+  function PokemonDetailRender({ id }: { id: string } & RenderArgs) {
     return (
       <>
-        <Hero parent={parent} id={id} />
-        <Stats parent={parent} id={id} />
-        <Species parent={parent} id={id} />
+        <Hero id={id} />
+        <Stats id={id} />
+        <Species id={id} />
       </>
     )
   },
@@ -284,7 +286,7 @@ that hosts CMS-managed children, use [`block`](./block.md)
 and declare the slot via `cms.blocks(slot, selector?)` /
 `cms.block(slot, selector?)` inside `schema`. A partial that happens
 to render a singleton block can still place it directly via JSX
-(`<SomeBlock parent={parent} />`); the block's CMS row falls out of
+(`<SomeBlock />`); the block's CMS row falls out of
 its spec id (the first selector label, or `Render.name`-derived).
 
 ## Selector grammar
@@ -406,12 +408,12 @@ are nested specs that take their data via JSX props or `vary`.
 
 ```tsx
 const PokemonDetailPage = parton(
-  function PokemonDetailRender({ id, parent }: { id: string } & RenderArgs) {
+  function PokemonDetailRender({ id }: { id: string } & RenderArgs) {
     return (
       <>
-        <Hero parent={parent} id={id} />
-        <Stats parent={parent} id={id} />
-        <Species parent={parent} id={id} />
+        <Hero id={id} />
+        <Stats id={id} />
+        <Species id={id} />
       </>
     )
   },
@@ -420,9 +422,9 @@ const PokemonDetailPage = parton(
 
 // Place every page wrapper as a sibling at the root; only the
 // matching one renders.
-<PokemonOverviewPage parent={ROOT} />
-<PokemonDetailPage parent={ROOT} />
-<CmsDemoPage parent={ROOT} />
+<PokemonOverviewPage />
+<PokemonDetailPage />
+<CmsDemoPage />
 …
 ```
 
@@ -458,7 +460,7 @@ export const NotFoundFallback = parton(
 )
 
 // Place once alongside the other page wrappers.
-<NotFoundFallback parent={ROOT} />
+<NotFoundFallback />
 ```
 
 The set is populated as a side-effect of every `parton(…,
@@ -473,7 +475,7 @@ tracking.
 
 ```tsx
 const CheckoutForm = parton(
-  function Render({ cardName, cardCvc, saves, save, parent }) {
+  function Render({ cardName, cardCvc, saves, save }) {
     return <CheckoutClient cardName={cardName} cardCvc={cardCvc} saves={saves} onSave={save} />
   },
   {
@@ -550,7 +552,6 @@ function CheckoutClient({ cardName, cardCvc, saves, onSave }) {
 |---|---|
 | `<every key from vary's return>` | author's `vary` callback |
 | `<every key from schema's return>` | scoped descriptors → `ResolvedCell`; module cells → `ResolvedCell`; plain values pass through |
-| `parent` | framework — `ROOT` for actions (no descendant render context) |
 | `args` | second parameter, caller-supplied |
 
 Cells in the handler scope have deferred-write `set`: the call

@@ -104,7 +104,7 @@ vary output:
 
 ```tsx
 const ProductPage = parton(
-  function Render({ notes, parent }) {
+  function Render({ notes }) {
     return <NotesEditor notes={notes} />
   },
   {
@@ -134,9 +134,9 @@ const cartItemCell = localCell({
 })
 
 // Parent renders many lines, each bound to a specific itemId:
-function CartRender({ cart, parent }) {
+function CartRender({ cart }) {
   return cart.value.itemIds.map((uid) => (
-    <CartLine key={uid} parent={parent} item={cartItemCell.with({ uid })} />
+    <CartLine key={uid} item={cartItemCell.with({ uid })} />
   ))
 }
 
@@ -303,10 +303,9 @@ is no manual `.with({ uid })` re-keying:
 // hand-written alias:
 function MagentoCartRender({
   cart,
-  parent,
 }: { cart: ResolvedCell<CellValue<typeof cartCell>> } & RenderArgs) {
   // cart.value.cart.items is BoundCell<…>[] — forward directly:
-  return cart.value?.cart.items.map((line) => <CartLine item={line} parent={parent} />)
+  return cart.value?.cart.items.map((line) => <CartLine item={line} />)
 }
 ```
 
@@ -364,10 +363,10 @@ cell, no binder/reader split:
 
 ```ts
 const Cart = parton(
-  function Render({ cart, parent }) {
+  function Render({ cart }) {
     // cart.value.cart.items are per-line BoundCells (result → cells):
     return cart.value?.cart.items.map((line) => (
-      <CartLine key={String(line.args.uid)} parent={parent} item={line} />
+      <CartLine key={String(line.args.uid)} item={line} />
     ))
   },
   {
@@ -389,7 +388,7 @@ auto-resolved before Render runs. Pass a `BoundCell` from a parent to a
 child parton:
 
 ```tsx
-<CartLine parent={parent} item={cartItemCell.with({ uid })} />
+<CartLine item={cartItemCell.with({ uid })} />
 ```
 
 The child's Render receives `item` as a `ResolvedCell<T>`. The

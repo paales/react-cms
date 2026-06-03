@@ -131,7 +131,7 @@ export interface CellInterface<T, A extends CellArgs = CellArgs> {
    * Bind this cell to explicit args, returning a `BoundCell<T>` with
    * the partition baked. Use at JSX placement sites:
    *
-   *     <CartLine item={cartItemCell.with({itemId})} parent={parent} />
+   *     <CartLine item={cartItemCell.with({itemId})} />
    *
    * `A` (the args type) defaults to `CellArgs`; gqlCell/fragmentCell set
    * it to the document's variables / key shape so `.with` is typed.

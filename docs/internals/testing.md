@@ -44,7 +44,7 @@ const TestPartial = parton(
   { selector: "#test", vary: ({ request }) => ({ value: new URL(request.url).searchParams.get("v") ?? "" }) }
 )
 
-const { rendered } = await renderRsc(<TestPartial parent={ROOT} />, { url: "/?v=hello" })
+const { rendered } = await renderRsc(<TestPartial />, { url: "/?v=hello" })
 expect(rendered).toContain("hello")
 ```
 

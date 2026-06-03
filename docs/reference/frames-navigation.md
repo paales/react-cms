@@ -15,29 +15,25 @@ const CartContent = parton(CartContentRender, {
   vary: ({ pathname }) => ({ state: parseCartState(pathname) }),
 })
 
-<Frame name="cart" initialUrl="/cart/closed" parent={parent}>
-  {(p) => <CartContent parent={p} />}
+<Frame name="cart" initialUrl="/cart/closed">
+  <CartContent />
 </Frame>
 ```
 
-`<Frame>` is a plain React component — no constructor. It extends
-`parent.frameChain` with its name, writes `initialUrl` to the
+`<Frame>` is a plain React component — no constructor. It extends the
+ambient frame chain with its name, writes `initialUrl` to the
 session-frame-URL store (so descendants find it via session lookup),
 and provides the `useNavigation("cart")` context to client
-descendants. The render-prop child receives the extended
-`PartialCtx`; thread it as `parent` to every spec inside.
+descendants. Partons inside the frame inherit the extended frame
+chain via server context — no threading.
 
 Multiple sibling partials can live in one frame:
 
 ```tsx
-<Frame name="cart" initialUrl="/cart/closed" parent={parent}>
-  {(p) => (
-    <>
-      <CartHeader parent={p} />
-      <CartBody parent={p} />
-      <CartFooter parent={p} />
-    </>
-  )}
+<Frame name="cart" initialUrl="/cart/closed">
+  <CartHeader />
+  <CartBody />
+  <CartFooter />
 </Frame>
 ```
 
@@ -55,18 +51,16 @@ For a frame at path `[outer, inner]` (joined as `"outer.inner"`):
 Nest a `<Frame>` inside another to extend the frame chain:
 
 ```tsx
-<Frame name="cart" initialUrl="/cart/closed" parent={parent}>
-  {(p) => (
-    <CartContent parent={p}>
-      <Frame name="tab" initialUrl="/items" parent={p}>
-        {(tabParent) => <CartTab parent={tabParent} />}
-      </Frame>
-    </CartContent>
-  )}
+<Frame name="cart" initialUrl="/cart/closed">
+  <CartContent>
+    <Frame name="tab" initialUrl="/items">
+      <CartTab />
+    </Frame>
+  </CartContent>
 </Frame>
 ```
 
-The inner `<Frame>` extends `parent.frameChain` from `["cart"]` to
+The inner `<Frame>` extends the frame chain from `["cart"]` to
 `["cart", "tab"]`. Inside `CartTab`, `useNavigation("tab")` binds to
 the nested frame and resolves against the `cart.tab` session entry.
 A second `tab` frame nested under `menu` resolves to `menu.tab` —
@@ -395,6 +389,6 @@ named frame pick up the new URL via `getSessionFrameUrl()`.
   it to session on first render only if the session has no entry for
   the frame path. Once the user navigates the frame, the session URL
   takes over. Use `clearSessionFrame(path)` to drop it.
-- **Nested frames need explicit threading.** The inner `<Frame>` must
-  receive its `parent` from the outer render-prop callback (not
-  `ROOT`); passing `ROOT` strips the ambient frame chain.
+- **Nested frames just nest.** Place an inner `<Frame>` anywhere inside
+  the outer one's children; it inherits the outer frame chain via server
+  context and extends it with its own name. No threading.

@@ -1,35 +1,33 @@
 # Frame scope internals
 
-Each spec computes its frame chain explicitly from
-`parent.frameChain` plus its own `frame` option; its `vary` callback
-receives the frame-resolved `Request` as an argument.
+A parton reads its frame chain from server context — the ambient
+parton's `frameChain` (see [`server-context.md`](./server-context.md)).
+It opens no frame of its own; `<Frame>` is what extends the chain. Its
+`vary` callback receives the frame-resolved `Request` as an argument.
 
 ```ts
 // inside createSpecComponent (framework/src/lib/partial.tsx):
-const ourFrameChain = opts.frame
-  ? [...parent.frameChain, opts.frame]
-  : parent.frameChain
+const parent = getAmbientParent()
+const ourFrameChain = parent.frameChain
 const ourRequest =
-  opts.frame != null
-    ? resolveFrameRequest(ourFrameChain, opts.frameUrl)
-    : ourFrameChain.length > 0
-      ? resolveFrameRequest(ourFrameChain, undefined)
-      : getRequest()
+  ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()
 ```
 
-`resolveFrameRequest` looks the URL up via `getSessionFrameUrl(path)`
-and falls back to the spec's `frameUrl` option, then to the page
-request.
+`<Frame name>` reads the same ambient parent, appends `name` to the
+chain, and sets that as its descendants' context, so they inherit the
+extended chain. `resolveFrameRequest` looks the URL up via
+`getSessionFrameUrl(path)` (a `<Frame>`'s `initialUrl` is written there
+on cold render) and falls back to the page request.
 
-## Why explicit props, not an ALS cell
+## Why server context, not an ALS cell
 
 RSC sibling interleaving makes a per-request mutable cell unsafe: a
 sibling spec's body can overwrite the cell between an ancestor's
-setup and its descendant's body. Threading `parent: PartialCtx` as
-an explicit prop sidesteps that — the `frameChain` propagates
-without any ALS / cell, immune to sibling interleaving — and `vary`
-runs once per spec invocation with the resolved request as an
-argument, so there's no cell to drift.
+setup and its descendant's body. The frame chain rides server context
+instead — threaded through React's Flight task graph — which survives
+`await` and isolates siblings, so the chain propagates without any ALS
+/ cell drift. `vary` runs once per spec invocation with the resolved
+request as an argument.
 
 ## Wire protocol
 
@@ -48,10 +46,9 @@ inside a framed spec naturally drive that frame.
 
 ## Sharp edges
 
-- **Same-name frames at different depths.** Two specs with
-  `frame="tab"` under different ancestors (e.g. `cart.tab` and
-  `menu.tab`) coexist because the framework keys every frame by its
-  full dotted path.
-- **`frameUrl` as cold-session default.** Once the session has a
-  URL for the frame, the option is ignored; clear the entry with
+- **Same-name frames at different depths.** Two `<Frame name="tab">`
+  under different ancestors (e.g. `cart.tab` and `menu.tab`) coexist
+  because the framework keys every frame by its full dotted path.
+- **`initialUrl` as cold-session default.** Once the session has a
+  URL for the frame, the prop is ignored; clear the entry with
   `clearSessionFrame(path)` to reset.

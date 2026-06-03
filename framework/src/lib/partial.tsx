@@ -9,7 +9,7 @@
  * also the cache-key surface.
  *
  *   const PokemonPage = parton(PokemonRender, '/pokemon/:id')
- *   <PokemonPage parent={ROOT} />
+ *   <PokemonPage />
  *
  * Per-instance render-id overrides flow in through the framework-
  * internal `__instanceId` JSX prop — the same Component renders with
@@ -361,7 +361,7 @@ export interface PartialComponentProps {
  * `SpecExtraProps<R, V>` is the call-site prop surface: `R` minus the
  * framework keys minus the vary keys. When `vary` returns the entire
  * prop surface, `SpecExtraProps` collapses to `{}` and the call site
- * is just `<Spec parent={...} />`.
+ * is just `<Spec />`.
  */
 /** A prop the Render receives as `ResolvedCell<T>` may be SUPPLIED at
  *  the call site as a `BoundCell<T>` (`cell.with(args)`) or a `CellInterface<T>`
@@ -2004,9 +2004,9 @@ export function _buildPartial<V extends object>(
  *      Inferred from `Render`'s prop type minus the previous two.
  *
  * `Extra` is what the JSX call site has to supply (e.g.
- * `<HeroSpec parent={...} id={pokemonId} />`). When `vary` (or the
- * URL pattern) already covers the entire surface, `Extra` is empty
- * and the call site is just `<HeroSpec parent={...} />`.
+ * `<HeroSpec id={pokemonId} />`). When `vary` (or the URL pattern)
+ * already covers the entire surface, `Extra` is empty and the call
+ * site is just `<HeroSpec />`.
  *
  * The returned spec carries a phantom `.props` type — `typeof
  * Spec.props` resolves to the prop bag the framework supplies to

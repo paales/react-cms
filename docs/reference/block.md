@@ -6,7 +6,7 @@ declares both CMS content reads and child slot composition.
 
 ```tsx
 const HeroBlock = block(
-  function HeroRender({ headline, subhead, tone, parent }) {
+  function HeroRender({ headline, subhead, tone }) {
     return (
       <article data-tone={tone}>
         <h1>{headline}</h1>
@@ -87,8 +87,8 @@ interface CmsReadSurface {
 
 Field reads (`text`/`enum`/etc.) return values from the host's CMS
 content row; `block` / `blocks` return ReactNode for the host's slot
-children. The framework binds the surface to the host's content row +
-parent context internally — the schema never threads any of it.
+children. The framework binds the surface to the host's content row
+internally — the schema never threads any of it.
 
 `cms.blocks(slot, selector?)` resolves the slot's entries against the
 selector (label filter, e.g. `"page-block"`), looks each entry up by
@@ -135,7 +135,7 @@ const AppNav = block(NavRootRender, {
   schema: ({ cms }) => ({ links: cms.blocks("links", "nav-item") }),
 })
 
-<AppNav parent={ROOT}/>
+<AppNav/>
 ```
 
 The spec reads from CMS row `"app-nav"`. External code refetches via
@@ -151,7 +151,7 @@ multiple placements share the label and refetch together:
 const LivePrice = parton(LivePriceRender, { selector: "price" })
 
 {products.map(p => (
-  <LivePrice key={p.sku} parent={parent} sku={p.sku} basePrice={p.price} />
+  <LivePrice key={p.sku} sku={p.sku} basePrice={p.price} />
 ))}
 ```
 

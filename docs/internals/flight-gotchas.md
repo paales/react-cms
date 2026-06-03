@@ -19,7 +19,7 @@ spec component itself.
 ```tsx
 {items.map((item) => (
   <Fragment key={item.id}>
-    <ItemSpec parent={parent} />
+    <ItemSpec />
   </Fragment>
 ))}
 ```
@@ -56,7 +56,8 @@ React's RSC build (`react.react-server.js`) deliberately excludes
 `createContext`. Server components can't create their own
 providers. The framework works around this by:
 
-- Threading `parent: PartialCtx` as an explicit prop (no context
-  needed).
+- Implementing **server context** ([`server-context.md`](./server-context.md)):
+  a small patch threads a parton's `parent` through React's Flight task
+  graph, so partons read it ambiently without a `createContext`.
 - Passing the frame-resolved `request` to `vary` as an argument
   (no ALS, no cell, no context).

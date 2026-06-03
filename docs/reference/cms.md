@@ -146,9 +146,8 @@ export const PageRootBlock = block(
 )
 ```
 
-The framework wires host context (parent + the rendered instance's
-CMS storage key) into the `cms` surface implicitly. Author code
-doesn't thread any of it. Each slot entry's id becomes its rendered
+The framework wires the rendered instance's CMS storage key into the
+`cms` surface implicitly. Author code doesn't thread any of it. Each slot entry's id becomes its rendered
 block instance's effective CMS row via the framework-internal slot
 wiring.
 
@@ -208,7 +207,7 @@ When the cookie is set, `<EditorShell>` paints three panes:
   partial mounts. Folds the previewed `pathname` into its `vary` so
   cross-page navigation invalidates the tree fp.
 - Preview — the page itself, rendered inline inside the editor's
-  middle pane. Page placements receive `parent={ROOT}`; their `vary`
+  middle pane. Page placements render at the root; their `vary`
   callbacks see the window URL with editor-internal params present
   (`?select=…`, `?config=…`). Specs whose `vary` only reads the
   pathname or page-relevant search params naturally ignore those.

@@ -19,7 +19,6 @@ import { Suspense } from "react"
 <Suspense fallback={<Spinner />}>
   <RemoteFrame
     url="https://stripe.example/__remote/payment-form"
-    parent={parent}
     capability={{ cart_id: "abc", currency: "USD", total: 49.95 }}
   />
 </Suspense>
@@ -30,7 +29,6 @@ import { Suspense } from "react"
 ```ts
 interface RemoteFrameProps {
   url: string
-  parent: PartialCtx
   capability?: Capability
   namespace?: string
 }
@@ -39,7 +37,6 @@ interface RemoteFrameProps {
 | Prop | Notes |
 |---|---|
 | `url` | Absolute URL or same-origin path of the remote endpoint. Relative paths resolve against the current request's URL via `getRequest()`. |
-| `parent` | Host `PartialCtx`. Passed for placement consistency; the remote runs in its own process scope, so this isn't forwarded over the wire. |
 | `capability` | Host-declared values the remote can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header. |
 | `namespace` | Prefix applied to every id + label registered from this remote's trailer. `magento` turns the remote's `stocks` spec into `magento:stocks` in the host's registry, so selectors stay collision-free across multiple remotes. Set automatically by `parton add` bindings. |
 
@@ -121,17 +118,16 @@ Host call sites:
 import { MagentoPaymentSummary, MagentoStocks } from "@/remote/magento"
 
 <MagentoPaymentSummary
-  parent={parent}
   capability={{ cart_id: "...", currency: "EUR", total: 127.45 }}
 />
-<MagentoStocks parent={parent} />
+<MagentoStocks />
 ```
 
 When a spec varies on URL search params, the binding accepts a
 `searchParams` prop that gets appended to the fetch URL:
 
 ```tsx
-<MagentoCheckoutStep parent={parent} searchParams={{ step: "payment" }} />
+<MagentoCheckoutStep searchParams={{ step: "payment" }} />
 ```
 
 `yarn parton update <name>` re-runs the fetch using the origin
@@ -227,20 +223,16 @@ bound remote — no dedicated primitive needed:
 ```tsx
 import { MagentoCheckoutStep } from "@/remote/magento"
 
-<Frame name="checkout" initialUrl="/?step=shipping" parent={parent}>
-  {(p) => (
-    <>
-      <CheckoutStepNav />          {/* client buttons: nav.navigate(?step=…) */}
-      <RemoteCheckoutFrame parent={p} />
-    </>
-  )}
+<Frame name="checkout" initialUrl="/?step=shipping">
+  <CheckoutStepNav />          {/* client buttons: nav.navigate(?step=…) */}
+  <RemoteCheckoutFrame />
 </Frame>
 
 const RemoteCheckoutFrame = parton(
-  function Render({ step, parent }) {
+  function Render({ step }) {
     return (
       <Suspense fallback={…}>
-        <MagentoCheckoutStep parent={parent} searchParams={{ step }} />
+        <MagentoCheckoutStep searchParams={{ step }} />
       </Suspense>
     )
   },
@@ -278,7 +270,6 @@ not declared, the remote doesn't see.
 ```tsx
 // Host
 <MagentoPaymentSummary
-  parent={parent}
   capability={{
     cart_id: cart.id,
     currency: cart.currency,

@@ -201,7 +201,7 @@ On each render the wrapper:
    `inv` fold.
 6. **fp** = `id|matchKey|vary|schema=<cellHashes>|props|inv`.
 7. **Render** with the assembled prop bag (resolved cells, vary
-   output, schema-resolved entries, parent context).
+   output, schema-resolved entries).
 
 The wrapper is `async`. Cold-load paths await; hot paths (storage
 warm) settle in a microtask — sync-equivalent in practice.
