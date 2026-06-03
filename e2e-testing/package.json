@@ -33,7 +33,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "latest",
-    "@vitejs/plugin-rsc": "^0.5.24",
+    "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch",
     "gql.tada": "^1.9.2",
     "playwright": "^1.59.1",
     "rsc-html-stream": "^0.0.7",

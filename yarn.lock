@@ -1769,7 +1769,7 @@ __metadata:
     "@types/react": "npm:^19.2.14"
     "@types/react-dom": "npm:^19.2.3"
     "@vitejs/plugin-react": "npm:latest"
-    "@vitejs/plugin-rsc": "npm:^0.5.24"
+    "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch"
     react: "npm:19.3.0-canary-00f063c3-20260415"
     react-dom: "npm:19.3.0-canary-00f063c3-20260415"
     tailwindcss: "npm:^4.2.4"
@@ -1792,7 +1792,7 @@ __metadata:
     "@types/react": "npm:^19.2.14"
     "@types/react-dom": "npm:^19.2.3"
     "@vitejs/plugin-react": "npm:latest"
-    "@vitejs/plugin-rsc": "npm:^0.5.24"
+    "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch"
     gql.tada: "npm:^1.9.2"
     graphql: "npm:^16.13.2"
     graphql-config: "npm:^5.1.6"
@@ -1817,7 +1817,7 @@ __metadata:
     "@types/react": "npm:^19.2.14"
     "@types/react-dom": "npm:^19.2.3"
     "@vitejs/plugin-react": "npm:latest"
-    "@vitejs/plugin-rsc": "npm:^0.5.24"
+    "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch"
     "@vitest/browser": "npm:3.2.4"
     jsdom: "npm:^29.0.2"
     playwright: "npm:^1.59.1"
@@ -3508,7 +3508,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@vitejs/plugin-rsc@npm:^0.5.24":
+"@vitejs/plugin-rsc@npm:0.5.24":
   version: 0.5.24
   resolution: "@vitejs/plugin-rsc@npm:0.5.24"
   dependencies:
@@ -3529,6 +3529,30 @@ __metadata:
     react-server-dom-webpack:
       optional: true
   checksum: 10c0/16fe6faed603356b04e7db9f36e6e9d320206b2b25ff2193504207decb0389d8d094ee5752a15940e31d35a5a23da553f88004a3883783f5a7b5c5cde6c59fc2
+  languageName: node
+  linkType: hard
+
+"@vitejs/plugin-rsc@patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch":
+  version: 0.5.24
+  resolution: "@vitejs/plugin-rsc@patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch::version=0.5.24&hash=b1498e"
+  dependencies:
+    "@rolldown/pluginutils": "npm:1.0.0-rc.15"
+    es-module-lexer: "npm:^2.0.0"
+    estree-walker: "npm:^3.0.3"
+    magic-string: "npm:^0.30.21"
+    srvx: "npm:^0.11.15"
+    strip-literal: "npm:^3.1.0"
+    turbo-stream: "npm:^3.2.0"
+    vitefu: "npm:^1.1.3"
+  peerDependencies:
+    react: "*"
+    react-dom: "*"
+    react-server-dom-webpack: "*"
+    vite: "*"
+  peerDependenciesMeta:
+    react-server-dom-webpack:
+      optional: true
+  checksum: 10c0/68a160d4ff61475a78cf7160df1cb00e2177662c69ccb442bd2787acdbf11c21e0eaf93848a7ec0686cb1397599574aff58023e1d02e507a085274a83cf608e3
   languageName: node
   linkType: hard
 

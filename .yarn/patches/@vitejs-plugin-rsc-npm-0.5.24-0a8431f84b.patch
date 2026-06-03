@@ -1,0 +1,82 @@
+diff --git a/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.development.js b/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.development.js
+index e70ceca585a39736991445d1411843aa956bf702..eb2af83b945bb5abd815ed0ad12a456a3b357eb0 100644
+--- a/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.development.js
++++ b/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.development.js
+@@ -1621,6 +1621,7 @@
+       thenableIndexCounter = 0;
+       thenableState = prevThenableState;
+       currentComponentDebugInfo = componentDebugInfo;
++      ReactSharedInternalsServer.__partonTask = task;
+       props = supportsComponentStorage
+         ? task.debugTask
+           ? task.debugTask.run(
+@@ -1994,6 +1995,8 @@
+         keyPath: keyPath,
+         implicitSlot: implicitSlot,
+         formatContext: formatContext,
++        partonContext: request.__renderingTask ? (request.__renderingTask.partonChildContext !== undefined ? request.__renderingTask.partonChildContext : request.__renderingTask.partonContext) : null,
++        partonChildContext: request.__renderingTask ? (request.__renderingTask.partonChildContext !== undefined ? request.__renderingTask.partonChildContext : request.__renderingTask.partonContext) : null,
+         ping: function () {
+           return pingTask(request, task);
+         },
+@@ -3496,6 +3499,9 @@
+       callOnAllReadyIfReady(request);
+     }
+     function retryTask(request, task) {
++      var __prevRenderingTask = request.__renderingTask;
++      request.__renderingTask = task;
++      try {
+       if (0 === task.status) {
+         var prevCanEmitDebugInfo = canEmitDebugInfo;
+         task.status = 5;
+@@ -3566,6 +3572,9 @@
+             (serializedSize = parentSerializedSize);
+         }
+       }
++      } finally {
++        request.__renderingTask = __prevRenderingTask;
++      }
+     }
+     function tryStreamTask(request, task) {
+       var prevCanEmitDebugInfo = canEmitDebugInfo;
+diff --git a/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.production.js b/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.production.js
+index 087f238c1a0ec9cc1003b2bcb9ea024ba762f2b8..1f6b1e68d8cda4893e1a801edc880d4a1092dc17 100644
+--- a/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.production.js
++++ b/dist/vendor/react-server-dom/cjs/react-server-dom-webpack-server.edge.production.js
+@@ -1150,6 +1150,7 @@ function renderFunctionComponent(request, task, key, Component, props) {
+   task.thenableState = null;
+   thenableIndexCounter = 0;
+   thenableState = prevThenableState;
++  ReactSharedInternalsServer.__partonTask = task;
+   props = Component(props, void 0);
+   if (12 === request.status)
+     throw (
+@@ -1287,6 +1288,8 @@ function createTask(
+     keyPath: keyPath,
+     implicitSlot: implicitSlot,
+     formatContext: formatContext,
++    partonContext: request.__renderingTask ? (request.__renderingTask.partonChildContext !== undefined ? request.__renderingTask.partonChildContext : request.__renderingTask.partonContext) : null,
++    partonChildContext: request.__renderingTask ? (request.__renderingTask.partonChildContext !== undefined ? request.__renderingTask.partonChildContext : request.__renderingTask.partonContext) : null,
+     ping: function () {
+       return pingTask(request, task);
+     },
+@@ -1911,6 +1914,9 @@ function erroredTask(request, task, error) {
+ }
+ var emptyRoot = {};
+ function retryTask(request, task) {
++  var __prevRenderingTask = request.__renderingTask;
++  request.__renderingTask = task;
++  try {
+   if (0 === task.status) {
+     task.status = 5;
+     var parentSerializedSize = serializedSize;
+@@ -1969,6 +1975,9 @@ function retryTask(request, task) {
+       serializedSize = parentSerializedSize;
+     }
+   }
++  } finally {
++    request.__renderingTask = __prevRenderingTask;
++  }
+ }
+ function tryStreamTask(request, task) {
+   var parentSerializedSize = serializedSize;

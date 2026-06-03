@@ -12,7 +12,7 @@
     "./*": "./src/*"
   },
   "dependencies": {
-    "@vitejs/plugin-rsc": "^0.5.24",
+    "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch",
     "react": "19.3.0-canary-00f063c3-20260415"
   },
   "devDependencies": {
