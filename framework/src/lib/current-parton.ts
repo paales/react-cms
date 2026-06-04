@@ -52,6 +52,18 @@ export interface CurrentParton {
    *  labels) before the fingerprint, so a later `refreshSelector(name)`
    *  shifts the fp. The Set is mutable; the wrapper owns the instance. */
   readonly tags: Set<string>
+  /** Request-dimension dependency keys read via tracked hooks
+   *  (`cookie()`, `searchParam()`, …) during this render — e.g.
+   *  `"cookie:cart_id"`. The wrapper stores the (live) Set on the
+   *  snapshot; the NEXT render re-reads each key's current value and
+   *  folds it into the fingerprint (store-and-reread), so a tracked read
+   *  moves the fp like a `vary` axis without an explicit `vary`. The
+   *  descendant fold re-reads them too. Mutable; the wrapper owns it. */
+  readonly deps: Set<string>
+  /** The parton's frame-resolved request — what tracked hooks read
+   *  from, so a framed spec tracks its frame's URL/cookies (consistent
+   *  with how `vary` already saw the frame-resolved request). */
+  readonly request: Request
 }
 
 /**

@@ -83,6 +83,15 @@ export interface PartialSnapshot {
    *  own JSX is unchanged would fp-skip and starve its descendants
    *  of a re-evaluation, even when their URL/CMS deps just changed. */
   varyKey?: string
+  /** Request-dimension dependency keys recorded by tracked hooks
+   *  (`cookie()`, `searchParam()`) during this render — e.g.
+   *  `"cookie:cart_id"`. The auto-tracked analogue of `varyKey`: the
+   *  next render (own fp) and the descendant fold re-read each key's
+   *  current value and fold it, so a tracked read moves the fp without
+   *  an explicit `vary`. The live Set is stored, so reads after the
+   *  render's awaits are captured by the time the next render reads it.
+   *  Absent/empty for any spec that never calls a tracked hook. */
+  deps?: ReadonlySet<string>
   /** Variant key — `hash(stableStringify(matchParams))` for specs
    *  with their own named match params, otherwise the closest match-
    *  bearing ancestor's matchKey, otherwise `ROOT_MATCH_KEY`. Stored

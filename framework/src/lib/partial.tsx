@@ -100,6 +100,7 @@ import { getScope } from "../runtime/context.ts"
 import { buildTimeScope, type TimeScope } from "./time.ts"
 import { getServerContext } from "./server-context.ts"
 import { _setCurrentParton } from "./current-parton.ts"
+import { evalDepKeys } from "./server-hooks.ts"
 
 export { ROOT, type PartialCtx } from "./partial-context.ts"
 
@@ -703,6 +704,10 @@ interface PartialBoundaryProps {
   /** Hash of the spec's varyResult — feeds the descendant fold so
    *  ancestors' fps reflect descendants' deps. */
   varyKey?: string
+  /** Tracked-read dependency keys (`cookie:…`, `search:…`) recorded by
+   *  server-hooks during this render. The live Set, so post-await reads
+   *  land before the next render consults it. */
+  deps?: ReadonlySet<string>
   /** Variant key for this rendered instance — see `deriveMatchKey`.
    *  Stored on the snapshot so the fp-trailer's `recomputeFp` can
    *  read it without re-deriving from the catalog. */
@@ -732,6 +737,7 @@ export function PartialBoundary({
   props,
   constraintArgs,
   varyKey,
+  deps,
   matchKey,
   emittedFp,
   expiresAt,
@@ -749,6 +755,7 @@ export function PartialBoundary({
     props,
     constraintArgs,
     varyKey,
+    deps,
     matchKey,
     emittedFp,
     expiresAt,
@@ -1303,14 +1310,14 @@ function createSpecComponent<V>(
       spec as InternalSpec<unknown>,
       effectiveInstanceId,
     )
-    // Expose this parton's own identity to server-hooks called within its
-    // render (`getCurrentParton`, `tag`) — the self-context analogue of
-    // the ambient PARENT. Rides the same per-component ALS as server
-    // context, so reads are valid anywhere in the body and siblings stay
-    // isolated. `selfTags` collects `tag(name)` calls for the fp fold
-    // below. See current-parton.ts.
+    // Server-hooks called within this parton's render read its own
+    // identity from the rendering task (`getCurrentParton`); `tag()` and
+    // tracked reads (`cookie()`, `searchParam()`) accumulate into these
+    // Sets, which the wrapper folds into the fp below. The task is
+    // stamped just after the frame phase, once the frame-resolved request
+    // these hooks read from is known. See current-parton.ts.
     const selfTags = new Set<string>()
-    _setCurrentParton({ id, tags: selfTags })
+    const selfDeps = new Set<string>()
     // Keepalive defaults to true. The flag governs both the active
     // emission (wrap body in `<Activity mode="visible">`) and the
     // parked emission on match-miss / vary-null (emit
@@ -1328,6 +1335,9 @@ function createSpecComponent<V>(
     // the page's.
     const ourFrameChain = parent.frameChain
     const ourRequest = ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()
+    // Stamp the self-context now that the frame-resolved request is known
+    // — tracked hooks (`cookie()` / `searchParam()`) read from it.
+    _setCurrentParton({ id, tags: selfTags, deps: selfDeps, request: ourRequest })
 
     // ── Match phase ──
     // `match` gates rendering against the (frame-resolved) request URL.
@@ -1626,8 +1636,18 @@ function createSpecComponent<V>(
         : { ...((varyResult as Record<string, unknown> | null) ?? {}), ...boundArgsMerged }
     const invalidationTs = queryMatchingTs(expandedLabels, effectiveConstraints)
     const invalidationKey = invalidationTs > 0 ? `|inv=${invalidationTs}` : ""
+    // Store-and-reread for tracked reads: `cookie()` / `searchParam()`
+    // record their keys DURING Render, after this fp is computed — so
+    // fold the PRIOR render's recorded keys, re-read against the current
+    // request. A changed cookie/search value shifts the fp; a spec that
+    // never calls a tracked hook has no prior deps and folds nothing
+    // (byte-identical). First render of a variant: no prior snapshot →
+    // cold (no fp-skip relies on it), and the keys it records make every
+    // subsequent render fp-accurate.
+    const priorSnap = lookupPartial(id)
+    const depsKey = evalDepKeys(priorSnap?.deps, ourRequest)
     const ownStructuralFp = hash(
-      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}`,
+      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}${depsKey}`,
     )
     const descendantFold = computeDescendantFold(id)
     const structuralFp = hash(`${ownStructuralFp}${descendantFold}`)
@@ -1742,6 +1762,7 @@ function createSpecComponent<V>(
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           constraintArgs={Object.keys(boundArgsMerged).length > 0 ? boundArgsMerged : undefined}
           varyKey={varyKey}
+          deps={priorSnap?.deps}
           matchKey={matchKey}
           emittedFp={snapshotFp}
           expiresAt={expiresAt}
@@ -1779,6 +1800,7 @@ function createSpecComponent<V>(
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           constraintArgs={Object.keys(boundArgsMerged).length > 0 ? boundArgsMerged : undefined}
           varyKey={varyKey}
+          deps={priorSnap?.deps}
           matchKey={matchKey}
           emittedFp={snapshotFp}
           expiresAt={expiresAt}
@@ -1853,6 +1875,7 @@ function createSpecComponent<V>(
           props={Object.keys(extraProps).length > 0 ? extraProps : undefined}
           constraintArgs={Object.keys(boundArgsMerged).length > 0 ? boundArgsMerged : undefined}
           varyKey={varyKey}
+          deps={selfDeps}
           matchKey={matchKey}
           emittedFp={snapshotFp}
           expiresAt={expiresAt}

@@ -95,30 +95,48 @@ reachable in the response).
   inputs (`vary` / tracked reads) and tags (`selector` / `tag()`).
 - Known only after render (bubbles up) → fp-trailer. Intrinsic.
 
+## Decision (2026-06-04)
+
+`parton()` stays a module-scope **constructor** — NOT a runtime `<Parton>`
+component. This keeps the spec catalog populated at module load, so cold
+reconstruct (`partialFromSnapshot` → `componentById`) and the action dispatcher's
+schema lookup keep working untouched; the §4 reconstruct kernel below is moot.
+What moves *out* of the constructor's options is `vary` and `localCell`/`schema`
+— their reads become tracked server-hooks inside `Render`, folding into the fp
+via the dep-record + store-and-reread.
+
 ## Status
 
 - ✅ **Self-context** (`getCurrentParton`) — commit `e927c5a`. Probe
   `current-parton.rsc.test.tsx`: own-id survives an await, a nested child reads
   the child not the parent, staggered siblings stay isolated (the drift case).
-- ✅ **`tag()` + fp-fold** (schema phase) — folds into `expandedLabels`
-  alongside cell labels; a `refreshSelector(name)` shifts the fp; byte-identical
-  (no-op) for any spec that doesn't call it. Probe `tag-fp.rsc.test.tsx`.
+- ✅ **`tag()` + fp-fold** (schema phase) — commit `aee88b0`. Folds into
+  `expandedLabels`; a `refreshSelector(name)` shifts the fp; byte-identical for
+  any spec that doesn't call it. Probe `tag-fp.rsc.test.tsx`.
+- ✅ **Tracked-read hooks** (`cookie()`, `searchParam()`) — own-fp fold via
+  store-and-reread (a render's recorded dep keys re-read at the next render's
+  fp). A tracked read moves the fp like a `vary` axis; a spec that never tracks
+  is byte-identical. Probe `tracked-reads-fp.rsc.test.tsx`. Own fp only — the
+  descendant fold (§1), cells (§3), and the migration (§5) follow.
 
-Both kept internal (not in the public barrel) — no app consumer yet.
+All kept internal (not in the public barrel) — no app consumer yet.
 
-## Roadmap + open decisions
+## Roadmap
 
-Each step touches the fp/skip path, the action/refetch reconstruction, or the
-public API. The flagged decision should be made before it's safe to land —
-which is why this autonomous pass stopped here.
+§4 is resolved (constructor stays). The rest is additive — each step is a no-op
+for specs that don't opt into the new hooks, so existing specs + e2e stay green
+throughout, and the `vary`/`schema` removal is the final migration step (§5).
 
-### 1. Render-phase `tag()` / tracked reads (store-and-reread)
-`tag()` is effective only in the schema phase today (it runs before the fp). A
-render-body `tag()` lands after the fp. To fold it, the parton's discovered
-tag/dep set must be STORED per `(id, matchKey)` after the render and RE-READ
-before the next render's fp. **Decision:** where to store (registry vs
-snapshot). The first-render-has-no-stored-set lag is fine — a tag only matters
-once bumped, and the bump post-dates the first render.
+### 1. Descendant fold for tracked reads + render-phase `tag()` — NEXT
+Own-fp store-and-reread landed (the tracked-read hooks above; deps stored on the
+snapshot as a live Set, re-read at the next fp). Two pieces remain: **(a)
+descendant fold** — `descendantContribution` must re-evaluate a descendant's
+stored `deps` (additive: present → fold via `evalDepKeys`, absent → today's
+`vary` path), so an ancestor's fp reflects an auto-tracked descendant's reads.
+Until this lands, auto-tracked specs are correct standalone but not fold-covered
+*under a wrapper* (no in-tree caller yet). **(b) render-phase `tag()`** — `tag()`
+folds in the schema phase today (before the fp); a render-body tag rides the same
+dep-record store-and-reread. Both additive, both testable in isolation.
 
 ### 2. Auto-tracked vary (`vary` becomes implicit)
 Reads via tracked hooks (`cookie()`, `session()`, `param()`, cells) accumulate
@@ -127,48 +145,43 @@ Render. **Decisions:** (a) value→label fold for cells (don't resolve a cell to
 compute the fp — check its version/label, so a nav can fp-skip without the
 GraphQL round-trip the schema phase does today); (b) the stateless-cold-skip
 tradeoff — a captured/generated vary is STATEFUL (a cold process must render),
-an explicit vary is request-reproducible. **Likely outcome:** explicit `vary`
-stays the default, auto-track is an opt-in mode — the dynamic-range hedge.
+an explicit vary is request-reproducible — but it degrades to over-fetch (full
+render), never stale, so it's a perf cost not a correctness one. **Decided:**
+`vary` is removed (§5), tracked hooks replace it; the cold/edge case just
+re-renders.
 
-### 3. Inline `localCell` (server-hook cells) — BLOCKED on action enumeration
-The descriptor pattern already makes a free-import `localCell` trivial (the
-framework supplies parton id + key from the schema-return object — but that's
-cosmetic, it reads nothing ambiently). The REAL inline form
-(`const x = localCell('k', …)` in Render) removes the schema callback — but the
-schema callback is the **replayable shape** the action dispatcher re-runs
-WITHOUT a render (`resolveSchemaForAction`, `parton-actions.ts`) to resolve a
-parton's cells, and the same shape a cold refetch would need. So inline cells
-need a way to enumerate a parton's cells without rendering it. **Decision:**
-keep a declared shape, or solve render-discovers-then-replay (the §4 knot). The
-partition source also moves to an ambient `session()`-style read. NB:
-forms-demo is a poor first target precisely because its `save` action depends
-on this enumeration.
+### 3. Inline `localCell` (server-hook cells)
+Inline `const x = localCell('k', …)` in Render removes the `schema` callback —
+but the schema callback is the **replayable shape** the action dispatcher
+re-runs WITHOUT a render (`resolveSchemaForAction`, `parton-actions.ts`) to
+resolve a parton's cells. Since the constructor stays (§4 resolved), the action
+has the Component in the catalog and can **re-render the parton to enumerate its
+cells**, OR inline cells **register a `(key, partition, shape)` record into the
+snapshot** at render-time that the action reads back. **Decision:**
+re-render-to-enumerate vs snapshot cell-record (the latter avoids a render but
+adds a durable record). The partition source moves to an ambient
+`session()`-style read. forms-demo is the migration target once this lands (its
+`save` action is exactly the enumeration consumer).
 
-### 4. `<Parton>` component (retire the constructor) — BLOCKED on a kernel
-With drift solved, the constructor's only SURVIVING justification is that it
-registers `id → {Component, match, vary}` at module-load, so any process —
-including a cold one handling a refetch — can reconstruct a parton it never
-rendered. The catalog's three consumers (`spec-catalog.ts`): cold refetch
-(`partialFromSnapshot`), the descendant fold (`descendantContribution` re-runs
-`vary`), and match-key walking (`deriveMatchKey`). `<Parton>` pushes all three
-onto per-instance snapshot/runtime data.
+### 4. `<Parton>` component (retire the constructor) — RESOLVED: constructor stays
+Decided (see Decision above): `parton()` remains a module-scope constructor, so
+the catalog stays module-load-populated and cold reconstruct
+(`partialFromSnapshot` → `componentById`, `descendantContribution`,
+`deriveMatchKey`) keeps working untouched. The placement-identity / "Abolish id"
+direction — and its cross-process Component-reference kernel (whether plugin-rsc
+mints stable refs for an arbitrary server function) — is set aside. Identity
+keeps coming from the constructor's derived id + per-placement prop hash, which
+is already deterministic and cross-process stable.
 
-**Kernel question:** can a cold process reconstruct `{Component-ref, match,
-dep-record}` for a parton it never rendered, from the client's snapshot alone?
-`match` + `dep-record` are data and can ride the snapshot; the hard one is the
-**Component reference** — re-invoking THIS server function in a process that
-never evaluated the JSX. Flight mints stable cross-process ids for
-`"use client"` refs and `"use server"` actions via the bundler; does
-`@vitejs/plugin-rsc` expose the same for an arbitrary server function (a
-parton's Render)? If yes, the constructor dies and identity falls out of
-placement (the "Abolish id" endgame, `IDEAS.md`). If no, the constructor
-survives as a thin module-load anchor and `<Parton>` is sugar. **Investigate
-this before building §3–§4.** (Positional ids also need stable per-level keys,
-not ordinals.)
+### 5. Migrate specs off `vary`/`schema`, then remove the options
+Once §1–§3 land, migrate every spec's `vary` reads to tracked hooks and its
+`schema` cells to inline `localCell`, then drop the `vary`/`schema` options from
+the constructor. This is the behavior-changing, every-spec step — done last,
+each spec validated against both test tiers.
 
 ## Non-goals
 - Eliminating the fp-trailer (upward; intrinsic).
-- Removing explicit `vary` outright — keep as default; auto-track is opt-in.
+- A runtime `<Parton>` component / placement identity (§4 — constructor stays).
 - Patching global `fetch` for tracking — opt-in wrappers only; raw `fetch`
   stays the no-reactivity escape (an untracked read just doesn't reload on
   nav, a fine default).
