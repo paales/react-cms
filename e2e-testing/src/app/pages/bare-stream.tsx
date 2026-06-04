@@ -4,7 +4,7 @@
  * the current `?end=` value, so only the active range renders.
  */
 
-import { parton, type RenderArgs } from "@parton/framework"
+import { parton, searchParam } from "@parton/framework"
 import { NextObserver } from "../components/next-observer.tsx"
 import { ScrollRestore } from "../components/scroll-restore.tsx"
 
@@ -14,6 +14,12 @@ const MAX_PAGES = 50
 function makeBarePage(page: number) {
   return parton(
     function BarePageRender() {
+      // Inline-tracked `?end`: records the dep so this page re-renders when
+      // the loaded range grows. Beyond the range → render nothing. The
+      // range only grows (infinite scroll), so there's no parked variant to
+      // preserve — a plain null replaces the old `vary`→null park.
+      const end = Math.max(1, Number(searchParam("end")) || 1)
+      if (page > end) return null
       const offset = (page - 1) * ITEMS_PER_PAGE
       return (
         <section data-testid={`page-${page}`} data-page={page} className="mb-4">
@@ -37,11 +43,6 @@ function makeBarePage(page: number) {
       // Selector namespaced so the bare page-N specs don't collide
       // with the Pokemon homepage's `#page-N` list-page specs.
       selector: `#bare-page-${page}`,
-      vary: ({ search: { end: endRaw } }) => {
-        const end = Math.max(1, Number(endRaw) || 1)
-        if (page > end) return null
-        return { page }
-      },
     },
   )
 }
@@ -49,19 +50,18 @@ function makeBarePage(page: number) {
 const BarePagePartials = Array.from({ length: MAX_PAGES }, (_, i) => makeBarePage(i + 1))
 
 const BareNext = parton(
-  function BareNextRender({ end }: { end: number } & RenderArgs) {
+  function BareNextRender() {
+    const end = Math.max(1, Number(searchParam("end")) || 1)
     return <NextObserver currentEnd={end} />
   },
   {
     selector: "#bare-next",
-    vary: ({ search: { end } }) => ({
-      end: Math.max(1, Number(end) || 1),
-    }),
   },
 )
 
 export const BarePage = parton(
-  function BareRender({ end }: { end: number } & RenderArgs) {
+  function BareRender() {
+    const end = Math.max(1, Number(searchParam("end")) || 1)
     return (
       <>
         <title>Infinite Scroll Test</title>
