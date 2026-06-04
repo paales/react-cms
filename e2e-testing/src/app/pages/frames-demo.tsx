@@ -4,7 +4,7 @@
  * a nested frame (`cart.tab`, `menu.tab`).
  */
 
-import { parton, type RenderArgs } from "@parton/framework"
+import { parton, match, searchParam, type RenderArgs } from "@parton/framework"
 import { Frame } from "@parton/framework/lib/frame.tsx"
 import { FrameNavigateButton, UpdateEntryStateButton } from "../components/frames-demo-controls.tsx"
 import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/components/ui/card"
@@ -12,11 +12,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/compone
 // ─── Main listing (page-scoped) ─────────────────────────────────────────
 
 export const FramesMainListPartial = parton(
-  function FramesMainListRender({
-    sku,
-  }: {
-    sku: string | null
-  } & RenderArgs) {
+  function FramesMainListRender() {
+    const sku = searchParam("product")
     if (sku) {
       const renderedAt = Date.now()
       return (
@@ -49,20 +46,16 @@ export const FramesMainListPartial = parton(
       </div>
     )
   },
-  {
-    selector: "#frames-main-list",
-    vary: ({ search: { product: sku = null } }) => ({ sku }),
-  },
+  { selector: "#frames-main-list" },
 )
 
 // ─── Cart tab content (nested frame) ────────────────────────────────────
 
 export const CartTabPartial = parton(
-  function CartTabRender({
-    pathname,
-  }: {
-    pathname: string
-  } & RenderArgs) {
+  function CartTabRender() {
+    // Frame-scoped: `match()` reads this parton's frame-resolved URL and
+    // folds only the captured `:tab` segment.
+    const { tab } = match("/:tab") ?? {}
     return (
       <div data-testid="cart-tab">
         <div className="mb-2 flex flex-wrap gap-2">
@@ -70,17 +63,17 @@ export const CartTabPartial = parton(
           <FrameNavigateButton url="/coupons" label="Coupons" testId="cart-tab-coupons" />
           <FrameNavigateButton url="/summary" label="Summary" testId="cart-tab-summary" />
         </div>
-        {pathname === "/items" && (
+        {tab === "items" && (
           <div data-testid="cart-tab-items-body" className="rounded-md border border-dashed p-3">
             3 items in your cart. Fresh render @ {new Date().toLocaleTimeString()}
           </div>
         )}
-        {pathname === "/coupons" && (
+        {tab === "coupons" && (
           <div data-testid="cart-tab-coupons-body" className="rounded-md border border-dashed p-3">
             Apply coupon — none active. Fresh render @ {new Date().toLocaleTimeString()}
           </div>
         )}
-        {pathname === "/summary" && (
+        {tab === "summary" && (
           <div data-testid="cart-tab-summary-body" className="rounded-md border border-dashed p-3">
             Subtotal $0.00 · tax $0.00. Fresh render @ {new Date().toLocaleTimeString()}
           </div>
@@ -88,10 +81,7 @@ export const CartTabPartial = parton(
       </div>
     )
   },
-  {
-    selector: "#cart-tab",
-    vary: ({ pathname }) => ({ pathname }),
-  },
+  { selector: "#cart-tab" },
 )
 
 // ─── Cart frame content ────────────────────────────────────────────────
@@ -108,11 +98,12 @@ function NestedFrameShell({ label, children }: { label: string; children: React.
 }
 
 export const CartFramePartial = parton(
-  function CartFrameRender({
-    state,
-  }: {
-    state: "closed" | "open" | "checkout" | "unknown"
-  } & RenderArgs) {
+  function CartFrameRender() {
+    const state = (match("/cart/:state")?.state ?? "unknown") as
+      | "closed"
+      | "open"
+      | "checkout"
+      | "unknown"
     switch (state) {
       case "closed":
         return (
@@ -170,42 +161,26 @@ export const CartFramePartial = parton(
         return <div data-testid="cart-unknown">Unknown cart URL.</div>
     }
   },
-  {
-    selector: "#cart",
-    vary: ({ pathname: pn }) => {
-      const state: "closed" | "open" | "checkout" | "unknown" =
-        pn === "/cart/closed"
-          ? "closed"
-          : pn === "/cart/open"
-            ? "open"
-            : pn === "/cart/checkout"
-              ? "checkout"
-              : "unknown"
-      return { state }
-    },
-  },
+  { selector: "#cart" },
 )
 
 // ─── Menu tab + slow ────────────────────────────────────────────────────
 
 export const MenuTabPartial = parton(
-  function MenuTabRender({
-    pathname,
-  }: {
-    pathname: string
-  } & RenderArgs) {
+  function MenuTabRender() {
+    const { tab } = match("/:tab") ?? {}
     return (
       <div data-testid="menu-tab">
         <div className="mb-2 flex flex-wrap gap-2">
           <FrameNavigateButton url="/general" label="General" testId="menu-tab-general" />
           <FrameNavigateButton url="/advanced" label="Advanced" testId="menu-tab-advanced" />
         </div>
-        {pathname === "/general" && (
+        {tab === "general" && (
           <div data-testid="menu-tab-general-body" className="rounded-md border border-dashed p-3">
             General preferences. Fresh render @ {new Date().toLocaleTimeString()}
           </div>
         )}
-        {pathname === "/advanced" && (
+        {tab === "advanced" && (
           <div data-testid="menu-tab-advanced-body" className="rounded-md border border-dashed p-3">
             Advanced knobs. Fresh render @ {new Date().toLocaleTimeString()}
           </div>
@@ -213,10 +188,7 @@ export const MenuTabPartial = parton(
       </div>
     )
   },
-  {
-    selector: "#menu-tab",
-    vary: ({ pathname }) => ({ pathname }),
-  },
+  { selector: "#menu-tab" },
 )
 
 export const MenuSlowInnerPartial = parton(
@@ -239,11 +211,13 @@ export const MenuSlowInnerPartial = parton(
 )
 
 export const MenuFramePartial = parton(
-  function MenuFrameRender({
-    state,
-  }: {
-    state: "closed" | "about" | "settings" | "slow" | "unknown"
-  } & RenderArgs) {
+  function MenuFrameRender() {
+    const state = (match("/menu/:state")?.state ?? "unknown") as
+      | "closed"
+      | "about"
+      | "settings"
+      | "slow"
+      | "unknown"
     switch (state) {
       case "closed":
         return (
@@ -304,22 +278,7 @@ export const MenuFramePartial = parton(
         return <div data-testid="menu-unknown">Unknown menu URL.</div>
     }
   },
-  {
-    selector: "#menu",
-    vary: ({ pathname: pn }) => {
-      const state: "closed" | "about" | "settings" | "slow" | "unknown" =
-        pn === "/menu/closed"
-          ? "closed"
-          : pn === "/menu/about"
-            ? "about"
-            : pn === "/menu/settings"
-              ? "settings"
-              : pn === "/menu/slow"
-                ? "slow"
-                : "unknown"
-      return { state }
-    },
-  },
+  { selector: "#menu" },
 )
 
 // ─── Chrome ─────────────────────────────────────────────────────────────

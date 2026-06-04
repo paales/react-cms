@@ -20,6 +20,7 @@
 
 import {
   parton,
+  cookie,
   type CellValue,
   type PartonProps,
   type ResolvedCell,
@@ -129,10 +130,11 @@ export const MagentoCartPage = parton(
   },
   {
     match: "/magento/cart",
-    // cart_id cookie → the cart cell's partition. The schema's 2nd arg is
-    // this vary output; TS widens it to `object` here (it can't thread the
-    // sibling vary's return), so narrow with a cast to bind `.with`.
-    vary: ({ cookies }) => ({ cartId: cookies.cart_id ?? "" }),
-    schema: (_f, vary) => ({ cart: cartCell.with(vary as { cartId: string }) }),
+    // cart_id cookie → the cart cell's partition. Read inline in schema
+    // (records the cookie dep so the fp folds it) and bind the cart cell.
+    schema: () => {
+      const cartId = cookie("cart_id") ?? ""
+      return { cart: cartCell.with({ cartId }) }
+    },
   },
 )

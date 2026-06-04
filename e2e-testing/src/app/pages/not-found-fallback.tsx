@@ -13,19 +13,19 @@
  * other page wrappers; the gating is automatic.
  */
 
-import { parton, getRegisteredMatchPatterns, notFound } from "@parton/framework"
+import { parton, getRegisteredMatchPatterns, getCurrentParton, notFound } from "@parton/framework"
 
-export const NotFoundFallback = parton(
-  function NotFoundFallbackRender() {
-    notFound()
-    return null
-  },
-  {
-    vary: ({ url }) => {
-      for (const pattern of getRegisteredMatchPatterns()) {
-        if (pattern.test(url.href)) return null
-      }
-      return {}
-    },
-  },
-)
+export const NotFoundFallback = parton(function NotFoundFallbackRender() {
+  // Non-addressable 404 gate: if any registered pattern matches the
+  // current URL, render nothing; otherwise throw notFound(). It gates
+  // rather than varying by a tracked dimension, so it re-evaluates on
+  // every render (every page render runs it) — no dep to record.
+  const url = getCurrentParton()?.request.url
+  if (url) {
+    for (const pattern of getRegisteredMatchPatterns()) {
+      if (pattern.test(url)) return null
+    }
+  }
+  notFound()
+  return null
+})
