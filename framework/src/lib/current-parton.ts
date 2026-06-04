@@ -47,6 +47,11 @@ export interface CurrentParton {
   /** The parton's effective render id — the one keying snapshots, the
    *  wire token, and cache lookups. */
   readonly id: string
+  /** Invalidation tags registered by `tag(name)` during this render.
+   *  The wrapper folds them into the parton's label set (alongside cell
+   *  labels) before the fingerprint, so a later `refreshSelector(name)`
+   *  shifts the fp. The Set is mutable; the wrapper owns the instance. */
+  readonly tags: Set<string>
 }
 
 /**
@@ -68,4 +73,22 @@ export function _setCurrentParton(parton: CurrentParton): void {
  */
 export function getCurrentParton(): CurrentParton | undefined {
   return sharedInternals?.__partonStorage?.getStore()?.currentParton
+}
+
+/**
+ * Register an invalidation tag on the rendering parton — the server-hook
+ * form of a `selector` label, but computed per render (e.g. an entity
+ * key, `tag(`product:${id}`)`). Folded into the parton's fingerprint via
+ * the same `queryMatchingTs` path declared selectors use, so a matching
+ * `refreshSelector(name)` (a server action's revalidation) shifts the fp
+ * and the parton re-renders on the next navigation; it also becomes a
+ * selector-refetch target.
+ *
+ * Effective when called in the schema phase — which runs BEFORE the
+ * fingerprint is computed. (A render-body `tag()` lands after the fp;
+ * folding those needs a store-and-reread step that is not built yet.)
+ * No-op outside a parton body.
+ */
+export function tag(name: string): void {
+  sharedInternals?.__partonStorage?.getStore()?.currentParton?.tags.add(name)
 }

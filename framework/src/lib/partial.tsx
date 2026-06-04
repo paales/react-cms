@@ -1304,11 +1304,13 @@ function createSpecComponent<V>(
       effectiveInstanceId,
     )
     // Expose this parton's own identity to server-hooks called within its
-    // render (`getCurrentParton`) — the self-context analogue of the
-    // ambient PARENT. Rides the same per-component ALS as server context,
-    // so reads are valid anywhere in the body and siblings stay isolated.
-    // See current-parton.ts.
-    _setCurrentParton({ id })
+    // render (`getCurrentParton`, `tag`) — the self-context analogue of
+    // the ambient PARENT. Rides the same per-component ALS as server
+    // context, so reads are valid anywhere in the body and siblings stay
+    // isolated. `selfTags` collects `tag(name)` calls for the fp fold
+    // below. See current-parton.ts.
+    const selfTags = new Set<string>()
+    _setCurrentParton({ id, tags: selfTags })
     // Keepalive defaults to true. The flag governs both the active
     // emission (wrap body in `<Activity mode="visible">`) and the
     // parked emission on match-miss / vary-null (emit
@@ -1546,7 +1548,15 @@ function createSpecComponent<V>(
       resolutionParts.sort()
       schemaKeyHash = `|schema=${hash(resolutionParts.join("|"))}`
     }
-    const expandedLabels = cellLabels.length > 0 ? [...parsed.labels, ...cellLabels] : parsed.labels
+    // Fold `tag(name)` registrations (schema-phase server-hook) into the
+    // label set alongside cell labels, so they participate in the fp's
+    // queryMatchingTs fold and in selector-targeted refetch. Empty for
+    // any spec that never calls tag() — byte-identical to before.
+    const tagLabels = selfTags.size > 0 ? [...selfTags] : []
+    const expandedLabels =
+      cellLabels.length > 0 || tagLabels.length > 0
+        ? [...parsed.labels, ...cellLabels, ...tagLabels]
+        : parsed.labels
 
     // ── Actions phase ──
     // Each declared action becomes a `ResolvedAction` in Render's prop
