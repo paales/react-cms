@@ -1342,9 +1342,6 @@ function createSpecComponent<V>(
     // the page's.
     const ourFrameChain = parent.frameChain
     const ourRequest = ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()
-    // Stamp the self-context now that the frame-resolved request is known
-    // — tracked hooks (`cookie()` / `searchParam()`) read from it.
-    _setCurrentParton({ id, tags: selfTags, deps: selfDeps, request: ourRequest })
 
     // ── Match phase ──
     // `match` gates rendering against the (frame-resolved) request URL.
@@ -1358,6 +1355,11 @@ function createSpecComponent<V>(
       if (result === null) return emitParkedKeepalive(id, keepalive, requestState)
       params = extractNamedParams(result)
     }
+    // Stamp the self-context now that the frame-resolved request + match
+    // params are known — server-hooks (`cookie()` / `searchParam()` /
+    // `param()`, `tag()`, inline `localCell`) read them off it. See
+    // current-parton.ts.
+    _setCurrentParton({ id, tags: selfTags, deps: selfDeps, request: ourRequest, params })
     // matchKey identifies the rendered variant for client-side
     // Activity keying AND nested-substitution lookups. The rule is:
     //   - A spec with its OWN named match params hashes them — so

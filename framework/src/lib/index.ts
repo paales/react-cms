@@ -41,6 +41,14 @@ export {
   type ServerContext,
 } from "./server-context.ts"
 
+// Server-hooks — free functions a parton's Render calls to read a request
+// dimension AND record it as an fp dependency (the inline-tracking
+// replacement for `vary`): `cookie()`, `searchParam()`, `param()`. Plus
+// `tag()` (a render-time invalidation label) and `getCurrentParton()` (the
+// parton's own identity). See current-parton.ts / server-hooks.ts.
+export { cookie, searchParam, param } from "./server-hooks.ts"
+export { tag, getCurrentParton, type CurrentParton } from "./current-parton.ts"
+
 export {
   PartialsClient,
   getCachedPartialIds,

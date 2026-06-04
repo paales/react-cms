@@ -64,6 +64,10 @@ export interface CurrentParton {
    *  from, so a framed spec tracks its frame's URL/cookies (consistent
    *  with how `vary` already saw the frame-resolved request). */
   readonly request: Request
+  /** Resolved match params (`/pokemon/:id` → `{id}`), read by `param()`.
+   *  NOT dep-recorded — match params already fold into the fp via
+   *  `matchKey`, so `param()` is a pure read. */
+  readonly params: Record<string, string>
 }
 
 /**

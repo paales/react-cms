@@ -41,6 +41,17 @@ export function searchParam(name: string): string | null {
 }
 
 /**
+ * Read a resolved match param (`/pokemon/:id` → `param("id")`). Records
+ * NO dependency: match params already fold into the fp via `matchKey`,
+ * so reading one is enough — a param change moves the fp through the
+ * match identity. `undefined` outside a parton body or for an unmatched
+ * name.
+ */
+export function param(name: string): string | undefined {
+  return getCurrentParton()?.params[name]
+}
+
+/**
  * Re-evaluate recorded dependency keys against a request, producing a
  * stable `|deps=…` suffix for the fingerprint. The read side of
  * store-and-reread: a parton's (or descendant's) prior-render keys are
