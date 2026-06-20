@@ -16,6 +16,21 @@ function bytesOf(s: string): ReadableStream<Uint8Array> {
   })
 }
 
+// Fault A (literal `$$…` vs ref, `:deref` suffix, `$@`/`$L` prefixes
+// through splice) is NOT a fault: REF_RE rejects `$$`-escaped literals
+// and `remapRefs`/`refString` preserve prefix + deref suffix while
+// renumbering the id. Probed and confirmed safe — no test kept.
+
+// Fault C (a fresh row that references a deduped import BEFORE the
+// import's own `I` row arrives, dangling the ref) is NOT reachable: React's
+// Flight serializer queues a client-reference's import chunk into
+// `completedImportChunks` while serializing the referencing row, and
+// `flushCompletedChunks` drains import chunks before regular model chunks
+// every pass — so an `I` row always precedes any row that references it.
+// The single-pass dedup in `spliceOne` is therefore sound. Confirmed
+// against react-server-dom (vendored under @vitejs/plugin-rsc); no test
+// kept (a repro would have to feed an ordering React never emits).
+
 // ─── Fault B — hole id-block collisions ────────────────────────────────
 describe("flight-graph spliceHoles — id-block collisions (Fault B)", () => {
   it("does not collide when a fresh render emits an id >= ID_BLOCK", async () => {

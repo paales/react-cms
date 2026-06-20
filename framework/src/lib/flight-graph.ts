@@ -400,7 +400,12 @@ async function spliceOne<H extends HoleRef>(
     return toHex(base + n * lanes + lane)
   }
 
-  // First pass over each row: decide dedup mapping before emitting refs.
+  // Single streaming pass. Dedup is order-safe because React's Flight
+  // serializer flushes a client-reference's import (`I`) / symbol (`$S`)
+  // row before any row that references it (import chunks drain ahead of
+  // regular chunks every flush). So by the time a fresh row's `$L<id>`
+  // ref is rewritten, that id's dedup decision is already in `sharedRemap`
+  // — a referencing row never precedes the import row it depends on.
   const sharedRemap = new Map<string, string>() // fresh id -> scaffold id
 
   const reader = renderHole(hole).getReader()
