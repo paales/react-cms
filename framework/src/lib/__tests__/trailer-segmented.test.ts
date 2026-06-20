@@ -262,3 +262,53 @@ describe("splitAtFpTrailer — legacy single-segment shim", () => {
     expect(fp).toBe(null)
   })
 })
+
+describe("splitSegments — abort", () => {
+  // Bounded timer for hang/leak assertions: an iterator op that never
+  // settles loses the race, so a proven hang is "the timer won." The
+  // test itself always terminates.
+  function timeout(ms: number): Promise<"timeout"> {
+    return new Promise((r) => setTimeout(() => r("timeout"), ms))
+  }
+
+  it("does not deadlock when aborted while parked on a silent long-lived source", async () => {
+    // A heartbeat / chat segment-loop that emits a segment then goes
+    // silent without closing. `driveSegment` for the next segment parks
+    // in `readChunk`; abort must cancel the reader so iteration settles
+    // and the connection is released — otherwise `next` deadlocks
+    // awaiting a drive that can never finish.
+    let cancelCount = 0
+    const source = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(bytes("seg-1"))
+        c.enqueue(buildMarker(TAG_NEXT_SEGMENT, 0))
+        // segment 2 opens but no body bytes ever arrive; never closes.
+      },
+      cancel() {
+        cancelCount++
+      },
+    })
+    const ac = new AbortController()
+    const iter = splitSegments(source, ac.signal)[Symbol.asyncIterator]()
+
+    const first = await iter.next()
+    await collect(first.value!.body)
+    await first.value!.trailers
+
+    // Segment 2's body opens; driveSegment is now parked reading bytes
+    // that never arrive.
+    const second = await iter.next()
+    expect(second.done).toBe(false)
+    const reader2 = second.value!.body.getReader()
+    const parkedRead = reader2.read()
+
+    ac.abort()
+    const advance = iter.next()
+    const winner = await Promise.race([advance, timeout(500)])
+    // The timer must NOT win: iteration settled, connection released.
+    expect(winner).not.toBe("timeout")
+    expect((winner as IteratorResult<unknown>).done).toBe(true)
+    expect(cancelCount).toBe(1)
+    void parkedRead
+  })
+})

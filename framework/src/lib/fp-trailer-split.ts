@@ -123,10 +123,33 @@ class SegmentIterator implements AsyncIterator<Segment> {
   private exhausted = false
   private currentDrive: Promise<void> | null = null
   private signal?: AbortSignal
+  private cancelled = false
 
   constructor(source: ReadableStream<Uint8Array>, signal?: AbortSignal) {
     this.reader = source.getReader()
     this.signal = signal
+    // Abort can land while `driveSegment` is parked in `readChunk`
+    // awaiting bytes from a long-lived-but-silent source (an infinite
+    // heartbeat / chat segment-loop that has stopped producing). That
+    // read only resolves when the source delivers or closes — neither
+    // happens — so awaiting `currentDrive` in `next` would deadlock and
+    // the boundary cancel below would never run. Cancelling the reader
+    // the instant the signal fires settles the parked read (`done:
+    // true`), so the body drains via a clean close (not a torn
+    // `error()`) and `currentDrive` resolves.
+    if (signal) {
+      if (signal.aborted) this.cancelReader()
+      else signal.addEventListener("abort", () => this.cancelReader(), { once: true })
+    }
+  }
+
+  /** Cancel the source reader exactly once — releasing the upstream
+   *  connection. Invoked from the abort listener, the boundary check,
+   *  and `return`; the `cancelled` guard keeps it single. */
+  private cancelReader(): void {
+    if (this.cancelled) return
+    this.cancelled = true
+    this.reader.cancel().catch(() => {})
   }
 
   async next(): Promise<IteratorResult<Segment>> {
@@ -145,12 +168,11 @@ class SegmentIterator implements AsyncIterator<Segment> {
     // (the `BodyStreamBuffer was aborted` crash). Instead the in-flight
     // segment above finished draining via `currentDrive`; now, before
     // producing the NEXT segment, honor the abort and end iteration
-    // cleanly. The reader is cancelled so the server connection (e.g.
-    // an infinite heartbeat / chat segment-loop) is released.
+    // cleanly. The reader is cancelled (idempotently — the abort
+    // listener may already have done it) so the server connection is
+    // released.
     if (this.signal?.aborted) {
-      try {
-        await this.reader.cancel()
-      } catch {}
+      this.cancelReader()
       this.exhausted = true
       return { value: undefined, done: true }
     }
@@ -301,9 +323,7 @@ class SegmentIterator implements AsyncIterator<Segment> {
   }
 
   async return(): Promise<IteratorResult<Segment>> {
-    try {
-      await this.reader.cancel()
-    } catch {}
+    this.cancelReader()
     this.exhausted = true
     return { value: undefined, done: true }
   }
