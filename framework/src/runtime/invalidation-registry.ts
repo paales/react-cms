@@ -35,20 +35,39 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks"
+import { stableStringify } from "../lib/stable-stringify.ts"
 
 export interface InvalidationEntry {
   name: string
   /** Key→value constraints; entry only matches when every pair
-   *  appears as-is in the partial's vary inputs. Empty object matches
-   *  any partial with the given name. */
-  constraints: Record<string, string>
+   *  appears in the partial's vary inputs (string-loose for bare
+   *  tokens, type-exact for tagged ones — see `matchesConstraints`).
+   *  Empty object matches any partial with the given name. */
+  constraints: Record<string, unknown>
   ts: number
 }
 
 export interface ParsedSelector {
   name: string
-  constraints: Record<string, string>
+  /** Decoded constraint values. Hand-authored tokens (`cart_id=1234`)
+   *  decode to strings — matched type-loosely against vary inputs.
+   *  Type-tagged tokens (emitted by `encodeArgsForSelector` for
+   *  non-string partition values) decode to their original JS type and
+   *  match type-exactly, so a number partition `{uid:123}` and a string
+   *  partition `{uid:"123"}` stay distinct — mirroring the partition key
+   *  (`hash(stableStringify(args))`), which already keeps them apart. */
+  constraints: Record<string, unknown>
 }
+
+/**
+ * Sigil marking a type-tagged constraint value. A token `key=\x01<json>`
+ * carries the value's JSON encoding rather than a bare string, so a
+ * non-string partition component round-trips through the selector with
+ * its type intact. `\x01` (Start-of-Heading) never appears in a
+ * hand-authored selector or a URL-decoded key/value, so its presence
+ * unambiguously signals the tagged form.
+ */
+const TYPE_TAG = "\x01"
 
 // ─── Module state ─────────────────────────────────────────────────────
 
@@ -76,17 +95,33 @@ export function parseSelector(spec: string): ParsedSelector {
   const qIdx = s.indexOf("?")
   if (qIdx < 0) return { name: s, constraints: {} }
   const name = s.slice(0, qIdx)
-  const constraints: Record<string, string> = {}
+  const constraints: Record<string, unknown> = {}
   for (const pair of s.slice(qIdx + 1).split("&")) {
     if (!pair) continue
     const eq = pair.indexOf("=")
     if (eq < 0) {
       constraints[decodeURIComponent(pair)] = ""
     } else {
-      constraints[decodeURIComponent(pair.slice(0, eq))] = decodeURIComponent(pair.slice(eq + 1))
+      constraints[decodeURIComponent(pair.slice(0, eq))] = decodeConstraintValue(
+        decodeURIComponent(pair.slice(eq + 1)),
+      )
     }
   }
   return { name, constraints }
+}
+
+/** Decode one constraint value. A `\x01`-prefixed token carries a JSON
+ *  encoding of a non-string value; a bare token stays a string (the
+ *  hand-authored case). */
+function decodeConstraintValue(raw: string): unknown {
+  if (!raw.startsWith(TYPE_TAG)) return raw
+  try {
+    return JSON.parse(raw.slice(TYPE_TAG.length))
+  } catch {
+    // Malformed tag — fall back to the literal text so a corrupt
+    // selector still produces a (string) constraint rather than throwing.
+    return raw
+  }
 }
 
 /** Parse a list of selector tokens — accepts string-with-whitespace
@@ -106,9 +141,18 @@ export function parseSelectors(spec: string | string[]): ParsedSelector[] {
  * Encode an args object as a query-string fragment for partition-scoped
  * selectors (`{itemId: "abc"}` → `itemId=abc`) — the inverse of
  * `parseSelector`'s constraint parsing. Keys sorted (deterministic);
- * values `String(v)`-stringified (constraint matching is string-equality,
- * see `matchesConstraints`); URL-encoded so `&`/`=`/`?` in values don't
- * break the parser. Absent values dropped; empty object → `""`.
+ * URL-encoded so `&`/`=`/`?` in values don't break the parser. Empty
+ * object → `""`.
+ *
+ * String values encode bare (`itemId=abc`) so they match hand-authored
+ * selectors and bare-token constraints. Non-string values (number,
+ * boolean, null) encode type-tagged (`\x01<json>`) so the selector
+ * preserves the type distinction the partition key
+ * (`hash(stableStringify(args))`) already makes — a write at `{uid:123}`
+ * fires `uid=\x01123`, which does NOT match a placement bound to the
+ * STRING partition `{uid:"123"}` (a different storage slot). `undefined`
+ * values are dropped: an absent constraint imposes no requirement, the
+ * subset semantics `matchesConstraints` relies on.
  */
 export function encodeArgsForSelector(args: Record<string, unknown>): string {
   const keys = Object.keys(args).sort()
@@ -116,8 +160,10 @@ export function encodeArgsForSelector(args: Record<string, unknown>): string {
   const parts: string[] = []
   for (const k of keys) {
     const v = args[k]
-    if (v === undefined || v === null) continue
-    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    if (v === undefined) continue
+    const encodedValue =
+      typeof v === "string" ? v : `${TYPE_TAG}${JSON.stringify(v)}`
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(encodedValue)}`)
   }
   return parts.join("&")
 }
@@ -285,13 +331,24 @@ export function queryMatchingTs(
 
 function matchesConstraints(
   varyInputs: Record<string, unknown> | null | undefined,
-  constraints: Record<string, string>,
+  constraints: Record<string, unknown>,
 ): boolean {
   for (const k in constraints) {
     if (!varyInputs) return false
     const v = (varyInputs as Record<string, unknown>)[k]
     if (v == null) return false
-    if (String(v) !== constraints[k]) return false
+    const c = constraints[k]
+    if (typeof c === "string") {
+      // Bare (hand-authored or string-partition) constraint — match
+      // any vary input whose string form is equal. Keeps `cart_id=1234`
+      // matching a string vary `"1234"`.
+      if (String(v) !== c) return false
+    } else {
+      // Type-tagged constraint — match type-exactly, the same identity
+      // the partition key uses. A string vary `"123"` does NOT satisfy a
+      // number constraint `123`.
+      if (stableStringify(v) !== stableStringify(c)) return false
+    }
   }
   return true
 }
