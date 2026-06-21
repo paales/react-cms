@@ -108,6 +108,7 @@ yarn test:all           # All three Vitest projects
 yarn test:watch         # Watch mode — node project
 yarn test:watch:rsc     # Watch mode — rsc project
 yarn test:e2e           # Playwright — full-stack specs in e2e-testing/e2e/
+yarn bench:server       # Server-side warm-tick benchmark (live-tick CPU cost) — see bench/README.md
 ```
 
 The root `yarn dev` / `yarn build` scripts delegate via
@@ -126,6 +127,16 @@ its tsconfig). Tier picking and harness mechanics are in
 `yarn test:e2e` auto-starts a dev server if nothing's on port 5179.
 HMR dispose hooks clear cache + registry on edits, so server
 restart is rarely needed during dev.
+
+`yarn bench:server` measures the server CPU cost of a live re-render
+("warm tick") in-process — the parton hot path's recalculate-the-world
+cost as world size and update density scale. The distilled numbers are
+committed at
+[`bench/results/server-warm-tick.json`](./bench/results/server-warm-tick.json)
+as the regression substrate (re-run and re-commit to update the
+baseline); CPU profiles (`--prof`) and scratch logs stay local
+(gitignored). Scenarios, flags, and how to read the curves live in
+[`bench/README.md`](./bench/README.md).
 
 ## Spec authoring rules
 
