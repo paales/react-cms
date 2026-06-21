@@ -10,11 +10,23 @@
  * lives in the `.bench.ts` file vitest runs.
  *
  * Usage:
- *   yarn bench:server                 full matrix → stdout table + JSON
+ *   yarn bench:server                 full matrix (DEV Flight) → table + JSON
+ *   yarn bench:server --prod          full matrix against the PRODUCTION
+ *                                     react-server-dom build → .prod.json
  *   yarn bench:server --prof          ONE scenario (scaling/N=1000) under
  *                                     Node --cpu-prof → bench/results/prof/
+ *   yarn bench:server --prod --prof   profile the PRODUCTION runtime
  *   yarn bench:server --only=depth    run only scenarios matching a name
  *   yarn bench:server --warmup=20 --measure=200
+ *
+ * Dev vs prod (see bench/README.md): the vendored Flight entry
+ * (`node_modules/@vitejs/plugin-rsc/dist/vendor/react-server-dom/
+ * server.edge.js`) branches on `process.env.NODE_ENV` at require-time,
+ * loading the development build (debug-model chunks, source stacks) or
+ * the production build (those omitted). `--prod` sets NODE_ENV=production
+ * in this spawned process so the worker requires the production build —
+ * vitest's `NODE_ENV ??= "test"` is a nullish assign, so an explicit
+ * value survives. Dev stays the default.
  *
  * Flags map to BENCH_* env vars the bench file reads (see
  * server-warm-tick.bench.ts).
@@ -32,12 +44,26 @@ const val = (name) => {
 }
 
 const prof = has("--prof")
+const prod = has("--prod")
 const env = { ...process.env }
 
 if (val("warmup")) env.BENCH_WARMUP = val("warmup")
 if (val("measure")) env.BENCH_MEASURE = val("measure")
 if (val("only")) env.BENCH_ONLY = val("only")
 if (val("out")) env.BENCH_OUT = val("out")
+
+// `--prod`: load the PRODUCTION react-server-dom build instead of the
+// development one. The vendored Flight entry branches on
+// `process.env.NODE_ENV` at require-time (in the worker), so setting it
+// here in the spawned env is the whole lever — it propagates to the
+// vitest worker (and, under --prof, the fork, which inherits parent
+// env). Vitest's `NODE_ENV ??= "test"` is a nullish assign, so this
+// explicit value survives. BENCH_PROD lets the bench file stamp the
+// artifact's `runtime` field and pick the prod JSON path by default.
+if (prod) {
+  env.NODE_ENV = "production"
+  env.BENCH_PROD = "1"
+}
 
 // The vendored Flight server's internal `require("react")` goes through
 // Node's CJS resolver, which ignores Vite conditions — so set the
@@ -59,10 +85,21 @@ if (prof) {
   // — --cpu-prof slows execution, and N=1000 ticks are ~80ms each.
   env.BENCH_WARMUP = env.BENCH_WARMUP ?? "20"
   env.BENCH_MEASURE = env.BENCH_MEASURE ?? "400"
-  // Start clean so `pickLargestProfile` can't pick up a stale file.
-  rmSync(profDir, { recursive: true, force: true })
   mkdirSync(profDir, { recursive: true })
-  console.log(`[bench] --prof: profiling "${env.BENCH_ONLY}" → ${profDir}/`)
+  // Start clean so `pickLargestProfile` can't pick up a stale loose
+  // profile, but preserve the OTHER mode's stable artifact so a dev and
+  // a prod profile can coexist side by side.
+  const otherStable = prod ? "warm-tick.cpuprofile" : "warm-tick.prod.cpuprofile"
+  for (const f of readdirSync(profDir)) {
+    // Drop loose node-generated profiles and this mode's prior artifact;
+    // keep the other mode's so a dev and a prod profile coexist.
+    if (f.endsWith(".cpuprofile") && f !== otherStable) {
+      rmSync(join(profDir, f), { force: true })
+    }
+  }
+  console.log(
+    `[bench] --prof: profiling "${env.BENCH_ONLY}" (${prod ? "prod" : "dev"} Flight) → ${profDir}/`,
+  )
 }
 
 env.NODE_OPTIONS = [env.NODE_OPTIONS, ...baseNodeOptions].filter(Boolean).join(" ")
@@ -77,10 +114,15 @@ if (prof) {
   // and drop the near-empty manager profiles.
   const target = pickLargestProfile(profDir)
   if (target) {
-    const stable = join(profDir, "warm-tick.cpuprofile")
+    // Prod and dev profiles get distinct names so both can coexist.
+    const stable = join(profDir, prod ? "warm-tick.prod.cpuprofile" : "warm-tick.cpuprofile")
     if (target !== stable) renameSync(target, stable)
+    // Drop only the near-empty manager profiles (Node's loose CPU.*
+    // files), keeping BOTH stable artifacts so a dev and a prod profile
+    // survive across runs.
+    const keep = new Set(["warm-tick.cpuprofile", "warm-tick.prod.cpuprofile"])
     for (const f of readdirSync(profDir)) {
-      if (f.endsWith(".cpuprofile") && join(profDir, f) !== stable) {
+      if (f.endsWith(".cpuprofile") && !keep.has(f)) {
         rmSync(join(profDir, f), { force: true })
       }
     }
@@ -93,13 +135,16 @@ if (prof) {
 
 process.exit(res.status ?? 1)
 
-/** Return the path of the largest .cpuprofile in `dir` (the render
- *  worker), or null if none. */
+/** Return the path of the largest FRESH profile in `dir` (the render
+ *  worker), or null if none. Only loose `CPU.*.cpuprofile` files Node
+ *  just emitted are considered — never the preserved `warm-tick*` stable
+ *  artifacts from a prior run, which would otherwise poison the pick (a
+ *  big dev profile could masquerade as this run's prod render worker). */
 function pickLargestProfile(dir) {
   let best = null
   let bestSize = -1
   for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".cpuprofile")) continue
+    if (!f.startsWith("CPU.") || !f.endsWith(".cpuprofile")) continue
     const p = join(dir, f)
     const size = statSync(p).size
     if (size > bestSize) {

@@ -11,12 +11,23 @@ that *proving a subtree unchanged costs O(tree)* — the tax we want to
 target.
 
 ```bash
-yarn bench:server                 # full matrix → stdout table + JSON artifact
+yarn bench:server                 # full matrix, DEV Flight → table + JSON
+yarn bench:server --prod          # full matrix, PRODUCTION Flight → .prod.json
 yarn bench:server --prof          # profile scaling/N=1000 under Node --cpu-prof
+yarn bench:server --prod --prof   # profile the PRODUCTION runtime
 yarn bench:server --only=depth    # one category (scaling | dashboard | depth)
 yarn bench:server --only=scaling/N=1000   # one exact scenario
 yarn bench:server --warmup=20 --measure=200   # shorter run while iterating
 ```
+
+**Dev vs prod, and which is canonical.** Dev is the DEFAULT; `--prod`
+measures the production react-server-dom build. They answer different
+questions and are NOT comparable in absolute terms — see
+[Dev vs prod Flight](#dev-vs-prod-flight) below. Rule of thumb: **dev**
+is the stable signal for hunting framework slop and tracking regressions
+(it amplifies the framework's own fingerprint/fold/encode work and is
+unaffected by React's debug-channel churn between versions); **prod** is
+the honest absolute number — what a deployed tick actually costs.
 
 It is **not** part of `yarn test`: the rsc test project's include glob
 covers `*.rsc.test.tsx` under the package dirs, never `bench/**`. The only
@@ -67,8 +78,56 @@ dev Flight runtime the wire carries debug metadata (component source,
 server stacks) that inflates both cold and warm payloads and can make the
 warm placeholder wire comparable to — or larger than — the cold body at
 large N. That is a real observation about the fp-skip wire, not a
-measurement fault; production Flight omits the debug channel. The
-render-count gate is the load-bearing faithfulness proof.
+measurement fault; production Flight (`--prod`) omits the debug channel.
+The render-count gate is the load-bearing faithfulness proof.
+
+## Dev vs prod Flight
+
+The vendored Flight entry
+(`node_modules/@vitejs/plugin-rsc/dist/vendor/react-server-dom/server.edge.js`)
+branches on `process.env.NODE_ENV` at require-time: the **development**
+build emits debug-model chunks (component source, server stacks, `jsxDEV`
+provenance); the **production** build omits them. Both run the same
+render + fp-skip path — only React's serialization differs.
+
+`--prod` sets `NODE_ENV=production` in the spawned bench process so the
+vitest worker requires the production build. Vitest's `NODE_ENV ??=
+"test"` is a *nullish* assignment, so an explicit value survives; the
+worker hard-fails the run if `--prod` was requested but `NODE_ENV` is not
+`production` at render time, so a clobbered env can never masquerade as a
+prod result. The Flight build in effect is stamped into the artifact's
+`runtime` field and the table header (`dev Flight` / `prod Flight`).
+
+What changes, measured (post-fold master, node v24, M=1, D=2):
+
+- **Payload bytes collapse.** At N=10 the dev cold body is ~78 KB; under
+  `--prod` it is ~3 KB — a ~25× drop, entirely the debug-model chunks the
+  production build omits. The ratio shrinks as the page's real content
+  grows (at N=1000, ~1.48 MB dev → ~252 KB prod, ~6×), but the absolute
+  debug overhead the prod build strips is large at every N. This byte
+  drop is the objective proof the production build actually loaded (the
+  env var reaching the conditional is necessary, not sufficient — the
+  bytes are the evidence).
+- **Warm-tick latency drops ~4–5×.** A large slice of the dev warm-tick
+  cost is React's debug serialization (`emitOutlinedDebugModelChunk`,
+  `renderDebugModel`, `collectStackTrace`, `jsxDEV` — ~40% of self-time
+  at N=1000); under `--prod` those frames are absent from the flame
+  graph, so the residual is the framework's own render +
+  fingerprint/fold + Flight encode work plus GC. Prod's scaling curve
+  bends less than dev's — the debug channel was a meaningful contributor
+  to the dev curve's large-N super-linearity, though both still grow
+  super-linearly (the O(tree) fold tax lives in both).
+
+Which to use:
+
+- **dev (default) — framework-slop hunting + regression tracking.** It
+  amplifies the framework's own per-subtree work and is a stable signal:
+  it does not shift when React's debug channel changes between versions.
+  The committed `server-warm-tick.json` is the dev baseline.
+- **prod (`--prod`) — honest absolute numbers.** What a deployed tick
+  actually costs. The committed `server-warm-tick.prod.json` is the prod
+  baseline. Do NOT compare a dev p50 against a prod p50 — they measure
+  different runtimes.
 
 ## Scenarios
 
@@ -101,9 +160,16 @@ The stdout table (and the JSON artifact) report, per scenario:
 
 ## The JSON artifact (regression substrate)
 
-Every run writes `bench/results/server-warm-tick.json` with every
-scenario's numbers plus a **git SHA** + **node version** + warmup/measure
-settings, so two runs are directly comparable over time. To track a change:
+Each run writes a JSON artifact with every scenario's numbers plus a
+**git SHA** + **node version** + **`runtime`** (dev/prod) + warmup/measure
+settings, so two runs are directly comparable over time. The path depends
+on the runtime so the dev and prod baselines coexist:
+
+- dev (default) → `bench/results/server-warm-tick.json`
+- `--prod` → `bench/results/server-warm-tick.prod.json`
+
+Both are committed. To track a change, compare against the SAME runtime's
+baseline:
 
 ```bash
 git stash && yarn bench:server   # baseline → note the SHA in the JSON
@@ -120,12 +186,17 @@ trips a failure, how to handle hardware variance between runners).
 
 `yarn bench:server --prof` runs ONE scenario (`scaling/N=1000`) in a
 single forked worker whose `execArgv` carries Node's `--cpu-prof`, writing
-`bench/results/prof/warm-tick.cpuprofile`. (The fork `execArgv` is the
-seam that reaches the render work — `NODE_OPTIONS=--cpu-prof` on the
-launcher would only profile the launcher blocking in `spawnSync`; thread
-pools don't honor `--cpu-prof` cleanly, forks do. Node writes one profile
-per process; the CLI keeps the largest — the render worker — and drops the
-near-empty manager profiles.)
+`bench/results/prof/warm-tick.cpuprofile`. Add `--prod` to profile the
+production runtime instead; it writes a distinct
+`warm-tick.prod.cpuprofile` so the dev and prod profiles coexist. (The
+fork `execArgv` is the seam that reaches the render work —
+`NODE_OPTIONS=--cpu-prof` on the launcher would only profile the launcher
+blocking in `spawnSync`; thread pools don't honor `--cpu-prof` cleanly,
+forks do. The fork inherits the launcher's env, so `--prod`'s
+`NODE_ENV=production` reaches it. Node writes one profile per process; the
+CLI keeps the largest — the render worker — and drops the near-empty
+manager profiles.) Profiles stay local (`bench/results/prof/` is
+gitignored).
 
 Open it:
 
@@ -133,15 +204,22 @@ Open it:
   `.cpuprofile`.
 - or `npx speedscope bench/results/prof/warm-tick.cpuprofile`.
 
-Where the time goes (N=1000, dev Flight runtime — see baseline below):
-the dominant self-time frame is the framework's `getRouteSnapshots`
-(`partial-registry.ts`), which rebuilds a fresh merged snapshot Map over
-the whole route on each call and is invoked per-ancestor by
-`computeDescendantFold` — an O(tree)-per-call cost that compounds into the
-O(tree) tick tax. The remainder is React Flight's dev-only debug
-serialization (`emitOutlinedDebugModelChunk`, `renderDebugModel`,
-`collectStackTrace`) and GC, both of which shrink under a production Flight
-build. Fingerprint work (`hash`, `stableStringify`) is a small slice.
+Where the time goes (N=1000, M=1):
+
+- **dev Flight.** The self-time is dominated by React's *dev-only* debug
+  serialization — `emitOutlinedDebugModelChunk` (~20%), `renderDebugModel`
+  (~8%), `jsxDEV` (~6%), `collectStackTrace` (~5%), `outlineComponentInfo`
+  — together roughly 40% of samples, plus ~15% GC churning the debug
+  objects. The framework's own work is a thin slice on top: the parton
+  `Component` body (`partial.tsx`) and fingerprint hashing (`hash.ts`) are
+  each ~2%. So at large N the dev curve is mostly measuring React's debug
+  channel, not framework slop — which is exactly why dev is the *stable*
+  signal for slop hunting (framework work stands out against a fixed dev
+  backdrop) but not the honest absolute cost.
+- **prod Flight (`--prod`).** The entire debug-serialization band is gone
+  (those frames are absent from the flame graph), so what remains is the
+  framework's render + fingerprint/fold + Flight encode path and GC. This
+  is the profile to read when targeting the genuine per-tick cost.
 
 A coarse render-vs-fp-vs-encode phase split was deliberately left out: a
 clean split needs invasive instrumentation of framework internals that

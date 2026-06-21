@@ -1,8 +1,9 @@
 /**
  * Human-readable table renderer + JSON artifact shape for the server
  * warm-tick benchmark. The artifact is the regression-tracking substrate:
- * every run stamps a git SHA + node version so two `bench/results/*.json`
- * files are directly comparable over time.
+ * every run stamps a git SHA, node version, and Flight `runtime` (dev vs
+ * prod build) so two `bench/results/*.json` files are directly comparable
+ * over time.
  */
 
 import type { ScenarioResult } from "./runner.tsx"
@@ -11,6 +12,11 @@ export interface BenchArtifact {
   generatedAt: string
   gitSha: string
   nodeVersion: string
+  /** Which react-server-dom build the numbers were measured against:
+   *  `"dev"` (debug-model chunks present) or `"prod"` (`--prod`, those
+   *  omitted). The two are NOT comparable in absolute terms — see
+   *  bench/README.md. */
+  runtime: "dev" | "prod"
   warmup: number
   measure: number
   results: ScenarioResult[]
@@ -49,7 +55,7 @@ export function renderTable(artifact: BenchArtifact): string {
   const lines: string[] = []
   lines.push(
     `server warm-tick benchmark  ·  ${artifact.gitSha}  ·  node ${artifact.nodeVersion}  ·  ` +
-      `warmup=${artifact.warmup} measure=${artifact.measure}`,
+      `${artifact.runtime} Flight  ·  warmup=${artifact.warmup} measure=${artifact.measure}`,
   )
   const header = COLS.map((c) => pad(c.head, c.width)).join("  ")
   lines.push(header)

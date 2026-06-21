@@ -1,7 +1,8 @@
 {
-  "generatedAt": "2026-06-21T21:20:21.091Z",
-  "gitSha": "f8e4aca",
+  "generatedAt": "2026-06-21T22:08:01.027Z",
+  "gitSha": "2d7e0f7",
   "nodeVersion": "v24.11.1",
+  "runtime": "dev",
   "warmup": 50,
   "measure": 500,
   "results": [
@@ -12,26 +13,26 @@
         "liveCells": 1,
         "depth": 2
       },
-      "coldMs": 6.823875000000015,
-      "coldBytes": 79603,
+      "coldMs": 6.543959000000001,
+      "coldBytes": 79598,
       "gate": {
         "coldRenders": 12,
-        "coldBytes": 79603,
+        "coldBytes": 79598,
         "warmRenders": 3,
-        "warmBytes": 76562,
+        "warmBytes": 76563,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 529.2500000000473,
-        "p95us": 1183.5839999999962,
-        "p99us": 2305.1249999999754,
-        "meanUs": 727.4949919999967,
-        "minUs": 427.83299999996416,
-        "maxUs": 2593.0829999999787
+        "p50us": 448.4579999999596,
+        "p95us": 1418.0000000000064,
+        "p99us": 2677.500000000009,
+        "meanUs": 709.6125799999958,
+        "minUs": 405.16600000000835,
+        "maxUs": 5101.666000000023
       },
-      "warmBytesMean": 65226.59,
-      "ticksPerSec": 1374.5799091356555
+      "warmBytesMean": 65228.376,
+      "ticksPerSec": 1409.219661804764
     },
     {
       "name": "scaling/N=50",
@@ -40,26 +41,26 @@
         "liveCells": 1,
         "depth": 2
       },
-      "coldMs": 2.1432499999999663,
-      "coldBytes": 111767,
+      "coldMs": 1.9999160000000984,
+      "coldBytes": 111758,
       "gate": {
         "coldRenders": 52,
-        "coldBytes": 111767,
+        "coldBytes": 111758,
         "warmRenders": 3,
-        "warmBytes": 102345,
+        "warmBytes": 102365,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 1460.0420000001577,
-        "p95us": 3999.5420000000195,
-        "p99us": 7801.083999999946,
-        "meanUs": 2005.8169040000041,
-        "minUs": 1333.5420000000795,
-        "maxUs": 9534.70900000002
+        "p50us": 1275.333000000046,
+        "p95us": 3742.1249999999873,
+        "p99us": 9794.832999999926,
+        "meanUs": 1862.2645919999914,
+        "minUs": 1194.7079999999914,
+        "maxUs": 11923.207999999931
       },
-      "warmBytesMean": 110765.318,
-      "ticksPerSec": 498.5499912807585
+      "warmBytesMean": 110776.784,
+      "ticksPerSec": 536.9806225688067
     },
     {
       "name": "scaling/N=100",
@@ -68,26 +69,26 @@
         "liveCells": 1,
         "depth": 2
       },
-      "coldMs": 3.1658330000000205,
-      "coldBytes": 183554,
+      "coldMs": 2.8417920000001686,
+      "coldBytes": 183544,
       "gate": {
         "coldRenders": 102,
-        "coldBytes": 183554,
+        "coldBytes": 183544,
         "warmRenders": 3,
-        "warmBytes": 164471,
+        "warmBytes": 164491,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 2945.9160000001248,
-        "p95us": 7509.875000000193,
-        "p99us": 11453.082999999879,
-        "meanUs": 3885.8280699999987,
-        "minUs": 2740.000000000009,
-        "maxUs": 13974.20800000009
+        "p50us": 2326.791999999841,
+        "p95us": 6743.542000000161,
+        "p99us": 11499.291999999969,
+        "meanUs": 3255.9904420000034,
+        "minUs": 2187.7919999997175,
+        "maxUs": 17235.25000000018
       },
-      "warmBytesMean": 181683.72,
-      "ticksPerSec": 257.3454054028696
+      "warmBytesMean": 181719.906,
+      "ticksPerSec": 307.12620869542434
     },
     {
       "name": "scaling/N=500",
@@ -96,26 +97,26 @@
         "liveCells": 1,
         "depth": 2
       },
-      "coldMs": 18.235625000000255,
-      "coldBytes": 771369,
+      "coldMs": 14.898208999999952,
+      "coldBytes": 771095,
       "gate": {
         "coldRenders": 502,
-        "coldBytes": 771369,
+        "coldBytes": 771095,
         "warmRenders": 3,
-        "warmBytes": 671266,
+        "warmBytes": 671485,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 24845.666999999594,
-        "p95us": 47658.792000000176,
-        "p99us": 50872.041999999965,
-        "meanUs": 29020.59791199997,
-        "minUs": 22030.83300000071,
-        "maxUs": 54507.08300000042
+        "p50us": 11755.750000000262,
+        "p95us": 32450.417000000016,
+        "p99us": 39425.29200000172,
+        "meanUs": 15985.646516000013,
+        "minUs": 11139.957999999751,
+        "maxUs": 41074.08299999952
       },
-      "warmBytesMean": 794238.296,
-      "ticksPerSec": 34.458283837994315
+      "warmBytesMean": 741283.868,
+      "ticksPerSec": 62.55611864050048
     },
     {
       "name": "scaling/N=1000",
@@ -124,26 +125,26 @@
         "liveCells": 1,
         "depth": 2
       },
-      "coldMs": 116.20033300000068,
-      "coldBytes": 2994181,
+      "coldMs": 40.3080829999999,
+      "coldBytes": 1513342,
       "gate": {
         "coldRenders": 1002,
-        "coldBytes": 2994181,
+        "coldBytes": 1513342,
         "warmRenders": 3,
-        "warmBytes": 2178882,
+        "warmBytes": 1312379,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 80164.16699999536,
-        "p95us": 130966.99999999691,
-        "p99us": 153349.16699999303,
-        "meanUs": 93262.41340200005,
-        "minUs": 70149.8750000028,
-        "maxUs": 162518.6250000006
+        "p50us": 31399.750000000495,
+        "p95us": 73121.99999999939,
+        "p99us": 76476.20800000004,
+        "meanUs": 33748.27451399988,
+        "minUs": 23546.291999999085,
+        "maxUs": 91611.75000000003
       },
-      "warmBytesMean": 1710392.79,
-      "ticksPerSec": 10.722433223871029
+      "warmBytesMean": 1456795.312,
+      "ticksPerSec": 29.631144537039
     },
     {
       "name": "dashboard/M=1",
@@ -152,26 +153,26 @@
         "liveCells": 1,
         "depth": 2
       },
-      "coldMs": 21.8981669999921,
-      "coldBytes": 715693,
+      "coldMs": 5.9895829999986745,
+      "coldBytes": 329226,
       "gate": {
         "coldRenders": 202,
-        "coldBytes": 715693,
+        "coldBytes": 329226,
         "warmRenders": 3,
-        "warmBytes": 646326,
+        "warmBytes": 290650,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 7560.7920000038575,
-        "p95us": 16921.916999999667,
-        "p99us": 21955.45900000434,
-        "meanUs": 9881.503070000075,
-        "minUs": 7003.207999994629,
-        "maxUs": 25237.584000002244
+        "p50us": 4653.583000002982,
+        "p95us": 13016.332999999577,
+        "p99us": 18734.334000000672,
+        "meanUs": 6196.378184000013,
+        "minUs": 4417.749999996886,
+        "maxUs": 19422.458999997616
       },
-      "warmBytesMean": 421063.98,
-      "ticksPerSec": 101.19917920543564
+      "warmBytesMean": 316756.62,
+      "ticksPerSec": 161.38459763191204
     },
     {
       "name": "dashboard/M=10",
@@ -180,26 +181,26 @@
         "liveCells": 10,
         "depth": 2
       },
-      "coldMs": 10.276249999995343,
-      "coldBytes": 329432,
+      "coldMs": 5.928249999997206,
+      "coldBytes": 329753,
       "gate": {
         "coldRenders": 202,
-        "coldBytes": 329432,
+        "coldBytes": 329753,
         "warmRenders": 12,
-        "warmBytes": 292581,
+        "warmBytes": 292820,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 7268.75000000291,
-        "p95us": 16568.499999993946,
-        "p99us": 20534.749999991618,
-        "meanUs": 9293.606573999625,
-        "minUs": 6812.87500000326,
-        "maxUs": 20933.415999999852
+        "p50us": 4752.749999999651,
+        "p95us": 13287.083000002895,
+        "p99us": 19113.83399999613,
+        "meanUs": 6215.103095999539,
+        "minUs": 4433.458999999857,
+        "maxUs": 19514.791999994486
       },
-      "warmBytesMean": 329636.696,
-      "ticksPerSec": 107.60085355858108
+      "warmBytesMean": 318213.126,
+      "ticksPerSec": 160.89837683363092
     },
     {
       "name": "dashboard/M=50",
@@ -208,26 +209,26 @@
         "liveCells": 50,
         "depth": 2
       },
-      "coldMs": 10.444792000009329,
-      "coldBytes": 331789,
+      "coldMs": 5.809459000003699,
+      "coldBytes": 331808,
       "gate": {
         "coldRenders": 202,
-        "coldBytes": 331789,
+        "coldBytes": 331808,
         "warmRenders": 52,
-        "warmBytes": 302366,
+        "warmBytes": 302581,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 8329.125000003842,
-        "p95us": 18398.541000002297,
-        "p99us": 22230.41699999885,
-        "meanUs": 10332.193348000112,
-        "minUs": 7418.5839999991,
-        "maxUs": 22667.625000001863
+        "p50us": 5505.125000003318,
+        "p95us": 14666.749999996682,
+        "p99us": 19935.37500000093,
+        "meanUs": 6973.717612000026,
+        "minUs": 4964.958000004117,
+        "maxUs": 21214.83299999818
       },
-      "warmBytesMean": 340063.704,
-      "ticksPerSec": 96.78487096774654
+      "warmBytesMean": 325112.956,
+      "ticksPerSec": 143.39553960132395
     },
     {
       "name": "dashboard/M=200",
@@ -236,26 +237,26 @@
         "liveCells": 200,
         "depth": 2
       },
-      "coldMs": 7.008541999995941,
-      "coldBytes": 339500,
+      "coldMs": 6.559832999999344,
+      "coldBytes": 339498,
       "gate": {
         "coldRenders": 202,
-        "coldBytes": 339500,
+        "coldBytes": 339498,
         "warmRenders": 202,
-        "warmBytes": 339461,
+        "warmBytes": 339769,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 13041.750000003958,
-        "p95us": 27278.79199999734,
-        "p99us": 30895.375000007334,
-        "meanUs": 14817.127913999839,
-        "minUs": 9311.832999999751,
-        "maxUs": 35654.66600000218
+        "p50us": 8402.082999993581,
+        "p95us": 19789.54199999862,
+        "p99us": 27045.375000001513,
+        "meanUs": 10393.846892000374,
+        "minUs": 6658.458000005339,
+        "maxUs": 29065.75000000157
       },
-      "warmBytesMean": 377116.842,
-      "ticksPerSec": 67.48946258708872
+      "warmBytesMean": 366241.75,
+      "ticksPerSec": 96.21076877413407
     },
     {
       "name": "depth/D=1",
@@ -264,26 +265,26 @@
         "liveCells": 1,
         "depth": 1
       },
-      "coldMs": 3.1960000000108266,
-      "coldBytes": 181213,
+      "coldMs": 3.0422079999989364,
+      "coldBytes": 181221,
       "gate": {
         "coldRenders": 101,
-        "coldBytes": 181213,
+        "coldBytes": 181221,
         "warmRenders": 2,
-        "warmBytes": 163024,
+        "warmBytes": 163101,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 3027.3749999905704,
-        "p95us": 7592.250000001513,
-        "p99us": 11853.166000000783,
-        "meanUs": 3864.94674799993,
-        "minUs": 2738.041999997222,
-        "maxUs": 12248.209000012139
+        "p50us": 2264.2500000001746,
+        "p95us": 6458.208000003651,
+        "p99us": 6685.958000001847,
+        "meanUs": 2747.9883820000555,
+        "minUs": 2145.0000000040745,
+        "maxUs": 12461.499999997613
       },
-      "warmBytesMean": 180342.258,
-      "ticksPerSec": 258.7357770239628
+      "warmBytesMean": 173894.052,
+      "ticksPerSec": 363.9025574308195
     },
     {
       "name": "depth/D=4",
@@ -292,26 +293,26 @@
         "liveCells": 1,
         "depth": 4
       },
-      "coldMs": 3.4935830000031274,
-      "coldBytes": 223475,
+      "coldMs": 10.292124999999942,
+      "coldBytes": 424197,
       "gate": {
         "coldRenders": 104,
-        "coldBytes": 223475,
+        "coldBytes": 424197,
         "warmRenders": 5,
-        "warmBytes": 202470,
+        "warmBytes": 388190,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 3394.5419999945443,
-        "p95us": 8319.917000000714,
-        "p99us": 12039.915999994264,
-        "meanUs": 4453.632585999589,
-        "minUs": 3108.542000001762,
-        "maxUs": 13269.583000001148
+        "p50us": 2695.0419999993755,
+        "p95us": 7040.291999997862,
+        "p99us": 7336.999999999534,
+        "meanUs": 3207.1126019999383,
+        "minUs": 2550.9170000004815,
+        "maxUs": 13230.750000002445
       },
-      "warmBytesMean": 223704.892,
-      "ticksPerSec": 224.53580996860714
+      "warmBytesMean": 257762.65,
+      "ticksPerSec": 311.80695039407266
     },
     {
       "name": "depth/D=16",
@@ -320,26 +321,26 @@
         "liveCells": 1,
         "depth": 16
       },
-      "coldMs": 4.476709000009578,
-      "coldBytes": 433478,
+      "coldMs": 3.9397920000046724,
+      "coldBytes": 433535,
       "gate": {
         "coldRenders": 116,
-        "coldBytes": 433478,
+        "coldBytes": 433535,
         "warmRenders": 17,
-        "warmBytes": 400831,
+        "warmBytes": 401041,
         "faithful": true
       },
       "measuredTicks": 500,
       "warm": {
-        "p50us": 4626.749999995809,
-        "p95us": 10063.834000000497,
-        "p99us": 13301.915999996709,
-        "meanUs": 5752.344589999271,
-        "minUs": 4308.917000002111,
-        "maxUs": 14381.291999990935
+        "p50us": 3335.584000000381,
+        "p95us": 8526.333000001614,
+        "p99us": 12389.33299999917,
+        "meanUs": 4112.692585999856,
+        "minUs": 3156.25,
+        "maxUs": 13227.874999996857
       },
-      "warmBytesMean": 425321.51,
-      "ticksPerSec": 173.84215850673277
+      "warmBytesMean": 417265.82,
+      "ticksPerSec": 243.14970766454337
     }
   ]
 }
