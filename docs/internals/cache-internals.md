@@ -18,7 +18,7 @@ resolve — the flatten):
   referenced. The stored payload is the lean, stable scaffolding.
 - **Hit.** `spliceHoles` streams the stored scaffolding back row by
   row and, at each placeholder, splices a freshly-rendered parton —
-  renumbered into a private id block (its root takes the placeholder's
+  renumbered into a private id lane (its root takes the placeholder's
   seam id, so the parent's `$L` reference resolves to the fresh
   render) and deduped against the scaffold's client-module / symbol
   rows. The fresh render's own Suspense streams as its bytes arrive.
@@ -62,9 +62,12 @@ rewrite can't be a regex over the text).
   then mark-and-sweep from the root (`0`): rows no longer reachable —
   the frozen hole content — are dropped, so the stored payload never
   carries content the splice will replace.
-- **Renumber + dedup.** Each spliced hole's rows are offset into a
-  private id block keyed by document order; refs are remapped by the
-  same offset. Rows the scaffold already declares (client-module `I`
+- **Renumber + dedup.** Each spliced hole's rows are renumbered into
+  an interleaved id lane above the scaffold's `maxId` — hole *i* of
+  *H* maps a fresh internal id *n* to `maxId + 1 + n*H + i`, so each
+  hole owns one residue class mod *H* and lanes stay disjoint for any
+  *n* (a deep render that emits large internal ids can't overrun an
+  adjacent hole's range). Rows the scaffold already declares (client-module `I`
   rows, `$S` symbol rows — matched by data string) are dropped and the
   fresh refs routed to the scaffold's id, so splicing doesn't grow the
   payload. Precomputed-at-store-time facts (`maxId`, the shared-row

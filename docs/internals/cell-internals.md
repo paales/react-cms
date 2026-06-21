@@ -192,13 +192,18 @@ On each render the wrapper:
      descriptor's `vary` over the parton's vary output → resolve.
    - **Bound cell** (a `BoundCell<T>` in the schema record): use
      baked args directly. Same resolution.
-4. **Props phase** *(new)* — walk top-level JSX props:
+4. **Props phase** — walk top-level JSX props:
    - For each prop whose value is a `Cell<T>` or `BoundCell<T>`,
      resolve as above, replace the prop with `ResolvedCell<T>`,
      stamp label, add args.
 5. **Constraint surface** — `effectiveConstraints = vary ∪
    boundArgsMerged`. Passed to `queryMatchingTs(labels, surface)` →
-   `inv` fold.
+   `inv` fold. Matching is type-aware: non-string partition values
+   (number, boolean, null) match type-exactly, so `{uid:123}` and
+   `{uid:"123"}` stay distinct — mirroring the partition key
+   (`hash(stableStringify(args))`). Bare string tokens still match
+   loosely, so a hand-authored `cart_id=1234` matches a string vary
+   input `"1234"`.
 6. **fp** = `id|matchKey|vary|schema=<cellHashes>|props|inv`.
 7. **Render** with the assembled prop bag (resolved cells, vary
    output, schema-resolved entries).
