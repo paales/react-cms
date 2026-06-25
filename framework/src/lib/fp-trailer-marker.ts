@@ -121,6 +121,16 @@ export function tryReadMarker(buf: Uint8Array, offset = 0): ReadMarkerResult {
 export const TAG_FP_UPDATES = "fp"
 export const TAG_URL_UPDATE = "url"
 export const TAG_NEXT_SEGMENT = "next"
+/** Producer milestone: the segment driver writes this after a segment's
+ *  render has fully drained — body bytes plus the `fp`/`url` trailers
+ *  are all on the wire. It is the explicit "this iteration is done"
+ *  signal: once the client has read it, the segment's Flight body is
+ *  wholly delivered, so the reader can be cancelled WITHOUT tearing a
+ *  mid-render body (whose pending deferred references would otherwise
+ *  reject with "Connection closed."). The live heartbeat's cooperative
+ *  abort gates on this — see `SegmentIterator` in `fp-trailer-split.ts`.
+ *  Zero-length, like `next`. */
+export const TAG_SEGMENT_SETTLED = "settled"
 
 /**
  * Body shape of an `fp` trailer entry (JSON). Maps each spec id whose

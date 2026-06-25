@@ -4,17 +4,21 @@ import { test, expect } from "./fixtures"
  * The live-page heartbeat must not tear the page down during a SAME-PAGE
  * refetch.
  *
- * Every search keystroke navigates (it flips `?q`). Before the fix the
- * heartbeat aborted its in-flight `?streaming=1` connection on *every*
- * `navigate` event — which rejects the already-committed payload's
- * pending references ("Connection closed."), thrown while rendering the
- * deferred search stages. That tore `SearchBodyRender` through its error
- * boundary and dropped the open search dialog mid-typing: the input
- * detached and the overlay stayed gone until a full refresh ("URL search
- * breaks the underlying page / search broken after a while").
+ * Every search keystroke navigates (it flips `?q`). The heartbeat aborts
+ * its in-flight `?streaming=1` connection on every `navigate` event — in
+ * this framework all page changes are partial, so it always reopens for
+ * the now-current URL. Before the fix that abort cancelled the stream's
+ * reader mid-render, rejecting the already-committed payload's pending
+ * references ("Connection closed."), thrown while rendering the deferred
+ * search stages. That tore `SearchBodyRender` through its error boundary
+ * and dropped the open search dialog mid-typing: the input detached and
+ * the overlay stayed gone until a full refresh ("URL search breaks the
+ * underlying page / search broken after a while").
  *
- * The heartbeat now aborts only on a real PAGE change (pathname), so a
- * keystroke's `?q` flip leaves the live stream — and the dialog — intact.
+ * The abort is now cooperative: the transport (`splitSegments`) holds it
+ * until the in-flight segment's render has settled (the server's
+ * `settled` marker), so the body always closes cleanly with all its
+ * deferred bytes — the live stream and the dialog survive the keystroke.
  *
  * (The separate stale-`q` ordering race — a superseded fire committing
  * out of order — is covered by `search-rapid-type-backspace.spec.ts`.)

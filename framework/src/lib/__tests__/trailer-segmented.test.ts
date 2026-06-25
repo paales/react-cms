@@ -12,6 +12,7 @@ import { splitAtFpTrailer, splitSegments } from "../fp-trailer-split.ts"
 import {
   TAG_FP_UPDATES,
   TAG_NEXT_SEGMENT,
+  TAG_SEGMENT_SETTLED,
   TAG_URL_UPDATE,
   buildMarker,
 } from "../fp-trailer-marker.ts"
@@ -263,7 +264,7 @@ describe("splitAtFpTrailer — legacy single-segment shim", () => {
   })
 })
 
-describe("splitSegments — abort", () => {
+describe("splitSegments — abort gated on `settled`", () => {
   // Bounded timer for hang/leak assertions: an iterator op that never
   // settles loses the race, so a proven hang is "the timer won." The
   // test itself always terminates.
@@ -271,18 +272,19 @@ describe("splitSegments — abort", () => {
     return new Promise((r) => setTimeout(() => r("timeout"), ms))
   }
 
-  it("does not deadlock when aborted while parked on a silent long-lived source", async () => {
-    // A heartbeat / chat segment-loop that emits a segment then goes
-    // silent without closing. `driveSegment` for the next segment parks
-    // in `readChunk`; abort must cancel the reader so iteration settles
-    // and the connection is released — otherwise `next` deadlocks
-    // awaiting a drive that can never finish.
+  it("cancels immediately when aborted while parked after a settled segment", async () => {
+    // The realistic steady state: the server emits a segment, writes its
+    // `settled` marker, then parks holding the connection open awaiting
+    // the next bump (the live heartbeat sitting idle between segments).
+    // The body is wholly delivered, so an abort here cancels the reader
+    // straight away — no deadlock, connection released.
     let cancelCount = 0
     const source = new ReadableStream<Uint8Array>({
       start(c) {
         c.enqueue(bytes("seg-1"))
-        c.enqueue(buildMarker(TAG_NEXT_SEGMENT, 0))
-        // segment 2 opens but no body bytes ever arrive; never closes.
+        c.enqueue(emitTrailerEntry(TAG_FP_UPDATES, '{"id":"warm"}'))
+        c.enqueue(buildMarker(TAG_SEGMENT_SETTLED, 0))
+        // Now silent: parked awaiting `next`, never closes.
       },
       cancel() {
         cancelCount++
@@ -292,23 +294,64 @@ describe("splitSegments — abort", () => {
     const iter = splitSegments(source, ac.signal)[Symbol.asyncIterator]()
 
     const first = await iter.next()
-    await collect(first.value!.body)
-    await first.value!.trailers
+    expect(bodyText(await collect(first.value!.body))).toBe("seg-1")
+    // Trailers resolve at the `settled` marker, not deferred to `next`.
+    const trailers = await first.value!.trailers
+    expect(new TextDecoder().decode(trailers.get(TAG_FP_UPDATES)!)).toBe('{"id":"warm"}')
 
-    // Segment 2's body opens; driveSegment is now parked reading bytes
-    // that never arrive.
-    const second = await iter.next()
-    expect(second.done).toBe(false)
-    const reader2 = second.value!.body.getReader()
-    const parkedRead = reader2.read()
-
-    ac.abort()
+    // The drive is parked post-settled awaiting `next`. Abort releases it.
     const advance = iter.next()
+    ac.abort()
     const winner = await Promise.race([advance, timeout(500)])
-    // The timer must NOT win: iteration settled, connection released.
     expect(winner).not.toBe("timeout")
     expect((winner as IteratorResult<unknown>).done).toBe(true)
     expect(cancelCount).toBe(1)
-    void parkedRead
+  })
+
+  it("defers the cancel until the in-flight segment settles (no mid-render tear)", async () => {
+    // An abort lands while the segment's render is still streaming. The
+    // reader must NOT be cancelled yet — closing the body before its
+    // remaining (deferred) bytes arrive would reject the committed
+    // payload's pending references ("Connection closed."). Instead the
+    // body keeps draining; the cancel fires the instant the `settled`
+    // marker arrives, by which point the body has closed cleanly.
+    let cancelCount = 0
+    let ctrl!: ReadableStreamDefaultController<Uint8Array>
+    const source = new ReadableStream<Uint8Array>({
+      start(c) {
+        ctrl = c
+      },
+      cancel() {
+        cancelCount++
+      },
+    })
+    const ac = new AbortController()
+    const iter = splitSegments(source, ac.signal)[Symbol.asyncIterator]()
+
+    // Render begins: first half of the body.
+    ctrl.enqueue(bytes("body-part-1:"))
+    const first = await iter.next()
+    expect(first.done).toBe(false)
+    const bodyReader = first.value!.body.getReader()
+    expect(new TextDecoder().decode((await bodyReader.read()).value!)).toBe("body-part-1:")
+
+    // Abort mid-render — the segment has not settled yet, so the reader
+    // must stay open.
+    ac.abort()
+    expect(cancelCount).toBe(0)
+
+    // The render completes: rest of the body, then the `settled` marker.
+    ctrl.enqueue(bytes("body-part-2"))
+    ctrl.enqueue(buildMarker(TAG_SEGMENT_SETTLED, 0))
+
+    // The remaining body bytes are still delivered (clean close, no tear).
+    expect(new TextDecoder().decode((await bodyReader.read()).value!)).toBe("body-part-2")
+    expect((await bodyReader.read()).done).toBe(true)
+
+    // Now the deferred cancel fires: iteration settles, reader released.
+    const winner = await Promise.race([iter.next(), timeout(500)])
+    expect(winner).not.toBe("timeout")
+    expect((winner as IteratorResult<unknown>).done).toBe(true)
+    expect(cancelCount).toBe(1)
   })
 })

@@ -39,7 +39,7 @@ import {
 } from "../runtime/context.ts"
 import { _currentTs, _waitForNextBump } from "../runtime/invalidation-registry.ts"
 import { _routeHasMatchingBump } from "./segment-relevance.ts"
-import { buildMarker, TAG_NEXT_SEGMENT } from "./fp-trailer-marker.ts"
+import { buildMarker, TAG_NEXT_SEGMENT, TAG_SEGMENT_SETTLED } from "./fp-trailer-marker.ts"
 
 /** How long the driver holds the response open after each segment.
  *  Bumped to 20s — long enough that most realtime updates land
@@ -68,9 +68,10 @@ export async function driveSegmentedResponse(
   renderSegment: () => ReadableStream<Uint8Array>,
   onSegmentEnd?: () => void,
 ): Promise<void> {
-  // Pre-encode the `next` delimiter — same bytes every segment
-  // boundary, so build it once.
+  // Pre-encode the `next` delimiter and the `settled` milestone — same
+  // bytes every time, so build each once.
   const nextMarker = buildMarker(TAG_NEXT_SEGMENT, 0)
+  const settledMarker = buildMarker(TAG_SEGMENT_SETTLED, 0)
 
   let segmentIndex = 0
   let lastTs = _currentTs()
@@ -93,6 +94,16 @@ export async function driveSegmentedResponse(
     } finally {
       reader.releaseLock()
     }
+
+    // The render for this segment has fully drained — its body bytes and
+    // the `fp`/`url` trailers are all on the wire. Emit the `settled`
+    // milestone so the client knows the iteration is complete: from this
+    // point the connection is parked (held open awaiting the next bump),
+    // and an abort can cancel the reader WITHOUT tearing a mid-render
+    // body. The client's cooperative abort (the live heartbeat tearing
+    // down on navigate) gates on this marker — see `SegmentIterator` in
+    // `fp-trailer-split.ts`.
+    controller.enqueue(settledMarker)
 
     if (onSegmentEnd) onSegmentEnd()
 

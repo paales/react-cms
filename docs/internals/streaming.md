@@ -152,14 +152,18 @@ Behaviour:
 - **Interval re-fires** every 5s by default — but each tick is a
   no-op if a stream is already open. So in steady state there's
   exactly one streaming connection.
-- **On a cross-PAGE `navigate`** (pathname change), aborts the
-  in-flight stream; the next interval tick reopens on the new page.
-  A SAME-page refetch (a search keystroke flipping `?q`, an overlay
-  toggling `?search`) does NOT abort — aborting a streaming connection
-  rejects its committed payload's pending references (`"Connection
-  closed."`, thrown while rendering the deferred parts), which tears
-  the visible page through the error boundary and drops an open
-  overlay mid-interaction. The decision is `_liveStreamCrossesPage`.
+- **On any `navigate`**, aborts the in-flight stream; the next
+  interval tick reopens on the now-current URL. Every page change is
+  partial here, so there is no "same page" to keep the old stream
+  for — it always reopens for the new URL. The abort is
+  **cooperative**: the transport (`splitSegments`) holds it until the
+  in-flight segment's render has settled (the server's `settled`
+  marker — see [Wire shape](#wire-shape)), then cancels the reader. So
+  the body always closes with all its bytes delivered; it never closes
+  mid-render, which would reject the committed payload's pending
+  references (`"Connection closed."`, thrown while rendering the
+  deferred parts) and tear the visible page through the error boundary
+  (the "URL search breaks the underlying page" bug).
 - **No live-state gating.** The heartbeat is on or off at the app
   level, not per-page. A page with no `expiresAt` / cells still
   pays the cost of one open streaming connection — the fp-skip
@@ -197,15 +201,29 @@ Each segment's bytes look like:
 <flight rows…>
 \xFF[parton:fp:N]\n<N-byte JSON: id→{from: cold_fp, to: warm_fp}>
 \xFF[parton:url:M]\n<M-byte JSON: {window?, frames?, history?}>
+\xFF[parton:settled:0]\n
 \xFF[parton:next:0]\n
 <flight rows for next segment…>
 ```
 
-Order: Flight payload first, then trailer entries, then the
-optional `next` delimiter. The client's `splitSegments` consumes
-the body bytes until the first `\xFF` (UTF-8 invalid → never inside
-Flight payload), reads trailer entries with `tryReadMarker`, and
-either continues to the next segment or terminates.
+Order: Flight payload first, then trailer entries, then the `settled`
+milestone, then the optional `next` delimiter. The client's
+`splitSegments` consumes the body bytes until the first `\xFF` (UTF-8
+invalid → never inside Flight payload), reads trailer entries with
+`tryReadMarker`, and either continues to the next segment or
+terminates.
+
+The `settled` marker is the driver's explicit "this iteration is
+done" signal, written once a segment's render has fully drained (body
+plus `fp`/`url` trailers). It is what makes the heartbeat's abort
+safe: `splitSegments` cancels the reader immediately if the in-flight
+segment is already settled (the steady state — parked between
+segments awaiting the next bump), and DEFERS the cancel until the
+marker arrives if the render is still mid-flight, so an abort never
+closes a body before its deferred references land. This is the
+real-signal alternative to inferring "safe to abort" from a pathname
+comparison — the producer states the milestone rather than the
+consumer guessing it.
 
 ## `expiresAt` vs `cache`
 
