@@ -1,9 +1,19 @@
 "use client"
 
+import "katex/dist/katex.min.css"
 import type { AnchorHTMLAttributes } from "react"
 import { Streamdown, defaultRemarkPlugins } from "streamdown"
+import { code } from "@streamdown/code"
+import { math } from "@streamdown/math"
+import { mermaid } from "@streamdown/mermaid"
 
 import { cn } from "@parton/copies/lib/utils"
+
+// Streamdown plugins: `code` is syntax highlighting (200+ languages,
+// lazy-loaded grammars), `mermaid` renders ```mermaid fences as SVG
+// diagrams, `math` renders `$$…$$` KaTeX. Passing `plugins` replaces
+// Streamdown's defaults, so the set is explicit.
+const PLUGINS = { code, mermaid, math }
 
 // A scheme (`https:`, `mailto:`), protocol-relative (`//host`), or
 // fragment (`#x`) URL is left untouched; everything else is relative.
@@ -83,9 +93,12 @@ function SameTabAnchor({
  *     links / images (`./block.md`, `./live/01.png`) against the
  *     document's path. Streamdown's defaults are preserved and the
  *     resolver appended, since passing `remarkPlugins` replaces them.
+ *   - `plugins` enables code highlighting, mermaid diagrams, and KaTeX
+ *     math (see `PLUGINS`).
  *
- * Streamdown styles itself with Tailwind utilities; the app's
- * `@source "…/streamdown/dist/*.js"` directive generates them.
+ * Streamdown and its plugins style themselves with Tailwind utilities;
+ * the app's `@source` directives over their dist generate them. Math
+ * additionally needs KaTeX's own stylesheet, imported above.
  */
 export function Markdown({
   children,
@@ -101,6 +114,7 @@ export function Markdown({
       parseIncompleteMarkdown={false}
       linkSafety={{ enabled: false }}
       remarkPlugins={remarkPlugins}
+      plugins={PLUGINS}
       components={{ a: SameTabAnchor }}
       className={cn("max-w-none text-sm leading-relaxed [&_h1]:mt-0", className)}
     >
