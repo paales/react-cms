@@ -288,7 +288,8 @@ fire `reload({ selector })`.
 
 | Option | Effect |
 |---|---|
-| `streaming: true` | Progressive reveal — commit without `startTransition`, so Suspense fallbacks paint and Flight chunks land per-row. Default is `false` (transition-wrapped, atomic swap, no fallback flash). Not to be confused with the `streaming` milestone in `progress` — the option is a behavior switch, the milestone is an event marker. |
+| `streaming: true` | Progressive reveal — commit without `startTransition`, so Suspense fallbacks paint and Flight chunks land per-row. Default is `false` (transition-wrapped, atomic swap, no fallback flash). A CLIENT commit-mode switch only — it does **not** hold the connection open. Not to be confused with the `streaming` milestone in `progress` — the option is a behavior switch, the milestone is an event marker. |
+| `live: true` | Open the reload as a live subscription — the server holds the connection open (up to its keepalive) and pushes a fresh segment on every route-relevant bump / `expiresAt` boundary. `reload`-only; `<LivePageHeartbeat>` is the canonical caller. Orthogonal to `streaming` (commit mode): a plain `reload({selector, streaming: true})` stays one-shot. Pair with a `signal` so navigating away tears the long-poll down. |
 | `silent: true` | Update the URL without firing any refetch. Wins over `selector` if both are set. Ignored on frame handles. `navigate`-only. |
 | `props` | See above. |
 | `cookies` | Write client-side cookies before the refetch fires. `navigate`-only — `reload` does not accept it. |

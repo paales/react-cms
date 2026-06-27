@@ -2,16 +2,21 @@
  * Server-side multi-segment response driver.
  *
  * Stays open for up to `KEEPALIVE_MS` of idle after each segment
- * when the request opts in via `?streaming=1` (set by the client's
- * `reload({streaming: true})` / `navigate({streaming: true})`).
- * Within that window, any `refreshSelector` activity wakes the
- * driver, re-runs the render, and emits the next segment delimited
- * by a `next` marker. If the window elapses with no activity, the
- * response closes.
+ * when the request is a live subscription — `?live=1`, set by the
+ * client's `<LivePageHeartbeat>` long-poll — or when a render called
+ * `markConnectionLive()` (the chat's `ChunkSlot`). Within that window,
+ * any `refreshSelector` activity wakes the driver, re-runs the render,
+ * and emits the next segment delimited by a `next` marker. If the
+ * window elapses with no activity, the response closes.
  *
- * Non-streaming requests (no `?streaming=1` — most navigations,
- * cache-mode refetches, action responses) emit one segment and
- * close — byte-identical to the pre-segment-loop output.
+ * One-shot requests — every navigation, every targeted refetch
+ * (including `reload({selector, streaming: true})`), action responses —
+ * emit one segment and close. `?streaming=1` alone is a CLIENT commit-
+ * mode flag (progressive reveal vs atomic swap); it does NOT hold the
+ * connection open. Holding open is a server subscription concern,
+ * gated only on `?live=1` / `markConnectionLive`, so a targeted
+ * streaming refetch returns its segment and closes instead of parking
+ * for the full keepalive.
  *
  * Wire shape per segment matches `wrapStreamWithFpTrailer` exactly —
  * one Flight document, optional fp-trailer entry, no other markers
@@ -107,12 +112,13 @@ export async function driveSegmentedResponse(
 
     if (onSegmentEnd) onSegmentEnd()
 
-    // Multi-segment opt-in: either the request URL carried
-    // `?streaming=1` (client-side `reload({streaming: true})` /
-    // `navigate({streaming: true})`), or this segment's render
+    // Multi-segment opt-in: either the request is a live subscription
+    // (`?live=1`, the heartbeat's long-poll), or this segment's render
     // called `markConnectionLive()` (server-side opt-in used by
-    // producer-await sentinels like the chat's `ChunkSlot`).
-    if (!isStreamingRequest() && !_isConnectionLive()) break
+    // producer-await sentinels like the chat's `ChunkSlot`). A bare
+    // `?streaming=1` targeted refetch is NOT a subscription — it's a
+    // one-shot that commits its segment and closes.
+    if (!isLiveSubscription() && !_isConnectionLive()) break
 
     // Promote just-emitted (id, matchKey, fp) tokens into the
     // request-scoped cached override so the NEXT segment's render
@@ -255,14 +261,15 @@ function computeNextExpiresAtDelay(): number | null {
   return min - Date.now()
 }
 
-/** Inspect the active request's URL for a `?streaming=1` flag. The
- *  client's `reload({streaming: true})` sets it; everything else
- *  (page nav, cache-mode refetch, action response) doesn't. Returning
- *  false here keeps the driver's first-and-only segment behaviour
- *  byte-identical to the pre-segment-loop output. */
-function isStreamingRequest(): boolean {
+/** Inspect the active request's URL for a `?live=1` flag — the live-
+ *  subscription opt-in set by `<LivePageHeartbeat>` (a whole-route
+ *  long-poll that wants the connection held open for pushes). Targeted
+ *  refetches and one-shot navs never set it, so they emit their
+ *  segment and close. Returning false here keeps the driver's
+ *  first-and-only segment behaviour byte-identical to a one-shot. */
+function isLiveSubscription(): boolean {
   try {
-    return new URL(getRequest().url).searchParams.get("streaming") === "1"
+    return new URL(getRequest().url).searchParams.get("live") === "1"
   } catch {
     return false
   }

@@ -13,8 +13,9 @@ const HEADER_ACTION_ID = "x-rsc-action"
 export const HEADER_RSC_RENDER = "x-parton-render"
 
 /** Framework-internal query params appended to RSC fetch URLs. They drive
- *  `PartialRoot`'s refetch routing (`partials`/`cached`), the segment loop
- *  (`streaming`), and post-action cache repopulation (`__populateCache`) —
+ *  `PartialRoot`'s refetch routing (`partials`/`cached`), the client commit
+ *  mode (`streaming`), the segment driver's hold-open subscription
+ *  (`live`), and post-action cache repopulation (`__populateCache`) —
  *  all consumed off the raw `getRequest()` before any spec renders. They're
  *  stripped from the page URL serialized into the payload for descendant
  *  client components (`PageUrlProvider`): meaningless to app code, and — for
@@ -28,6 +29,7 @@ export const FRAMEWORK_URL_PARAMS = [
   "partials",
   "cached",
   "streaming",
+  "live",
   "__populateCache",
   "__nojs",
 ] as const

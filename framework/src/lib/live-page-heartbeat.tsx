@@ -13,7 +13,7 @@ interface Props {
 }
 
 /**
- * Opt-in client component that holds a `?streaming=1` long-poll
+ * Opt-in client component that holds a `?live=1` long-poll
  * connection to the current URL open. Mount it once near the app's
  * React root (typically from `entry.browser.tsx`):
  *
@@ -41,9 +41,11 @@ interface Props {
  * `load` listener.
  *
  * Behaviour:
- *   - Mount → fire one `reload({streaming: true})`. Batches with
- *     any in-tick client-side activator fires (when-mounted,
- *     when-visible) via `enqueueRefetch`'s per-microtask coalescer.
+ *   - Mount → fire one `reload({streaming: true, live: true})`.
+ *     `live` holds the connection open as a subscription; `streaming`
+ *     commits each pushed segment progressively. Batches with any
+ *     in-tick client-side activator fires (when-mounted, when-visible)
+ *     via `enqueueRefetch`'s per-microtask coalescer.
  *   - Every `intervalMs` (default 5s), re-fires IF no stream is
  *     currently open. While a stream is open the tick is a no-op.
  *     When the server's keepalive elapses, the next tick reopens.
@@ -82,7 +84,13 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
       if (!alive) return
       if (inFlight) return
       inFlight = new AbortController()
-      const { finished } = reload({ streaming: true, signal: inFlight.signal })
+      // `live: true` holds the connection open as a whole-route
+      // subscription (the server parks it for the keepalive and pushes
+      // a segment on every relevant bump / expiresAt boundary).
+      // `streaming: true` makes the client commit each pushed segment
+      // progressively. The two are orthogonal — a targeted refetch
+      // takes `streaming` without `live` and stays one-shot.
+      const { finished } = reload({ streaming: true, live: true, signal: inFlight.signal })
       finished
         .catch(() => {
           // Network error / abort. Clear the in-flight slot so the

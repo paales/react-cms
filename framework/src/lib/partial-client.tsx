@@ -1051,6 +1051,11 @@ interface RefetchBatchEntry {
    *  Suspense fallbacks. Mirrors the `streaming` option on
    *  `FrameworkNavigateOptions` / `FrameworkReloadOptions`. */
   streaming: boolean
+  /** Open as a live subscription — adds `?live=1` so the server's
+   *  segment driver holds the connection open and pushes future
+   *  segments. Only the heartbeat sets this; targeted refetches are
+   *  one-shot. Mirrors `FrameworkReloadOptions.live`. */
+  live: boolean
   /** Abort signal for the in-flight HTTP fetch on this entry. Per-
    *  selector supersede sets this to a fresh `AbortController`'s signal
    *  and aborts predecessors when the newer fire's `streaming`
@@ -1091,9 +1096,11 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
 
   const labelSet = new Set<string>()
   let streamingMode = false
+  let liveMode = false
   for (const entry of batch) {
     for (const l of entry.labels) labelSet.add(l)
     if (entry.streaming) streamingMode = true
+    if (entry.live) liveMode = true
   }
 
   // Combine per-entry signals so the batched fetch aborts when any
@@ -1114,6 +1121,10 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   const url = new URL(window.location.href)
   if (labelSet.size > 0) url.searchParams.set("partials", [...labelSet].join(","))
   if (streamingMode) url.searchParams.set("streaming", "1")
+  // `?live=1` is the server hold-open signal — distinct from
+  // `?streaming=1` (client commit mode). Only the heartbeat sets it;
+  // targeted refetches stay one-shot and the connection closes.
+  if (liveMode) url.searchParams.set("live", "1")
 
   // Send cached fingerprints so the server can fp-skip unchanged
   // partials. With a selector, strip cached tokens whose id prefix
@@ -1999,6 +2010,9 @@ function buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeNavigati
           const refetch = enqueueRefetch({
             labels: parsed.labels,
             streaming: options?.streaming ?? false,
+            // Navigation is one-shot — a held-open subscription belongs
+            // to the heartbeat's `reload({live: true})`, not a nav.
+            live: false,
           })
           await refetch.streaming
           m.streaming.resolve()
@@ -2053,20 +2067,24 @@ function buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeNavigati
     const parsed = parseOptionsSelector(options)
     const m = makeMilestoneDeferreds()
 
-    // Two ways to reach the in-place refetch path (no browser reload):
+    // Three ways to reach the in-place refetch path (no browser reload):
     //
     //   1. Selector filter (`reload({selector: "#cart"})`) — targeted
     //      partial refetch. Existing behaviour.
-    //   2. Streaming opt-in (`reload({streaming: true})`) without a
+    //   2. Live subscription (`reload({live: true})`) without a
     //      selector — the framework heartbeat. Full-page top-down
     //      re-render with fp-skip pruning unchanged partials; the
-    //      `?streaming=1` URL flag holds the connection open for live
+    //      `?live=1` URL flag holds the connection open for live
     //      updates.
+    //   3. Streaming opt-in (`reload({streaming: true})`) — the client
+    //      commits the response progressively. A render-mode switch, not
+    //      a browser reload, so it stays in-place too.
     //
-    // Only a bare `reload()` (no selector, no streaming) falls through
-    // to `nav.reload()` — that's the user-facing "reload this URL"
-    // command and IS supposed to do a real browser reload.
-    const wantsInPlace = parsed.labels.length > 0 || options?.streaming === true
+    // Only a bare `reload()` (no selector, no streaming, no live) falls
+    // through to `nav.reload()` — that's the user-facing "reload this
+    // URL" command and IS supposed to do a real browser reload.
+    const wantsInPlace =
+      parsed.labels.length > 0 || options?.streaming === true || options?.live === true
     if (wantsInPlace) {
       m.committed.resolve(nav.currentEntry!)
       void (async () => {
@@ -2078,6 +2096,10 @@ function buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeNavigati
           const refetch = enqueueRefetch({
             labels: parsed.labels,
             streaming: options?.streaming ?? false,
+            // `live: true` (the heartbeat) holds the connection open as
+            // a subscription; a bare `reload({selector, streaming})` is
+            // one-shot and closes once its segment drains.
+            live: options?.live ?? false,
             signal: options?.signal,
           })
           await refetch.streaming

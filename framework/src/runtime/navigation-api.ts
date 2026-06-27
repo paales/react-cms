@@ -187,14 +187,29 @@ export interface FrameworkReloadOptions extends NavigationReloadOptions {
   selector?: string | string[]
   /** See `FrameworkNavigateOptions.streaming`. */
   streaming?: boolean
+  /**
+   * Open this reload as a live subscription: the server holds the
+   * connection open (up to a keepalive cap) and pushes a fresh
+   * segment whenever route-relevant state changes — a
+   * `refreshSelector` bump or an `expiresAt` boundary. The framework's
+   * `<LivePageHeartbeat>` is the canonical caller (a whole-route
+   * long-poll, no `selector`).
+   *
+   * Orthogonal to `streaming`, which is a CLIENT commit-mode switch
+   * (progressive reveal vs atomic swap). A plain `reload({selector})`
+   * or `reload({selector, streaming: true})` is one-shot — it
+   * refetches its targets and the connection closes. Set `live: true`
+   * only when you want a held-open push channel; pair it with a
+   * `signal` so navigating away tears the long-poll down.
+   */
+  live?: boolean
   /** Caller-supplied abort signal. Aborting before the reload
    *  completes cancels the in-flight fetch on the client and the
    *  long-poll stream on the server. Components that fire a
-   *  `streaming: true` reload from a `useEffect` should pass a
-   *  signal whose controller aborts in the effect's cleanup —
-   *  otherwise navigating away leaves the server-side segment
-   *  driver running until its next render finishes without
-   *  `markConnectionLive`. */
+   *  `live: true` reload from a `useEffect` should pass a signal whose
+   *  controller aborts in the effect's cleanup — otherwise navigating
+   *  away leaves the server-side segment driver parked open until its
+   *  keepalive elapses. */
   signal?: AbortSignal
 }
 

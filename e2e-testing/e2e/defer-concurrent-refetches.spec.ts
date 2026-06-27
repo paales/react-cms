@@ -49,6 +49,40 @@ test.describe("concurrent refetches", () => {
       .not.toBe(before)
   })
 
+  test("a streaming refetch is one-shot — the button doesn't hang loading", async ({ page }) => {
+    // `refresh-concurrent-a` fires `reload({selector, streaming: true})`.
+    // `streaming` is a CLIENT commit-mode switch (progressive reveal) —
+    // it is NOT a subscription. The server must return the segment and
+    // close; only the heartbeat's `reload({live: true})` holds a
+    // connection open. The regression: a targeted `?streaming=1` refetch
+    // was held open for the full 20s keepalive, so the button — whose
+    // label is "…" while `committed && !finished` — sat in its loading
+    // state for 20s. The button keeps showing its label (`disabled` is
+    // off for streaming), but the text staying "…" is the visible hang.
+    await page.goto("/defer-demo")
+    await page.waitForSelector('[data-testid="concurrent-a"]', { timeout: 10000 })
+    await page.waitForFunction(
+      () => typeof (window as any).__rsc_partial_refetch === "function",
+      null,
+      { timeout: 10000 },
+    )
+    const btn = page.locator('[data-testid="refresh-concurrent-a"]')
+    const before = await page.locator('[data-testid="concurrent-a"]').textContent()
+    await page.waitForTimeout(50)
+    await btn.click()
+    // The refetch commits (proves it actually fired, not a no-op)…
+    await expect
+      .poll(async () => await page.locator('[data-testid="concurrent-a"]').textContent(), {
+        timeout: 5000,
+      })
+      .not.toBe(before)
+    // …and the connection closes one-shot, so the button leaves its
+    // loading state far short of the 20s subscription keepalive. The
+    // hold-open bug pinned it at "…" for the full keepalive; the 6s
+    // bound sits well below 20s and ~10× above the real one-shot close.
+    await expect(btn).toHaveText("refetch a", { timeout: 6000 })
+  })
+
   test("three distinct-id refetches run in parallel server-side", async ({ page }) => {
     const rscCalls: Array<{
       partials: string | null

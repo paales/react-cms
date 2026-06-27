@@ -105,14 +105,14 @@ async function main() {
 
   // Identity of a page URL for staleness checks — pathname + search
   // with framework-internal refetch params stripped (`partials`,
-  // `cached`, `streaming`, `__frame*`). Those describe
+  // `cached`, `streaming`, `live`, `__frame*`). Those describe
   // HOW a refetch was dispatched, not WHICH page it represents, so a
   // targeted refetch's key equals the page it targets; only real
   // navigation (pathname / `?search` / `?q` / …) changes it. Defaults
   // to the live `window.location`.
   function pageUrlKey(href: string = window.location.href): string {
     const u = new URL(href, window.location.origin)
-    for (const k of ["partials", "cached", "streaming", "__frame", "__frameUrl"]) {
+    for (const k of ["partials", "cached", "streaming", "live", "__frame", "__frameUrl"]) {
       u.searchParams.delete(k)
     }
     return u.pathname + u.search

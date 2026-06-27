@@ -64,7 +64,7 @@ kilobytes echoed back on every navigation. The element type stays
 
 - the chat overlay's frame refetch becomes a `markConnectionLive`
   long-poll and commits in **cache mode**;
-- the page heartbeat holds a `?streaming=1` connection that also
+- the page heartbeat holds a `?live=1` connection that also
   renders the open chat and commits in **streaming mode**.
 
 If one payload's root were `<PageUrlProvider>` and the other a bare

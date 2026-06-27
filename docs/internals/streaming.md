@@ -41,8 +41,10 @@ any selector-routing logic that could replace it.
    **reads a cell via `schema`** (write-driven via
    `refreshSelector("cell:<id>")`).
 2. **The app's browser entry mounts `<LivePageHeartbeat />`**
-   near the React root. After hydration it holds a `?streaming=1`
-   long-poll open against the current URL.
+   near the React root. After hydration it holds a `?live=1`
+   long-poll open against the current URL (it fires
+   `reload({streaming: true, live: true})` — `live` is what holds the
+   connection open; `streaming` only sets the client commit mode).
 3. **Server-side segment driver runs.** For each rendered segment,
    it races three arms:
    - `_waitForNextBump` — a `refreshSelector` lands (CRUD writes,
@@ -68,8 +70,8 @@ any selector-routing logic that could replace it.
 
 ## Actions stay non-streaming
 
-Server actions complete with a one-shot response (no `?streaming=1`
-on their URL). Their bodies call `refreshSelector` / `cell.set` /
+Server actions complete with a one-shot response (no `?live=1` on
+their URL). Their bodies call `refreshSelector` / `cell.set` /
 `getServerNavigation().reload({selector})`, which bumps the
 **already-open** heartbeat stream. The segment driver wakes, the
 next segment renders, the changed partial's fp moves, the bytes
@@ -78,13 +80,37 @@ ship. The heartbeat is the one connection actions ever need.
 A frame refetch, though, CAN open a second connection: the chat
 overlay's frame nav renders a `markConnectionLive` sentinel, so that
 targeted (cache-mode) refetch holds open and streams alongside the
-heartbeat's `?streaming=1` (streaming-mode) connection. Two live
-connections then commit onto the same React root in different modes.
-That's safe only because every payload — cache or streaming — carries
-the identical `<PageUrlProvider><PartialsClient>` root; otherwise the
-alternating commits would remount the whole page on each seam. See
+heartbeat's `?live=1` connection. Two live connections then commit
+onto the same React root. That's safe only because every payload —
+cache or streaming — carries the identical
+`<PageUrlProvider><PartialsClient>` root; otherwise the alternating
+commits would remount the whole page on each seam. See
 [`render-pipeline.md`](./render-pipeline.md) ("Both modes share one
 payload root").
+
+## `streaming` vs `live` — two orthogonal flags
+
+A held-open connection is gated only on the request being a live
+subscription. There are two URL flags, and conflating them is a bug:
+
+- **`?streaming=1`** (`reload/navigate({streaming: true})`) is a
+  CLIENT commit-mode switch. `true` commits each segment
+  progressively (`setPayloadRaw` — Suspense fallbacks, per-chunk
+  reveal); `false` swaps atomically inside a transition. It has **no**
+  server effect — it does not hold the connection open.
+- **`?live=1`** (`reload({live: true})`) is the SERVER hold-open
+  subscription. The segment driver parks the connection for the
+  keepalive and pushes a fresh segment on every route-relevant bump /
+  `expiresAt` boundary. Only `<LivePageHeartbeat>` sets it.
+
+So the segment driver holds a response open iff `?live=1` **or** a
+render called `markConnectionLive()`. A targeted
+`reload({selector, streaming: true})` (a search keystroke, a
+"refetch this card" button) is a one-shot: it commits its segment
+progressively and the connection closes. It does **not** park for the
+keepalive — a one-shot refetch that held open would pin any
+`committed && !finished` spinner in its loading state for the full
+20s.
 
 ## Deferred (stream-only) writes
 
@@ -148,7 +174,9 @@ Behaviour:
 
 - **Initial fire** deferred by one macrotask so React's commit
   phase (which wires `setPayloadRaw`) runs first. Then
-  `nav.reload({streaming: true})` opens the long-poll connection.
+  `nav.reload({streaming: true, live: true})` opens the long-poll
+  connection — `live` holds it open, `streaming` commits each pushed
+  segment progressively.
 - **Interval re-fires** every 5s by default — but each tick is a
   no-op if a stream is already open. So in steady state there's
   exactly one streaming connection.
