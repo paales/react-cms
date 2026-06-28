@@ -145,7 +145,7 @@ export const MagentoPage = parton(
     return (
       <>
         <MagentoHeader />
-        <MagentoProducts products={magentoProductsCell.with({ pageSize: 12 })} />
+        <MagentoProducts products={magentoProductsCell.with({ pageSize: 12, currentPage: 1 })} />
       </>
     )
   },

@@ -17,9 +17,13 @@ import { graphql } from "../../magento-graphql.ts"
 const magento = gqlCellBuilder({ client, graphql, prefix: "magento" })
 
 // id auto-derives to "magento.products" (operation name + prefix).
+// `currentPage` partitions the cache per page, so an infinite-scroll
+// page-parton can bind `.with({pageSize, currentPage})` and fetch only
+// its own slice. `total_count` lets a scroller cap its page pool.
 export const magentoProductsCell = magento.query(`
-  query Products($pageSize: Int!) {
-    products(filter: {}, pageSize: $pageSize) {
+  query Products($pageSize: Int!, $currentPage: Int!) {
+    products(filter: {}, pageSize: $pageSize, currentPage: $currentPage) {
+      total_count
       items {
         id
         name

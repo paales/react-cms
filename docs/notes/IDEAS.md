@@ -130,6 +130,14 @@ Open questions if/when we build this:
 
 ### Activate ⇄ deactivate symmetry (deferred + infinite-scroll unload)
 
+> **Prototyped** (app-side) — see [`view-culling.md`](./view-culling.md)
+> and `/magento/browse`. The shape that worked is *not* a per-item
+> `deactivate()` on `useActivate`; it's a single camera that reports the
+> visible **set** as a frame-scoped `vary` input, and the server decides
+> each page's zone (ring / reserved / absent). `vary → null` is the
+> deactivation — no new primitive. The notes below are the original
+> sketch; the prototype's findings supersede the `deactivate()` framing.
+
 Today `useActivate(partialId, subscribe)` fires once and the partial
 stays live. There's no path back to dormant. The infinite-scroll
 case wants symmetry: as items leave the viewport, the framework

@@ -65,14 +65,14 @@
             ]
           },
           {
-            "id": "app-nav-link-bare",
+            "id": "app-nav-link-browse",
             "type": "nav-link",
             "configs": [
               {
                 "match": {},
                 "fields": {
-                  "href": "/bare",
-                  "label": "Bare Stream"
+                  "href": "/magento/browse",
+                  "label": "Browse"
                 }
               }
             ]

@@ -26,13 +26,11 @@ import { getNavigation } from "@parton/framework/runtime/navigation-api.ts"
  *  - Use a rAF retry loop because async / streamed content can grow
  *    the document after the first paint.
  *
- * Caveat: in the current app shell (root.tsx returns either BarePage
- * or the default layout depending on URL), navigating away from /bare
- * and back doesn't appear to remount BarePage on every visit, so the
- * mount-time restore doesn't fire on browser back. Save still works.
- * Open question: whether to fix at the router level so each route
- * mount is real, or move the restore logic to a navigate-event hook
- * that runs without requiring a remount.
+ * Caveat: a route whose host partial fp-skips across a back-nav isn't
+ * remounted, so the mount-time restore doesn't fire on browser back
+ * (save still works). Open question: whether to fix at the router level
+ * so each route mount is real, or move the restore logic to a
+ * navigate-event hook that runs without requiring a remount.
  */
 export function ScrollRestore() {
   useEffect(() => {

@@ -29,10 +29,10 @@ import { DeferredDemoPage } from "./pages/deferred-demo.tsx"
 import { CursorsPage } from "./pages/cursors.tsx"
 import { FormsDemoPage } from "./pages/forms-demo.tsx"
 import { FramesDemoPage } from "./pages/frames-demo.tsx"
-import { BarePage } from "./pages/bare-stream.tsx"
 import { ChatNotesPage } from "./pages/chat-notes.tsx"
 import { DocsPage } from "./pages/docs.tsx"
 import { MagentoPage } from "./pages/magento/product-list.tsx"
+import { ProductBrowsePage } from "./pages/magento/product-browse.tsx"
 import { MagentoCartPage } from "./pages/magento/cart-page.tsx"
 import { NotFoundFallback } from "./pages/not-found-fallback.tsx"
 import {
@@ -73,10 +73,10 @@ export function Root() {
               <CursorsPage />
               <FormsDemoPage />
               <FramesDemoPage />
-              <BarePage />
               <ChatNotesPage />
               <DocsPage />
               <MagentoPage />
+              <ProductBrowsePage />
               <MagentoCartPage />
               <InspectBasePage />
               <InspectDrawer1 />
