@@ -47,7 +47,7 @@ export {
 // `tag()` (a render-time invalidation label) and `getCurrentParton()` (the
 // parton's own identity). See current-parton.ts / server-hooks.ts.
 export { cookie, searchParam, param, match, session, visible } from "./server-hooks.ts"
-export { tag, getCurrentParton, type CurrentParton } from "./current-parton.ts"
+export { tag, getCurrentParton, type CurrentParton, type VisibleOptions } from "./current-parton.ts"
 
 export {
   PartialsClient,

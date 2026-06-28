@@ -20,7 +20,7 @@
  * fp-accurate. See `docs/notes/server-hooks.md`.
  */
 
-import { getCurrentParton } from "./current-parton.ts"
+import { getCurrentParton, type VisibleOptions } from "./current-parton.ts"
 import { parseCookies } from "../runtime/context.ts"
 import { getSessionId } from "../runtime/session.ts"
 import { parseSelector, queryMatchingTs } from "../runtime/invalidation-registry.ts"
@@ -88,11 +88,16 @@ export function session(): { readonly id: string } {
  * `?visible=`, every parton is in (`true`) or out (`false`); the
  * observer's `rootMargin` is the runway, so "out" is the correct skeleton
  * state for everything past it.
+ *
+ * `options` configures THIS parton's observation — e.g. `visible({
+ * rootMargin: "1000px 0px" })` for an eager runway. It rides to the client
+ * boundary's IntersectionObserver; it doesn't affect the fp.
  */
-export function visible(): boolean | undefined {
+export function visible(options?: VisibleOptions): boolean | undefined {
   const cp = getCurrentParton()
   if (!cp) return undefined
   cp.deps.add(`visible:${cp.id}`)
+  if (options) cp.visibleOptions = options
   return readVisible(new URL(cp.request.url).searchParams, cp.id)
 }
 

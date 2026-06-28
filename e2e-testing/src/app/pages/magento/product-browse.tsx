@@ -98,7 +98,8 @@ const PageProducts = parton(
 // its space lives in the parent (always present), so this parton's content
 // can swap skeleton ⇄ products without ever shifting layout.
 const BrowsePage = parton(function BrowsePageRender({ page }: { page: number } & RenderArgs) {
-  const vis = visible()
+  // Fetch ~a page ahead of the viewport so the grid fills before you reach it.
+  const vis = visible({ rootMargin: "900px 0px" })
   // Cold (no client report yet): seed the cull off the `?page=` anchor so
   // the first paint fills the right neighborhood; the live set refines it.
   const show = vis ?? Math.abs(page - (Number(searchParam("page")) || 1)) <= COLD_RING

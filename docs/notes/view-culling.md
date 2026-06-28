@@ -47,7 +47,9 @@ dep. On the client, `PartialErrorBoundary` then wraps the parton's children
 in a React 19.3 **`<Fragment ref>`** and observes them with an
 IntersectionObserver via **`FragmentInstance.observeUsing`** — *no wrapper
 element, no `data-*` id stamping*. The boundary already knows its own id, so
-it reports `{ id, inView }` straight from its closure.
+it reports `{ id, inView }` straight from its closure. The parton tunes its
+own runway at the read site — `visible({ rootMargin: "900px 0px" })` — and
+the options thread server→client on the `cullable` prop.
 
 Reports funnel into a module-level controller (`visibility.tsx`, mirroring
 the refetch batch / partial cache — client state lives at module scope). It

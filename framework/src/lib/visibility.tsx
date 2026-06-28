@@ -23,6 +23,7 @@
 
 import React, { useEffect, useRef } from "react"
 import { _windowNav } from "./partial-client.tsx"
+import type { VisibleOptions } from "./current-parton.ts"
 
 /** How far beyond the viewport a parton counts as "in view" — the runway,
  *  so a parton fills before it's literally on screen. Expressed as an
@@ -110,18 +111,21 @@ async function flush(): Promise<void> {
  */
 export function VisibilityObserver({
   id,
+  options,
   children,
 }: {
   id: string
+  options?: VisibleOptions
   children: React.ReactNode
 }): React.ReactNode {
   const ref = useRef<FragmentInstance | null>(null)
+  const rootMargin = options?.rootMargin ?? RUNWAY
   useEffect(() => {
     const inst = ref.current
     if (!inst || typeof inst.observeUsing !== "function") return
     const io = new IntersectionObserver(
       (entries) => reportVisible(id, entries.some((e) => e.isIntersecting)),
-      { rootMargin: RUNWAY },
+      { rootMargin },
     )
     inst.observeUsing(io)
     return () => {
@@ -133,7 +137,7 @@ export function VisibilityObserver({
       io.disconnect()
       reportGone(id)
     }
-  }, [id])
+  }, [id, rootMargin])
   // `ref` on a Fragment yields a FragmentInstance (React 19.3). Built via
   // `createElement` so the ref prop isn't gated by the JSX intrinsic types
   // (the installed react-dom supports it even where `@types/react` doesn't).

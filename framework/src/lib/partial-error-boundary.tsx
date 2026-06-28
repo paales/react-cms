@@ -3,6 +3,7 @@
 import React from "react"
 import { _windowNav, PartialIdContext, registerClientPartial } from "./partial-client.tsx"
 import { VisibilityObserver } from "./visibility.tsx"
+import type { VisibleOptions } from "./current-parton.ts"
 
 interface Props {
   partialId: string
@@ -23,11 +24,12 @@ interface Props {
    * If omitted, the built-in red card with a retry button is used.
    */
   fallback?: React.ReactNode
-  /** The parton read `visible()` — observe its viewport intersection via
-   *  a `<Fragment ref>` and report it to the culling controller, so it
-   *  self-refetches as it enters/leaves view. Set by the server wrapper
-   *  from the parton's tracked deps. */
-  cullable?: boolean
+  /** Present when the parton read `visible()` — observe its viewport
+   *  intersection via a `<Fragment ref>` and report it to the culling
+   *  controller, so it self-refetches as it enters/leaves view. The value
+   *  is the parton's observer options (`{}` for defaults). Set by the
+   *  server wrapper from the parton's tracked deps. */
+  cullable?: VisibleOptions
 }
 
 interface State {
@@ -104,7 +106,9 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
     // observes their viewport intersection (no wrapper DOM); a plain
     // parton renders them bare.
     const body = this.props.cullable ? (
-      <VisibilityObserver id={this.props.partialId}>{this.props.children}</VisibilityObserver>
+      <VisibilityObserver id={this.props.partialId} options={this.props.cullable}>
+        {this.props.children}
+      </VisibilityObserver>
     ) : (
       this.props.children
     )

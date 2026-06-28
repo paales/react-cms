@@ -104,7 +104,7 @@ import { getCellStorage } from "../runtime/cell-storage.ts"
 import { getScope } from "../runtime/context.ts"
 import { buildTimeScope, type TimeScope } from "./time.ts"
 import { getServerContext } from "./server-context.ts"
-import { _setCurrentParton } from "./current-parton.ts"
+import { _setCurrentParton, type CurrentParton } from "./current-parton.ts"
 import { evalDepKeys } from "./server-hooks.ts"
 
 export { ROOT, type PartialCtx } from "./partial-context.ts"
@@ -1458,7 +1458,8 @@ function createSpecComponent<V>(
     // params are known — server-hooks (`cookie()` / `searchParam()` /
     // `param()`, `tag()`, inline `localCell`) read them off it. See
     // current-parton.ts.
-    _setCurrentParton({ id, tags: selfTags, deps: selfDeps, request: ourRequest, params })
+    const self: CurrentParton = { id, tags: selfTags, deps: selfDeps, request: ourRequest, params }
+    _setCurrentParton(self)
     // matchKey identifies the rendered variant for client-side
     // Activity keying AND nested-substitution lookups. The rule is:
     //   - A spec with its OWN named match params hashes them — so
@@ -1906,7 +1907,7 @@ function createSpecComponent<V>(
           partialId={id}
           {...fpProp}
           partialMatchKey={matchKey}
-          cullable={hasVisibleDep(priorSnap?.deps)}
+          cullable={hasVisibleDep(priorSnap?.deps) ? {} : undefined}
         >
           {dormant}
         </PartialErrorBoundary>
@@ -1939,8 +1940,10 @@ function createSpecComponent<V>(
 
     let body: ReactNode = spec.Render(renderProps)
     // Cullable if the render read `visible()` — the client observes its
-    // viewport intersection and self-refetches it on enter/leave.
-    const cullable = hasVisibleDep(selfDeps)
+    // viewport intersection and self-refetches it on enter/leave. The
+    // boundary prop carries the parton's observer options (or `{}`), so its
+    // presence is the cullable flag and its value is the runway config.
+    const cullable = hasVisibleDep(selfDeps) ? (self.visibleOptions ?? {}) : undefined
 
     if (opts.cache !== undefined) {
       body = (

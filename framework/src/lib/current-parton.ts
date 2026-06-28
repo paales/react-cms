@@ -42,6 +42,16 @@ const sharedInternals = (
   }
 ).__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE
 
+/** Observation options a cullable parton declares at its `visible()` read.
+ *  Server-side state, threaded to the client boundary's IntersectionObserver
+ *  (via the `cullable` prop). */
+export interface VisibleOptions {
+  /** Runway — how far beyond the viewport still counts as "in view", as an
+   *  IntersectionObserver `rootMargin`. Bigger = fetch further ahead.
+   *  Default `"600px 0px"`. */
+  readonly rootMargin?: string
+}
+
 /** The rendering parton's own identity. */
 export interface CurrentParton {
   /** The parton's effective render id — the one keying snapshots, the
@@ -68,6 +78,10 @@ export interface CurrentParton {
    *  NOT dep-recorded — match params already fold into the fp via
    *  `matchKey`, so `param()` is a pure read. */
   readonly params: Record<string, string>
+  /** Observation options set by a `visible(opts)` read this render. Mutable
+   *  — the hook writes it; the wrapper reads it back to build the cullable
+   *  boundary's observer config. */
+  visibleOptions?: VisibleOptions
 }
 
 /**
