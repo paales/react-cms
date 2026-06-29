@@ -1705,8 +1705,8 @@ __metadata:
   dependencies:
     "@parton/copies": "workspace:*"
     "@parton/framework": "workspace:*"
-    "@types/react": "npm:^19.2.14"
-    react: "npm:19.3.0-canary-00f063c3-20260415"
+    "@types/react": "npm:^19.2.17"
+    react: "npm:19.3.0-canary-68631c04-20260626"
   languageName: unknown
   linkType: soft
 
@@ -1722,7 +1722,7 @@ __metadata:
     "@streamdown/code": "npm:^1.1.1"
     "@streamdown/math": "npm:^1.0.2"
     "@streamdown/mermaid": "npm:^1.0.2"
-    "@types/react": "npm:^19.2.14"
+    "@types/react": "npm:^19.2.17"
     "@types/react-dom": "npm:^19.2.3"
     "@xyflow/react": "npm:^12.10.2"
     ai: "npm:^6.0.168"
@@ -1737,9 +1737,9 @@ __metadata:
     motion: "npm:^12.38.0"
     nanoid: "npm:^5.1.9"
     next-themes: "npm:^0.4.6"
-    react: "npm:19.3.0-canary-00f063c3-20260415"
+    react: "npm:19.3.0-canary-68631c04-20260626"
     react-day-picker: "npm:^9.14.0"
-    react-dom: "npm:19.3.0-canary-00f063c3-20260415"
+    react-dom: "npm:19.3.0-canary-68631c04-20260626"
     react-jsx-parser: "npm:^2.4.1"
     react-resizable-panels: "npm:^4.10.0"
     recharts: "npm:3.8.0"
@@ -1766,12 +1766,12 @@ __metadata:
   dependencies:
     "@parton/framework": "workspace:*"
     "@tailwindcss/vite": "npm:^4.2.4"
-    "@types/react": "npm:^19.2.14"
+    "@types/react": "npm:^19.2.17"
     "@types/react-dom": "npm:^19.2.3"
     "@vitejs/plugin-react": "npm:latest"
     "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch"
-    react: "npm:19.3.0-canary-00f063c3-20260415"
-    react-dom: "npm:19.3.0-canary-00f063c3-20260415"
+    react: "npm:19.3.0-canary-68631c04-20260626"
+    react-dom: "npm:19.3.0-canary-68631c04-20260626"
     tailwindcss: "npm:^4.2.4"
     vite: "npm:^8.0.3"
   languageName: unknown
@@ -1789,7 +1789,7 @@ __metadata:
     "@parton/framework": "workspace:*"
     "@playwright/test": "npm:^1.59.1"
     "@tailwindcss/vite": "npm:^4.2.4"
-    "@types/react": "npm:^19.2.14"
+    "@types/react": "npm:^19.2.17"
     "@types/react-dom": "npm:^19.2.3"
     "@vitejs/plugin-react": "npm:latest"
     "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch"
@@ -1798,8 +1798,8 @@ __metadata:
     graphql-config: "npm:^5.1.6"
     graphql-request: "npm:^7.4.0"
     playwright: "npm:^1.59.1"
-    react: "npm:19.3.0-canary-00f063c3-20260415"
-    react-dom: "npm:19.3.0-canary-00f063c3-20260415"
+    react: "npm:19.3.0-canary-68631c04-20260626"
+    react-dom: "npm:19.3.0-canary-68631c04-20260626"
     rsc-html-stream: "npm:^0.0.7"
     shadcn: "npm:^4.4.0"
     streamdown: "npm:^2.5.0"
@@ -1814,15 +1814,15 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@parton/framework@workspace:framework"
   dependencies:
-    "@types/react": "npm:^19.2.14"
+    "@types/react": "npm:^19.2.17"
     "@types/react-dom": "npm:^19.2.3"
     "@vitejs/plugin-react": "npm:latest"
     "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch"
     "@vitest/browser": "npm:3.2.4"
     jsdom: "npm:^29.0.2"
     playwright: "npm:^1.59.1"
-    react: "npm:19.3.0-canary-00f063c3-20260415"
-    react-dom: "npm:19.3.0-canary-00f063c3-20260415"
+    react: "npm:19.3.0-canary-68631c04-20260626"
+    react-dom: "npm:19.3.0-canary-68631c04-20260626"
     vite: "npm:^8.0.3"
     vitest: "npm:^3.1.4"
   bin:
@@ -3392,12 +3392,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/react@npm:^19.2.14":
-  version: 19.2.14
-  resolution: "@types/react@npm:19.2.14"
+"@types/react@npm:^19.2.17":
+  version: 19.2.17
+  resolution: "@types/react@npm:19.2.17"
   dependencies:
     csstype: "npm:^3.2.2"
-  checksum: 10c0/7d25bf41b57719452d86d2ac0570b659210402707313a36ee612666bf11275a1c69824f8c3ee1fdca077ccfe15452f6da8f1224529b917050eb2d861e52b59b7
+  checksum: 10c0/bc2c4af96b3e480604424de70d5ebda90c5f4b485df471858c0bc2d7d70364b606ec3c4d8579f94f01aa0c6c0591f56bcf14cba5689f5eea4b74250ccdc3a232
   languageName: node
   linkType: hard
 
@@ -8657,14 +8657,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-dom@npm:19.3.0-canary-00f063c3-20260415":
-  version: 19.3.0-canary-00f063c3-20260415
-  resolution: "react-dom@npm:19.3.0-canary-00f063c3-20260415"
+"react-dom@npm:19.3.0-canary-68631c04-20260626":
+  version: 19.3.0-canary-68631c04-20260626
+  resolution: "react-dom@npm:19.3.0-canary-68631c04-20260626"
   dependencies:
-    scheduler: "npm:0.28.0-canary-00f063c3-20260415"
+    scheduler: "npm:0.28.0-canary-68631c04-20260626"
   peerDependencies:
-    react: 19.3.0-canary-00f063c3-20260415
-  checksum: 10c0/83bd46510cc148909c58eb776c3fbab6a83366b6284e2ad17f54f37246d9a6094205f38df78bb2a162d3079af1c14c2e4a94a6000d4a10319f6eb957dc98029b
+    react: 19.3.0-canary-68631c04-20260626
+  checksum: 10c0/af39bdeac3b0a682787ee9625c5f3e009280e7578b5d7b085c3f941e045f61f754ceda3073afb426bf4d2e0d4c1aba2a78384b4d2ca06384836699a4e873d80b
   languageName: node
   linkType: hard
 
@@ -8775,10 +8775,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react@npm:19.3.0-canary-00f063c3-20260415":
-  version: 19.3.0-canary-00f063c3-20260415
-  resolution: "react@npm:19.3.0-canary-00f063c3-20260415"
-  checksum: 10c0/3d33d995dc253c135286286f910865c01d7edfd803d207715d6c00b7b8a246b072e6e97c324e77a758c4ae165725a4406aab2b4a6eb3ae451d0a099a2d3c6133
+"react@npm:19.3.0-canary-68631c04-20260626":
+  version: 19.3.0-canary-68631c04-20260626
+  resolution: "react@npm:19.3.0-canary-68631c04-20260626"
+  checksum: 10c0/56c66c831c6ac1d42003d0b533a5d07f7f1097d733c08c5add307d03d48344b725a2b7f35b3431c59de1e4040805f2e4335af7416bc9ffa90dadc2872878843d
   languageName: node
   linkType: hard
 
@@ -9295,10 +9295,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"scheduler@npm:0.28.0-canary-00f063c3-20260415":
-  version: 0.28.0-canary-00f063c3-20260415
-  resolution: "scheduler@npm:0.28.0-canary-00f063c3-20260415"
-  checksum: 10c0/a1db91220b731c0f1900216d41ae94f81a6c0e6d950ec1d1203df89135e7690b1bb0a3629438ab44cab613f47f022d07a996727a07114e8c0ddfac182d45ea0b
+"scheduler@npm:0.28.0-canary-68631c04-20260626":
+  version: 0.28.0-canary-68631c04-20260626
+  resolution: "scheduler@npm:0.28.0-canary-68631c04-20260626"
+  checksum: 10c0/2179f60c8caba6fa5702026a5fa09e3be97fdaeb6e3251425478ee63578be7da220a141b855afa52158a30c8a3bbcfa4683e019ab5a4554d2db656031cf04b64
   languageName: node
   linkType: hard
 

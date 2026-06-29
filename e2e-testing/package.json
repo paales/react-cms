@@ -21,8 +21,8 @@
     "graphql": "^16.13.2",
     "graphql-config": "^5.1.6",
     "graphql-request": "^7.4.0",
-    "react": "19.3.0-canary-00f063c3-20260415",
-    "react-dom": "19.3.0-canary-00f063c3-20260415",
+    "react": "19.3.0-canary-68631c04-20260626",
+    "react-dom": "19.3.0-canary-68631c04-20260626",
     "shadcn": "^4.4.0",
     "streamdown": "^2.5.0",
     "tw-animate-css": "^1.4.0"
@@ -30,7 +30,7 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4.2.4",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "latest",
     "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch",

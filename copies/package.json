@@ -30,9 +30,9 @@
     "motion": "^12.38.0",
     "nanoid": "^5.1.9",
     "next-themes": "^0.4.6",
-    "react": "19.3.0-canary-00f063c3-20260415",
+    "react": "19.3.0-canary-68631c04-20260626",
     "react-day-picker": "^9.14.0",
-    "react-dom": "19.3.0-canary-00f063c3-20260415",
+    "react-dom": "19.3.0-canary-68631c04-20260626",
     "react-jsx-parser": "^2.4.1",
     "react-resizable-panels": "^4.10.0",
     "recharts": "3.8.0",
@@ -45,7 +45,7 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "shadcn": "^4.4.0"
   }

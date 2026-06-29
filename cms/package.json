@@ -11,9 +11,9 @@
   "dependencies": {
     "@parton/copies": "workspace:*",
     "@parton/framework": "workspace:*",
-    "react": "19.3.0-canary-00f063c3-20260415"
+    "react": "19.3.0-canary-68631c04-20260626"
   },
   "devDependencies": {
-    "@types/react": "^19.2.14"
+    "@types/react": "^19.2.17"
   }
 }
