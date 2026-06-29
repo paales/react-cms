@@ -133,3 +133,17 @@ test("data-driven catalog; ?page= mirrors scroll without resetting it", async ({
   const yAfter = await page.evaluate(() => Math.round(window.scrollY))
   expect(Math.abs(yAfter - yScrolled), "silent ?page= write kept the viewport put").toBeLessThan(120)
 })
+
+test("client-side nav from home swaps to browse, not a torn page", async ({ page }) => {
+  // The e2e's other tests `goto` the page; the bug only shows on a CLIENT
+  // nav: the cull controller, firing its refetch as browse's cold partons
+  // mount mid-navigation, superseded the route swap and left the home route
+  // visible on top. The controller now defers culling until the navigation
+  // settles.
+  await page.goto("/")
+  await page.locator('a[href="/magento/browse"]').first().click()
+  // The visible page heading becomes browse's, and its sections render —
+  // home is swapped out (keepalive-hidden), not torn on top.
+  await expect(page.locator("h1:visible").first()).toHaveText("Browse Products", { timeout: 20000 })
+  await expect(page.locator('[data-page="1"]')).toBeVisible()
+})

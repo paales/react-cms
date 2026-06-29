@@ -104,6 +104,18 @@ refetch param; `?page=` is just the bookmarkable shadow.
    (`@parton/framework/lib/partial-client.tsx`), never the `@parton/framework`
    barrel — the barrel pulls server/node modules into the client bundle
    (`require is not defined`).
+7. **Culling is a POST-SETTLE operation.** The IO fires as a new route's cold
+   partons mount — i.e. *mid-navigation* — so the controller's refetch, if it
+   fires then, supersedes the in-flight navigation and tears the route swap
+   (the old route stays visible, the new one never lands). The controller
+   defers its flush while `navigation.transition` is non-null, then re-flushes.
+   Only shows on a CLIENT nav (a `goto` doesn't reproduce it), so the e2e for
+   it clicks a link rather than navigating directly.
+8. **Scroll restore is two paths.** A back-nav (client) restores `?page=N` in a
+   LAYOUT effect (scroll before paint, no 0,0→jump); a fresh SSR load / hard
+   reload can't — the server paints before any JS runs — so a tiny
+   pre-hydration inline script (rendered after the sections, inert on client
+   navs) does the scroll during HTML parse.
 
 ## Known refinements (follow-ups)
 

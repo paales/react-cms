@@ -79,6 +79,20 @@ async function flush(): Promise<void> {
   // Serialize: one refetch in flight. Newer flips accumulate in `changed`
   // and fire when it lands (the `finally` re-checks).
   if (inFlight || changed.size === 0) return
+  // Culling is a POST-SETTLE operation. A refetch fired while a page
+  // navigation is still committing supersedes it and tears the route swap —
+  // the old route stays visible and the new one never lands (the IO fires as
+  // the new route's cold partons mount, i.e. mid-navigation). Defer until the
+  // in-flight navigation finishes, then re-flush. `navigation.transition` is
+  // the real signal (non-null only while a navigation is committing), so this
+  // doesn't guess.
+  const transition = (
+    window as unknown as { navigation?: { transition?: { finished: Promise<unknown> } | null } }
+  ).navigation?.transition
+  if (transition) {
+    transition.finished.then(schedule, schedule)
+    return
+  }
   const targets = [...changed]
   changed = new Set()
   inFlight = true

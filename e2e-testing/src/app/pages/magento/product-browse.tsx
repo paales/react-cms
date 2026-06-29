@@ -19,7 +19,14 @@
  *    while that page is visible — so the fetch itself is gated by culling.
  */
 
-import { parton, visible, searchParam, type CellValue, type RenderArgs, type ResolvedCell } from "@parton/framework"
+import {
+  parton,
+  visible,
+  searchParam,
+  type CellValue,
+  type RenderArgs,
+  type ResolvedCell,
+} from "@parton/framework"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { PageUrlSync } from "../../components/page-url-sync.tsx"
 import { magentoProductsCell } from "./products-cell.ts"
@@ -104,7 +111,10 @@ const BrowsePage = parton(function BrowsePageRender({ page }: { page: number } &
   // the first paint fills the right neighborhood; the live set refines it.
   const show = vis ?? Math.abs(page - (Number(searchParam("page")) || 1)) <= COLD_RING
   return show ? (
-    <PageProducts page={page} products={magentoProductsCell.with({ pageSize: PAGE_SIZE, currentPage: page })} />
+    <PageProducts
+      page={page}
+      products={magentoProductsCell.with({ pageSize: PAGE_SIZE, currentPage: page })}
+    />
   ) : (
     <GridSkeleton />
   )
@@ -154,6 +164,17 @@ export const ProductBrowsePage = parton(
         </header>
         <BrowseList totalPages={totalPages} />
         <PageUrlSync />
+        {/* Pre-hydration scroll: a fresh load / hard reload of ?page=N must
+            paint at section N, not at 0,0 and then jump. This inline script
+            runs during HTML parse (the sections are already above it),
+            before hydration. On a client nav it's inert — React doesn't
+            execute dangerouslySetInnerHTML scripts — and PageUrlSync's
+            layout effect covers that path. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var p=new URLSearchParams(location.search).get("page");if(p&&+p>1){var e=document.querySelector('[data-page="'+p+'"]');if(e)e.scrollIntoView({block:"start"})}}catch(_){}})()`,
+          }}
+        />
       </>
     )
   },
