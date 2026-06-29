@@ -5,6 +5,12 @@ import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
 import { Button } from "@parton/copies/components/ui/button"
 import { Input } from "@parton/copies/components/ui/input"
 
+// Static, stateless spinner — hoisted to module scope so it isn't a new
+// component identity each render (which resets state and blocks the compiler).
+const Spinner = () => (
+  <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-muted-foreground/60 border-t-foreground" />
+)
+
 /**
  * Search toggle buttons for the header.
  *
@@ -55,10 +61,6 @@ export function SearchToggle({ urlOpen }: { urlOpen: boolean }) {
   function closeFrame() {
     frameNavigate("/")
   }
-
-  const Spinner = () => (
-    <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-muted-foreground/60 border-t-foreground" />
-  )
 
   if (urlOpen) {
     return (

@@ -37,6 +37,9 @@ export function CursorLayer({ cursors }: { cursors: ResolvedCell<CursorMap> }) {
       uid = Math.random().toString(36).slice(2, 10)
       sessionStorage.setItem("cursor-uid", uid)
     }
+    // Per-tab identity init from sessionStorage on mount — must be an effect
+    // (no sessionStorage during SSR render); one-time, not a render cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIdentity({ uid, color: colorFor(uid) })
   }, [])
   // Stamp ready only once `identity` has committed — this effect runs
@@ -55,14 +58,21 @@ export function CursorLayer({ cursors }: { cursors: ResolvedCell<CursorMap> }) {
   const pending = useRef<{ x: number; y: number } | null>(null)
 
   const flush = useCallback(() => {
-    if (inFlight.current || !pending.current || !identity) return
-    const p = pending.current
-    pending.current = null
-    inFlight.current = true
-    void moveCursor(identity.uid, p.x, p.y, identity.color).finally(() => {
-      inFlight.current = false
-      if (pending.current) flush()
-    })
+    if (!identity) return
+    const id = identity
+    // Inner pump drains the coalescer without `flush` referencing itself
+    // (which would read the callback before its declaration completes).
+    function pump() {
+      if (inFlight.current || !pending.current) return
+      const p = pending.current
+      pending.current = null
+      inFlight.current = true
+      void moveCursor(id.uid, p.x, p.y, id.color).finally(() => {
+        inFlight.current = false
+        pump()
+      })
+    }
+    pump()
   }, [identity])
 
   const onPointerMove = useCallback(

@@ -75,6 +75,9 @@ export function CardForm({
       transformName(nextName),
       extractNumberDigits(nextNumber),
     )
+    // Event-time (input-change) coin-flip — not render — choosing the
+    // same-batch vs staggered-POST path the defer specs exercise.
+    // eslint-disable-next-line react-hooks/purity
     if (Math.random() < CVC_SAME_BATCH_PROBABILITY) {
       void cvc.set(cvcValue)
     } else {

@@ -1583,6 +1583,9 @@ export function FrameNameProvider({
         })),
       })
     }
+    // `key` (joinFramePath(path)) subsumes `path` — `path` is a fresh array
+    // each render, so listing it directly would re-run the effect every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, initialUrl])
   return (
     <FrameUrlContext value={frameUrls}>
@@ -2800,12 +2803,17 @@ function wrapWithHooks(imperative: ImperativeNavigation): FrameworkNavigation {
   return new Proxy(imperative, {
     get(target, prop, receiver) {
       if (prop === "reload") {
+        // `.reload()` / `.navigate()` ARE hooks (they return the
+        // [fire, progress] tuple) exposed as Proxy methods and invoked as
+        // hooks during render — a contract the linter can't see through.
         return function reload(): ReloadStatus {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
           return useReloadHook(target as ImperativeNavigation)
         }
       }
       if (prop === "navigate") {
         return function navigate(): NavigateStatus {
+          // eslint-disable-next-line react-hooks/rules-of-hooks
           return useNavigateHook(target as ImperativeNavigation)
         }
       }
@@ -2960,6 +2968,10 @@ export function useActivate(
   const once = opts?.once ?? true
   const firedRef = useRef(false)
   const subscribeRef = useRef(subscribe)
+  // Latest-closure capture for a mount-scoped subscription: the activator
+  // subscribes once and must call the freshest `subscribe` / frame path
+  // without re-subscribing every render. The render-time ref write is by design.
+  // eslint-disable-next-line react-hooks/refs
   subscribeRef.current = subscribe
   // Activator fires happen in event-callback land — outside render —
   // so the imperative handle is the right shape. The ambient frame
@@ -2968,6 +2980,7 @@ export function useActivate(
   const framePath = useContext(FrameNameContext)
   const framePathKey = joinFramePath(framePath)
   const framePathRef = useRef(framePath)
+  // eslint-disable-next-line react-hooks/refs
   framePathRef.current = framePath
 
   useEffect(() => {
@@ -2986,7 +2999,6 @@ export function useActivate(
     return () => {
       if (typeof cleanup === "function") cleanup()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [partialId, once, framePathKey])
 }
 

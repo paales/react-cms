@@ -45,7 +45,6 @@ export function PageUrlSync() {
     if (page > 1) {
       document.querySelector(`[data-page="${page}"]`)?.scrollIntoView({ block: "start" })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Mirror the centered page back to ?page= after the scroll settles.

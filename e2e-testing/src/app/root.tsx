@@ -1,17 +1,9 @@
 import "./styles.css"
 // Side-effect import — block specs self-register at module load.
 import "./blocks/catalog.ts"
-import {
-  NotFoundError,
-  PartialRoot,
-  ROOT,
-  Redirect,
-  RedirectError,
-  setFrameworkControl,
-} from "@parton/framework"
+import { PartialRoot } from "@parton/framework"
 import { AppNav } from "./components/app-nav.tsx"
 import { ChatOverlay } from "./chat/chat-overlay.tsx"
-import { NotFoundPage } from "./pages/not-found.tsx"
 import { EditorShell } from "@parton/cms"
 
 import { PokemonOverviewPage } from "./pages/pokemon.tsx"
@@ -43,74 +35,53 @@ import {
 } from "./pages/inspect-stack.tsx"
 
 export function Root() {
-  try {
-    return (
-      <PartialRoot>
-        <html lang="en" className="light">
-          <head>
-            <meta charSet="UTF-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <title>React Partials</title>
-          </head>
-          <body className="min-h-screen bg-background text-foreground antialiased">
-            {/* Site content lives in a centered, max-width column. */}
-            <div className="mx-auto min-h-screen max-w-225 p-8" data-testid="page-shell">
-              <AppNav />
-              <PokemonOverviewPage />
-              <PokemonDetailPage />
-              <CacheDemoPage />
-              <CacheStreamingDemoPage />
-              <RemoteFrameDemoPage />
-              <RemoteFrameCrossOriginDemoPage />
-              <CmsDemoPage />
-              <DeferDemoPage />
-              <SelectorDemoPage />
-              <SentinelsDemoPage />
-              <NotFoundDemoPage />
-              <RedirectDemoPage />
-              <StreamingDemoPage />
-              <DeferredDemoPage />
-              <CursorsPage />
-              <FormsDemoPage />
-              <FramesDemoPage />
-              <ChatNotesPage />
-              <DocsPage />
-              <MagentoPage />
-              <ProductBrowsePage />
-              <MagentoCartPage />
-              <InspectBasePage />
-              <InspectDrawer1 />
-              <InspectDrawer2 />
-              <InspectDrawer3 />
-              <NotFoundFallback />
-            </div>
-            <EditorShell />
-            <ChatOverlay />
-          </body>
-        </html>
-      </PartialRoot>
-    )
-  } catch (e) {
-    if (e instanceof NotFoundError) {
-      setFrameworkControl({ notFound: true })
-      return (
-        <html lang="en" className="light">
-          <body>
-            <NotFoundPage />
-          </body>
-        </html>
-      )
-    }
-    if (e instanceof RedirectError) {
-      setFrameworkControl({ redirect: { url: e.url, status: e.status } })
-      return (
-        <html lang="en" className="light">
-          <body>
-            <Redirect url={e.url} />
-          </body>
-        </html>
-      )
-    }
-    throw e
-  }
+  // notFound() / redirect() set the framework control channel eagerly (before
+  // throwing) and entry.rsc reads it after render — so this server component
+  // never has to catch sentinels itself; it just declares the tree.
+  return (
+    <PartialRoot>
+      <html lang="en" className="light">
+        <head>
+          <meta charSet="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>React Partials</title>
+        </head>
+        <body className="min-h-screen bg-background text-foreground antialiased">
+          {/* Site content lives in a centered, max-width column. */}
+          <div className="mx-auto min-h-screen max-w-225 p-8" data-testid="page-shell">
+            <AppNav />
+            <PokemonOverviewPage />
+            <PokemonDetailPage />
+            <CacheDemoPage />
+            <CacheStreamingDemoPage />
+            <RemoteFrameDemoPage />
+            <RemoteFrameCrossOriginDemoPage />
+            <CmsDemoPage />
+            <DeferDemoPage />
+            <SelectorDemoPage />
+            <SentinelsDemoPage />
+            <NotFoundDemoPage />
+            <RedirectDemoPage />
+            <StreamingDemoPage />
+            <DeferredDemoPage />
+            <CursorsPage />
+            <FormsDemoPage />
+            <FramesDemoPage />
+            <ChatNotesPage />
+            <DocsPage />
+            <MagentoPage />
+            <ProductBrowsePage />
+            <MagentoCartPage />
+            <InspectBasePage />
+            <InspectDrawer1 />
+            <InspectDrawer2 />
+            <InspectDrawer3 />
+            <NotFoundFallback />
+          </div>
+          <EditorShell />
+          <ChatOverlay />
+        </body>
+      </html>
+    </PartialRoot>
+  )
 }

@@ -307,7 +307,10 @@ interface InternalSpecConfig<V> {
    *  client `onClick` via `usePartonAction(prop)`). */
   actions?: Record<
     string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TS can't propagate the literal's schema return into action handler scope contravariantly; `any` here lets author destructure freely. Render's prop bag (typed via InferV) is the source of truth for cell types.
+    // `any` (not `unknown`): TS can't propagate the literal's schema return
+    // into action-handler scope contravariantly; `any` lets the author
+    // destructure freely. Render's prop bag (typed via InferV) is the source
+    // of truth for cell types.
     (scope: any, args: any) => Promise<unknown>
   >
   /** Refetch labels (whitespace string or array). First label is the

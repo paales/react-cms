@@ -14,8 +14,6 @@
 
 - [ ] So the page template editor ALSO can be the content of a wysiwyg editor, we don't want to build a wysiwyg editor, but there is overlap. In Shopify for example you quickly need to create separate blog templates to do something special because the wysiwyg editor doesn't give you enough leverage. Sooo, the block editor should be able to do recursive block editors? Where a template nests in another template?
 
-- [ ] Enable React.StrictMode always? Or why not?
-
 - [ ] Should gqlCell also get a batch resolver, this is a common prmitive in building resolvers and this situation looks similar, right? Or is this something a graphql server should just efficiently handle?
 
 - [ ] Optimize the streams and connection paradigms with websockets or the new QUIC network channel.
