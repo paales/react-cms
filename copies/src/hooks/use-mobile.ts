@@ -3,20 +3,17 @@ import * as React from "react"
 const MOBILE_BREAKPOINT = 768
 
 export function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
-
-  React.useEffect(() => {
+  // Subscribe to the breakpoint media query as an external store: no
+  // setState-in-effect, and SSR gets a defined snapshot (false) instead of
+  // the undefined → first-paint flash the useState version had.
+  const subscribe = React.useCallback((onStoreChange: () => void) => {
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    const onChange = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    }
-    mql.addEventListener("change", onChange)
-    // One-time sync from a browser-only API (matchMedia) on mount — must be in
-    // an effect (no `window` during SSR); not a cascading-render source.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    return () => mql.removeEventListener("change", onChange)
+    mql.addEventListener("change", onStoreChange)
+    return () => mql.removeEventListener("change", onStoreChange)
   }, [])
-
-  return !!isMobile
+  return React.useSyncExternalStore(
+    subscribe,
+    () => window.innerWidth < MOBILE_BREAKPOINT,
+    () => false,
+  )
 }

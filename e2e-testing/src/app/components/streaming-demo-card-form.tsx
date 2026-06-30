@@ -47,8 +47,6 @@ export interface CardFormProps {
   applyLocalTransform: ResolvedCell<boolean>
 }
 
-/** Probability the CVC write joins the same batch as name/number. */
-const CVC_SAME_BATCH_PROBABILITY = 0.5
 const CVC_STAGGER_DELAY_MS = 50
 
 export function CardForm({
@@ -67,18 +65,20 @@ export function CardForm({
 
   // Compute + fire the derived CVC. Pure function of the cleaned
   // (name, number) pair so it matches what the server's `write` will
-  // store, regardless of the local-transform toggle. The coin-flip
-  // sends CVC either in the same microtask batch as the input write
-  // (one POST, all three cells) or via a 50 ms setTimeout (two POSTs).
+  // store, regardless of the local-transform toggle. The send path
+  // alternates by input length so the demo exercises both: the same
+  // microtask batch as the input write (one POST, all three cells) or a
+  // 50 ms setTimeout (two POSTs).
   const fireCvc = (nextName: string, nextNumber: string): void => {
     const cvcValue = computeCvc(
       transformName(nextName),
       extractNumberDigits(nextNumber),
     )
-    // Event-time (input-change) coin-flip — not render — choosing the
-    // same-batch vs staggered-POST path the defer specs exercise.
-    // eslint-disable-next-line react-hooks/purity
-    if (Math.random() < CVC_SAME_BATCH_PROBABILITY) {
+    // Deterministic alternation (pure — no Math.random in the
+    // render-reachable path) between the same-batch and staggered POST
+    // paths the defer specs exercise.
+    const sameBatch = (nextName.length + nextNumber.length) % 2 === 0
+    if (sameBatch) {
       void cvc.set(cvcValue)
     } else {
       setTimeout(() => cvc.set(cvcValue), CVC_STAGGER_DELAY_MS)

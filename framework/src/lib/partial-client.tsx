@@ -33,6 +33,7 @@ import React, {
   Suspense,
   useContext,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useState,
@@ -1562,12 +1563,11 @@ export function FrameNameProvider({
     next.set(key, initialUrl)
     return next
   }, [parentFrameUrls, key, initialUrl])
-  useEffect(() => {
-    // Client cache: so `useNavigation(path).currentEntry.url` is
-    // non-null on cold load.
-    if (!_frameUrls.has(key)) {
-      _frameUrls.set(key, initialUrl)
-    }
+  // Seed the nav entry's frame node for this `path`. Wrapped in useEffectEvent
+  // so the effect keys off `key` (the stable join of `path`) without reacting
+  // to `path`'s per-render array identity — it reads the current path each
+  // time `key` changes.
+  const seedFrameNode = useEffectEvent(() => {
     const nav = getNavigation()
     if (!nav) return
     const current = nav.currentEntry?.getState() ?? null
@@ -1583,9 +1583,14 @@ export function FrameNameProvider({
         })),
       })
     }
-    // `key` (joinFramePath(path)) subsumes `path` — `path` is a fresh array
-    // each render, so listing it directly would re-run the effect every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })
+  useEffect(() => {
+    // Client cache: so `useNavigation(path).currentEntry.url` is non-null on
+    // cold load.
+    if (!_frameUrls.has(key)) {
+      _frameUrls.set(key, initialUrl)
+    }
+    seedFrameNode()
   }, [key, initialUrl])
   return (
     <FrameUrlContext value={frameUrls}>
@@ -2803,17 +2808,16 @@ function wrapWithHooks(imperative: ImperativeNavigation): FrameworkNavigation {
   return new Proxy(imperative, {
     get(target, prop, receiver) {
       if (prop === "reload") {
-        // `.reload()` / `.navigate()` ARE hooks (they return the
-        // [fire, progress] tuple) exposed as Proxy methods and invoked as
-        // hooks during render — a contract the linter can't see through.
-        return function reload(): ReloadStatus {
-          // eslint-disable-next-line react-hooks/rules-of-hooks
+        // Named `useReload` (not `reload`): these Proxy methods ARE hooks —
+        // they return the [fire, progress] tuple and are invoked as hooks
+        // during render. The `use` name makes that contract legible to React
+        // and the linter; the property key the caller sees stays `reload`.
+        return function useReload(): ReloadStatus {
           return useReloadHook(target as ImperativeNavigation)
         }
       }
       if (prop === "navigate") {
-        return function navigate(): NavigateStatus {
-          // eslint-disable-next-line react-hooks/rules-of-hooks
+        return function useNavigate(): NavigateStatus {
           return useNavigateHook(target as ImperativeNavigation)
         }
       }
@@ -2943,11 +2947,11 @@ export function useNavigation(name?: string): FrameworkNavigation {
  * `fire` more than once is a no-op by default (one-shot activation).
  * Pass `{once: false}` if you need an activator that can fire repeatedly.
  *
- * `subscribe` is registered once per mount and is captured via ref, so
- * the latest closure is used when the subscription fires. The effect
- * itself does not re-run when `subscribe` changes — if you need to
- * re-subscribe on prop changes, remount the activator by setting a
- * `key` that changes with those props.
+ * `subscribe` is registered once per mount; `useEffectEvent` keeps the
+ * latest `subscribe` + fire closure, so the subscription always calls the
+ * freshest version without re-running. To genuinely re-subscribe on prop
+ * changes, remount the activator by setting a `key` that changes with
+ * those props.
  *
  * Note: activators are triggers. If the activated content needs
  * dynamic data, the activator writes that data to a scope the spec
@@ -2967,39 +2971,33 @@ export function useActivate(
 ): void {
   const once = opts?.once ?? true
   const firedRef = useRef(false)
-  const subscribeRef = useRef(subscribe)
-  // Latest-closure capture for a mount-scoped subscription: the activator
-  // subscribes once and must call the freshest `subscribe` / frame path
-  // without re-subscribing every render. The render-time ref write is by design.
-  // eslint-disable-next-line react-hooks/refs
-  subscribeRef.current = subscribe
-  // Activator fires happen in event-callback land — outside render —
-  // so the imperative handle is the right shape. The ambient frame
-  // path comes from context; the handle is resolved per-fire to
-  // pick up any frame changes between mount and trigger.
+  // Activator fires happen in event-callback land — outside render — so the
+  // imperative handle is the right shape. The ambient frame path comes from
+  // context; the handle is resolved per-fire to pick up frame changes between
+  // mount and trigger.
   const framePath = useContext(FrameNameContext)
-  const framePathKey = joinFramePath(framePath)
-  const framePathRef = useRef(framePath)
-  // eslint-disable-next-line react-hooks/refs
-  framePathRef.current = framePath
+
+  // useEffectEvent keeps the latest `subscribe` and fire behavior without
+  // re-running the mount-scoped subscription — the modern replacement for
+  // smuggling them through `ref.current = latest` during render.
+  const onSubscribe = useEffectEvent((fire: ActivatorFire) => subscribe(fire))
+  const fireReload = useEffectEvent(() => {
+    if (once && firedRef.current) return
+    firedRef.current = true
+    // Funnel activator-driven refetches through the same imperative `reload`
+    // surface other triggers use — one path, batched by the same microtask
+    // coalescer. AbortError / NavigationError surface via the public hook
+    // layer; an activator-internal fire is fire-and-forget so we don't await.
+    const handle = framePath.length > 0 ? _frame(framePath) : _windowNav()
+    void handle.reload({ selector: [`#${partialId}`] })
+  })
 
   useEffect(() => {
-    const cleanup = subscribeRef.current(() => {
-      if (once && firedRef.current) return
-      firedRef.current = true
-      // Funnel activator-driven refetches through the same imperative
-      // `reload` surface other triggers use — one path, batched by the
-      // same microtask coalescer. AbortError / NavigationError surface
-      // via the public hook layer; an activator-internal fire is
-      // fire-and-forget so we don't await.
-      const handle =
-        framePathRef.current.length > 0 ? _frame(framePathRef.current) : _windowNav()
-      void handle.reload({ selector: [`#${partialId}`] })
-    })
+    const cleanup = onSubscribe(() => fireReload())
     return () => {
       if (typeof cleanup === "function") cleanup()
     }
-  }, [partialId, once, framePathKey])
+  }, [])
 }
 
 // ─── Scroll restoration for non-window scroll containers ───────────────
