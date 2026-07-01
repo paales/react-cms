@@ -25,6 +25,13 @@ import {
   claimRefetchCommit as _claimRefetchCommit,
   nextRefetchSeq as _nextRefetchSeq,
 } from "../refetch-ordering.ts"
+import {
+  abortPredecessors,
+  inFlightKey,
+  registerInFlight,
+  unregisterInFlight,
+  type InFlightEntry,
+} from "../partial-client-state.ts"
 
 describe("_claimRefetchCommit — monotonic per-selector commit ordering", () => {
   it("commits fires that arrive in issue order", () => {
@@ -64,6 +71,87 @@ describe("_claimRefetchCommit — monotonic per-selector commit ordering", () =>
     expect(_claimRefetchCommit("sel-a", 9)).toBe(true)
     // A different selector's first fire is unaffected by sel-a's high-water mark.
     expect(_claimRefetchCommit("sel-b", 1)).toBe(true)
+  })
+
+  it("an issued-but-never-committed newer fire does not blackhole an older drain", () => {
+    const k = "search-results-aborted-newer"
+    const first = _nextRefetchSeq(k) // 1
+    _nextRefetchSeq(k) // 2 — issued, then aborted by the caller's signal
+    // The newer fire never commits (its fetch was cancelled before any
+    // segment landed). The high-water mark only advances on COMMIT, so
+    // the older fire's drain still lands — the page shows fire 1's
+    // tree, which is the newest content that actually arrived.
+    expect(_claimRefetchCommit(k, first)).toBe(true)
+  })
+
+  it("a resumed older stream cannot commit again after a newer fire landed between its segments", () => {
+    const k = "search-results-resume-after-newer"
+    const older = _nextRefetchSeq(k) // 1
+    const newer = _nextRefetchSeq(k) // 2
+    expect(_claimRefetchCommit(k, older)).toBe(true) // stage 1 of the older stream
+    expect(_claimRefetchCommit(k, newer)).toBe(true) // newer fire lands whole
+    expect(_claimRefetchCommit(k, older)).toBe(false) // older stage 2: dropped
+    expect(_claimRefetchCommit(k, older)).toBe(false) // …and stays dropped (stage 3)
+    expect(_claimRefetchCommit(k, newer)).toBe(true) // newer's own later segments still pass
+  })
+})
+
+describe("in-flight registry — frame long-poll supersede/abort", () => {
+  const entry = (): InFlightEntry => ({ controller: new AbortController() })
+
+  it("inFlightKey is the sorted label set; label-less fires get no key", () => {
+    expect(inFlightKey(["b", "a"])).toBe("a,b")
+    expect(inFlightKey(["cart"])).toBe("cart")
+    expect(inFlightKey([])).toBe(null)
+  })
+
+  it("abortPredecessors aborts every OLDER fire and keeps the newest", () => {
+    const k = "frame-cart-abort"
+    const oldest = entry()
+    const middle = entry()
+    const newest = entry()
+    registerInFlight(k, oldest)
+    registerInFlight(k, middle)
+    registerInFlight(k, newest)
+
+    // The newest fire's first segment landed — its predecessors' long-
+    // poll streams must tear down.
+    abortPredecessors(k, newest)
+    expect(oldest.controller.signal.aborted).toBe(true)
+    expect(middle.controller.signal.aborted).toBe(true)
+    expect(newest.controller.signal.aborted).toBe(false)
+
+    unregisterInFlight(k, newest)
+  })
+
+  it("abortPredecessors on the oldest entry is a no-op", () => {
+    const k = "frame-cart-oldest"
+    const oldest = entry()
+    const newer = entry()
+    registerInFlight(k, oldest)
+    registerInFlight(k, newer)
+
+    // A stale fire completing does not cancel the newer one.
+    abortPredecessors(k, oldest)
+    expect(oldest.controller.signal.aborted).toBe(false)
+    expect(newer.controller.signal.aborted).toBe(false)
+
+    unregisterInFlight(k, oldest)
+    unregisterInFlight(k, newer)
+  })
+
+  it("an unregistered (finished) fire is no longer aborted by successors", () => {
+    const k = "frame-cart-finished"
+    const finished = entry()
+    const next = entry()
+    registerInFlight(k, finished)
+    unregisterInFlight(k, finished)
+    registerInFlight(k, next)
+
+    abortPredecessors(k, next)
+    expect(finished.controller.signal.aborted).toBe(false)
+
+    unregisterInFlight(k, next)
   })
 })
 

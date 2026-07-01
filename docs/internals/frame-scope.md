@@ -45,8 +45,30 @@ are dropped, bounding the store in a long-lived process.
 
 `useNavigation(name?)` returns the navigation handle for the named
 frame, or for the closest ambient frame in the React context (set
-by `FrameNameProvider` from `framework/src/lib/partial-client.tsx`). Buttons
-inside a framed spec naturally drive that frame.
+by `FrameNameProvider` from `framework/src/lib/frame-client.tsx`,
+re-exported through `partial-client.tsx`). Buttons inside a framed
+spec naturally drive that frame.
+
+## Frames-tree writes are serialised
+
+Client-side frame state lives on the window navigation entry as one
+`state.__frames` tree; every frame nav is a clone-and-patch cycle
+(read the entry state, `writeFrameNode` a new snapshot, hand it to
+the Navigation API). `updateCurrentEntry` applies synchronously, but
+an explicit `history: "push" | "replace"` frame nav bakes its
+snapshot into `nav.navigate(...)`, whose entry commits
+asynchronously — a second frame's write inside that window would
+clone a snapshot missing the pending node, and the last commit would
+silently drop the other frame's update.
+
+`runFrameTreeWrite` (`frame-client.tsx`) closes that window with a
+write queue: a cycle whose commit is still pending holds the tree,
+and every later cycle queues behind it, re-reading the then-current
+entry when its turn comes. Uncontended cycles (the common path) run
+synchronously. All frames-tree mutations go through it — `navigate`
+(both modes), in-state `back`/`forward`, `updateCurrentEntry`, and
+`FrameNameProvider`'s seed. Interleavings are pinned by
+`framework/src/lib/__tests__/frame-write-race.test.ts`.
 
 ## Sharp edges
 

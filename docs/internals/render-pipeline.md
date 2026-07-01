@@ -93,6 +93,23 @@ same `match`-driven structure, so they reuse the template. See
 [`streaming.md`](./streaming.md) and `PartialsClient` in
 `partial-client.tsx`.
 
+### Client module map
+
+The client merge layer is split across focused modules under
+`framework/src/lib/`; `partial-client.tsx` is the `"use client"`
+boundary — it holds `PartialsClient` (the merge coordinator) and
+re-exports the rest, so `@parton/framework/lib/partial-client.tsx`
+stays the one import path:
+
+| Module | Owns |
+|---|---|
+| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `getCachedPartialIds`, `pruneToLive`), the persisted template (`getTemplate` / `setTemplate`), the in-flight registry (`abortPredecessors`), and the frame-URL cache. |
+| `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel, `treeHasPendingLazy`, warm-preload (`_warmCacheFromPayload`) and the fp-trailer DOM scan. |
+| `partial-template.tsx` | `deriveTemplate` + `renderTemplate`. |
+| `refetch.ts` | `enqueueRefetch` (microtask-batched targeted refetch → `?partials=`), selector parsing, the silent-navigation info brand. |
+| `frame-client.tsx` | The frames tree on the nav entry (read/write + the write serialiser), `FrameNameProvider`, frame refetch dispatch, and the window/frame imperative handle builders. |
+| `use-navigation.tsx` | The `useNavigation()` hook layer (`[fire, progress]` tuples, `@self` resolution, preload), `useActivate`, `useScrollRestore`, `PageUrlContext`, `PartialIdContext`. |
+
 ### Bounding the client cache (and the pending-lazy guard)
 
 Both commit paths bound `_currentPagePartials` / `_currentPageFingerprints`
@@ -263,7 +280,7 @@ the corresponding fp set is cleared before the walk re-registers
 the current render's fp. Without this, fps from prior navigations
 accumulate (e.g. `frames-main-list` cycling between listing and
 product detail under a constant matchKey — see
-[`partial-client.tsx::cacheStore`](../../framework/src/lib/partial-client.tsx))
+[`partial-client-state.ts::cacheStore`](../../framework/src/lib/partial-client-state.ts))
 and the next nav can fp-skip against a stale entry while the cache
 slot points at fresh content, surfacing the wrong subtree on
 substitution. The async warm-fp trailer upholds the same invariant by
@@ -391,7 +408,7 @@ The server-side machinery (`wrapSsrStreamWithFpTrailer` in
    descendants typically do.
 
 The client-side `_applyFpTrailerFromDocument` (in
-`framework/src/lib/partial-client.tsx`) scans `document.childNodes` +
+`framework/src/lib/partial-cache.ts`) scans `document.childNodes` +
 `document.documentElement.childNodes` for the comment, parses the JSON,
 and for each entry aliases `to` (warm) onto whichever `(id, matchKey)`
 slot's fp set still holds `from` (cold) — matched by CONTENT, not by
