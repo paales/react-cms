@@ -1033,6 +1033,30 @@ const registeredMatchPatterns: URLPattern[] = []
  *  `registerMatchPattern`. */
 const registeredPatternSignatures = new Set<string>()
 
+/** True once any registered pattern constrains a component other than
+ *  pathname. Set by `registerMatchPattern`; read by `computeRouteKey`
+ *  to decide whether the pathname-keyed cache is sound. Never unset —
+ *  patterns are never unregistered. */
+let hasNonPathnamePattern = false
+
+/**
+ * A pattern is pathname-only when every other component sits at the
+ * URLPattern wildcard default (`*`). Such a pattern's match result is
+ * a function of the pathname alone — the invariant that licenses the
+ * pathname-keyed routeKey cache.
+ */
+function isPathnameOnly(pattern: URLPattern): boolean {
+  return (
+    pattern.protocol === "*" &&
+    pattern.username === "*" &&
+    pattern.password === "*" &&
+    pattern.hostname === "*" &&
+    pattern.port === "*" &&
+    pattern.search === "*" &&
+    pattern.hash === "*"
+  )
+}
+
 /**
  * Register a spec's compiled URLPattern, deduplicated by signature.
  * HMR re-executes a spec module and runs the constructor again with
@@ -1046,6 +1070,7 @@ function registerMatchPattern(pattern: URLPattern): void {
   if (registeredPatternSignatures.has(signature)) return
   registeredPatternSignatures.add(signature)
   registeredMatchPatterns.push(pattern)
+  if (!isPathnameOnly(pattern)) hasNonPathnamePattern = true
   // Adding a pattern invalidates the routeKey cache — a URL whose
   // matched-set previously excluded this pattern may now include it.
   routeKeyCache.clear()
@@ -1108,14 +1133,19 @@ function patternSignature(pattern: URLPattern): string {
  * so the sentinel just keeps lookups deterministic on the read side.
  */
 /** Pathname → routeKey cache. Per-segment streaming responses change
- *  only the `?cached=` query each tick; the matched-pattern set is
- *  invariant under query/fragment changes because every registered
- *  pattern in this framework is pathname-only (`compileMatchPattern`
- *  emits `new URLPattern({pathname})` for the string form). Keying
- *  the cache by pathname (instead of full URL) is what lets one
- *  streaming request's N segments share one routeKey computation
- *  instead of N. Invalidated by pattern registration so a new pattern
- *  can shift the matched-set for previously-seen pathnames. */
+ *  only the `?cached=` query each tick; keying the cache by pathname
+ *  (instead of full URL) is what lets one streaming request's N
+ *  segments share one routeKey computation instead of N. The pathname
+ *  key is sound only while every registered pattern is pathname-only:
+ *  such patterns' match results are invariant under query / host /
+ *  hash changes. `match` also accepts URLPatternInit dicts that
+ *  constrain other components (`match: { search: "*q=:query" }`), and
+ *  one such registration makes two same-pathname URLs match different
+ *  pattern sets — `registerMatchPattern` records this in
+ *  `hasNonPathnamePattern` and `computeRouteKey` bypasses the cache
+ *  entirely from then on, doing the full match per call. Invalidated
+ *  by pattern registration so a new pattern can shift the matched-set
+ *  for previously-seen pathnames. */
 const routeKeyCache = new Map<string, string>()
 const ROUTE_KEY_CACHE_MAX = 2048
 
@@ -1134,9 +1164,16 @@ function extractPathname(url: string): string {
 }
 
 export function computeRouteKey(url: string): string {
-  const pathname = extractPathname(url)
-  const cached = routeKeyCache.get(pathname)
-  if (cached !== undefined) return cached
+  // The pathname-keyed cache is licensed only by the pathname-only
+  // invariant (see the cache's docstring). A registered pattern that
+  // constrains search/host/etc. breaks it — compute per call then.
+  const cacheable = !hasNonPathnamePattern
+  let pathname = ""
+  if (cacheable) {
+    pathname = extractPathname(url)
+    const cached = routeKeyCache.get(pathname)
+    if (cached !== undefined) return cached
+  }
   const matched: string[] = []
   for (const pattern of registeredMatchPatterns) {
     if (pattern.exec(url) !== null) {
@@ -1150,13 +1187,15 @@ export function computeRouteKey(url: string): string {
     matched.sort()
     result = hash(matched.join(""))
   }
-  // Simple FIFO bound. The streaming case repeats one pathname so the
-  // cap is mostly defensive against pathological pathname diversity.
-  if (routeKeyCache.size >= ROUTE_KEY_CACHE_MAX) {
-    const oldest = routeKeyCache.keys().next().value
-    if (oldest !== undefined) routeKeyCache.delete(oldest)
+  if (cacheable) {
+    // Simple FIFO bound. The streaming case repeats one pathname so the
+    // cap is mostly defensive against pathological pathname diversity.
+    if (routeKeyCache.size >= ROUTE_KEY_CACHE_MAX) {
+      const oldest = routeKeyCache.keys().next().value
+      if (oldest !== undefined) routeKeyCache.delete(oldest)
+    }
+    routeKeyCache.set(pathname, result)
   }
-  routeKeyCache.set(pathname, result)
   return result
 }
 
@@ -1171,6 +1210,7 @@ export function _clearRouteKeyCache(): void {
 export function _resetMatchPatterns(): void {
   registeredMatchPatterns.length = 0
   registeredPatternSignatures.clear()
+  hasNonPathnamePattern = false
   routeKeyCache.clear()
 }
 
