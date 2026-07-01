@@ -12,8 +12,8 @@
  * graph (`partial.tsx` et al.) that the driver imports.
  */
 
-import { queryMatchingTs } from "../runtime/invalidation-registry.ts"
-import type { PartialSnapshot } from "./partial-registry.ts"
+import { queryMatchingTs } from "../runtime/invalidation-registry.ts";
+import type { PartialSnapshot } from "./partial-registry.ts";
 
 /**
  * True iff some bump with `ts > sinceTs` matches any of these
@@ -24,20 +24,48 @@ import type { PartialSnapshot } from "./partial-registry.ts"
  * (another viewer's cart) or to an unrendered label returns `false`.
  */
 export function _routeHasMatchingBump(
-  snapshots: ReadonlyMap<string, PartialSnapshot>,
-  sinceTs: number,
+	snapshots: ReadonlyMap<string, PartialSnapshot>,
+	sinceTs: number,
 ): boolean {
-  for (const snap of snapshots.values()) {
-    let varyInputs: Record<string, unknown> | null = null
-    if (snap.varyKey) {
-      try {
-        varyInputs = JSON.parse(snap.varyKey) as Record<string, unknown>
-      } catch {
-        varyInputs = null
-      }
-    }
-    const constraintSurface = { ...(varyInputs ?? {}), ...(snap.constraintArgs ?? {}) }
-    if (queryMatchingTs(snap.labels, constraintSurface) > sinceTs) return true
-  }
-  return false
+	for (const [, snap] of snapshots) {
+		if (snapshotHasMatchingBump(snap, sinceTs)) return true;
+	}
+	return false;
+}
+
+/**
+ * The ids whose snapshots a bump with `ts > sinceTs` touched — same
+ * predicate as `_routeHasMatchingBump`, returning the matches instead
+ * of short-circuiting. The per-parton segment driver renders exactly
+ * these as lanes, so one viewer's partition-scoped write re-renders
+ * only the partons it actually constrains.
+ */
+export function _routeMatchingBumpIds(
+	snapshots: ReadonlyMap<string, PartialSnapshot>,
+	sinceTs: number,
+): string[] {
+	const ids: string[] = [];
+	for (const [id, snap] of snapshots) {
+		if (snapshotHasMatchingBump(snap, sinceTs)) ids.push(id);
+	}
+	return ids;
+}
+
+function snapshotHasMatchingBump(
+	snap: PartialSnapshot,
+	sinceTs: number,
+): boolean {
+	let varyInputs: Record<string, unknown> | null = null;
+	if (snap.varyKey) {
+		try {
+			varyInputs = JSON.parse(snap.varyKey) as Record<string, unknown>;
+		} catch {
+			varyInputs = null;
+		}
+	}
+	const constraintSurface = {
+		...(varyInputs ?? {}),
+		...(snap.constraintArgs ?? {}),
+	};
+	return queryMatchingTs(snap.labels, constraintSurface) > sinceTs;
 }

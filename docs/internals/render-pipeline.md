@@ -103,8 +103,8 @@ stays the one import path:
 
 | Module | Owns |
 |---|---|
-| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `getCachedPartialIds`, `pruneToLive`), the persisted template (`getTemplate` / `setTemplate`), the in-flight registry (`abortPredecessors`), and the frame-URL cache. |
-| `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel, `treeHasPendingLazy`, warm-preload (`_warmCacheFromPayload`) and the fp-trailer DOM scan. |
+| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `getCachedPartialIds`, `pruneToLive`), the persisted template (`getTemplate` / `setTemplate`), the lane-commit subscription (`subscribeLaneCommits` / `notifyLaneCommit`), the in-flight registry (`abortPredecessors`), and the frame-URL cache. |
+| `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel, `treeHasPendingLazy`, warm-preload (`_warmCacheFromPayload`), the per-parton lane commit (`_commitPartonLane` — synchronous cache walk + fp updates + the notify that re-renders `PartialsClient`; see [streaming.md](./streaming.md)) and the fp-trailer DOM scan. |
 | `partial-template.tsx` | `deriveTemplate` + `renderTemplate`. |
 | `refetch.ts` | `enqueueRefetch` (microtask-batched targeted refetch → `?partials=`), selector parsing, the silent-navigation info brand. |
 | `frame-client.tsx` | The frames tree on the nav entry (read/write + the write serialiser), `FrameNameProvider`, frame refetch dispatch, and the window/frame imperative handle builders. |

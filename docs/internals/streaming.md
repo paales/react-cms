@@ -61,12 +61,41 @@ any selector-routing logic that could replace it.
    - Idle timeout (~20s) — the connection closes cleanly. The
      heartbeat's next interval tick (~5s default) reopens.
 4. **On a relevant bump or an `expiresAt` boundary, the driver
-   re-renders.** Unchanged partials fp-skip to placeholder bytes; the
-   partial that triggered the wake emits its fresh content. Bytes go
-   down the open connection as a new segment.
-5. **Client per-segment trailer fires** `applyStandardTrailers`:
-   updates the fp registry, updates the URL if a server-action
-   navigated.
+   renders per-parton lanes.** The relevance check resolves WHICH
+   snapshot ids the wake touched (`_routeMatchingBumpIds` for bumps;
+   the due `expiresAt` set for time wakes), and each touched parton
+   renders in isolation through the snapshot-reconstruction path a
+   `?partials=` refetch uses (`partialFromSnapshot` →
+   `renderToReadableStream`). Each render's bytes frame as an
+   independent `mux` lane (`driveLaneStream` in
+   `segmented-response.ts`), interleaved as the renders produce them —
+   a fast parton's lane closes on the wire while a slow sibling's
+   render is still suspended, so no update waits on the slowest
+   Suspense boundary. One lane per parton id at a time: a wake that
+   touches an open lane marks it dirty and the pump re-renders on
+   drain. Ancestors never re-run — each lane's fp trailer carries
+   `{from,to}` updates for every route snapshot whose recomputed fp
+   drifted, which includes ancestors whose descendant fold the lane's
+   commit just moved.
+5. **The client demuxes and commits per lane.** The splitter
+   (`splitSegments`) classifies the region off the server's `lanes`
+   marker and yields each lane's body — itself shaped like a
+   one-segment fp-trailer stream. The browser entry decodes each lane
+   independently (`splitAtFpTrailer` + `createFromReadableStream`,
+   successive lanes for the same parton chained in arrival order) and
+   hands the subtree to `_commitPartonLane`: a synchronous cache walk
+   (wrapper + nested entries + fingerprints), the lane's fp updates,
+   then a notify that schedules a `startTransition` re-render of
+   `PartialsClient` — `renderTemplate` / `substituteNested` swap the
+   fresh subtree in place. No whole-payload `setPayload` is involved,
+   so a lane commit can never remount the page shell.
+
+Relevance false-negatives (a dependency the label/vary surface doesn't
+capture) degrade to a MISSED update on the lane path, where the old
+whole-tree path degraded to a wasted re-render. The backstop is the
+keepalive cycle: the connection closes after ~20s idle, the
+heartbeat reopens it, and a reopened connection's first segment is
+always whole-tree — a periodic full reconciliation.
 
 ## Actions stay non-streaming
 
@@ -111,6 +140,16 @@ progressively and the connection closes. It does **not** park for the
 keepalive — a one-shot refetch that held open would pin any
 `committed && !finished` spinner in its loading state for the full
 20s.
+
+The two subscription kinds emit differently after their first
+segment. A `?live=1` subscription switches to per-parton lanes (its
+wakes are relevance-matched bumps / `expiresAt` boundaries, which
+name the partons to render). A `markConnectionLive()` subscription
+(the chat's `ChunkSlot`) stays whole-tree: its next content comes
+from the render itself resolving a producer await, not from a bump,
+so there is nothing for a lane to key on — and inside a `?live=1`
+lane render, `markConnectionLive()` is not honored for the same
+reason.
 
 ## Deferred (stream-only) writes
 
@@ -252,6 +291,28 @@ closes a body before its deferred references land. This is the
 real-signal alternative to inferring "safe to abort" from a pathname
 comparison — the producer states the milestone rather than the
 consumer guessing it.
+
+A live subscription's connection, after its whole-tree first segment,
+carries a **lanes region** instead of further payload segments:
+
+```
+\xFF[parton:next:0]\n
+\xFF[parton:lanes:0]\n
+\xFF[parton:mux:N]\n<parton-id>\n<one chunk of that parton's payload>
+\xFF[parton:mux:N]\n<other-id>\n<chunk>            ← lanes interleave
+\xFF[parton:muxend:M]\n<parton-id>                 ← that payload is complete
+\xFF[parton:settled:0]\n                           ← quiesce: every lane drained
+```
+
+The `lanes` marker is what lets the splitter classify the segment
+before picking a decoder. Each lane's reassembled body is
+byte-identical to a one-shot refetch response (Flight payload + its
+own `fp` trailer), so the client decodes it with the same
+`splitAtFpTrailer` path. A parton id may open again after its
+`muxend` — that's the next re-render of the same parton on the same
+connection. Lanes regions are always safe to abort immediately: a
+torn lane rejects only its own un-committed decode, never a committed
+tree, so the deferred-abort gate applies only to payload segments.
 
 ## `expiresAt` vs `cache`
 

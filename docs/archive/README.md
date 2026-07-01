@@ -50,6 +50,7 @@ For that, start at [`../reference/intro.md`](../reference/intro.md).
 | Path | Purpose |
 |---|---|
 | `design/` | V6 floating block editor design bundle — Claude Design conversation (`chats/chat1.md`), V6 prototype (`project/`), screenshots (`v6-screenshots/`, `live/`), Playwright drivers. Implementation lives in `cms/src/editor/`; this directory captures the *why* behind the chrome. |
+| [`flight-multi-update.md`](./flight-multi-update.md) | Flight multi-write wire facts (duplicate rows fatal, stream slots value-only) + the per-parton lane design. Superseded 2026-07-02 — lanes shipped into the live segment driver; see `docs/internals/streaming.md`. |
 
 ## Removed APIs / earlier designs
 

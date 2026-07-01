@@ -17,6 +17,7 @@ import { DeferDemoPage } from "./pages/defer-demo.tsx"
 import { SelectorDemoPage } from "./pages/selector-demo.tsx"
 import { SentinelsDemoPage, NotFoundDemoPage, RedirectDemoPage } from "./pages/sentinels-demo.tsx"
 import { StreamingDemoPage } from "./pages/streaming-demo.tsx"
+import { LanesDemoPage } from "./pages/lanes-demo.tsx"
 import { DeferredDemoPage } from "./pages/deferred-demo.tsx"
 import { CursorsPage } from "./pages/cursors.tsx"
 import { FormsDemoPage } from "./pages/forms-demo.tsx"
@@ -63,6 +64,7 @@ export function Root() {
             <NotFoundDemoPage />
             <RedirectDemoPage />
             <StreamingDemoPage />
+            <LanesDemoPage />
             <DeferredDemoPage />
             <CursorsPage />
             <FormsDemoPage />

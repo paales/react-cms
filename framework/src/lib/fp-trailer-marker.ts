@@ -30,13 +30,13 @@
  * pure-text boundary would risk collision with Flight content.
  */
 
-const PREFIX_BYTE = 0xff
+const PREFIX_BYTE = 0xff;
 
-const HEADER_OPEN = "[parton:"
-const HEADER_CLOSE = "]\n"
+const HEADER_OPEN = "[parton:";
+const HEADER_CLOSE = "]\n";
 
-const TEXT_ENCODER = new TextEncoder()
-const TEXT_DECODER = new TextDecoder()
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 /** Build the marker + header bytes for a trailer entry. The caller
  *  enqueues this followed by exactly `bodyLength` body bytes.
@@ -47,27 +47,31 @@ const TEXT_DECODER = new TextDecoder()
  *  curl. Flight rows end with `\n`, so the marker naturally appears
  *  on its own line after the preceding row's terminator. */
 export function buildMarker(tag: string, bodyLength: number): Uint8Array {
-  if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) {
-    throw new Error(`Trailer tag must match /^[a-z][a-z0-9_-]{0,15}$/i, got: ${tag}`)
-  }
-  if (!Number.isInteger(bodyLength) || bodyLength < 0) {
-    throw new Error(`Trailer length must be a non-negative integer, got: ${bodyLength}`)
-  }
-  const header = `${HEADER_OPEN}${tag}:${bodyLength}${HEADER_CLOSE}`
-  const headerBytes = TEXT_ENCODER.encode(header)
-  const out = new Uint8Array(1 + headerBytes.byteLength)
-  out[0] = PREFIX_BYTE
-  out.set(headerBytes, 1)
-  return out
+	if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) {
+		throw new Error(
+			`Trailer tag must match /^[a-z][a-z0-9_-]{0,15}$/i, got: ${tag}`,
+		);
+	}
+	if (!Number.isInteger(bodyLength) || bodyLength < 0) {
+		throw new Error(
+			`Trailer length must be a non-negative integer, got: ${bodyLength}`,
+		);
+	}
+	const header = `${HEADER_OPEN}${tag}:${bodyLength}${HEADER_CLOSE}`;
+	const headerBytes = TEXT_ENCODER.encode(header);
+	const out = new Uint8Array(1 + headerBytes.byteLength);
+	out[0] = PREFIX_BYTE;
+	out.set(headerBytes, 1);
+	return out;
 }
 
 export interface ParsedMarker {
-  tag: string
-  length: number
-  /** Total bytes from `\xFF` through the trailing `\n`, inclusive.
-   *  Body starts at the buffer offset + headerSize; total entry size
-   *  is `headerSize + length`. */
-  headerSize: number
+	tag: string;
+	length: number;
+	/** Total bytes from `\xFF` through the trailing `\n`, inclusive.
+	 *  Body starts at the buffer offset + headerSize; total entry size
+	 *  is `headerSize + length`. */
+	headerSize: number;
 }
 
 /**
@@ -78,49 +82,49 @@ export interface ParsedMarker {
  *   - `"invalid"` if the bytes claim to be a marker but the header
  *     doesn't validate (corrupt stream — caller should error out).
  */
-export type ReadMarkerResult = ParsedMarker | "need-more" | "invalid"
+export type ReadMarkerResult = ParsedMarker | "need-more" | "invalid";
 
 export function tryReadMarker(buf: Uint8Array, offset = 0): ReadMarkerResult {
-  if (offset >= buf.byteLength) return "need-more"
-  if (buf[offset] !== PREFIX_BYTE) return "invalid"
-  // Scan for the terminating `]\n` after the prefix.
-  // Cap the scan so a corrupted stream with no `\n` doesn't run away.
-  const SCAN_LIMIT = 64
-  const start = offset + 1
-  const end = Math.min(start + SCAN_LIMIT, buf.byteLength)
-  let nlIdx = -1
-  for (let i = start; i < end; i++) {
-    if (buf[i] === 0x0a) {
-      nlIdx = i
-      break
-    }
-  }
-  if (nlIdx < 0) {
-    // No newline yet within the scan window.
-    if (end - start >= SCAN_LIMIT) return "invalid"
-    return "need-more"
-  }
-  // Header text excludes the trailing `\n` but includes the closing `]`.
-  const headerBytes = buf.subarray(start, nlIdx)
-  const headerText = TEXT_DECODER.decode(headerBytes)
-  if (!headerText.startsWith(HEADER_OPEN)) return "invalid"
-  if (!headerText.endsWith("]")) return "invalid"
-  const inside = headerText.slice(HEADER_OPEN.length, headerText.length - 1)
-  const colonIdx = inside.indexOf(":")
-  if (colonIdx <= 0) return "invalid"
-  const tag = inside.slice(0, colonIdx)
-  const lengthStr = inside.slice(colonIdx + 1)
-  if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) return "invalid"
-  if (!/^\d+$/.test(lengthStr)) return "invalid"
-  const length = Number(lengthStr)
-  return { tag, length, headerSize: 1 + (nlIdx - start) + 1 }
+	if (offset >= buf.byteLength) return "need-more";
+	if (buf[offset] !== PREFIX_BYTE) return "invalid";
+	// Scan for the terminating `]\n` after the prefix.
+	// Cap the scan so a corrupted stream with no `\n` doesn't run away.
+	const SCAN_LIMIT = 64;
+	const start = offset + 1;
+	const end = Math.min(start + SCAN_LIMIT, buf.byteLength);
+	let nlIdx = -1;
+	for (let i = start; i < end; i++) {
+		if (buf[i] === 0x0a) {
+			nlIdx = i;
+			break;
+		}
+	}
+	if (nlIdx < 0) {
+		// No newline yet within the scan window.
+		if (end - start >= SCAN_LIMIT) return "invalid";
+		return "need-more";
+	}
+	// Header text excludes the trailing `\n` but includes the closing `]`.
+	const headerBytes = buf.subarray(start, nlIdx);
+	const headerText = TEXT_DECODER.decode(headerBytes);
+	if (!headerText.startsWith(HEADER_OPEN)) return "invalid";
+	if (!headerText.endsWith("]")) return "invalid";
+	const inside = headerText.slice(HEADER_OPEN.length, headerText.length - 1);
+	const colonIdx = inside.indexOf(":");
+	if (colonIdx <= 0) return "invalid";
+	const tag = inside.slice(0, colonIdx);
+	const lengthStr = inside.slice(colonIdx + 1);
+	if (!/^[a-z][a-z0-9_-]{0,15}$/i.test(tag)) return "invalid";
+	if (!/^\d+$/.test(lengthStr)) return "invalid";
+	const length = Number(lengthStr);
+	return { tag, length, headerSize: 1 + (nlIdx - start) + 1 };
 }
 
 /** Tag taxonomy — constants so callers don't have to know the
  *  literals. */
-export const TAG_FP_UPDATES = "fp"
-export const TAG_URL_UPDATE = "url"
-export const TAG_NEXT_SEGMENT = "next"
+export const TAG_FP_UPDATES = "fp";
+export const TAG_URL_UPDATE = "url";
+export const TAG_NEXT_SEGMENT = "next";
 /** Producer milestone: the segment driver writes this after a segment's
  *  render has fully drained — body bytes plus the `fp`/`url` trailers
  *  are all on the wire. It is the explicit "this iteration is done"
@@ -130,7 +134,24 @@ export const TAG_NEXT_SEGMENT = "next"
  *  reject with "Connection closed."). The live heartbeat's cooperative
  *  abort gates on this — see `SegmentIterator` in `fp-trailer-split.ts`.
  *  Zero-length, like `next`. */
-export const TAG_SEGMENT_SETTLED = "settled"
+export const TAG_SEGMENT_SETTLED = "settled";
+/** Opens a per-parton lane region on a live connection. The segment
+ *  driver writes this (zero-length) right after a `next` delimiter to
+ *  declare that the rest of the connection carries `mux`/`muxend`
+ *  frames — independent per-parton Flight payloads — instead of a
+ *  whole-tree Flight document. The client's splitter classifies the
+ *  segment off this marker BEFORE handing it to a decoder, so a lanes
+ *  segment is never mistaken for an (empty) payload document. */
+export const TAG_LANES_OPEN = "lanes";
+/** One chunk of one parton's Flight payload: body is
+ *  `<parton-id>\n<bytes>`. Frames from different partons interleave
+ *  freely; a parton's own frames arrive in render order. */
+export const TAG_MUX_FRAME = "mux";
+/** Closes a parton's lane: body is the parton id. The parton's payload
+ *  is complete on the wire — the client can decode + commit it. The
+ *  same id may open again later (a subsequent re-render of the same
+ *  parton on the same connection). */
+export const TAG_MUX_END = "muxend";
 
 /**
  * Body shape of an `fp` trailer entry (JSON). Maps each spec id whose
@@ -154,14 +175,14 @@ export const TAG_SEGMENT_SETTLED = "settled"
  * `fp-trailer.ts` (server).
  */
 export interface FpUpdate {
-  from: string
-  to: string
+	from: string;
+	to: string;
 }
 
-export type FpUpdatesPayload = Record<string, FpUpdate>
+export type FpUpdatesPayload = Record<string, FpUpdate>;
 
 /** Backward-compat alias the legacy `wrapStreamWithFpTrailer` caller
  *  used to build its sole trailer entry. Kept around for any out-of-
  *  tree code that imported the constant directly; new code should use
  *  `buildMarker(TAG_FP_UPDATES, length)`. */
-export const PREFIX_BYTE_VALUE = PREFIX_BYTE
+export const PREFIX_BYTE_VALUE = PREFIX_BYTE;

@@ -18,8 +18,8 @@
  *     frame-URL cache.
  */
 
-import type { ReactNode } from "react"
-import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
+import type { ReactNode } from "react";
+import type { FpUpdatesPayload } from "./fp-trailer-marker.ts";
 
 // ─── Partial cache + fingerprints ─────────────────────────────────
 
@@ -52,53 +52,53 @@ import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
  * For a future LRU layer over the variant pool, see
  * `docs/notes/IDEAS.md` (Keepalive follow-ups).
  */
-export type PartialCache = Map<string, Map<string, ReactNode>>
+export type PartialCache = Map<string, Map<string, ReactNode>>;
 
-const _currentPagePartials: PartialCache = new Map()
-const _currentPageFingerprints = new Map<string, Map<string, Set<string>>>()
+const _currentPagePartials: PartialCache = new Map();
+const _currentPageFingerprints = new Map<string, Map<string, Set<string>>>();
 
 /** The one live `PartialCache` instance backing the current page. */
 export function getCurrentPagePartials(): PartialCache {
-  return _currentPagePartials
+	return _currentPagePartials;
 }
 
 export function cacheLookup(
-  cache: PartialCache,
-  id: string,
-  matchKey: string,
+	cache: PartialCache,
+	id: string,
+	matchKey: string,
 ): ReactNode | undefined {
-  return cache.get(id)?.get(matchKey)
+	return cache.get(id)?.get(matchKey);
 }
 
 export function cacheStore(
-  cache: PartialCache,
-  id: string,
-  matchKey: string,
-  node: ReactNode,
+	cache: PartialCache,
+	id: string,
+	matchKey: string,
+	node: ReactNode,
 ): void {
-  let inner = cache.get(id)
-  if (!inner) {
-    inner = new Map()
-    cache.set(id, inner)
-  }
-  const replacing = inner.has(matchKey)
-  inner.set(matchKey, node)
-  // Overwriting a cache slot invalidates any fingerprint that
-  // referred to the old content. Without this, fps from prior
-  // navs accumulate in `_currentPageFingerprints[id][matchKey]`
-  // and travel back to the server in `?cached=`; the next visit
-  // can fp-skip against a stale entry while the cache slot points
-  // at fresh content, and `substituteNested` lands the wrong
-  // subtree (or the right one for the wrong URL). Same matchKey
-  // with different vary outputs share a slot by design — the
-  // fingerprint set must shrink to "what the current slot
-  // actually represents", which is exactly the fp that
-  // `registerClientPartial` is about to write after this call.
-  // Cold→warm trailer adds for the same render still land
-  // additively after the walk completes.
-  if (replacing) {
-    _currentPageFingerprints.get(id)?.delete(matchKey)
-  }
+	let inner = cache.get(id);
+	if (!inner) {
+		inner = new Map();
+		cache.set(id, inner);
+	}
+	const replacing = inner.has(matchKey);
+	inner.set(matchKey, node);
+	// Overwriting a cache slot invalidates any fingerprint that
+	// referred to the old content. Without this, fps from prior
+	// navs accumulate in `_currentPageFingerprints[id][matchKey]`
+	// and travel back to the server in `?cached=`; the next visit
+	// can fp-skip against a stale entry while the cache slot points
+	// at fresh content, and `substituteNested` lands the wrong
+	// subtree (or the right one for the wrong URL). Same matchKey
+	// with different vary outputs share a slot by design — the
+	// fingerprint set must shrink to "what the current slot
+	// actually represents", which is exactly the fp that
+	// `registerClientPartial` is about to write after this call.
+	// Cold→warm trailer adds for the same render still land
+	// additively after the walk completes.
+	if (replacing) {
+		_currentPageFingerprints.get(id)?.delete(matchKey);
+	}
 }
 
 /**
@@ -119,33 +119,33 @@ export function cacheStore(
  *  emit a fresh pair per segment. Keeping the LATEST few is
  *  enough for the cold/warm fp-skip on the next nav; older fps
  *  for the same variant are stale and only bloat `?cached=`. */
-export const FP_CAP_PER_VARIANT = 4
+export const FP_CAP_PER_VARIANT = 4;
 
 export function registerClientPartial(
-  id: string,
-  matchKey: string,
-  fingerprint: string,
+	id: string,
+	matchKey: string,
+	fingerprint: string,
 ): void {
-  let inner = _currentPageFingerprints.get(id)
-  if (!inner) {
-    inner = new Map()
-    _currentPageFingerprints.set(id, inner)
-  }
-  let set = inner.get(matchKey)
-  if (!set) {
-    set = new Set()
-    inner.set(matchKey, set)
-  }
-  if (set.has(fingerprint)) return
-  set.add(fingerprint)
-  // Evict the oldest entries (insertion order) once the cap is
-  // reached. Without this, a live partial that re-renders every
-  // segment would inflate `?cached=` unboundedly.
-  while (set.size > FP_CAP_PER_VARIANT) {
-    const oldest = set.values().next().value
-    if (oldest === undefined) break
-    set.delete(oldest)
-  }
+	let inner = _currentPageFingerprints.get(id);
+	if (!inner) {
+		inner = new Map();
+		_currentPageFingerprints.set(id, inner);
+	}
+	let set = inner.get(matchKey);
+	if (!set) {
+		set = new Set();
+		inner.set(matchKey, set);
+	}
+	if (set.has(fingerprint)) return;
+	set.add(fingerprint);
+	// Evict the oldest entries (insertion order) once the cap is
+	// reached. Without this, a live partial that re-renders every
+	// segment would inflate `?cached=` unboundedly.
+	while (set.size > FP_CAP_PER_VARIANT) {
+		const oldest = set.values().next().value;
+		if (oldest === undefined) break;
+		set.delete(oldest);
+	}
 }
 
 /**
@@ -158,28 +158,28 @@ export function registerClientPartial(
  * `lib/fp-trailer-marker.ts` for the wire sentinel + payload shape.
  */
 export function _applyFpUpdates(updates: FpUpdatesPayload): void {
-  for (const [id, { from, to }] of Object.entries(updates)) {
-    const inner = _currentPageFingerprints.get(id)
-    if (!inner) continue
-    // Alias the warm fp `to` onto the variant slot whose set still
-    // holds the cold fp `from` — matched by CONTENT. The trailer is
-    // async: it lands after its response's body committed, by which
-    // point a concurrent refetch for a DIFFERENT query against the same
-    // stable `(id, matchKey)` may have overwritten the slot — and
-    // cleared its fp-set (see `cacheStore`). Anchoring on `from` means
-    // such a superseded trailer finds no slot and is dropped, so the
-    // advertised fp-set stays in lockstep with the node the slot
-    // actually holds — the invariant that makes every server fp-skip
-    // restore the content the server matched it against. `from` folds in
-    // matchKey, so it pins exactly one slot. registerClientPartial
-    // enforces the per-variant fp cap.
-    for (const [mk, set] of inner) {
-      if (set.has(from)) {
-        registerClientPartial(id, mk, to)
-        break
-      }
-    }
-  }
+	for (const [id, { from, to }] of Object.entries(updates)) {
+		const inner = _currentPageFingerprints.get(id);
+		if (!inner) continue;
+		// Alias the warm fp `to` onto the variant slot whose set still
+		// holds the cold fp `from` — matched by CONTENT. The trailer is
+		// async: it lands after its response's body committed, by which
+		// point a concurrent refetch for a DIFFERENT query against the same
+		// stable `(id, matchKey)` may have overwritten the slot — and
+		// cleared its fp-set (see `cacheStore`). Anchoring on `from` means
+		// such a superseded trailer finds no slot and is dropped, so the
+		// advertised fp-set stays in lockstep with the node the slot
+		// actually holds — the invariant that makes every server fp-skip
+		// restore the content the server matched it against. `from` folds in
+		// matchKey, so it pins exactly one slot. registerClientPartial
+		// enforces the per-variant fp cap.
+		for (const [mk, set] of inner) {
+			if (set.has(from)) {
+				registerClientPartial(id, mk, to);
+				break;
+			}
+		}
+	}
 }
 
 /**
@@ -201,15 +201,15 @@ export function _applyFpUpdates(updates: FpUpdatesPayload): void {
  * applies uniformly across the entire tree.
  */
 export function getCachedPartialIds(): string[] {
-  const out: string[] = []
-  for (const [id, byMatchKey] of _currentPageFingerprints) {
-    for (const [matchKey, fps] of byMatchKey) {
-      for (const fp of fps) {
-        out.push(`${id}:${matchKey}:${fp}`)
-      }
-    }
-  }
-  return out
+	const out: string[] = [];
+	for (const [id, byMatchKey] of _currentPageFingerprints) {
+		for (const [matchKey, fps] of byMatchKey) {
+			for (const fp of fps) {
+				out.push(`${id}:${matchKey}:${fp}`);
+			}
+		}
+	}
+	return out;
 }
 
 /**
@@ -223,19 +223,43 @@ export function getCachedPartialIds(): string[] {
  * anywhere drops.
  */
 export function pruneToLive(live: Map<string, Set<string>>): void {
-  for (const map of [_currentPagePartials, _currentPageFingerprints]) {
-    for (const [id, byMatchKey] of map) {
-      const liveMks = live.get(id)
-      if (!liveMks) {
-        map.delete(id)
-        continue
-      }
-      for (const mk of [...byMatchKey.keys()]) {
-        if (!liveMks.has(mk)) byMatchKey.delete(mk)
-      }
-      if (byMatchKey.size === 0) map.delete(id)
-    }
-  }
+	for (const map of [_currentPagePartials, _currentPageFingerprints]) {
+		for (const [id, byMatchKey] of map) {
+			const liveMks = live.get(id);
+			if (!liveMks) {
+				map.delete(id);
+				continue;
+			}
+			for (const mk of [...byMatchKey.keys()]) {
+				if (!liveMks.has(mk)) byMatchKey.delete(mk);
+			}
+			if (byMatchKey.size === 0) map.delete(id);
+		}
+	}
+}
+
+// ─── Lane commits ─────────────────────────────────────────────────
+
+/**
+ * Subscription for per-parton lane commits. A lane commit writes a
+ * freshly-decoded parton subtree into the partial cache OUTSIDE any
+ * payload render — nothing re-renders on a cache write by itself, so
+ * `PartialsClient` subscribes here and schedules a transition
+ * re-render of the template on every notify; `renderTemplate` /
+ * `substituteNested` then swap the fresh subtree in place. See
+ * `_commitPartonLane` in `partial-cache.ts`.
+ */
+const _laneCommitSubscribers = new Set<() => void>();
+
+export function subscribeLaneCommits(cb: () => void): () => void {
+	_laneCommitSubscribers.add(cb);
+	return () => {
+		_laneCommitSubscribers.delete(cb);
+	};
+}
+
+export function notifyLaneCommit(): void {
+	for (const cb of [..._laneCommitSubscribers]) cb();
 }
 
 // ─── Structural template ──────────────────────────────────────────
@@ -250,7 +274,7 @@ export function pruneToLive(live: Map<string, Set<string>>): void {
  * Keyed by route (pathname + search). Same-URL refetches reuse the
  * cached template; different-URL navigations re-derive.
  */
-let _template: ReactNode = null
+let _template: ReactNode = null;
 
 /**
  * The page `_template` was derived for — the pathname only. The
@@ -263,27 +287,27 @@ let _template: ReactNode = null
  * new page still has a Flight chunk in flight would re-render this STALE
  * prior-page template — the page sticks on the one you just left.
  */
-let _templateRoute: string | null = null
+let _templateRoute: string | null = null;
 
 /** Page key for `_template`: the pathname. Same-page query/state changes
  *  reuse the template (the `match`-driven structure is unchanged); only a
  *  pathname change re-derives. Client-only (reads `window.location`);
  *  callers are past the SSR `typeof document` guard. */
 export function templateRouteKey(): string {
-  return new URL(window.location.href).pathname
+	return new URL(window.location.href).pathname;
 }
 
 export function getTemplate(): ReactNode {
-  return _template
+	return _template;
 }
 
 export function getTemplateRoute(): string | null {
-  return _templateRoute
+	return _templateRoute;
 }
 
 export function setTemplate(template: ReactNode, route: string): void {
-  _template = template
-  _templateRoute = route
+	_template = template;
+	_templateRoute = route;
 }
 
 // ─── In-flight queue + deferred abort (frame long-polls only) ─────
@@ -314,38 +338,38 @@ export function setTemplate(template: ReactNode, route: string): void {
 // the sorted, comma-joined label set.
 
 export interface InFlightEntry {
-  controller: AbortController
+	controller: AbortController;
 }
 
-const _inFlight = new Map<string, InFlightEntry[]>()
+const _inFlight = new Map<string, InFlightEntry[]>();
 
 export function inFlightKey(labels: string[]): string | null {
-  if (labels.length === 0) return null
-  return labels.slice().sort().join(",")
+	if (labels.length === 0) return null;
+	return labels.slice().sort().join(",");
 }
 
 export function registerInFlight(key: string, entry: InFlightEntry): void {
-  const stack = _inFlight.get(key)
-  if (stack) stack.push(entry)
-  else _inFlight.set(key, [entry])
+	const stack = _inFlight.get(key);
+	if (stack) stack.push(entry);
+	else _inFlight.set(key, [entry]);
 }
 
 export function unregisterInFlight(key: string, entry: InFlightEntry): void {
-  const stack = _inFlight.get(key)
-  if (!stack) return
-  const idx = stack.indexOf(entry)
-  if (idx >= 0) stack.splice(idx, 1)
-  if (stack.length === 0) _inFlight.delete(key)
+	const stack = _inFlight.get(key);
+	if (!stack) return;
+	const idx = stack.indexOf(entry);
+	if (idx >= 0) stack.splice(idx, 1);
+	if (stack.length === 0) _inFlight.delete(key);
 }
 
 /** Abort every entry older than `entry` in this selector's stack. */
 export function abortPredecessors(key: string, entry: InFlightEntry): void {
-  const stack = _inFlight.get(key)
-  if (!stack) return
-  const idx = stack.indexOf(entry)
-  if (idx <= 0) return
-  for (let i = 0; i < idx; i++) stack[i].controller.abort()
-  stack.splice(0, idx)
+	const stack = _inFlight.get(key);
+	if (!stack) return;
+	const idx = stack.indexOf(entry);
+	if (idx <= 0) return;
+	for (let i = 0; i < idx; i++) stack[i].controller.abort();
+	stack.splice(0, idx);
 }
 
 // ─── Frame URLs ───────────────────────────────────────────────────
@@ -357,16 +381,16 @@ export function abortPredecessors(key: string, entry: InFlightEntry): void {
  * return a synchronous value without a server round-trip. The server
  * session is authoritative — this is a UX cache.
  */
-const _frameUrls = new Map<string, string>()
+const _frameUrls = new Map<string, string>();
 
 export function getFrameUrl(key: string): string | undefined {
-  return _frameUrls.get(key)
+	return _frameUrls.get(key);
 }
 
 export function setFrameUrl(key: string, url: string): void {
-  _frameUrls.set(key, url)
+	_frameUrls.set(key, url);
 }
 
 export function hasFrameUrl(key: string): boolean {
-  return _frameUrls.has(key)
+	return _frameUrls.has(key);
 }
