@@ -12,10 +12,12 @@ import {
 } from "../partial.tsx"
 import {
   finalizeScopedCell,
+  getCellById,
   makeScopedCellFactories,
   type ResolvedCell,
   type ScopedCellDescriptor,
 } from "../cell.ts"
+import { runWithRequestAsync } from "../../runtime/context.ts"
 import { hash } from "../hash.ts"
 import { stableStringify } from "../stable-stringify.ts"
 import {
@@ -197,6 +199,79 @@ describe("scoped cell — schema resolution in a parton", () => {
     const out = await flightAt("http://t/mixed", <Page />)
     expect(out).toContain("dark")
     expect(out).toContain("scoped note")
+  })
+
+  it("peek reads stored state, not the declared default", async () => {
+    const factories = makeScopedCellFactories<object>()
+    const d = factories.localCell({
+      shape: "string",
+      initial: "(default)",
+    }) as ScopedCellDescriptor<string>
+    const handle = finalizeScopedCell(d, "peek-parton", "notes")
+
+    // No-arg peek resolves the `{}` partition — the slot a vary-less,
+    // match-param-less parton's schema resolution writes to.
+    const { result: coldPeek } = await runWithRequestAsync(
+      new Request("http://t/x"),
+      async () => handle.peek(),
+    )
+    expect(coldPeek).toBe("(default)")
+
+    seedCell("peek-parton/notes", {}, "stored!")
+    const { result: warmPeek } = await runWithRequestAsync(
+      new Request("http://t/x"),
+      async () => handle.peek(),
+    )
+    expect(warmPeek).toBe("stored!")
+  })
+
+  it("peek(args) reads the parton-partitioned slot the schema resolution used", async () => {
+    const Page = parton(
+      function Render({
+        notes,
+      }: { notes: ResolvedCell<string> } & RenderArgs) {
+        return <span>{notes.value || "(empty)"}</span>
+      },
+      {
+        selector: "scoped-peek",
+        match: "/p/:id",
+        vary: ({ params }) => ({ productId: params.id }),
+        schema: ({ localCell }) => ({ notes: localCell({ shape: "string", initial: "" }) }),
+      },
+    )
+
+    seedCell("scoped-peek/notes", { productId: "A" }, "A-notes")
+    const out = await flightAt("http://t/p/A", <Page />)
+    expect(out).toContain('"children":"A-notes"')
+
+    // The render registered the finalized handle; peek at the same
+    // partition the parton resolved against sees the stored state.
+    const handle = getCellById("scoped-peek/notes")
+    expect(handle).toBeDefined()
+    const { result } = await runWithRequestAsync(new Request("http://t/p/A"), async () => ({
+      partitioned: handle!.peek({ productId: "A" }),
+      // No-arg peek can't re-derive the parton's partition — it reads
+      // the `{}` slot, which nothing wrote. Documented limitation.
+      bare: handle!.peek(),
+    }))
+    expect(result.partitioned).toBe("A-notes")
+    expect(result.bare).toBe("")
+  })
+
+  it("peek falls back to the default when the stored value fails shape validation", async () => {
+    const factories = makeScopedCellFactories<object>()
+    const d = factories.localCell({
+      shape: "number",
+      initial: 7,
+    }) as ScopedCellDescriptor<number>
+    const handle = finalizeScopedCell(d, "peek-invalid", "count")
+
+    seedCell("peek-invalid/count", {}, "not a number")
+    const { result } = await runWithRequestAsync(
+      new Request("http://t/x"),
+      async () => handle.peek(),
+    )
+    expect(result).toBe(7)
   })
 
   it("resolved scoped cell carries partition for the client batcher", async () => {

@@ -150,10 +150,18 @@ export interface CellInterface<T, A extends CellArgs = CellArgs> {
    * useful for cross-context mutations.
    */
   set(value: T, opts?: { vary?: CellArgs }): Promise<void>
-  /** Synchronous server-side read of the stored value at the partition
-   *  derived from `cell.vary(currentRequest)`. Returns `defaultValue`
-   *  on miss. Does NOT trigger the loader. */
-  peek(): T
+  /** Synchronous server-side read of the stored value. The partition
+   *  is `args` when given, otherwise derived from
+   *  `cell.vary(currentRequest)`. Returns `defaultValue` on miss.
+   *  Does NOT trigger the loader.
+   *
+   *  Scoped cells (schema / inline `localCell`) partition storage by
+   *  the owning parton's vary output, which `peek` can't re-derive
+   *  without a render — their no-arg `peek()` reads the `{}` partition
+   *  (the slot a vary-less, match-param-less parton resolves), and
+   *  reading a narrower partition requires naming it explicitly:
+   *  `peek(partitionArgs)`. */
+  peek(args?: CellArgs): T
   /** Internal — validates an incoming value against the cell's shape. */
   validate(value: unknown): T
   /** Internal — server-side write-pipeline transform. */
@@ -413,8 +421,9 @@ function bindSetter(id: string): CellInterface<unknown>["set"] {
   return _cellWriteAction.bind(null, id) as unknown as CellInterface<unknown>["set"]
 }
 
-/** Per-cell `peek` — sync server-side read at the partition derived
- *  from the cell's own vary against the active ALS request context. */
+/** Per-cell `peek` — sync server-side read. Explicit `args` name the
+ *  partition directly; otherwise it derives from the cell's own vary
+ *  against the active ALS request context. */
 function buildPeek<T>(
   id: string,
   storage: () => CellStorage,
@@ -422,11 +431,11 @@ function buildPeek<T>(
   defaultValue: T,
   varyFn: (scope: CellVaryScope) => CellArgs,
 ): CellInterface<T>["peek"] {
-  return () => {
-    const varyOut = varyFn(buildCellVaryScopeFromRequest())
-    const partitionKey = hash(stableStringify(varyOut))
+  return (args?: CellArgs) => {
+    const partition = args ?? varyFn(buildCellVaryScopeFromRequest())
+    const partitionKey = hash(stableStringify(partition))
     let readStorage = storage()
-    if (isUnresolvedPartition(varyOut)) {
+    if (isUnresolvedPartition(partition)) {
       warnUnresolvedPersistent(id, readStorage)
       readStorage = getEphemeralCellStorage()
     }
@@ -893,17 +902,23 @@ export function finalizeScopedCell<T>(
   // tied to parton state like form drafts that authors want to keep
   // across renders. Override via a future `storage` option on the
   // descriptor if needed.
+  // The handle's own `vary` is constant — a scoped cell's partition
+  // comes from the OWNING PARTON's vary output at schema-resolution
+  // time (see partial.tsx's schema phase), not from request scope.
+  // `peek` follows the same rule: no-arg reads the `{}` partition;
+  // callers that need a parton-partitioned slot pass its args
+  // (`peek(partitionArgs)`). See `CellInterface.peek`.
   const handle: CellInterface<T> = {
     __cell: true,
     id,
     shape: descriptor.shape,
     defaultValue: descriptor.defaultValue,
     storage: getCellStorage,
-    vary: () => ({}),
+    vary: constantVary,
     load: descriptor.load,
     with: (args: CellArgs): BoundCell<T> => buildBoundCell(handle, args),
     set: bindSetter(id) as CellInterface<T>["set"],
-    peek: () => descriptor.defaultValue,
+    peek: buildPeek(id, getCellStorage, validate, descriptor.defaultValue, constantVary),
     validate,
     write: descriptor.write,
   }

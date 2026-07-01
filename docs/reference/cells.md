@@ -408,16 +408,23 @@ child's labels include `cell:<id>` automatically.
 object props are NOT auto-resolved — if you want a cell to be
 framework-tracked, pass it as its own top-level prop.
 
-### Server-side via `cell.peek()`
+### Server-side via `cell.peek(args?)`
 
-`peek()` is a sync server-side read at the partition derived from
-the cell's own `vary` against the active request. Returns
-`defaultValue` on miss. Does NOT trigger the loader. Useful inside
-actions or vary callbacks.
+`peek()` is a sync server-side read of stored state. The partition is
+`args` when given, otherwise derived from the cell's own `vary`
+against the active request. Returns `defaultValue` on miss. Does NOT
+trigger the loader. Useful inside actions or vary callbacks.
 
 ```ts
 const showAdvanced = palette.peek() === "dark"
+const draft = notesCell.peek({ productId })   // explicit partition
 ```
+
+Scoped cells (schema / inline `localCell`) partition storage by the
+**owning parton's vary output**, which `peek` can't re-derive without
+a render. Their no-arg `peek()` reads the `{}` partition — the slot a
+vary-less, match-param-less parton resolves — so reading a
+parton-partitioned slot requires naming it: `peek(partitionArgs)`.
 
 ## Resolution order per partial render
 
