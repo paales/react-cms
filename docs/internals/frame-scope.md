@@ -41,8 +41,9 @@ cookie-backed (`__frame_sid`); state lives in
 
 `useNavigation(name?)` returns the navigation handle for the named
 frame, or for the closest ambient frame in the React context (set
-by `FrameNameProvider` from `framework/src/lib/partial-client.tsx`). Buttons
-inside a framed spec naturally drive that frame.
+by `FrameNameProvider` from `framework/src/lib/frame-client.tsx`,
+re-exported through `partial-client.tsx`). Buttons inside a framed
+spec naturally drive that frame.
 
 ## Sharp edges
 
