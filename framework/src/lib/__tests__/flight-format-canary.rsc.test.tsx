@@ -17,6 +17,13 @@
  *
  *  - row framing `<hex-id>:<type?><data>` + `\n`  — flight-rewrite's
  *    row splitting and `parseRow`/`serializeRow` round-trip
+ *  - the ONE framing exception: length-prefixed `T` text rows
+ *    (`<id>:T<hex-byte-length>,<raw bytes>`, NOT newline-terminated)
+ *    — split-on-`\n` tooling sees one glued to the following row,
+ *    so byte-preserving pass-through is what keeps such payloads
+ *    decodable (the client re-derives the boundary from the length)
+ *  - duplicate model rows are tolerated first-wins by the client
+ *    — the splice's id-uniqueness tripwire
  *  - element rows `["$", type, key, props, …]`    — flight-graph's
  *    hole detection reads type at [1], key at [2], props at [3]
  *  - refs `$<id>` / `$L<id>` / `$@<id>`, optional `:deref.path`
@@ -42,10 +49,21 @@
 
 import { Suspense, type ReactNode } from "react"
 import { describe, expect, it } from "vitest"
-import { flightToString, renderAndInspect, renderServerToFlight } from "../../test/rsc-server.ts"
+import {
+  consumePayload,
+  flightToString,
+  renderAndInspect,
+  renderServerToFlight,
+} from "../../test/rsc-server.ts"
 import { ClientButton } from "../../test/__fixtures__/client-button.tsx"
-import { parseRow, serializeRow, type FlightRow } from "../flight-rewrite.ts"
-import { scaffoldMeta } from "../flight-graph.ts"
+import {
+  parseRow,
+  passthroughRewriter,
+  rewriteFlightStream,
+  serializeRow,
+  type FlightRow,
+} from "../flight-rewrite.ts"
+import { joinRows, scaffoldMeta, splitRows } from "../flight-graph.ts"
 
 // The ref grammar the rewriters bake in (flight-graph's REF_RE):
 // `$`, optional `L`/`@`, a hex id, optional `:deref.path`.
@@ -85,6 +103,19 @@ function jsonData(row: FlightRow): unknown {
   }
 }
 
+function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(bytes)
+      c.close()
+    },
+  })
+}
+
+async function renderBytes(node: ReactNode): Promise<Uint8Array> {
+  return new Uint8Array(await new Response(renderServerToFlight(node)).arrayBuffer())
+}
+
 async function Delayed(): Promise<ReactNode> {
   await new Promise((r) => setTimeout(r, 5))
   return <p>late</p>
@@ -97,7 +128,9 @@ const suspenseFixture = (
 )
 
 describe("row framing", () => {
-  it("rows are newline-terminated and parseRow/serializeRow round-trips every line byte-identically", async () => {
+  it("JSON rows are newline-terminated and parseRow/serializeRow round-trips every line byte-identically", async () => {
+    // No large strings in this fixture, so no T rows — every row here
+    // is `\n`-framed. The T-row exception is pinned separately below.
     const { text, lines } = await renderRows(suspenseFixture)
     expect(text.endsWith("\n"), "payload must end with a row terminator").toBe(true)
     for (const line of lines) {
@@ -130,6 +163,91 @@ describe("row framing", () => {
     const root = rows.find((r) => r.id === "0")!
     const el = jsonData(root) as unknown[]
     expect((el[3] as { title: string }).title).toBe("line1\nline2")
+  })
+})
+
+describe("streamed text rows (T)", () => {
+  // ASCII fixture on purpose: byte offsets equal char offsets, so the
+  // string-space slicing below is byte-exact.
+  const big = "x".repeat(2048)
+  const T_ROW_RE = /(?:^|\n)([0-9a-f]+):T([0-9a-f]+),/
+
+  it("a large string outlines to a length-prefixed T row with NO trailing newline", async () => {
+    const text = new TextDecoder().decode(await renderBytes(<div title="t">{big}</div>))
+    const m = T_ROW_RE.exec(text)
+    expect(
+      m,
+      "large strings must outline to `<id>:T<hex-byte-length>,<raw bytes>` rows",
+    ).not.toBeNull()
+    const len = parseInt(m![2], 16)
+    expect(len, "the T prefix counts the raw payload bytes").toBe(2048)
+    const payloadStart = m!.index + m![0].length
+    expect(text.slice(payloadStart, payloadStart + len)).toBe(big)
+    expect(
+      text[payloadStart + len],
+      "a T row is NOT newline-terminated — the next row begins right after the counted bytes",
+    ).not.toBe("\n")
+    expect(
+      text.slice(payloadStart + len),
+      "the bytes after the T payload must open the next row's envelope",
+    ).toMatch(/^[0-9a-f]*:/)
+    // The element references the outlined text as a plain `$<id>` ref.
+    expect(text).toContain(`"children":"$${m![1]}"`)
+  })
+
+  it("row tooling passes a T-row payload through byte-identically, and it still decodes", async () => {
+    // The split-on-`\n` view cannot see a T row's boundary — it sees
+    // the raw payload glued to the following row as one pseudo-row.
+    // Pass-through is safe because nothing is re-framed: bytes out ==
+    // bytes in, and the client re-derives the true boundary from the
+    // length prefix. This is the contract that keeps cached partons
+    // containing large strings replayable.
+    const bytes = await renderBytes(<div title="t">{big}</div>)
+    const original = new TextDecoder().decode(bytes)
+
+    const rejoined = new TextDecoder().decode(joinRows(splitRows(bytes)))
+    expect(rejoined, "splitRows→joinRows must be byte-preserving over T rows").toBe(original)
+
+    const rewritten = new Uint8Array(
+      await new Response(
+        rewriteFlightStream(bytesToStream(bytes), passthroughRewriter),
+      ).arrayBuffer(),
+    )
+    expect(
+      new TextDecoder().decode(rewritten),
+      "passthrough rewriteFlightStream must be byte-preserving over T rows",
+    ).toBe(original)
+
+    const payload = await consumePayload<React.ReactElement<{ children: string }>>(
+      bytesToStream(rewritten),
+    )
+    expect(payload.props.children, "the T-row text must survive the round-trip").toBe(big)
+  })
+})
+
+describe("duplicate rows", () => {
+  it("a duplicated model row is tolerated by the client — first value wins, payload decodes", async () => {
+    // Splice/dedup invariants treat re-sending a row id as at worst
+    // redundant: today's client ignores a duplicate model row for an
+    // already-resolved chunk. If a React upgrade makes redefinition
+    // FATAL instead (resolveModelChunk treating a second model for a
+    // settled chunk as an error), the wire-level splice must guarantee
+    // id uniqueness absolutely — this assertion is the tripwire.
+    const { text, lines } = await renderRows(suspenseFixture)
+    const modelLine = lines.find((l) => /^[0-9a-f]+:\["\$","p"/.test(l))
+    expect(modelLine, "fixture must outline the async child to its own model row").toBeDefined()
+    const payload = await consumePayload<React.ReactElement<{ children: unknown }>>(
+      bytesToStream(new TextEncoder().encode(`${text + modelLine}\n`)),
+    )
+    // Force the outlined child the way React.lazy does; the FIRST
+    // row's value must win.
+    const lazy = payload.props.children as unknown as {
+      _init: (p: unknown) => React.ReactElement<{ children: string }>
+      _payload: unknown
+    }
+    await new Promise((r) => setTimeout(r, 10))
+    const child = lazy._init(lazy._payload)
+    expect(child.props.children).toBe("late")
   })
 })
 

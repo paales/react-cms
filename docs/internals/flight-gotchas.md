@@ -3,10 +3,12 @@
 A few RSC-specific quirks the framework works around. They live one
 level below the API surface.
 
-The wire-format facts the byte-level rewriters bake in — row framing,
-`$` / `$L` / `$@` ref shapes with `:deref` suffixes, `$$` escaping,
-`$undefined`, `I` / `$S` row shapes and their flush order, composite
-keys, UTF-8 validity — are pinned by the conformance canary
+The wire-format facts the byte-level rewriters bake in — row framing
+(and its one exception: length-prefixed `T` text rows, which are NOT
+newline-terminated), `$` / `$L` / `$@` ref shapes with `:deref`
+suffixes, `$$` escaping, `$undefined`, `I` / `$S` row shapes and their
+flush order, composite keys, duplicate-row tolerance, UTF-8 validity —
+are pinned by the conformance canary
 `framework/src/lib/__tests__/flight-format-canary.rsc.test.tsx`. It
 renders fixtures through the real Flight runtime and asserts each fact
 against the emitted bytes, so a React / `@vitejs/plugin-rsc` upgrade
