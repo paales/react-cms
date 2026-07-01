@@ -46,7 +46,16 @@ export {
 // replacement for `vary`): `cookie()`, `searchParam()`, `param()`. Plus
 // `tag()` (a render-time invalidation label) and `getCurrentParton()` (the
 // parton's own identity). See current-parton.ts / server-hooks.ts.
-export { cookie, searchParam, param, match, session, visible } from "./server-hooks.ts"
+export {
+  cookie,
+  searchParam,
+  param,
+  match,
+  session,
+  visible,
+  header,
+  pathname,
+} from "./server-hooks.ts"
 export { tag, getCurrentParton, type CurrentParton, type VisibleOptions } from "./current-parton.ts"
 
 export {

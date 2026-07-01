@@ -403,6 +403,35 @@ export function lookupPartial(id: string): PartialSnapshot | undefined {
   return store.partials.get(id)?.get(variantKey)
 }
 
+/**
+ * Committed tracked-read evidence for a spec id, across EVERY variant
+ * in the scope's canonical store (all routes):
+ *
+ *   - `"unknown"` — no committed variant anywhere (cold process, or the
+ *     id has never rendered). The spec's read set is unknowable.
+ *   - `"deps"`    — some committed variant recorded tracked reads. The
+ *     spec's fp is only trustworthy when computed against a dep record.
+ *   - `"depless"` — every committed variant recorded an EMPTY read set.
+ *     Under the tracking invariant (reads are conditioned only on
+ *     tracked inputs), an empty read set is a fixed point — no tracked
+ *     input exists that could make a future render start reading — so
+ *     a dep-less fp for this spec is complete evidence.
+ *
+ * Consumed by the fp-skip cold-record gate in partial.tsx: a spec
+ * without a declared `vary` may only skip against a dep-less fp when
+ * the evidence says `"depless"`.
+ */
+export function committedDepsEvidence(id: string): "unknown" | "depless" | "deps" {
+  const ctx = registryAls.getStore()
+  const scope = ctx?.scope ?? getScope()
+  const variants = canonical.get(scope)?.partials.get(id)
+  if (!variants || variants.size === 0) return "unknown"
+  for (const snap of variants.values()) {
+    if (snap.deps && snap.deps.size > 0) return "deps"
+  }
+  return "depless"
+}
+
 function buildHintSnapshots(
   store: ScopeStore | undefined,
   routeKey: string | undefined,

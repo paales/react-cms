@@ -38,6 +38,7 @@ import type { CacheOptions } from "./cache-options.ts"
 import { RemoteFrame } from "./remote-frame.tsx"
 import type { Capability } from "../runtime/capability.ts"
 import {
+  committedDepsEvidence,
   enterRequestRegistry,
   getActiveRegistry,
   getFoldBaseSnapshots,
@@ -1821,7 +1822,26 @@ function createSpecComponent<V>(
     const cachedFps = state?.cachedFingerprints.get(id)
     const fingerprintMatches = cachedFps != null && cachedFps.has(fp)
     const hasOuterChildren = outerChildren != null && outerChildren !== false
-    const shouldSkip = state != null && !isExplicit && fingerprintMatches && !hasOuterChildren
+    // Cold-record gate: a spec WITHOUT a declared `vary` may still have
+    // tracked reads in its Render body, and those only reach the fp via
+    // the snapshot's dep record (store-and-reread). With no prior
+    // snapshot for this route's variant, the fp above folded NO deps —
+    // it can collide with a dep-less fp the client cached under
+    // DIFFERENT read values (server restart between visits, or a first
+    // visit to a new route bucket), and skipping on that match would
+    // serve stale bytes. The read set is unknowable before the body
+    // runs, so the skip is only allowed when the committed record
+    // proves it's safe: some variant of this id has rendered and every
+    // committed variant recorded an empty read set (an empty read set
+    // is a fixed point — reads are conditioned only on tracked inputs,
+    // so nothing can make a future render start reading). Otherwise
+    // decline and render: the cold path over-fetches, never staleness.
+    // A declared `vary` is request-reproducible by contract, so those
+    // specs keep the cold-process skip.
+    const coldRecordMissing =
+      opts.vary == null && priorSnap == null && committedDepsEvidence(id) !== "depless"
+    const shouldSkip =
+      state != null && !isExplicit && fingerprintMatches && !hasOuterChildren && !coldRecordMissing
 
     if (state) {
       // No uniqueness checks. Selectors are flat labels with fan-out

@@ -147,16 +147,15 @@ Small, additive, and the same shape as `cookie()`/`searchParam()` — the entity
 tags a GraphQL response yields (`__typename:id`) would be recorded here.
 
 ### 2. Auto-tracked vary (`vary` becomes implicit)
-Reads via tracked hooks (`cookie()`, `session()`, `param()`, cells) accumulate
-the dependency surface; `vary`'s bail role becomes a plain early `return` in
-Render. **Decisions:** (a) value→label fold for cells (don't resolve a cell to
-compute the fp — check its version/label, so a nav can fp-skip without the
-GraphQL round-trip the schema phase does today); (b) the stateless-cold-skip
-tradeoff — a captured/generated vary is STATEFUL (a cold process must render),
-an explicit vary is request-reproducible — but it degrades to over-fetch (full
-render), never stale, so it's a perf cost not a correctness one. **Decided:**
-`vary` is removed (§5), tracked hooks replace it; the cold/edge case just
-re-renders.
+Designed in full — surface, cold semantics, the three non-fp roles, the
+wrapper-rule dissolution, `park()`, migration phases, perf — in
+[`auto-tracked-vary.md`](./auto-tracked-vary.md). The spike alongside it
+landed `header()` + `pathname()` (completing the VaryScope read surface),
+the cold-record fp-skip gate (`committedDepsEvidence` — what makes
+"cold degrades to over-fetch, never stale" mechanically true), and
+hooks-only conversions of representative e2e specs. **Decided:** `vary`
+is removed (§5), tracked hooks replace it; the cold/edge case just
+re-renders (now enforced by the gate, not assumed).
 
 ### 3. Inline `localCell` (server-hook cells)
 **Increment 1 landed** (read + client-write): `const v = await localCell("k",

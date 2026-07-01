@@ -42,6 +42,39 @@ export function searchParam(name: string): string | null {
 }
 
 /**
+ * Read a request header and record it as an fp dependency. Names are
+ * lowercased per HTTP semantics (`header("Accept-Language")` and
+ * `header("accept-language")` are the same read and the same dep key).
+ * Framework-internal `x-parton-*` headers are invisible here — they
+ * never reach a spec's dependency surface (mirroring the `vary`
+ * scope's header record), so the read returns `undefined` and records
+ * nothing.
+ */
+export function header(name: string): string | undefined {
+  const cp = getCurrentParton()
+  if (!cp) return undefined
+  const lower = name.toLowerCase()
+  if (lower.startsWith("x-parton-")) return undefined
+  cp.deps.add(`header:${lower}`)
+  return cp.request.headers.get(lower) ?? undefined
+}
+
+/**
+ * Read the (frame-resolved) request pathname and record it as an fp
+ * dependency — the whole-pathname axis for specs that genuinely depend
+ * on parts of the path their `match` doesn't name (a wildcard tail, a
+ * breadcrumb built from the full path). Prefer `match()` / `param()`
+ * when a named segment is enough: a pathname dep moves the fp on EVERY
+ * path change, which defeats fp-skip across unrelated navigations.
+ */
+export function pathname(): string {
+  const cp = getCurrentParton()
+  if (!cp) return ""
+  cp.deps.add("pathname:")
+  return new URL(cp.request.url).pathname
+}
+
+/**
  * Read a resolved match param (`/pokemon/:id` → `param("id")`). Records
  * NO dependency: match params already fold into the fp via `matchKey`,
  * so reading one is enough — a param change moves the fp through the
@@ -178,6 +211,8 @@ export function evalDepKeys(
     let value: string | null | undefined
     if (kind === "cookie") value = cookies[name]
     else if (kind === "search") value = url.searchParams.get(name)
+    else if (kind === "header") value = request.headers.get(name)
+    else if (kind === "pathname") value = url.pathname
     else if (kind === "match") {
       // `name` is the pattern (string) or its JSON (dict). Re-run it and
       // fold the NAMED params only — so a spec varies when its captured
@@ -206,7 +241,13 @@ export function evalDepKeys(
       const v = readVisible(url.searchParams, name)
       value = v === undefined ? "u" : v ? "1" : "0"
     } else value = undefined
-    parts.push(`${key}=${value ?? ""}`)
+    // Absence is a VALUE: `?search=` (empty string, dialog open) and no
+    // `?search` at all (dialog closed) must fold differently — the hooks
+    // return `""` vs `null` and Renders branch on it, exactly like a
+    // declared vary distinguished `""` from `undefined` via
+    // stableStringify. Encode absent as the bare key (no `=`), which no
+    // present value can collide with.
+    parts.push(value == null ? key : `${key}=${value}`)
   }
   return `|deps=${parts.join("&")}`
 }

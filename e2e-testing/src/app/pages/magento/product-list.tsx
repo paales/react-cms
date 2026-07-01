@@ -9,7 +9,9 @@
 
 import { Suspense } from "react"
 import {
+  cookie,
   parton,
+  searchParam,
   type CellValue,
   type PartialCtx,
   type RenderArgs,
@@ -42,7 +44,11 @@ const MagentoCartBadge = parton(
 )
 
 const MagentoHeader = parton(
-  function MagentoHeaderRender({ cartId }: { cartId: string } & RenderArgs) {
+  function MagentoHeaderRender(_: RenderArgs) {
+    // Tracked read — records `cookie:cart_id` on this parton, so a new
+    // cart cookie (set by the add-to-cart action) moves the fp on the
+    // next navigation exactly as the old `vary` did.
+    const cartId = cookie("cart_id") ?? ""
     return (
       <header className="mb-4 flex items-center justify-between gap-4">
         <span className="text-sm text-muted-foreground">{new Date().toLocaleString()}</span>
@@ -54,9 +60,10 @@ const MagentoHeader = parton(
       </header>
     )
   },
-  {
-    vary: ({ cookies: { cart_id: cartId } }) => ({ cartId: cartId ?? "" }),
-  },
+  // Explicit selector keeps the spec addressable (refetchable by label,
+  // fp on the wire) now that no `vary`/`match` marks it as such. Same
+  // id the auto-derived name produced.
+  { selector: "#magento-header" },
 )
 
 const MagentoProducts = parton(
@@ -94,7 +101,10 @@ const MagentoProducts = parton(
     // cache hit and streamed in over their 1s load. Exercises the
     // row-level cache splice end-to-end (cache-dynamic-partial-holes spec).
     cache: { maxAge: 60 },
-    vary: ({ search: { q = "" } }) => ({ q }),
+    // Tracked in `schema` (runs before the fp), so `q` folds into the
+    // byte-cache key from render 1 — a render-BODY read would lag one
+    // render and mis-key the cache on a cold process.
+    schema: () => ({ q: searchParam("q") ?? "" }),
   },
 )
 
