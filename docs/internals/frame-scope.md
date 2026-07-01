@@ -34,8 +34,12 @@ request as an argument.
 Frame navigation drops `?__frame=<dotted-path>&__frameUrl=<url>` on
 the URL. `PartialRoot` reads them on every request and writes the
 URL into the session before any spec runs. The session is
-cookie-backed (`__frame_sid`); state lives in
-`framework/src/runtime/session.ts`.
+cookie-backed (`__frame_sid`); state lives in the in-memory store in
+`framework/src/runtime/session.ts`. Entries expire on inactivity —
+every read or write refreshes the session's idle clock, so an active
+session's frame URLs never vanish under the user; sessions idle past
+the TTL (default 30 minutes, `configureSessionStore({ idleTtlMs })`)
+are dropped, bounding the store in a long-lived process.
 
 ## Client-side handle
 

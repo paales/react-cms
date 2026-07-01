@@ -6,12 +6,14 @@
  * scene; different cookies get isolated state; no cookie means
  * empty scene.
  */
-import { beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { runWithRequestAsync } from "../context.ts"
 import {
   _clearAllSessions,
   _sessionStats,
   clearSessionFrame,
+  configureSessionStore,
+  DEFAULT_SESSION_IDLE_TTL_MS,
   ensureSessionId,
   getSessionFrameUrl,
   getSessionId,
@@ -138,6 +140,94 @@ describe("session store basics", () => {
     expect(stats.sessions).toBe(2)
     expect(stats.frameCounts.cart).toBe(2)
     expect(stats.frameCounts.menu).toBe(1)
+  })
+})
+
+describe("session idle expiry", () => {
+  beforeEach(() => {
+    _clearAllSessions()
+    vi.useFakeTimers()
+    configureSessionStore({ idleTtlMs: 1000 })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    configureSessionStore({ idleTtlMs: DEFAULT_SESSION_IDLE_TTL_MS })
+    _clearAllSessions()
+  })
+
+  async function createSession(frameUrl = "/cart/open"): Promise<string> {
+    const { cookies } = await runWithRequestAsync(await makeRequest(), async () => {
+      setSessionFrameUrl(["cart"], frameUrl)
+    })
+    return cookies[0].match(/__frame_sid=([^;]+)/)![1]
+  }
+
+  async function readCart(sid: string): Promise<string | null> {
+    const { result } = await runWithRequestAsync(await makeRequest(sid), async () =>
+      getSessionFrameUrl(["cart"]),
+    )
+    return result
+  }
+
+  it("a session idle past the TTL is never served", async () => {
+    const sid = await createSession()
+    vi.advanceTimersByTime(1500)
+    expect(await readCart(sid)).toBeNull()
+  })
+
+  it("reads touch — an active session outlives many TTL windows", async () => {
+    const sid = await createSession()
+    // 5 × 600ms = 3s total, far past the 1s TTL — but never more than
+    // 600ms idle, so every read keeps the session alive.
+    for (let i = 0; i < 5; i++) {
+      vi.advanceTimersByTime(600)
+      expect(await readCart(sid)).toBe("/cart/open")
+    }
+  })
+
+  it("writes touch — frame navigation keeps the whole session alive", async () => {
+    const sid = await createSession()
+    vi.advanceTimersByTime(600)
+    await runWithRequestAsync(await makeRequest(sid), async () => {
+      setSessionFrameUrl(["menu"], "/menu/about")
+    })
+    vi.advanceTimersByTime(600)
+    // 1.2s since the cart write, but only 0.6s since the menu write
+    // touched the session — the cart URL is still there.
+    expect(await readCart(sid)).toBe("/cart/open")
+  })
+
+  it("a write to an expired session starts fresh instead of resurrecting stale frames", async () => {
+    const sid = await createSession("/cart/stale")
+    vi.advanceTimersByTime(1500)
+    await runWithRequestAsync(await makeRequest(sid), async () => {
+      setSessionFrameUrl(["menu"], "/menu/about")
+    })
+    const { result } = await runWithRequestAsync(await makeRequest(sid), async () => ({
+      cart: getSessionFrameUrl(["cart"]),
+      menu: getSessionFrameUrl(["menu"]),
+    }))
+    expect(result.cart).toBeNull()
+    expect(result.menu).toBe("/menu/about")
+  })
+
+  it("the opportunistic sweep reclaims idle sessions nobody reads again", async () => {
+    await createSession("/a")
+    await createSession("/b")
+    await createSession("/c")
+    expect(_sessionStats().sessions).toBe(3)
+    // Past both the TTL and the sweep rate limit; the next store
+    // access (the stats read itself) sweeps them all.
+    vi.advanceTimersByTime(120_000)
+    expect(_sessionStats().sessions).toBe(0)
+  })
+
+  it("idleTtlMs: Infinity disables expiry", async () => {
+    configureSessionStore({ idleTtlMs: Infinity })
+    const sid = await createSession()
+    vi.advanceTimersByTime(365 * 24 * 60 * 60 * 1000)
+    expect(await readCart(sid)).toBe("/cart/open")
   })
 })
 

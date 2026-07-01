@@ -29,6 +29,17 @@
  * cookie-to-state as before. In dev, Playwright workers supply a
  * per-worker `x-test-scope` header so parallel test workers don't
  * trample each other's session state.
+ *
+ * ── Expiry ──────────────────────────────────────────────────────────
+ * Entries expire on INACTIVITY, not age: every session read or write
+ * refreshes the entry's `touchedAt`, so an active session's frame
+ * URLs never vanish mid-session — only sessions idle longer than the
+ * configured TTL (default 30 minutes; `configureSessionStore`) are
+ * dropped, which is what bounds the store in a long-lived process.
+ * The read path checks idleness before serving (an expired entry is
+ * never returned, regardless of sweep timing); an opportunistic sweep
+ * on store access — rate-limited to once per minute — reclaims the
+ * entries no request ever reads again.
  */
 
 import { getScope, readCookie, setCookie } from "./context.ts"
@@ -55,18 +66,80 @@ function pathKey(path: readonly string[]): string {
 
 const SESSION_COOKIE = "__frame_sid"
 
+/** A stored session plus its inactivity clock. `touchedAt` refreshes
+ *  on every read or write of the session, so expiry keys on idleness
+ *  — an active session never ages out under the user. */
+interface SessionEntry {
+  state: SessionState
+  touchedAt: number
+}
+
+/** Sessions idle longer than this are dropped. Overridable via
+ *  `configureSessionStore`. */
+export const DEFAULT_SESSION_IDLE_TTL_MS = 30 * 60 * 1000
+
+/** Rate limit for the opportunistic sweep — a full-store walk at most
+ *  this often, amortized across requests. Correctness doesn't depend
+ *  on it (the read path never serves an expired entry); the sweep only
+ *  reclaims memory for sessions no request reads again. */
+const SWEEP_INTERVAL_MS = 60 * 1000
+
+let idleTtlMs = DEFAULT_SESSION_IDLE_TTL_MS
+let lastSweepAt = 0
+
+/**
+ * Configure the in-memory session store. `idleTtlMs` is the
+ * inactivity window after which a session is dropped (frame URLs and
+ * all); `Infinity` disables expiry.
+ */
+export function configureSessionStore(opts: { idleTtlMs?: number }): void {
+  if (opts.idleTtlMs !== undefined) idleTtlMs = opts.idleTtlMs
+}
+
 // CATEGORY C (docs/internals/server-isolation.md) — intentional shared map,
 // now nested under a per-scope bucket. Inner map keyed by opaque
 // session ID; different users don't collide within a scope.
-const scopes = new Map<string, Map<string, SessionState>>()
+const scopes = new Map<string, Map<string, SessionEntry>>()
 
-function store(scope: string = getScope()): Map<string, SessionState> {
+function store(scope: string = getScope()): Map<string, SessionEntry> {
+  sweepExpired(Date.now())
   let b = scopes.get(scope)
   if (!b) {
     b = new Map()
     scopes.set(scope, b)
   }
   return b
+}
+
+/** Walk every scope and drop entries past the idle TTL. Rate-limited
+ *  by `SWEEP_INTERVAL_MS`; runs on any store access. */
+function sweepExpired(now: number): void {
+  if (now - lastSweepAt < SWEEP_INTERVAL_MS) return
+  lastSweepAt = now
+  for (const [scope, bucket] of scopes) {
+    for (const [id, entry] of bucket) {
+      if (now - entry.touchedAt > idleTtlMs) bucket.delete(id)
+    }
+    if (bucket.size === 0) scopes.delete(scope)
+  }
+}
+
+/** Look up a session entry, treating an idle-expired one as absent
+ *  (and deleting it in passing). Does NOT touch — callers touch after
+ *  deciding the entry is live, so a lookup that ends in "no session"
+ *  can't resurrect one. */
+function liveEntry(
+  bucket: Map<string, SessionEntry>,
+  id: string,
+  now: number,
+): SessionEntry | undefined {
+  const entry = bucket.get(id)
+  if (!entry) return undefined
+  if (now - entry.touchedAt > idleTtlMs) {
+    bucket.delete(id)
+    return undefined
+  }
+  return entry
 }
 
 function generateSessionId(): string {
@@ -110,7 +183,14 @@ export function ensureSessionId(): string {
 export function getSessionState(): SessionState {
   const id = getSessionId()
   if (!id) return { frames: {} }
-  return store().get(id) ?? { frames: {} }
+  const now = Date.now()
+  const entry = liveEntry(store(), id, now)
+  if (!entry) return { frames: {} }
+  // Touch on read: any request that resolves this session's state
+  // counts as activity, so an in-use session's frame URLs never
+  // vanish mid-session.
+  entry.touchedAt = now
+  return entry.state
 }
 
 /**
@@ -129,9 +209,13 @@ export function getSessionFrameUrl(path: readonly string[]): string | null {
 export function setSessionFrameUrl(path: readonly string[], url: string): void {
   const id = ensureSessionId()
   const b = store()
-  const existing = b.get(id) ?? { frames: {} }
-  existing.frames = { ...existing.frames, [pathKey(path)]: { url } }
-  b.set(id, existing)
+  const now = Date.now()
+  // An expired entry is absent (not resurrected) — the write starts a
+  // fresh session state rather than reviving stale frame URLs.
+  const entry = liveEntry(b, id, now) ?? { state: { frames: {} }, touchedAt: now }
+  entry.state.frames = { ...entry.state.frames, [pathKey(path)]: { url } }
+  entry.touchedAt = now
+  b.set(id, entry)
 }
 
 /**
@@ -142,12 +226,13 @@ export function clearSessionFrame(path: readonly string[]): void {
   const id = getSessionId()
   if (!id) return
   const b = store()
-  const existing = b.get(id)
-  if (!existing) return
+  const now = Date.now()
+  const entry = liveEntry(b, id, now)
+  if (!entry) return
   const key = pathKey(path)
-  const { [key]: _removed, ...rest } = existing.frames
-  existing.frames = rest
-  b.set(id, existing)
+  const { [key]: _removed, ...rest } = entry.state.frames
+  entry.state.frames = rest
+  entry.touchedAt = now
 }
 
 /**
@@ -191,6 +276,7 @@ export function createSessionReadSurface(): SessionReadSurface {
 export function _clearAllSessions(scope?: string | "all"): void {
   if (scope === undefined || scope === "all") {
     scopes.clear()
+    lastSweepAt = 0
     return
   }
   scopes.delete(scope)
@@ -203,8 +289,8 @@ export function _sessionStats(): {
 } {
   const frameCounts: Record<string, number> = {}
   const b = store()
-  for (const state of b.values()) {
-    for (const framePath of Object.keys(state.frames)) {
+  for (const entry of b.values()) {
+    for (const framePath of Object.keys(entry.state.frames)) {
       frameCounts[framePath] = (frameCounts[framePath] ?? 0) + 1
     }
   }

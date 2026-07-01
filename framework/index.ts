@@ -139,6 +139,7 @@ export { getRouteSnapshots } from "./src/lib/partial-registry.ts"
 
 // ── Session (frame URLs, per-key values, read surface) ─────────────────
 export {
+  configureSessionStore,
   ensureSessionId,
   setSessionFrameUrl,
   type SessionReadSurface,
