@@ -85,6 +85,36 @@ register themselves the same way as top-level placements.
 | `e2e-testing/src/app/` | Example application — pages and blocks. |
 | `cms/data/` | CMS content store — `content.json` (committed), `draft.json` (gitignored). |
 
+## Setting up an app
+
+An app is three thin entry files delegating to the framework's entry
+factories, plus a vite config whose `environments.*.build.rollupOptions
+.input` map wires them together (see any sibling workspace —
+`website/` is the smallest example):
+
+```tsx
+// src/entry.rsc.tsx — the server handler
+import { createRscHandler } from "@parton/framework/entry/rsc.tsx"
+import { Root } from "./app/root.tsx"
+export default createRscHandler({ Root })
+
+// src/entry.ssr.tsx — HTML rendering
+export { renderHTML } from "@parton/framework/entry/ssr.tsx"
+
+// src/entry.browser.tsx — hydration + client runtime
+import { bootBrowser } from "@parton/framework/entry/browser.tsx"
+bootBrowser()
+```
+
+`createRscHandler` accepts the app's knobs: `Root` (the html shell,
+placing `<PartialRoot>`), `notFound` (404 page body), `fetch` (a
+first-crack hook for app routes — return `undefined` to fall through),
+`remote` (opt-in `/__remote/*` hosting — see
+[`remote-frame.md`](./remote-frame.md)), and `clearCaches` (extras on
+the DEV clear-caches endpoint). Everything else — the segmented
+response driver, fp-trailers, invalidation transactions, the live
+heartbeat — is the factories' business.
+
 ## Reading order
 
 1. [`partial.md`](./partial.md) — the base constructor: the match
