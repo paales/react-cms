@@ -55,6 +55,7 @@ import { computeRouteKey, partialFromSnapshot } from "./partial.tsx";
 import type { PartialSnapshot } from "./partial-registry.ts";
 import {
 	_readSnapshotsForRoute,
+	effectiveExpiresAt,
 	enterRequestRegistry,
 	lookupPartial,
 } from "./partial-registry.ts";
@@ -342,9 +343,9 @@ async function driveLaneStream(
 			const now = Date.now();
 			for (const [id, snap] of snapshots) {
 				if (openLaneIds.has(id)) continue;
-				if (snap.expiresAt === undefined || !Number.isFinite(snap.expiresAt))
-					continue;
-				if (snap.expiresAt <= now) touched.push(id);
+				const exp = effectiveExpiresAt(snap);
+				if (exp === undefined || !Number.isFinite(exp)) continue;
+				if (exp <= now) touched.push(id);
 			}
 		}
 		if (touched.length === 0) continue;
@@ -471,11 +472,11 @@ function routeHasRelevantBump(sinceTs: number): boolean {
  * no partial declared one (or the only declared values are
  * `+Infinity` — the "never" sentinel).
  *
- * Partials declare `expiresAt` by returning it from `vary`; the
- * framework strips it from the vary result before fp computation
- * (see `stripReservedVaryKeys` in partial.tsx) and stores it on
- * the partial's snapshot. The segment driver reads those snapshots
- * after each render to derive the next wake time.
+ * Partials declare `expiresAt` from `vary`'s return (stripped before
+ * fp computation — see `stripReservedVaryKeys` in partial.tsx) or by
+ * calling the `expires()` hook during Render (a live box on the
+ * snapshot; see `effectiveExpiresAt`). The segment driver reads the
+ * snapshots after each render to derive the next wake time.
  */
 function computeNextExpiresAtDelay(
 	excludeIds?: ReadonlySet<string>,
@@ -494,9 +495,10 @@ function computeNextExpiresAtDelay(
 	let min = Number.POSITIVE_INFINITY;
 	for (const [id, snap] of snapshots) {
 		if (excludeIds?.has(id)) continue;
-		if (snap.expiresAt === undefined) continue;
-		if (!Number.isFinite(snap.expiresAt)) continue;
-		if (snap.expiresAt < min) min = snap.expiresAt;
+		const exp = effectiveExpiresAt(snap);
+		if (exp === undefined) continue;
+		if (!Number.isFinite(exp)) continue;
+		if (exp < min) min = exp;
 	}
 	if (!Number.isFinite(min)) return null;
 	return min - Date.now();

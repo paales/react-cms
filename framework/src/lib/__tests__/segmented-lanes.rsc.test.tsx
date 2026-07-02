@@ -19,23 +19,18 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-	_captureCommitHandle,
-	runWithRequestAsync,
-} from "../../runtime/context.ts";
-import {
 	_clearInvalidationRegistry,
 	refreshSelector,
 } from "../../runtime/invalidation-registry.ts";
-import { renderServerToFlight } from "../../test/rsc-server.ts";
-import { wrapStreamWithFpTrailer } from "../fp-trailer.ts";
 import {
-	type DemuxedLane,
-	splitAtFpTrailer,
-	splitSegments,
-} from "../fp-trailer-split.ts";
+	decodeLane,
+	drainPayloadSegment,
+	freshLiveScope,
+	withLiveDrive,
+} from "../../test/live-drive.tsx";
+import type { DemuxedLane } from "../fp-trailer-split.ts";
 import { PartialRoot, parton, type RenderArgs } from "../partial.tsx";
 import { clearRegistry } from "../partial-registry.ts";
-import { driveSegmentedResponse } from "../segmented-response.ts";
 
 // Module-scope render counters — bumped every time a Render body runs,
 // so assertions can distinguish "re-rendered" from "served placeholder".
@@ -95,84 +90,6 @@ const ExpiryClock = parton(
 	},
 );
 
-// ─── Harness ─────────────────────────────────────────────────────────
-
-interface DriveHandle {
-	segments: AsyncIterator<
-		ReturnType<typeof splitSegments> extends AsyncIterable<infer S> ? S : never
-	>;
-	/** Ends the connection: cancels the client reader and wakes the
-	 *  parked driver with a bump so its enqueue fails and the loop
-	 *  exits without waiting out the 20s keepalive. */
-	shutdown: (wakeSelector: string) => Promise<void>;
-}
-
-async function withLiveDrive(
-	url: string,
-	page: () => ReactNode,
-	scope: string,
-	run: (h: DriveHandle) => Promise<void>,
-): Promise<void> {
-	const request = new Request(url, { headers: { "x-test-scope": scope } });
-	await runWithRequestAsync(request, async () => {
-		let controller!: ReadableStreamDefaultController<Uint8Array>;
-		const response = new ReadableStream<Uint8Array>({
-			start(c) {
-				controller = c;
-			},
-		});
-		const renderOnce = () =>
-			wrapStreamWithFpTrailer(
-				renderServerToFlight(page()),
-				_captureCommitHandle(),
-			);
-		const drive = driveSegmentedResponse(controller, renderOnce).then(() => {
-			try {
-				controller.close();
-			} catch {}
-		});
-		const iter = splitSegments(response)[Symbol.asyncIterator]();
-		await run({
-			segments: iter,
-			shutdown: async (wakeSelector: string) => {
-				await iter.return?.();
-				// The parked driver only observes the torn controller on its
-				// next enqueue; a matching bump forces that wake.
-				refreshSelector(wakeSelector);
-				await drive;
-			},
-		});
-	});
-}
-
-async function drainPayloadSegment(seg: {
-	kind: "payload";
-	body: ReadableStream<Uint8Array>;
-	trailers: Promise<Map<string, Uint8Array>>;
-}): Promise<string> {
-	const text = await new Response(seg.body).text();
-	await seg.trailers;
-	return text;
-}
-
-async function decodeLane(lane: DemuxedLane): Promise<{
-	bodyText: string;
-	fp: Record<string, { from: string; to: string }> | null;
-}> {
-	const { mainStream, trailer } = splitAtFpTrailer(lane.body);
-	const bodyText = await new Response(mainStream).text();
-	const fp = (await trailer) as Record<
-		string,
-		{ from: string; to: string }
-	> | null;
-	return { bodyText, fp };
-}
-
-let scopeCounter = 0;
-function freshScope(): string {
-	return `lanes-rsc-${Date.now()}-${scopeCounter++}`;
-}
-
 beforeEach(() => {
 	_clearInvalidationRegistry();
 	renders.fast = 0;
@@ -191,7 +108,7 @@ describe("live segment driver — per-parton lanes", () => {
 		await withLiveDrive(
 			"http://localhost/lanes?live=1",
 			Page,
-			freshScope(),
+			freshLiveScope("lanes-rsc"),
 			async (h) => {
 				// Segment 0: whole tree, both partons render once.
 				const first = await h.segments.next();
@@ -239,7 +156,7 @@ describe("live segment driver — per-parton lanes", () => {
 		await withLiveDrive(
 			"http://localhost/lanes?live=1",
 			Page,
-			freshScope(),
+			freshLiveScope("lanes-rsc"),
 			async (h) => {
 				const first = await h.segments.next();
 				if (first.done || first.value.kind !== "payload")
@@ -274,7 +191,7 @@ describe("live segment driver — per-parton lanes", () => {
 					<ExpiryClock />
 				</PartialRoot>
 			),
-			freshScope(),
+			freshLiveScope("lanes-rsc"),
 			async (h) => {
 				const first = await h.segments.next();
 				if (first.done || first.value.kind !== "payload")

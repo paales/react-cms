@@ -52,6 +52,17 @@ export interface VisibleOptions {
   readonly rootMargin?: string
 }
 
+/** Wake/TTL hints written by the `expires()` / `staleUntil()` hooks. A
+ *  live box: render-body writes land AFTER the boundary registered the
+ *  snapshot, so wake consumers (the segment driver's expiry arm, the
+ *  fp-skip TTL gate) read through the box at arm/decision time rather
+ *  than at registration. Never part of the fingerprint — folding a
+ *  wall-clock timestamp would shift the fp every millisecond. */
+export interface WakeHints {
+  expiresAt?: number
+  staleUntil?: number
+}
+
 /** The rendering parton's own identity. */
 export interface CurrentParton {
   /** The parton's effective render id — the one keying snapshots, the
@@ -87,6 +98,11 @@ export interface CurrentParton {
    *  `park()` is legal; `"render"` is the Render body. The wrapper flips
    *  it just before invoking Render. Mutable; the wrapper owns it. */
   phase: "schema" | "render"
+  /** Wake-hint box written by `expires()` / `staleUntil()` during this
+   *  render. The wrapper passes the same object to the boundary, which
+   *  stores it on the snapshot — so post-registration writes are visible
+   *  to consumers. The wrapper owns the instance. */
+  readonly wakeHints: WakeHints
 }
 
 /**

@@ -39,6 +39,7 @@ import { RemoteFrame } from "./remote-frame.tsx"
 import type { Capability } from "../runtime/capability.ts"
 import {
   committedDepsEvidence,
+  effectiveExpiresAt,
   enterRequestRegistry,
   getActiveRegistry,
   getFoldBaseSnapshots,
@@ -105,7 +106,7 @@ import { getCellStorage } from "../runtime/cell-storage.ts"
 import { getScope } from "../runtime/context.ts"
 import { buildTimeScope, type TimeScope } from "./time.ts"
 import { getServerContext } from "./server-context.ts"
-import { _setCurrentParton, type CurrentParton } from "./current-parton.ts"
+import { _setCurrentParton, type CurrentParton, type WakeHints } from "./current-parton.ts"
 import { evalDepKeys, _isParkSignal } from "./server-hooks.ts"
 
 export { ROOT, type PartialCtx } from "./partial-context.ts"
@@ -736,6 +737,11 @@ interface PartialBoundaryProps {
    *  expiry, and the byte cache can use it as a freshness boundary. */
   expiresAt?: number
   staleUntil?: number
+  /** Live wake-hint box the `expires()` / `staleUntil()` hooks write
+   *  into during Render. The render path passes the CurrentParton's
+   *  box; skip/defer paths (where Render doesn't run) thread the prior
+   *  snapshot's box through so a hook-declared wake survives. */
+  wakeHints?: WakeHints
   children: ReactNode
 }
 
@@ -757,6 +763,7 @@ export function PartialBoundary({
   emittedFp,
   expiresAt,
   staleUntil,
+  wakeHints,
   children,
 }: PartialBoundaryProps): ReactNode {
   // Inline-cell deps are partition-scoped selectors (`cell:<id>?<part>`)
@@ -794,6 +801,7 @@ export function PartialBoundary({
     emittedFp,
     expiresAt,
     staleUntil,
+    wakeHints,
   })
   return children
 }
@@ -1510,6 +1518,7 @@ function createSpecComponent<V>(
       request: ourRequest,
       params,
       phase: "schema",
+      wakeHints: {},
     }
     _setCurrentParton(self)
     // matchKey identifies the rendered variant for client-side
@@ -1897,8 +1906,19 @@ function createSpecComponent<V>(
     // specs keep the cold-process skip.
     const coldRecordMissing =
       opts.vary == null && priorSnap == null && committedDepsEvidence(id) !== "depless"
+    // TTL gate: a snapshot past its declared freshness boundary
+    // (`expires()` hook or vary's `expiresAt`) must not be served from
+    // the client's cache even when the fp matches — the boundary IS the
+    // declaration that identical inputs stop being fresh at that time.
+    const snapshotExpiresAt = priorSnap ? effectiveExpiresAt(priorSnap) : undefined
+    const snapshotExpired = snapshotExpiresAt !== undefined && snapshotExpiresAt <= Date.now()
     const shouldSkip =
-      state != null && !isExplicit && fingerprintMatches && !hasOuterChildren && !coldRecordMissing
+      state != null &&
+      !isExplicit &&
+      fingerprintMatches &&
+      !hasOuterChildren &&
+      !coldRecordMissing &&
+      !snapshotExpired
 
     if (state) {
       // No uniqueness checks. Selectors are flat labels with fan-out
@@ -1967,6 +1987,7 @@ function createSpecComponent<V>(
           emittedFp={snapshotFp}
           expiresAt={expiresAt}
           staleUntil={staleUntil}
+          wakeHints={priorSnap?.wakeHints}
         >
           {skipBody}
         </PartialBoundary>
@@ -2012,6 +2033,7 @@ function createSpecComponent<V>(
           emittedFp={snapshotFp}
           expiresAt={expiresAt}
           staleUntil={staleUntil}
+          wakeHints={priorSnap?.wakeHints}
         >
           {deferBody}
         </PartialBoundary>
@@ -2110,6 +2132,7 @@ function createSpecComponent<V>(
           emittedFp={snapshotFp}
           expiresAt={expiresAt}
           staleUntil={staleUntil}
+          wakeHints={self.wakeHints}
         >
           {body}
         </PartialBoundary>

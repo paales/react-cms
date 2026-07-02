@@ -56,6 +56,9 @@ export {
   header,
   pathname,
   park,
+  expires,
+  staleUntil,
+  time,
 } from "./server-hooks.ts"
 export { tag, getCurrentParton, type CurrentParton, type VisibleOptions } from "./current-parton.ts"
 

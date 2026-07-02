@@ -24,6 +24,7 @@ import { getCurrentParton, type VisibleOptions } from "./current-parton.ts"
 import { parseCookies } from "../runtime/context.ts"
 import { getSessionId } from "../runtime/session.ts"
 import { parseSelector, queryMatchingTs } from "../runtime/invalidation-registry.ts"
+import { buildTimeScope, type TimeScope } from "./time.ts"
 
 /**
  * Control signal thrown by `park()`. The parton wrapper catches it
@@ -83,6 +84,50 @@ export function park(): never {
     )
   }
   throw new ParkSignal(cp.id)
+}
+
+/**
+ * Declare a freshness boundary for this render: after `at`
+ * (epoch ms), this parton's output is no longer fresh. Two consumers:
+ * the live segment driver arms its expiry timer on the earliest
+ * boundary across the route's snapshots (so a live connection wakes
+ * and re-renders this parton on time), and fp-skip declines to serve
+ * a snapshot past its boundary. A wake hint, never an fp dependency —
+ * reading the clock is not a dependency; only the declared boundary
+ * matters. Multiple calls keep the EARLIEST boundary. Callable
+ * anywhere in schema or Render (the boundary carries a live box, so
+ * post-await calls land before the driver consults the snapshot).
+ *
+ *     expires(time().nextSecond)   // live ticker
+ *     expires(time().in(60_000))   // one-minute TTL
+ */
+export function expires(at: number): void {
+  const cp = getCurrentParton()
+  if (!cp) return
+  const h = cp.wakeHints
+  h.expiresAt = h.expiresAt === undefined ? at : Math.min(h.expiresAt, at)
+}
+
+/**
+ * Declare a stale-while-revalidate boundary: between `expires()` and
+ * `at`, cached output may be served stale while a refresh runs.
+ * Multiple calls keep the earliest boundary. See `expires()`.
+ */
+export function staleUntil(at: number): void {
+  const cp = getCurrentParton()
+  if (!cp) return
+  const h = cp.wakeHints
+  h.staleUntil = h.staleUntil === undefined ? at : Math.min(h.staleUntil, at)
+}
+
+/**
+ * The render clock — quantized timestamps for deriving wake
+ * boundaries without calling `Date.now()` math inline:
+ * `expires(time().nextSecond)`, `expires(time().in(5_000))`. Reading
+ * the clock records nothing; it is not a dependency.
+ */
+export function time(): TimeScope {
+  return buildTimeScope()
 }
 
 /** Read a cookie and record it as an fp dependency. */

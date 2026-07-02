@@ -36,6 +36,7 @@ import {
   getScope,
 } from "../runtime/context.ts"
 import type { CacheOptions } from "./cache-options.ts"
+import type { WakeHints } from "./current-parton.ts"
 import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
 
@@ -147,6 +148,28 @@ export interface PartialSnapshot {
    *  while a background refresh runs. Absent → strict freshness
    *  (no stale window). */
   staleUntil?: number
+  /** Live wake-hint box written by the `expires()` / `staleUntil()`
+   *  hooks during this render. Render-body writes land AFTER the
+   *  boundary registered this snapshot, so wake consumers read through
+   *  `effectiveExpiresAt` / `effectiveStaleUntil` (which prefer the
+   *  declared `expiresAt`/`staleUntil` fields and fall back to the
+   *  box) at arm/decision time. On a pass where Render didn't run
+   *  (fp-skip, defer), the boundary threads the PRIOR snapshot's box
+   *  through, so a hook-declared wake survives the skip. */
+  wakeHints?: WakeHints
+}
+
+/** This snapshot's freshness boundary — the `vary`-declared value or,
+ *  for hook-declaring specs, the live box `expires()` wrote during the
+ *  render. Absent → no time-based wake. */
+export function effectiveExpiresAt(snap: PartialSnapshot): number | undefined {
+  return snap.expiresAt ?? snap.wakeHints?.expiresAt
+}
+
+/** This snapshot's stale-while-revalidate boundary — declared value or
+ *  the live box `staleUntil()` wrote. See `effectiveExpiresAt`. */
+export function effectiveStaleUntil(snap: PartialSnapshot): number | undefined {
+  return snap.staleUntil ?? snap.wakeHints?.staleUntil
 }
 
 /** Per-snapshot origin annotation. See `PartialSnapshot.source`. */
