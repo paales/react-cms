@@ -1,0 +1,31 @@
+{
+  "name": "@parton/website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@parton/copies": "workspace:*",
+    "@parton/framework": "workspace:*",
+    "react": "19.3.0-canary-68631c04-20260626",
+    "react-dom": "19.3.0-canary-68631c04-20260626"
+  },
+  "devDependencies": {
+    "@rolldown/plugin-babel": "^0.2.0",
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "patch:@vitejs/plugin-rsc@npm%3A0.5.24#~/.yarn/patches/@vitejs-plugin-rsc-npm-0.5.24-0a8431f84b.patch",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "rsc-html-stream": "^0.0.7",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0"
+  }
+}
