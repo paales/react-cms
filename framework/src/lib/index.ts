@@ -71,6 +71,7 @@ export {
 } from "./partial-client.tsx"
 
 export {
+  atomic,
   localCell,
   buildResolvedCell,
   computeCellPartitionKey,

@@ -34,9 +34,10 @@ import {
   __cellWrite as _cellWriteAction,
   __scopedCellWrite as _scopedCellWriteAction,
 } from "../runtime/cell-actions.ts"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { getCurrentParton } from "./current-parton.ts"
 import { registerInlineCell } from "./parton-actions.ts"
-import { buildCellSelector } from "../runtime/invalidation-registry.ts"
+import { buildCellSelector, runInvalidationTransaction } from "../runtime/invalidation-registry.ts"
 import {
   getCellStorage,
   getEphemeralCellStorage,
@@ -156,6 +157,19 @@ export interface CellInterface<T, A extends CellArgs = CellArgs> {
    * it to the document's variables / key shape so `.with` is typed.
    */
   with(args: A): BoundCell<T>
+  /**
+   * Resolve this cell inside a parton's Render: read the stored value
+   * (running the loader on a miss) at `args` — or at the cell's own
+   * `partition` against the current request when omitted — and record
+   * the partition-scoped `cell:` dependency on the rendering parton,
+   * so a write re-renders it (the boundary also surfaces the label for
+   * selector refetch). Returns the same `ResolvedCell<T>` the prop
+   * path produces, Flight-portable with a bound `set`.
+   *
+   *     const bumps = await bumpsCell.resolve()
+   *     const line = await cartLineCell.resolve({ uid })
+   */
+  resolve(args?: A): Promise<ResolvedCell<T>>
   /**
    * Mutation surface. Server-side: invokes the action synchronously
    * against the current request scope. Client-side: Flight-serialized
@@ -364,9 +378,85 @@ export function _resetUnresolvedPersistentWarnings(): void {
  * either way.
  */
 export function cellStorageForArgs(cell: CellInterface<unknown>, args: CellArgs): CellStorage {
-  if (!isUnresolvedPartition(args)) return cell.storage()
+  if (!isUnresolvedPartition(args)) return _txView(cell.storage())
   warnUnresolvedPersistent(cell.id, cell.storage())
-  return getEphemeralCellStorage()
+  return _txView(getEphemeralCellStorage())
+}
+
+// ─── atomic() — the transactional write overlay ───────────────────────
+
+interface CellTxWrite {
+  storage: CellStorage
+  scope: string
+  cellId: string
+  partitionKey: string
+  value: unknown
+}
+
+/** ALS-scoped write buffer for `atomic()`. While active, every cell
+ *  write lands here instead of real storage (reads see the overlay);
+ *  success flushes to storage before the invalidation fan-out commits,
+ *  a throw discards the buffer with the pending invalidations. */
+const cellTxStorage = new AsyncLocalStorage<Map<string, CellTxWrite>>()
+
+const txKey = (scope: string, cellId: string, pk: string): string =>
+  `${scope}|${cellId}|${pk}`
+
+/** Wrap a storage adapter in the active transaction's overlay (identity
+ *  outside a transaction). */
+export function _txView(real: CellStorage): CellStorage {
+  const tx = cellTxStorage.getStore()
+  if (!tx) return real
+  return {
+    read(scope, cellId, partitionKey) {
+      const buffered = tx.get(txKey(scope, cellId, partitionKey))
+      return buffered ? buffered.value : real.read(scope, cellId, partitionKey)
+    },
+    write(scope, cellId, partitionKey, value) {
+      tx.set(txKey(scope, cellId, partitionKey), {
+        storage: real,
+        scope,
+        cellId,
+        partitionKey,
+        value,
+      })
+    },
+    clear(scope) {
+      real.clear(scope)
+    },
+    flush: real.flush?.bind(real),
+  }
+}
+
+/**
+ * Atomic write boundary for server functions. Every cell write inside
+ * `fn` commits together when it returns: writes buffer in an overlay
+ * (reads inside the transaction see them), the invalidation fan-out
+ * fires once (one live-driver wake, one lane pass — not one per
+ * write), and a throw discards every buffered write, rolling the
+ * client's optimistic overlay back with them. Unrelated to React's
+ * `startTransition` (client render priority) — this is server-side
+ * write atomicity.
+ *
+ *     "use server"
+ *     export async function saveCard(args: { name: string; cvc: string }) {
+ *       await atomic(async () => {
+ *         await cardName.set(args.name)
+ *         await cardCvc.set(args.cvc)
+ *       })
+ *     }
+ */
+export async function atomic<T>(fn: () => Promise<T>): Promise<T> {
+  if (cellTxStorage.getStore()) return runInvalidationTransaction(fn)
+  const tx = new Map<string, CellTxWrite>()
+  return runInvalidationTransaction(async () => {
+    const result = await cellTxStorage.run(tx, fn)
+    // Success: land the buffered writes on real storage BEFORE the
+    // enclosing invalidation transaction commits its fan-out, so the
+    // wake's re-render reads the committed values.
+    for (const w of tx.values()) w.storage.write(w.scope, w.cellId, w.partitionKey, w.value)
+    return result
+  })
 }
 
 // ─── Shared validator / shape plumbing ────────────────────────────────
@@ -460,10 +550,10 @@ function buildPeek<T>(
   return (args?: CellArgs) => {
     const partition = args ?? partitionFn(buildCellPartitionScopeFromRequest())
     const partitionKey = hash(stableStringify(partition))
-    let readStorage = storage()
+    let readStorage = _txView(storage())
     if (isUnresolvedPartition(partition)) {
-      warnUnresolvedPersistent(id, readStorage)
-      readStorage = getEphemeralCellStorage()
+      warnUnresolvedPersistent(id, storage())
+      readStorage = _txView(getEphemeralCellStorage())
     }
     const stored = readStorage.read(getScope(), id, partitionKey)
     if (stored === undefined) return defaultValue
@@ -687,6 +777,7 @@ export function localCell<S extends CellShapeSpec, T = ValueOfShape<S>>(
     partition: partitionFn,
     load: opts.load,
     with: (args: CellArgs): BoundCell<T> => buildBoundCell(handle, args),
+    resolve: (args?: CellArgs) => resolveInBody(handle, args),
     set: bindSetter(opts.id) as CellInterface<T>["set"],
     peek: buildPeek(opts.id, storage, validate, opts.initial, partitionFn),
     validate,
@@ -778,6 +869,7 @@ export function buildEphemeralCell<T>(
     load,
     keyOf,
     with: (args: CellArgs): BoundCell<T> => buildBoundCell(handle, args),
+    resolve: (args?: CellArgs) => resolveInBody(handle, args),
     set: bindSetter(id) as CellInterface<T>["set"],
     peek: buildPeek(id, getEphemeralCellStorage, validate, initial, constantPartition),
     validate,
@@ -802,6 +894,20 @@ export function buildEphemeralCell<T>(
  * resolution time so client calls land on the right partition
  * regardless of URL changes between render and call.
  */
+/** In-body resolution — the implementation behind `handle.resolve()`. */
+async function resolveInBody<T>(
+  handle: CellInterface<T>,
+  args: CellArgs | undefined,
+): Promise<ResolvedCell<T>> {
+  const partition = args ?? handle.partition(buildCellPartitionScopeFromRequest())
+  const value = await resolveCellValue(handle, partition)
+  // The dep is the partition-scoped selector — the exact string a
+  // write fires — so a partitioned write's bump is matched, and the
+  // boundary surfaces the bare `cell:` name as a refetch label.
+  getCurrentParton()?.deps.add(buildCellSelector(handle.id, partition))
+  return buildResolvedCell(handle, value, args !== undefined ? partition : undefined)
+}
+
 export function buildResolvedCell<T>(
   handle: CellInterface<T>,
   value: T,
@@ -948,6 +1054,7 @@ export function finalizeScopedCell<T>(
     partition: constantPartition,
     load: descriptor.load,
     with: (args: CellArgs): BoundCell<T> => buildBoundCell(handle, args),
+    resolve: (args?: CellArgs) => resolveInBody(handle, args),
     set: bindSetter(id) as CellInterface<T>["set"],
     peek: buildPeek(id, getCellStorage, validate, descriptor.defaultValue, constantPartition),
     validate,
