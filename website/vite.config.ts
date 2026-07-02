@@ -49,7 +49,13 @@ export default defineConfig(() => ({
     }),
     tailwindcss(),
   ],
-  server: { port: 5183 },
+  server: {
+    port: 5183,
+    // The cell storage lives in data/ inside this workspace; writes
+    // are runtime state, not source — without the ignore, every cell
+    // persist triggers vite's full-reload and the page loops.
+    watch: { ignored: ["**/website/data/**"] },
+  },
   preview: { port: 5183, strictPort: true },
   environments: {
     rsc: {

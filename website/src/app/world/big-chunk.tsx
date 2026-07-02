@@ -19,7 +19,7 @@ export const BigChunk = parton(function BigChunkRender({
   bx,
   by,
 }: { bx: number; by: number } & RenderArgs) {
-  const vis = visible({ rootMargin: "1024px" })
+  const vis = visible({ rootMargin: "100px" })
   const show = vis ?? (bx >= -1 && bx <= 0 && by >= -1 && by <= 0)
   // Culled: keep a full-size placeholder in the tree — the visibility
   // observer needs rendered nodes to measure, and the empty cell is

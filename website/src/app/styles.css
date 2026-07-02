@@ -142,6 +142,13 @@ body {
   }
 }
 
+.chunk__pulse {
+  position: absolute;
+  top: var(--tile);
+  left: var(--tile);
+  color: var(--ink-dim);
+}
+
 /* ── Content cards — tile-aligned ── */
 
 .card {
