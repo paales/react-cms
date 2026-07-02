@@ -1013,17 +1013,3 @@ export function finalizeScopedCell<T>(
   return handle
 }
 
-/**
- * Compute the storage partition key for a scoped cell given the
- * parton's match params.
- */
-export function computeScopedCellPartitionKey(
-  descriptor: ScopedCellDescriptor<unknown>,
-  partonVary: CellArgs | null | undefined,
-): string {
-  const base = partonVary ?? {}
-  const out = descriptor.partitionFn
-    ? descriptor.partitionFn(base as never)
-    : base
-  return hash(stableStringify(out))
-}

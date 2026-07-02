@@ -200,3 +200,32 @@ describe("partial-registry — variant-keyed storage", () => {
     })
   })
 })
+
+describe("freshness-guarded canonical writes", () => {
+  it("a late commit from an older registration does not clobber a fresher record", async () => {
+    // The live-connection shape: request A registers first but commits
+    // LAST (the connection closes late); request B registers a fresher
+    // record (more dep keys) and commits in between. A's late commit
+    // must not clobber B's record.
+    let ctxA!: ReturnType<typeof enterRequestRegistry>
+    await runWithRequestAsync(new Request("http://t/a"), async () => {
+      ctxA = enterRequestRegistry("/a", "streaming")
+      registerPartial("guarded", snap(["page-root"]))
+    })
+    await runWithRequestAsync(new Request("http://t/a"), async () => {
+      const ctxB = enterRequestRegistry("/a", "streaming")
+      const fresher = snap(["page-root"])
+      fresher.deps = new Set(["search:config"])
+      registerPartial("guarded", fresher)
+      commitRequestRegistry(ctxB)
+    })
+    await runWithRequestAsync(new Request("http://t/a"), async () => {
+      commitRequestRegistry(ctxA)
+    })
+    await runWithRequestAsync(new Request("http://t/a"), async () => {
+      enterRequestRegistry("/a", "cache")
+      const committed = lookupPartial("guarded")
+      expect([...(committed?.deps ?? [])]).toContain("search:config")
+    })
+  })
+})

@@ -129,6 +129,16 @@ export interface PartialSnapshot {
    *  over the wire (the host stamps it when consuming a remote's
    *  trailer). */
   source?: SnapshotSource
+  /** Registration sequence — a process-wide monotonic counter stamped
+   *  by `registerPartial`. Canonical writes are freshness-guarded on
+   *  it: a request that registered EARLIER can commit LATER (a live
+   *  connection's registry context commits when the connection
+   *  closes), and without the guard its stale snapshot would clobber
+   *  the record a targeted refetch committed in between — losing,
+   *  e.g., dep keys the fresher render recorded, which then breaks
+   *  fp-skip against the trailer's healed fps. Newest registration
+   *  wins at both canonical write sites. */
+  _seq?: number
   /** Live wake-hint box written by the `expires()` / `staleUntil()`
    *  hooks during this render. Render-body writes land AFTER the
    *  boundary registered this snapshot, so wake consumers read through
@@ -328,7 +338,25 @@ function activeRouteKey(ctx: RequestRegistry | undefined): string | undefined {
 
 // ─── Public registry API ────────────────────────────────────────────────
 
+let registrationSeq = 0
+
+/** Freshness guard for canonical variant writes: keep the stored
+ *  snapshot when it carries a NEWER registration than the incoming
+ *  one. See `PartialSnapshot._seq`. */
+function isStale(
+  existing: PartialSnapshot | undefined,
+  incoming: PartialSnapshot,
+): boolean {
+  return (
+    existing !== undefined &&
+    existing._seq !== undefined &&
+    incoming._seq !== undefined &&
+    existing._seq > incoming._seq
+  )
+}
+
 export function registerPartial(id: string, snapshot: PartialSnapshot): void {
+  snapshot._seq = ++registrationSeq
   const variantKey = variantKeyOf(snapshot)
   const ctx = registryAls.getStore()
   if (ctx) {
@@ -353,7 +381,9 @@ export function registerPartial(id: string, snapshot: PartialSnapshot): void {
       variants = new Map()
       store.partials.set(id, variants)
     }
-    variants.set(variantKey, snapshot)
+    if (!isStale(variants.get(variantKey), snapshot)) {
+      variants.set(variantKey, snapshot)
+    }
     const existing = store.hints.get(ctx.routeKey)
     if (existing) {
       existing.set(id, variantKey)
@@ -375,7 +405,9 @@ export function registerPartial(id: string, snapshot: PartialSnapshot): void {
     variants = new Map()
     store.partials.set(id, variants)
   }
-  variants.set(variantKey, snapshot)
+  if (!isStale(variants.get(variantKey), snapshot)) {
+    variants.set(variantKey, snapshot)
+  }
 }
 
 export function lookupPartial(id: string): PartialSnapshot | undefined {
@@ -566,6 +598,10 @@ export function commitRequestRegistry(ctx: RequestRegistry): void {
       variants = new Map()
       store.partials.set(id, variants)
     }
+    // Freshness-guarded: a long-lived connection committing at close
+    // must not clobber a record a fresher interleaved request already
+    // committed (lost update on the dep record).
+    if (isStale(variants.get(variantKey), snap)) continue
     variants.set(variantKey, snap)
   }
 
