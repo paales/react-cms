@@ -31,12 +31,14 @@ import {
 } from "@vitejs/plugin-rsc/rsc";
 import type { ComponentType, ReactNode } from "react";
 import type { ReactFormState } from "react-dom/client";
+import { handleVisibilityReport } from "../lib/connection-session.ts";
 import {
 	wrapSsrStreamWithFpTrailer,
 	wrapStreamWithCommitOnly,
 	wrapStreamWithFpTrailer,
 } from "../lib/fp-trailer.ts";
 import { driveSegmentedResponse } from "../lib/segmented-response.ts";
+import { VISIBILITY_ENDPOINT } from "../lib/visibility-protocol.ts";
 import { warmCmsCache } from "../runtime/cms-runtime.ts";
 import {
 	_actionSuppressesCommit,
@@ -100,12 +102,24 @@ export function createRscHandler(config: RscHandlerConfig): {
 			if (remote) return remote;
 		}
 
+		const url = new URL(request.url);
+
+		// Visibility reports — fire-and-forget POSTs from the client's
+		// culling controller, addressed to an open live connection by its
+		// explicit `__conn` token. Applied to the connection session and
+		// answered `204` with no body: the flipped partons' bytes travel
+		// down the live stream as lane segments, never on this response.
+		// `404` (connection not open) is the client's signal to fall back
+		// to the render-reload path. Framework-owned, dispatched before
+		// the app's `fetch` hook like the remote endpoints above.
+		if (request.method === "POST" && url.pathname === VISIBILITY_ENDPOINT) {
+			return handleVisibilityReport(request);
+		}
+
 		if (config.fetch) {
 			const appResponse = await config.fetch(request);
 			if (appResponse) return appResponse;
 		}
-
-		const url = new URL(request.url);
 
 		if (import.meta.env?.DEV) {
 			if (url.pathname === "/__test/clear-caches") {

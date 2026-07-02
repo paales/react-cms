@@ -50,8 +50,12 @@ any selector-routing logic that could replace it.
    long-poll open against the current URL (it fires
    `reload({streaming: true, live: true})` — `live` is what holds the
    connection open; `streaming` only sets the client commit mode).
+   Each fire mints a fresh **connection id** (`?__conn=`) and seeds
+   the request with the client's current `?visible=` set — the
+   server opens a connection session keyed on the id (see
+   §Visibility rides the connection).
 3. **Server-side segment driver runs.** For each rendered segment,
-   it races three arms:
+   it races the wake arms:
    - `_waitForNextBump` — a `refreshSelector` lands (CRUD writes,
      `cell.set`, server-action invalidations) **that is relevant to
      this route**: it matches a rendered partial's labels +
@@ -64,12 +68,15 @@ any selector-routing logic that could replace it.
      any bump); the relevance check is what gates the re-render.
    - Expiry arm — the earliest `expires()` boundary among the
      route's snapshots (read through `effectiveExpiresAt`) elapses.
+   - Visibility arm (lane driver only) — a visibility report lands on
+     the connection session, naming flipped parton ids.
    - Idle timeout (~20s) — the connection closes cleanly. The
      heartbeat's next interval tick (~5s default) reopens.
-4. **On a relevant bump or an expiry boundary, the driver
-   renders per-parton lanes.** The relevance check resolves WHICH
-   snapshot ids the wake touched (`_routeMatchingBumpIds` for bumps;
-   the due-expiry set for time wakes), and each touched parton
+4. **On a relevant bump, an expiry boundary, or a visibility flip,
+   the driver renders per-parton lanes.** The wake resolves WHICH
+   snapshot ids it touched (`_routeMatchingBumpIds` for bumps;
+   the due-expiry set for time wakes; the report's `changed` ids for
+   visibility flips), and each touched parton
    renders in isolation through the snapshot-reconstruction path a
    `?partials=` refetch uses (`partialFromSnapshot` →
    `renderToReadableStream`). Each render's bytes frame as an
@@ -202,6 +209,96 @@ connections). Default `localCell` storage is process-global; the
 request-scoped `getEphemeralCellStorage` is **not** a valid pairing —
 the write would never reach another connection's render.
 
+## Visibility rides the connection
+
+View culling (`visible()`, [`partial.md`](../reference/partial.md)
+§View culling) is the same up-cheap/down-stream asymmetry as deferred
+writes, applied to a request dimension that moves while a connection
+is open. A viewport flip is not a data write — it changes what the
+CONNECTION should be rendering — so with a live stream open it must
+not fire a second render channel (a `reload({selector})`) that races
+the stream's own renders for the same partons: two channels, double
+bytes, commit contention.
+
+The pieces:
+
+- **Connection sessions** (`lib/connection-session.ts`). A `?live=1`
+  request carrying a `?__conn=<id>` token — the id is minted fresh
+  per heartbeat fire, an explicit token, never inferred — gets a
+  server-side session opened by the segment driver before its first
+  segment renders and closed when the drive loop exits. The session
+  holds the connection's current **visible set**, seeded from the
+  request's `?visible=` param (`null` when absent — the
+  pre-measurement state) and stamped onto the request ALS store for
+  the connection's lifetime.
+- **The report POST** (`lib/visibility-protocol.ts`,
+  `POST /__parton/visible`, handled by `createRscHandler` before app
+  routing). The client's visibility controller sends flips as a
+  fire-and-forget JSON report `{connection, seq, changed, visible}`;
+  the server applies it to the session and answers `204` with no
+  body — the flipped partons' bytes come down the live stream as
+  lane segments, never on this response. `seq` is a client-monotonic
+  counter: the session applies `visible` only from reports newer
+  than the last applied (two in-flight POSTs can't commit an older
+  set over a newer one) while `changed` ids merge regardless — a
+  superseded report's flips still get their lane render, which reads
+  the current set either way. `404` means "no such connection" — the
+  explicit signal for the controller to clear its published id and
+  deliver that batch (and everything until the heartbeat
+  re-establishes) via the render-reload fallback.
+- **The visibility wake.** The lane driver races the session's flip
+  promise alongside the bump/expiry/keepalive arms. On a flip wake
+  it drains the session's pending ids, drops each id's promoted fps
+  from the cached override (a visibility fp CYCLES between the same
+  two values — in ↔ out — so a stale override entry would fp-skip a
+  re-entry to a placeholder while the client's cache slot holds the
+  other state's body; a flip is an explicit target, like
+  `?partials=`, and must re-render), and starts a lane per id
+  through the same `partialFromSnapshot` path bump lanes use.
+- **The read stays request-reproducible.** `visible()` and the fp
+  fold's store-and-reread both resolve through one function
+  (`readVisible` in `server-hooks.ts`): the connection session's set
+  first, the request's `?visible=` URL param as the no-session
+  fallback. The session's set IS part of the connection's request
+  state — updated only by the reports, and every update arrives with
+  an explicit wake naming the ids it flipped, so a set change can
+  never leave a rendered parton stale (the tracking invariant holds:
+  the read is a function of connection state the framework
+  invalidates on, not of untracked nondeterminism). The fp-trailer's
+  flush recompute reads the same set, so hook read and fold agree.
+
+Client-side transport selection lives in the controller
+(`lib/visibility.tsx`): flips coalesce per animation frame as before,
+and each flush checks `_getLiveConnectionId()`
+(`partial-client-state.ts`) — non-null routes the batch (cap 256;
+ids ride the JSON body, so no request-line limit) to the POST,
+`null` falls back to the one-shot
+`reload({selector, params: {visible}})` path unchanged (cap 48, the
+`?partials=` request-line bound). The heartbeat owns the id: it
+publishes it when a fire's first segment commits (the server
+provably has the session open by then) and clears it when the
+connection settles. Two seams keep the set in sync across the
+connection's lifecycle:
+
+- **The seed.** Each heartbeat fire carries the controller's current
+  set as `?visible=` (absent while unmeasured), so a REOPENED
+  connection's whole-tree first segment renders against the measured
+  viewport instead of the cold anchor seed — without it, every
+  reopen would clobber flip-committed content back to the anchor
+  state.
+- **The publish-time sync.** Flips that fire between a connection's
+  seed and its id publication ride the reload fallback; when the id
+  publishes, the controller pushes one full-set report
+  (`changed: []`) so the session catches up.
+
+When no live connection is open (heartbeat disabled, or between
+keepalive close and the next fire), the reload fallback is the whole
+story — one-shot renders whose `?visible=` param the hook reads
+directly. Verified end to end by
+`framework/src/lib/__tests__/connection-visibility.rsc.test.tsx` (the
+in-process drive) and the product-browse e2e specs (the fallback
+path).
+
 ## The heartbeat rides the browser bootstrap
 
 `bootBrowser()` (`framework/src/entry/browser.tsx`) mounts
@@ -228,7 +325,12 @@ Behaviour:
   for time-dependent content). Then
   `nav.reload({streaming: true, live: true})` opens the long-poll
   connection — `live` holds it open, `streaming` commits each pushed
-  segment progressively.
+  segment progressively. Each fire mints a fresh connection id
+  (`?__conn=`) and seeds the request with the client's current
+  visible set; when the first segment commits, the id is published
+  to the visibility controller (and stamped as the
+  `data-parton-live` attribute value) so flips can address the open
+  connection — see §Visibility rides the connection.
 - **Interval re-fires** every 5s by default — but each tick is a
   no-op if a stream is already open. So in steady state there's
   exactly one streaming connection.

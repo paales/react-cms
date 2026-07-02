@@ -202,6 +202,7 @@ Wire layer (trailers, segments, lanes — see
 | `fp-trailer-split.ts` | The client splitter: `splitSegments` (no-holdback, milestone-gated cooperative abort), `splitAtFpTrailer`. |
 | `segment-trailers-client.ts` | Applying a segment's standard trailers client-side — `fp` via `_applyFpUpdates`, `url` via `_windowNav().navigate(…, { silent: true })`. |
 | `segmented-response.ts` / `segment-relevance.ts` / `parton-mux.ts` | The server segment driver + lane pump, the bump-relevance predicate, and the per-parton lane mux/demux framing. |
+| `connection-session.ts` / `visibility-protocol.ts` | Per-live-connection session state keyed by the client-minted `?__conn=` id — the visible set behind `visible()` on a live connection, the visibility-report registry (`reportConnectionVisibility`, the `POST /__parton/visible` handler), and the shared wire shape (`VisibilityReport`). See [streaming.md](./streaming.md) §Visibility rides the connection. |
 
 Client merge layer:
 
@@ -215,8 +216,8 @@ Client merge layer:
 | `frame-client.tsx` | The frames tree on the nav entry (read/write + the write serialiser), `FrameNameProvider`, frame refetch dispatch, and the window/frame imperative handle builders. |
 | `use-navigation.tsx` | The `useNavigation()` hook layer (`[fire, progress]` tuples, `@self` resolution, preload), `useActivate`, `useScrollRestore`, `PageUrlContext`, `PartialIdContext`. |
 | `cell-client.tsx` | `useCell` + the client-side write batcher (see [`cell-internals.md`](./cell-internals.md)). |
-| `live-page-heartbeat.tsx` | The `?live=1` long-poll (mounted by `bootBrowser`) + the `data-parton-live` marker (see [`streaming.md`](./streaming.md)). |
-| `visibility.tsx` / `page-interactive.ts` | The viewport observer for `visible()`-cullable partons (`?visible=` reporting); the `data-parton-interactive` root marker. |
+| `live-page-heartbeat.tsx` | The `?live=1` long-poll (mounted by `bootBrowser`) + the `data-parton-live` marker (its value is the minted `?__conn=` connection id), the `?visible=` seed, and the connection-id publication the visibility controller keys its transport on (see [`streaming.md`](./streaming.md)). |
+| `visibility.tsx` / `page-interactive.ts` | The viewport observer for `visible()`-cullable partons + the flip controller (report POSTs onto the open live connection; `?visible=` render-reload fallback); the `data-parton-interactive` root marker. |
 
 `framework/src/runtime/` holds the request plumbing: `context.ts`
 (request ALS, scope derivation, the cached-fp override carrier, the
@@ -361,14 +362,18 @@ Wire params:
 | `partials` | Selector labels (cosmetic `#`/`.` stripped). Resolves against snapshot `labels` AND `id` for fan-out targeting. |
 | `cached` | `id:matchKey:fp,…` — fingerprints the client has |
 | `live` / `streaming` | Server hold-open subscription / client commit mode — see [`streaming.md`](./streaming.md) |
+| `__conn` | The live connection's session id (heartbeat-minted; keys the connection-session state visibility reports address) |
 | `__frame=...&__frameUrl=...` | session-write a frame URL before render |
-| `visible` | The viewport-report id set `visible()` reads |
+| `visible` | The viewport-report id set `visible()` reads — on a live request it seeds the connection session's set |
 | `__populateCache` | Post-action full render that repopulates the client cache without treating `?partials=` as a filter |
 
-`partials`, `cached`, `live`, `streaming`, `__frame` and
-`__frameUrl` are the `TRANSPORT_PARAMS` (`lib/match.ts`) — `match`
-never sees them. `visible` is a real request dimension (the
-`visible()` hook reads it and it folds into fps).
+`partials`, `cached`, `live`, `streaming`, `visible`, `__conn`,
+`__frame` and `__frameUrl` are the `TRANSPORT_PARAMS`
+(`lib/match.ts`) — `match` never sees them. `visible` is still a real
+request dimension — the `visible()` HOOK reads it (session-first, URL
+fallback) and it folds into fps — it is only invisible to match
+gates, where it would otherwise split variant identity by transport
+noise.
 
 After a server function commits, refetch routing is driven entirely by
 the invalidation registry — cell writes fire their `cell:` selectors

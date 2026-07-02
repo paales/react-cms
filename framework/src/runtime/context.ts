@@ -87,6 +87,22 @@ interface RequestStore {
    *  re-render and the open streaming connection propagates the change.
    *  Lazily created on the first write. */
   cellWrites?: { total: number; deferred: number }
+  /** The live connection's session state — opened by the segment
+   *  driver for a `?live=1&__conn=` request and carried on the ALS
+   *  store for the connection's lifetime (the driver loops inside one
+   *  `runWithRequestAsync` scope). What the `visible()` hook and the
+   *  fingerprint fold's store-and-reread consult FIRST for the
+   *  connection's current visible set; visibility-report POSTs update
+   *  it between wakes (see `../lib/connection-session.ts`). One-shot
+   *  requests never set it and fall back to the `?visible=` URL param. */
+  connectionSession?: ConnectionSessionHandle | null
+}
+
+/** The slice of a connection session the request context carries —
+ *  structural, so this module doesn't import the lib-side registry
+ *  (`../lib/connection-session.ts` owns the full session shape). */
+export interface ConnectionSessionHandle {
+  visible: ReadonlySet<string> | null
 }
 
 /** In-memory mirror of `?cached=…`. Same identity Maps shared across
@@ -325,6 +341,23 @@ export function _setCachedOverride(override: CachedOverride): void {
  *  or PartialRoot hasn't installed one yet (single-segment cold path). */
 export function _getCachedOverride(): CachedOverride | null {
   return requestContext.getStore()?.cachedOverride ?? null
+}
+
+/** Attach (or detach) the live connection's session to the request
+ *  store. Called by the segment driver when it opens/closes the
+ *  session for a `?live=1&__conn=` connection. */
+export function _setConnectionSession(session: ConnectionSessionHandle | null): void {
+  const store = requestContext.getStore()
+  if (store) store.connectionSession = session
+}
+
+/** The connection's current visible set, or `null` when this request
+ *  has no live connection session (one-shot renders, SSR) or the
+ *  session has no report/seed yet. Consumers fall back to the
+ *  request's `?visible=` URL param on `null` — see `readVisible` in
+ *  `../lib/server-hooks.ts`. */
+export function _getConnectionVisibleSet(): ReadonlySet<string> | null {
+  return requestContext.getStore()?.connectionSession?.visible ?? null
 }
 
 /** Consume and clear the pending URL update. Called at trailer-flush

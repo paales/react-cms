@@ -237,7 +237,7 @@ export function getCachedPartialIds(): string[] {
 	const out: string[] = [];
 	// Insertion order tracks registration recency (re-registration
 	// re-inserts) — walk newest-first and stop at the manifest cap.
-	const ids = [...(_currentPageFingerprints.keys())].reverse();
+	const ids = [..._currentPageFingerprints.keys()].reverse();
 	outer: for (const id of ids) {
 		const byMatchKey = _currentPageFingerprints.get(id);
 		if (!byMatchKey) continue;
@@ -299,6 +299,28 @@ export function subscribeLaneCommits(cb: () => void): () => void {
 
 export function notifyLaneCommit(): void {
 	for (const cb of [..._laneCommitSubscribers]) cb();
+}
+
+// ─── Live connection id ───────────────────────────────────────────
+
+/**
+ * The connection id of the currently-established live stream, or
+ * `null` when none is open. Owned by `<LivePageHeartbeat>`: it mints a
+ * fresh id per fire (sent as `?__conn=` on the `?live=1` request),
+ * publishes it here when the subscription's first segment commits (the
+ * server has the session open by then), and clears it when the
+ * connection settles. The visibility controller reads it to decide the
+ * flip transport: id in hand → fire-and-forget report POST onto the
+ * open connection; `null` → the one-shot render-reload fallback.
+ */
+let _liveConnectionId: string | null = null;
+
+export function _setLiveConnectionId(id: string | null): void {
+	_liveConnectionId = id;
+}
+
+export function _getLiveConnectionId(): string | null {
+	return _liveConnectionId;
 }
 
 // ─── Structural template ──────────────────────────────────────────
