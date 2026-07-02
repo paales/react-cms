@@ -1,12 +1,16 @@
-import { parton, type RenderArgs } from "@parton/framework"
-import { CHUNK_PX, WORLD_RADIUS } from "./constants.ts"
+import type { RenderArgs } from "@parton/framework"
+import { parton } from "@parton/framework"
+import { ActivityLight } from "./activity-light.tsx"
+import { CHUNK_PX, BIG_CHUNKS } from "./constants.ts"
+
+/** Position within the OWNING bigChunk (chunk coords are world-signed). */
+const inBig = (c: number): number => (((c % BIG_CHUNKS) + BIG_CHUNKS) % BIG_CHUNKS) * CHUNK_PX
 
 /**
- * One 512px world chunk — the parton unit of the demo. Each placement
- * gets per-instance identity from its `{cx, cy}` props, so a single
- * chunk can be refetched, cached, and live-updated without touching
- * its neighbours; the network light in its top-right corner is where
- * that wire activity will be made visible.
+ * One 512px world chunk — the content parton. Per-instance identity
+ * from its `{cx, cy}` props: each placement is individually
+ * refetchable and cacheable, and its network light flashes when ITS
+ * bytes arrive — not on a timer.
  */
 export const WorldChunk = parton(
   function WorldChunkRender({ cx, cy }: { cx: number; cy: number } & RenderArgs) {
@@ -14,15 +18,12 @@ export const WorldChunk = parton(
       <div
         className="chunk"
         data-testid={`chunk-${cx},${cy}`}
-        style={{
-          left: (cx + WORLD_RADIUS) * CHUNK_PX,
-          top: (cy + WORLD_RADIUS) * CHUNK_PX,
-        }}
+        style={{ left: inBig(cx), top: inBig(cy) }}
       >
         <span className="chunk__coord">
           {cx},{cy}
         </span>
-        <span className="chunk__light chunk__light--green" aria-hidden />
+        <ActivityLight ck={`${cx},${cy}`} />
         {cx === 0 && cy === 0 ? <OriginCard /> : null}
       </div>
     )
@@ -34,15 +35,11 @@ export const WorldChunk = parton(
 function OriginCard() {
   return (
     <div className="card">
-      <h1 className="card__title">Parton: an RSC-native framework</h1>
-      <p>A parton is an enhanced component.</p>
-      <p>
-        One part on the client.
-        <br />
-        One part on the server.
-      </p>
-      <p>Partons talk over the network — this chunk is one.</p>
-      <p className="card__hint">Move with WASD, or drag the world.</p>
+      <h1 className="card__title">PARTON</h1>
+      <p>An RSC-native framework.</p>
+      <p>A parton is an enhanced component: one part on the client, one part on the server.</p>
+      <p>Every chunk of this world is one. Scroll — chunks load as they enter view, and each light flashes when its chunk's bytes arrive.</p>
+      <p className="card__hint">WASD / drag / scroll</p>
     </div>
   )
 }

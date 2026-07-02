@@ -121,6 +121,16 @@ export function cacheStore(
  *  for the same variant are stale and only bloat `?cached=`. */
 export const FP_CAP_PER_VARIANT = 4;
 
+/** Cap on `?cached=` manifest ENTRIES advertised to the server. The
+ *  client's local fp cache is unbounded within a page (pruned to the
+ *  live tree), but the manifest travels in the request URL — a page
+ *  with hundreds of partons (the website's chunk world) would
+ *  otherwise blow the server's request-line limit (HTTP 431). Only
+ *  the most recently REGISTERED variants are advertised; anything
+ *  older re-renders server-side on its next appearance (over-fetch,
+ *  never stale) and re-enters the manifest by registering again. */
+export const CACHED_MANIFEST_CAP = 96;
+
 export function registerClientPartial(
 	id: string,
 	matchKey: string,
@@ -129,6 +139,12 @@ export function registerClientPartial(
 	let inner = _currentPageFingerprints.get(id);
 	if (!inner) {
 		inner = new Map();
+		_currentPageFingerprints.set(id, inner);
+	} else {
+		// Re-insert at the tail so map order tracks registration
+		// recency — `getCachedPartialIds` walks newest-first when
+		// capping the manifest.
+		_currentPageFingerprints.delete(id);
 		_currentPageFingerprints.set(id, inner);
 	}
 	let set = inner.get(matchKey);
@@ -202,10 +218,16 @@ export function _applyFpUpdates(updates: FpUpdatesPayload): void {
  */
 export function getCachedPartialIds(): string[] {
 	const out: string[] = [];
-	for (const [id, byMatchKey] of _currentPageFingerprints) {
+	// Insertion order tracks registration recency (re-registration
+	// re-inserts) — walk newest-first and stop at the manifest cap.
+	const ids = [...(_currentPageFingerprints.keys())].reverse();
+	outer: for (const id of ids) {
+		const byMatchKey = _currentPageFingerprints.get(id);
+		if (!byMatchKey) continue;
 		for (const [matchKey, fps] of byMatchKey) {
 			for (const fp of fps) {
 				out.push(`${id}:${matchKey}:${fp}`);
+				if (out.length >= CACHED_MANIFEST_CAP) break outer;
 			}
 		}
 	}

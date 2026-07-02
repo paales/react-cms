@@ -1,15 +1,29 @@
 /**
- * World geometry. A tile is the atomic 16px grid cell; a chunk is
- * 32×32 tiles (512px square) and is the parton unit — one `<WorldChunk>`
- * per chunk, individually addressable and refetchable. Larger
- * aggregates (8×8 chunks = a bigChunk) window the world so only the
- * region around the camera is in the tree.
+ * World geometry. A tile is the atomic 16px grid cell — and the em
+ * square of the world's type: every character advances exactly one
+ * tile. A chunk is 32×32 tiles (512px) and is the content parton; a
+ * bigChunk is 8×8 chunks (4096px) and is the LOAD unit — a cullable
+ * parton that materializes its chunks only near the viewport. The
+ * world is 8×8 bigChunks: 64×64 chunks, a 32768px-square plane.
+ *
+ * Chunk coordinates are signed: cx,cy ∈ [-32, 31], so chunk 0,0's
+ * top-left corner is the exact center of the plane — where the
+ * scroller starts.
  */
 export const TILE_PX = 16
 export const CHUNK_TILES = 32
 export const CHUNK_PX = TILE_PX * CHUNK_TILES // 512
 
-/** Chunks rendered per axis around the origin: cx,cy ∈ [-RADIUS, RADIUS]. */
-export const WORLD_RADIUS = 2
-export const WORLD_CHUNKS = WORLD_RADIUS * 2 + 1
-export const PLANE_PX = WORLD_CHUNKS * CHUNK_PX
+export const BIG_CHUNKS = 8
+export const BIG_PX = BIG_CHUNKS * CHUNK_PX // 4096
+
+export const WORLD_BIGS = 8
+export const WORLD_PX = WORLD_BIGS * BIG_PX // 32768
+
+/** bx,by ∈ [BIG_MIN, -BIG_MIN - 1] */
+export const BIG_MIN = -WORLD_BIGS / 2
+
+export const bigLeft = (b: number): number => (b - BIG_MIN) * BIG_PX
+
+/** Plane coordinate of the world center — chunk 0,0's top-left. */
+export const CENTER_PX = WORLD_PX / 2

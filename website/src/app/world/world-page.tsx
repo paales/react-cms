@@ -1,23 +1,32 @@
 import { parton, type RenderArgs } from "@parton/framework"
-import { WorldCamera } from "./camera.tsx"
-import { WorldChunk } from "./chunk.tsx"
-import { WORLD_RADIUS } from "./constants.ts"
+import { BigChunk } from "./big-chunk.tsx"
+import { WorldScroller } from "./scroller.tsx"
+import { BIG_MIN, WORLD_BIGS, bigLeft, BIG_PX } from "./constants.ts"
 
 /**
- * The world page — a camera over a plane of chunk partons. The camera
- * is a client component; the chunks are its server-rendered children,
- * so panning never re-renders them and each chunk keeps its own
- * addressable identity on the wire.
+ * The world page — a real scroller over 8×8 bigChunk sections. Every
+ * section is a fixed-size cell (the plane never shifts); each hosts a
+ * cullable BigChunk parton that fills with its 64 chunks only near
+ * the viewport.
  */
 export const WorldPage = parton(
   function WorldPageRender(_: RenderArgs) {
-    const chunks: React.ReactNode[] = []
-    for (let cy = -WORLD_RADIUS; cy <= WORLD_RADIUS; cy++) {
-      for (let cx = -WORLD_RADIUS; cx <= WORLD_RADIUS; cx++) {
-        chunks.push(<WorldChunk key={`${cx},${cy}`} cx={cx} cy={cy} />)
+    const bigs: React.ReactNode[] = []
+    for (let by = BIG_MIN; by < BIG_MIN + WORLD_BIGS; by++) {
+      for (let bx = BIG_MIN; bx < BIG_MIN + WORLD_BIGS; bx++) {
+        bigs.push(
+          <section
+            key={`${bx},${by}`}
+            className="big"
+            data-testid={`big-${bx},${by}`}
+            style={{ left: bigLeft(bx), top: bigLeft(by), width: BIG_PX, height: BIG_PX }}
+          >
+            <BigChunk bx={bx} by={by} />
+          </section>,
+        )
       }
     }
-    return <WorldCamera>{chunks}</WorldCamera>
+    return <WorldScroller>{bigs}</WorldScroller>
   },
   { match: "{/*}?", selector: "#world" },
 )
