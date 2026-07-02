@@ -11,6 +11,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest"
 import {
+  CACHED_MANIFEST_CAP,
   FP_CAP_PER_VARIANT,
   getCachedPartialIds,
   pruneToLive,
@@ -75,5 +76,35 @@ describe("registerClientPartial — FP cap / eviction", () => {
     // Each variant evicted only its own oldest entry.
     expect(advertisedFps("page", "mkA")[0]).toBe("a2")
     expect(advertisedFps("page", "mkB")[0]).toBe("b2")
+  })
+})
+
+describe("getCachedPartialIds — manifest cap", () => {
+  it("advertises at most CACHED_MANIFEST_CAP entries, newest registrations first", () => {
+    // A chunk-world-sized page: far more partons than the manifest
+    // admits. The manifest must stay bounded (it travels in the
+    // request URL) and prefer the most recently registered ids —
+    // anything older just re-renders server-side on its next visit.
+    const total = CACHED_MANIFEST_CAP + 50
+    for (let i = 0; i < total; i++) {
+      registerClientPartial(`chunk-${i}`, "mk", `fp${i}`)
+    }
+    const out = getCachedPartialIds()
+    expect(out.length).toBe(CACHED_MANIFEST_CAP)
+    // Newest first: the last-registered id leads the manifest…
+    expect(out[0]).toBe(`chunk-${total - 1}:mk:fp${total - 1}`)
+    // …and the oldest ids fell off entirely.
+    expect(out.some((t) => t.startsWith("chunk-0:"))).toBe(false)
+  })
+
+  it("re-registration refreshes an id's recency", () => {
+    for (let i = 0; i < CACHED_MANIFEST_CAP + 10; i++) {
+      registerClientPartial(`p-${i}`, "mk", `fp${i}`)
+    }
+    // p-0 aged out; registering it again puts it back at the front.
+    registerClientPartial("p-0", "mk", "fp0b")
+    const out = getCachedPartialIds()
+    expect(out[0]).toBe("p-0:mk:fp0")
+    expect(out[1]).toBe("p-0:mk:fp0b")
   })
 })
