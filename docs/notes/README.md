@@ -10,6 +10,7 @@ and stable lives in `../reference/` (user-facing) or `../internals/`
 | File | What it covers |
 |---|---|
 | [`IDEAS.md`](./IDEAS.md) | Concrete framework backlog — chapters describing what to build. Open items only; resolved/shipped items are deleted, or moved to `../archive/` when the design exploration is worth preserving. |
+| [`match-request-arc.md`](./match-request-arc.md) | Landing checklist for the match-gates / schema+actions-deletion arc (branch `match-request`) — one probabilistic search-overlay remount regression blocks the merge; repro + suspects inside. |
 | [`user-ideas.md`](./user-ideas.md) | Wider exploratory directions — "what if we…" / "should we investigate…" items, distinct from `IDEAS.md`'s concrete backlog. |
 | [`replicated-state.md`](./replicated-state.md) | Live design doc translating Unreal's actor replication model into parton primitives — authority taxonomy, RepNotify, useReplayableOptimistic. Forward-looking; cells cover the narrow "single typed value" lane today. |
 | [`remote-frame-design.md`](./remote-frame-design.md) | Live design doc for `<RemoteFrame>` v2+ — open questions for permissions / config / auth / batching / sessions / hydration beyond what's shipped today. |
