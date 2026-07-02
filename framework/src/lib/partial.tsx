@@ -155,6 +155,7 @@ export type PartialOptions<V> = Pick<
   | "defer"
   | "fallback"
   | "keepalive"
+  | "fpSkip"
   | "selector"
   | "capabilityType"
 >
@@ -190,6 +191,11 @@ interface InternalSpecConfig<V> {
    *  on cross-route nav (heavy video / iframe DOM, partials whose
    *  state is meaningful only while visible, debug-only specs). */
   keepalive?: boolean
+  /** When `false`, this spec is never served from the client's cache
+   *  on a fingerprint match — every request renders it fresh. For
+   *  always-authoritative surfaces (the CMS editor chrome) whose
+   *  output must track the request exactly. Default `true`. */
+  fpSkip?: boolean
   /** Capability schema name for this spec — referenced by the
    *  `/__remote/manifest.json` endpoint so the `parton add` CLI can
    *  generate typed bindings (`remote<TypeName>({…})`). The string
@@ -1514,6 +1520,7 @@ function createSpecComponent<V>(
     const snapshotExpiresAt = priorSnap ? effectiveExpiresAt(priorSnap) : undefined
     const snapshotExpired = snapshotExpiresAt !== undefined && snapshotExpiresAt <= Date.now()
     const shouldSkip =
+      opts.fpSkip !== false &&
       state != null &&
       !isExplicit &&
       fingerprintMatches &&

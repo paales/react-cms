@@ -453,7 +453,10 @@ export const EditorTreePartial = parton(
       </div>
     )
   },
-  { selector: "#cms-edit-tree" },
+  { selector: "#cms-edit-tree",
+    // Editor chrome is always authoritative — never served from the
+    // client's fp cache (its links embed the full URL).
+    fpSkip: false },
 )
 
 // ─── Settings pane (left panel — Settings tab) ─────────────────────────
@@ -638,7 +641,10 @@ export const EditorFieldPanelPartial = parton(
       </div>
     )
   },
-  { selector: "#cms-edit-fields" },
+  { selector: "#cms-edit-fields",
+    // Editor chrome is always authoritative — never served from the
+    // client's fp cache (its links embed the full URL).
+    fpSkip: false },
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -1304,6 +1310,9 @@ export const EditorShell = parton(
   {
     // Explicit selector keeps the spec addressable (fp on the wire).
     selector: "#editor-shell",
+    // Editor chrome is always authoritative — never served from the
+    // client's fp cache (its links embed the full URL).
+    fpSkip: false,
   },
 )
 
