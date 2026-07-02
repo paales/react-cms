@@ -102,10 +102,9 @@ const Clock = parton(
   { selector: "#clock", fallback: <div>Loading clock…</div> },
 )
 
-// Non-addressable (no selector/match/tracked reads) — re-renders inline
-// with its parent, which is enough to show the live render count. (It used
-// a `vary: () => ({tick: Date.now()})` to force a fresh fp every render;
-// inline, "always render" is just "be non-addressable".)
+// Non-addressable (no selector/match/schema) — re-renders inline with
+// its parent, which is enough to show the live render count: a
+// non-addressable spec has no fp on the wire, so nothing ever skips it.
 const Footer = parton(function CacheDemoFooterRender() {
   return (
     <div className="mt-8 text-xs text-muted-foreground">

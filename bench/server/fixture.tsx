@@ -5,7 +5,7 @@
  * of `partons` addressable leaf partons, `liveCells` of which read a
  * DISTINCT inline `localCell` (so bumping cell i shifts only leaf i's
  * fingerprint), nested `depth` levels deep under wrapper partons. The
- * wrappers carry a `vary` so they're addressable and fp-skippable, and
+ * wrappers carry a `selector` so they're addressable and fp-skippable, and
  * the descendant-fold re-instantiates a wrapper subtree only when one of
  * its descendants' invalidation timestamps moves.
  *
@@ -91,7 +91,7 @@ function makeStaticLeaf(i: number) {
 }
 
 /** A wrapper parton — addressable (so fp-skippable) and counted. Its
- *  `vary` is a constant: the descendant-fold (not vary) is what carries
+ *  the own-surface is constant: the descendant-fold is what carries
  *  a descendant's invalidation into the wrapper's fp, so a changed leaf
  *  re-instantiates its wrapper chain while unchanged siblings stay
  *  parked. */
@@ -101,7 +101,7 @@ function makeWrapper(level: number) {
       renderCount++
       return <div data-wrapper={level}>{children}</div>
     },
-    { selector: `#wrap-${level}`, vary: () => ({}) },
+    { selector: `#wrap-${level}` },
   )
 }
 

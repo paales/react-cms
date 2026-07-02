@@ -126,7 +126,7 @@ gives a parton its parent, `current-parton.ts` (`getCurrentParton`, `tag`)
 gives it its OWN identity — the basis for *server-hooks*. It is read-your-own (a
 provider deliberately never sees its own overlay), so it's a direct `parton`
 slot on the rendering frame rather than a context entry, and is not inherited by
-descendant frames. See [`../notes/server-hooks.md`](../notes/server-hooks.md).
+descendant frames. See [`../reference/partial.md`](../reference/partial.md).
 
 Isolated renders that are their own render root — a cache hole, a
 `<RemoteFrame>`, an addressable refetch — have no ambient parent frame; those

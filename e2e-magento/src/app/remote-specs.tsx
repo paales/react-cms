@@ -7,7 +7,7 @@
  * remote endpoint returns 404. `root.tsx` triggers the import.
  */
 
-import { parton, getCapability, type RenderArgs } from "@parton/framework"
+import { parton, getCapability, searchParam, type RenderArgs } from "@parton/framework"
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -48,7 +48,7 @@ export const MagentoGreeting = parton(
  *  content varies on a URL search param (`?step=`). The host
  *  embeds it inside a `<Frame>` so client-side buttons calling
  *  `useNavigation("checkout").navigate(...)` change the frame's
- *  URL, the parton's `vary` picks up the new step, and the
+ *  URL, the parton's tracked `searchParam` read picks up the new step, and the
  *  RemoteFrame re-fetches with new content — all without
  *  reloading the host page or affecting other frames. */
 export const MagentoCheckoutStep = parton(
@@ -88,7 +88,7 @@ export const MagentoCheckoutStep = parton(
   },
   {
     selector: "magento-checkout-step",
-    vary: ({ search: { step = "shipping" } }) => ({ step }),
+    schema: () => ({ step: searchParam("step", "shipping") }),
   },
 )
 
@@ -182,10 +182,7 @@ export const MagentoStockTicker = parton(
       </div>
     )
   },
-  {
-    selector: "magento-stocks",
-    vary: () => ({ tick: Date.now() }),
-  },
+  { selector: "magento-stocks" },
 )
 
 /** A nested addressable parton — rendered INSIDE another parton, so
@@ -225,9 +222,6 @@ export const MagentoCartSummary = parton(
       </div>
     )
   },
-  {
-    selector: "cart-summary",
-    vary: () => ({ tick: Date.now() }),
-  },
+  { selector: "cart-summary" },
 )
 

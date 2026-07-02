@@ -174,7 +174,6 @@ export function block<
     fallback: opts.fallback,
     keepalive: opts.keepalive,
     selector: allLabels,
-    vary: opts.vary as PartialOptions<V & S>["vary"],
   }
 
   const spec = _buildPartial(BlockRender as never, partialOptions)

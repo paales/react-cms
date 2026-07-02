@@ -31,7 +31,7 @@
  *     per keystroke and one segment ships with all updates.
  */
 
-import { parton, type RenderArgs, type ResolvedCell } from "@parton/framework"
+import { expires, parton, time, type RenderArgs, type ResolvedCell } from "@parton/framework"
 import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/components/ui/card"
 import { BumpButton, PushUrlButton } from "../components/streaming-demo-buttons.tsx"
 import { CardForm } from "../components/streaming-demo-card-form.tsx"
@@ -47,20 +47,19 @@ import {
 // ── Live tick partial — time-vary, no cell ──────────────────────────
 
 const LiveTick = parton(
-  function LiveTickRender({ tick }: { tick: number } & RenderArgs) {
+  function LiveTickRender(_: RenderArgs) {
+    // Wake boundary: fresh render every second — the live driver arms
+    // on it, and fp-skip declines a snapshot past it (TTL gate).
+    const clock = time()
+    expires(clock.nextSecond)
+    const tick = Math.floor(clock.now / 1000)
     return (
       <div className="font-mono text-sm" data-testid="streaming-demo-tick">
         Tick #{tick} · server time {new Date().toLocaleTimeString()}
       </div>
     )
   },
-  {
-    selector: "streaming-demo-tick",
-    vary: ({ time }) => ({
-      tick: Math.floor(time.now / 1000),
-      expiresAt: time.nextSecond,
-    }),
-  },
+  { selector: "streaming-demo-tick" },
 )
 
 // ── Bump counter + button — cell-backed, button inline ──────────────

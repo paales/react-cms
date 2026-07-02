@@ -3,16 +3,17 @@
 A **frame** is a server-iframe — a region of the page whose URL
 scope is independent of the window URL. Wrap a subtree in `<Frame
 name initialUrl>` to open a frame scope. Partials inside resolve
-against the frame URL — both `match` and `vary` see the frame-resolved
-request (the framework swaps the request URL via the ambient frame
-chain). So a framed spec routes *and* keys on its frame's URL, not the
-page's: `match: "/cart/open"` placed in a cart frame gates on the
-frame, exactly like `vary` reading the frame's `pathname`.
+against the frame URL — both `match` and the tracked server-hooks see
+the frame-resolved request (the framework swaps the request URL via
+the ambient frame chain). So a framed spec routes *and* keys on its
+frame's URL, not the page's: `match: "/cart/open"` placed in a cart
+frame gates on the frame, exactly like a `pathname()` read tracking
+the frame's URL.
 
 ```tsx
 const CartContent = parton(CartContentRender, {
   selector: "#cart",
-  vary: ({ pathname }) => ({ state: parseCartState(pathname) }),
+  schema: () => ({ state: parseCartState(pathname()) }),
 })
 
 <Frame name="cart" initialUrl="/cart/closed">
@@ -83,7 +84,7 @@ its `<Frame initialUrl>` (both cross Flight as context); after hydration
 the live browser handle takes over. This is what lets a URL-derived view
 — an active link, a breadcrumb — render correctly on the first paint
 with no hydration flash, while its host partial keeps fp-skipping (the
-URL never enters a `vary`).
+URL is never a tracked server read).
 
 ```tsx
 const nav = useNavigation()                       // window scope
@@ -274,13 +275,14 @@ server-side at the failing partial.
 ### Driving a refetch with fresh data
 
 A targeted refetch carries a *signal* — the `selector` — and the
-re-rendered spec sources its request-dependent inputs through `vary` /
-`match` / cells, which re-resolve against the current request. To drive
-a refetch with a fresh value, write it where the spec reads it: the
-page URL (`navigate(url, { selector })`), a frame URL, or a cookie
-(`navigate(url, { cookies, selector })`). A cache-mode refetch derives
-its fingerprint from `vary`'s output, so an input moves the result when
-it flows through one of those scopes. Activators (`useActivate` —
+re-rendered spec sources its request-dependent inputs through its
+tracked reads / `match` / cells, which re-resolve against the current
+request. To drive a refetch with a fresh value, write it where the
+spec reads it: the page URL (`navigate(url, { selector })`), a frame
+URL, or a cookie (`navigate(url, { cookies, selector })`). A
+cache-mode refetch derives its fingerprint from the recorded read set
+re-evaluated at the current request, so an input moves the result
+when it flows through one of those scopes. Activators (`useActivate` —
 `<WhenVisible>`, `<WhenMounted>`, manual buttons) are triggers that
 fire `reload({ selector })`.
 
@@ -289,7 +291,7 @@ fire `reload({ selector })`.
 | Option | Effect |
 |---|---|
 | `streaming: true` | Progressive reveal — commit without `startTransition`, so Suspense fallbacks paint and Flight chunks land per-row. Default is `false` (transition-wrapped, atomic swap, no fallback flash). A CLIENT commit-mode switch only — it does **not** hold the connection open. Not to be confused with the `streaming` milestone in `progress` — the option is a behavior switch, the milestone is an event marker. |
-| `live: true` | Open the reload as a live subscription — the server holds the connection open (up to its keepalive) and pushes a fresh segment on every route-relevant bump / `expiresAt` boundary. `reload`-only; `<LivePageHeartbeat>` is the canonical caller. Orthogonal to `streaming` (commit mode): a plain `reload({selector, streaming: true})` stays one-shot. Pair with a `signal` so navigating away tears the long-poll down. |
+| `live: true` | Open the reload as a live subscription — the server holds the connection open (up to its keepalive) and pushes a fresh segment on every route-relevant bump / `expires()` boundary. `reload`-only; `<LivePageHeartbeat>` is the canonical caller. Orthogonal to `streaming` (commit mode): a plain `reload({selector, streaming: true})` stays one-shot. Pair with a `signal` so navigating away tears the long-poll down. |
 | `silent: true` | Update the URL without firing any refetch. Wins over `selector` if both are set. Ignored on frame handles. `navigate`-only. |
 | `props` | See above. |
 | `cookies` | Write client-side cookies before the refetch fires. `navigate`-only — `reload` does not accept it. |

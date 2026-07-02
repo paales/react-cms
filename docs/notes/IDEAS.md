@@ -22,10 +22,10 @@ backlog item before multi-team adoption.
 
 ### Pattern-based cache invalidation
 
-Today, cache entries are invalidated by spec id or by tag. The `vary`
+Today, cache entries are invalidated by spec id or by tag. The dep
 result that produced each cache key is stored alongside, so a third
 invalidation axis is mechanically available: "drop every cache entry
-whose `vary` result contains `cookie:user_id=42`" (or
+whose dep record contains `cookie:user_id=42`" (or
 `pathname:/p/abc`, etc.). Useful when a session-level change (logout,
 locale switch, A/B bucket flip) needs to fan out across every spec
 that depended on it without the caller knowing each affected partial
@@ -34,16 +34,15 @@ id.
 Open questions:
 - **Storage shape.** Vary results are hashed into the cache key, not
   stored as queryable fields. Either keep a side-index
-  `(key → varyResult)` to walk, or accept O(n) scan over cache
+  `(key → depsKey)` to walk, or accept O(n) scan over cache
   entries on invalidation (probably fine for sub-10k entries).
 - **Surface.** Extend `getServerNavigation().reload(...)` to accept
   a `match: { cookie: "user_id", value: "42" }` shape alongside the
   current `selector` form. Same call site, additional dimension.
 - **Cross-key dimensions.** Matching on `cookie` keys assumes the
-  vary result encodes them in a stable shape. Today `vary` returns
-  whatever the author writes; folding the destructured scope keys
-  (`{cookies: {user_id: "42"}}`) into the stored vary result would
-  give the matcher something deterministic to query.
+  dep record encodes them in a stable shape. Dep keys are already
+  deterministic (`cookie:user_id`), so the matcher has a stable
+  surface to query.
 
 ### Cross-tab sync via BroadcastChannel
 
@@ -64,7 +63,7 @@ Cells partially mitigate via the value-fold (re-renders that produce identical b
 Possible directions:
 - **Syntactic sugar.** `reload({ selector: "cart", scope: { cart_id: cartId } })` as a readable alternative to query-string interpolation. Same semantics; easier to read for multi-key cases.
 - **Auto-scope from declared read keys.** If the framework tracks which `readCookie` / `readHeader` calls happened during the action body, fold those into default constraints. Small instrumentation cost, large ergonomic win — the action says what it touched without naming each axis.
-- **Dev warning on bare bumps.** Warn when a `reload({selector})` would match >1 distinct vary tuple in the current registry snapshot. Catches the footgun in development; ships nothing to production.
+- **Dev warning on bare bumps.** Warn when a `reload({selector})` would match >1 distinct constraint tuple in the current registry snapshot. Catches the footgun in development; ships nothing to production.
 
 Not urgent: the cart action is the only real per-user mutation in-tree today; CMS draft is process-global; cells absorb the bare-bump cost via fp-skip. Real pressure arrives when a multi-user app ships several per-user mutating actions and the upstream round-trips start showing in flame graphs.
 
@@ -163,10 +162,10 @@ Open questions:
   framework needs to either reserve the original height or accept
   reflow. The current `<WhenVisible>` already deals with this on
   activate; the deactivation side needs the mirror.
-- **State on reactivation.** Does deactivation re-run `vary` on the
+- **State on reactivation.** Does deactivation re-read the deps on the
   next activation? If yes, infinite-scroll back-up re-fetches stale
   rows; if no, stale snapshots accumulate. Probably: deactivation
-  freezes the snapshot, reactivation runs `vary` fresh.
+  freezes the snapshot, reactivation re-reads fresh.
 
 ### Speculation Rules API — cross-document prefetch complement
 

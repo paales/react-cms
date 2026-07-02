@@ -110,7 +110,7 @@ The framework resolves `palette` against the request, passes
 ### 2. Parton-scoped cell, declared inline in schema
 
 For cells owned by a specific parton, partitioned by the parton's
-vary output:
+match params:
 
 ```tsx
 const ProductPage = parton(
@@ -119,7 +119,6 @@ const ProductPage = parton(
   },
   {
     match: "/product/:id",
-    vary: ({ params }) => ({ productId: params.id }),
     schema: ({ localCell }) => ({
       notes: localCell({ shape: "string", initial: "" }),
     }),
@@ -128,8 +127,9 @@ const ProductPage = parton(
 ```
 
 Wire id auto-derives as `<partonId>/<schemaKey>` (e.g.
-`product-page/notes`). Partition is the parton's vary output by
-default; narrow via `vary: (partonVary) => subset` on the descriptor.
+`product-page/notes`). Partition is the parton's match params by
+default (here `{ id }`); narrow via `vary: (params) => subset` on
+the descriptor.
 
 ### 3. Placement-bound cell, passed as a JSX prop
 
@@ -356,7 +356,7 @@ Flight-serializable, callable from client components.
 
 The cell-write path emits **partition-scoped selectors**:
 `cell:<id>?<key>=<value>&<key>=<value>`. Only partons whose effective
-constraint surface (vary output ∪ bound args) contains a matching
+constraint surface (match params ∪ bound args) contains a matching
 subset get invalidated.
 
 ## Reading patterns
@@ -367,9 +367,9 @@ Schema callbacks return a record of cell handles / scoped
 descriptors / `BoundCell`s. The framework resolves each entry into a
 `ResolvedCell<T>` and passes it to Render via the prop bag.
 
-The callback's **2nd argument is the parton's `vary` output** — so one
-parton can derive a partition from the request and bind+read its own
-cell, no binder/reader split:
+**Tracked hooks work inside the callback** — so one parton can derive
+a partition from the request and bind+read its own cell in one place,
+no binder/reader split:
 
 ```ts
 const Cart = parton(
@@ -381,12 +381,10 @@ const Cart = parton(
   },
   {
     match: "/cart",
-    // cart_id cookie → the cart cell's partition.
-    vary: ({ cookies }) => ({ cartId: cookies.cart_id ?? "" }),
-    // 2nd arg is the vary output. The options generic widens it to
-    // `object` (TS can't thread a sibling `vary`'s return into this
-    // position), so narrow with a cast to bind `.with`.
-    schema: (_f, vary) => ({ cart: cartCell.with(vary as { cartId: string }) }),
+    // cart_id cookie → the cart cell's partition. `cookie()` is a
+    // tracked read, so the cookie folds into the fp AND binds the
+    // cell in the same breath.
+    schema: () => ({ cart: cartCell.with({ cartId: cookie("cart_id") ?? "" }) }),
   },
 )
 ```
@@ -413,7 +411,7 @@ framework-tracked, pass it as its own top-level prop.
 `peek()` is a sync server-side read of stored state. The partition is
 `args` when given, otherwise derived from the cell's own `vary`
 against the active request. Returns `defaultValue` on miss. Does NOT
-trigger the loader. Useful inside actions or vary callbacks.
+trigger the loader. Useful inside actions.
 
 ```ts
 const showAdvanced = palette.peek() === "dark"
@@ -421,25 +419,26 @@ const draft = notesCell.peek({ productId })   // explicit partition
 ```
 
 Scoped cells (schema / inline `localCell`) partition storage by the
-**owning parton's vary output**, which `peek` can't re-derive without
+**owning parton's match params**, which `peek` can't re-derive without
 a render. Their no-arg `peek()` reads the `{}` partition — the slot a
-vary-less, match-param-less parton resolves — so reading a
-parton-partitioned slot requires naming it: `peek(partitionArgs)`.
+match-param-less parton resolves — so reading a parton-partitioned
+slot requires naming it: `peek(partitionArgs)`.
 
 ## Resolution order per partial render
 
 1. **match phase** — URLPattern gates rendering.
-2. **vary phase** — sync callback against request scope; output participates in fp.
-3. **schema phase** — for each cell handle:
+2. **schema phase** — tracked hooks record onto the dep set (they fold
+   into THIS render's fp); a `park()` exits to the parked keepalive.
+   For each cell entry:
    - Module cell: run `cell.vary(scope)` → args; resolve via storage (or loader on miss); build `ResolvedCell`.
-   - Scoped descriptor: finalize → run descriptor's vary against partonVary → args; resolve.
+   - Scoped descriptor: finalize → run descriptor's `vary` over the parton's match params → args; resolve.
    - Bound cell: use baked args; resolve.
    - Stamp `cell:<id>` onto labels; merge args into constraint surface.
-4. **props phase** — walk top-level JSX props for Cell / BoundCell:
+3. **props phase** — walk top-level JSX props for Cell / BoundCell:
    - Resolve each; replace prop with `ResolvedCell`.
    - Stamp label; merge args.
-5. **fp** = `id|matchKey|vary|schema=<cellHashes>|props|inv`. `inv` folds the latest `queryMatchingTs(labels, vary ∪ args)` — partition-scoped invalidations move fp only for matching placements.
-6. **Render** runs with the merged prop bag.
+4. **fp** = `id|matchKey|schema=<cellHashes>|props|inv|deps`. `inv` folds the latest `queryMatchingTs(labels, matchParams ∪ args)` — partition-scoped invalidations move fp only for matching placements. `deps` re-reads the prior render's recorded dep keys at the current request (store-and-reread).
+5. **Render** runs with the merged prop bag; render-body tracked reads record for the NEXT fp.
 
 ## Mutation patterns
 
@@ -650,14 +649,15 @@ What's NOT a cell:
 
 ## Composition with existing primitives
 
-- **vary** — unchanged. Pure request-dimensions on parton specs.
-  Cells have their own `vary` callback (same shape, different role —
-  storage partition key vs parton fp).
+- **tracked reads** — unchanged. A parton's request dimensions are
+  its tracked hook reads (fp surface). Cells have their own `vary`
+  callback — a different role: it derives the storage partition key
+  from the request scope, not the parton's fingerprint.
 - **selector** — cells auto-stamp `cell:<id>` on the parton's
   labels. Partition-scoped writes emit `cell:<id>?<args>`.
 - **invalidation registry** — `cell.set` calls
   `refreshSelector("cell:" + id + "?" + args)` inside a transaction;
-  fp folding reuses `queryMatchingTs(labels, varyInputs ∪ boundArgs)`.
+  fp folding reuses `queryMatchingTs(labels, matchParams ∪ boundArgs)`.
 
 ## Related
 

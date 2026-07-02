@@ -10,7 +10,7 @@
  * This is increment 1 (read + client-write): single-slot partition; the
  * server-action cell enumeration (so an `actions` handler can resolve an
  * inline cell without a render) and request-derived partitioning are the
- * follow-ups — see docs/notes/server-hooks.md §3.
+ * follow-ups — see docs/reference/cells.md.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest"

@@ -1,3 +1,6 @@
+> Superseded 2026-07-02 by [docs/reference/partial.md](../reference/partial.md) — the
+> `vary` option is removed; tracked reads are the shipped design.
+
 # Auto-tracked vary — abolishing the declared `vary` callback
 
 Status: **design + spike**. The decision is made: tracked reads

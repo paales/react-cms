@@ -80,7 +80,7 @@ describe("inline-cell action enumeration (increment 2)", () => {
 
     const req = new Request("http://t/x")
     await runWithRequestAsync(req, async () => {
-      await __partonAction("inline-action-write/save", {}, {}, {})
+      await __partonAction("inline-action-write/save", {}, {})
     })
 
     // Handler read the seeded value (4) and wrote 5 — resolved by key,
@@ -106,7 +106,7 @@ describe("inline-cell action enumeration (increment 2)", () => {
 
     const req = new Request("http://t/x")
     await runWithRequestAsync(req, async () => {
-      await __partonAction("inline-action-autowrite/save", {}, {}, { notes: "hello" })
+      await __partonAction("inline-action-autowrite/save", {}, { notes: "hello" })
     })
 
     expect(readCell("inline-action-autowrite/notes", {})).toBe("hello")
@@ -135,7 +135,7 @@ describe("inline-cell action enumeration (increment 2)", () => {
     const req = new Request("http://t/x")
     await expect(
       runWithRequestAsync(req, async () => {
-        await __partonAction("inline-action-rollback/save", {}, {}, {})
+        await __partonAction("inline-action-rollback/save", {}, {})
       }),
     ).rejects.toThrow(/nope/)
 
@@ -173,13 +173,13 @@ describe("inline-cell action enumeration (increment 2)", () => {
     await runWithRequestAsync(
       new Request("http://t/x", { headers: { cookie: "__frame_sid=alice" } }),
       async () => {
-        await __partonAction("inline-session-cell/save", {}, {}, { text: "alice-draft" })
+        await __partonAction("inline-session-cell/save", {}, { text: "alice-draft" })
       },
     )
     await runWithRequestAsync(
       new Request("http://t/x", { headers: { cookie: "__frame_sid=bob" } }),
       async () => {
-        await __partonAction("inline-session-cell/save", {}, {}, { text: "bob-draft" })
+        await __partonAction("inline-session-cell/save", {}, { text: "bob-draft" })
       },
     )
 

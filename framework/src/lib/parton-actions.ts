@@ -3,7 +3,7 @@
  *
  * An action is a server function that:
  *   - Receives the same `scope` prop bag as the parton's Render (resolved
- *     schema + vary output + parent).
+ *     schema + match params).
  *   - Receives caller-supplied `args`, auto-typed as `Partial<{cellName:
  *     cellType}>` from the schema's cells.
  *   - Runs inside `runInvalidationTransaction`, so its writes (cell.set
@@ -37,7 +37,7 @@
  * Action handler. The framework calls this with `(scope, args)` after
  * resolving the parton's vary + schema for the current request.
  *
- * `scope` shape: `vary output + resolved schema + {parent}`. Same prop
+ * `scope` shape: `match params + resolved schema`. Same prop
  * bag Render receives, minus `children`.
  *
  * `args` shape: caller-supplied. The framework iterates `args` keys

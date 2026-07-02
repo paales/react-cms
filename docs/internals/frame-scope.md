@@ -2,8 +2,9 @@
 
 A parton reads its frame chain from server context — the ambient
 parton's `frameChain` (see [`server-context.md`](./server-context.md)).
-It opens no frame of its own; `<Frame>` is what extends the chain. Its
-`vary` callback receives the frame-resolved `Request` as an argument.
+It opens no frame of its own; `<Frame>` is what extends the chain. The
+tracked server-hooks read from the frame-resolved `Request`, so a
+framed spec keys on its frame's URL.
 
 ```ts
 // inside createSpecComponent (framework/src/lib/partial.tsx):
@@ -26,8 +27,8 @@ sibling spec's body can overwrite the cell between an ancestor's
 setup and its descendant's body. The frame chain rides server context
 instead — threaded through the parton ALS frame — which survives
 `await` and isolates siblings, so the chain propagates without any
-per-request cell drift. `vary` runs once per spec invocation with the resolved
-request as an argument.
+per-request cell drift. Each spec invocation resolves its request
+once; the tracked hooks read from that resolved request.
 
 ## Wire protocol
 

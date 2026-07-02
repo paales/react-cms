@@ -238,7 +238,7 @@ const RemoteCheckoutFrame = parton(
   },
   {
     selector: "remote-checkout-frame",
-    vary: ({ search: { step = "shipping" } }) => ({ step }),
+    schema: () => ({ step: searchParam("step", "shipping") }),
   },
 )
 ```
@@ -247,12 +247,14 @@ How it composes:
 
 1. `<Frame>` opens a per-name URL scope (session-backed; survives
    reloads; per-tab shared).
-2. The wrapper parton's `vary` reads `?step=` from the frame URL.
+2. The wrapper parton's `schema` reads `?step=` from the frame URL —
+   `searchParam()` is a tracked read against the frame-resolved
+   request.
 3. The parton threads `step` into the binding's `searchParams`.
 4. Client buttons inside the frame call
    `useNavigation("checkout").navigate("/?step=…")`. The frame
-   URL updates; the wrapper parton re-runs vary; the binding
-   re-fetches.
+   URL updates; the tracked read moves the wrapper's fingerprint;
+   the binding re-fetches.
 5. The page URL is unaffected; other frames are unaffected.
 
 ## Security note: credentials omit

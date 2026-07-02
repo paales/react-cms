@@ -60,7 +60,7 @@ describe("action dispatch — stamped CurrentParton", () => {
   it("schema hooks read the ACTION's request (caller's cookies), params come from the ref", async () => {
     const { result } = await runWithRequestAsync(
       new Request("http://t/__action", { headers: { cookie: "who=paul" } }),
-      async () => await __partonAction("stamp-echo/echo", {}, { id: "42" }, {}),
+      async () => await __partonAction("stamp-echo/echo", { id: "42" }, {}),
     )
     expect(result).toBe("paul:42")
   })
@@ -69,7 +69,7 @@ describe("action dispatch — stamped CurrentParton", () => {
     const dispatch = async (who: string) => {
       const { result } = await runWithRequestAsync(
         new Request("http://t/__action", { headers: { cookie: `who=${who}` } }),
-        async () => await __partonAction("stamp-echo/echo", {}, {}, {}),
+        async () => await __partonAction("stamp-echo/echo", {}, {}),
       )
       return result
     }
@@ -80,13 +80,13 @@ describe("action dispatch — stamped CurrentParton", () => {
   it("a schema that parks at dispatch time rejects the action", async () => {
     await expect(
       runWithRequestAsync(new Request("http://t/__action"), async () =>
-        __partonAction("stamp-parked/save", {}, {}, {}),
+        __partonAction("stamp-parked/save", {}, {}),
       ),
     ).rejects.toThrow(/parked parton cannot handle actions/)
     // Same action with the gate open dispatches fine.
     const { result } = await runWithRequestAsync(
       new Request("http://t/__action", { headers: { cookie: "open=1" } }),
-      async () => await __partonAction("stamp-parked/save", {}, {}, {}),
+      async () => await __partonAction("stamp-parked/save", {}, {}),
     )
     expect(result).toBe("saved")
   })

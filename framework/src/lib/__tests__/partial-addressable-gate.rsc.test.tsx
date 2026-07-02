@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from "vitest"
 import { parton, ROOT, PartialRoot, type RenderArgs } from "../partial.tsx"
+import { cookie, searchParam } from "../server-hooks.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { clearRegistry } from "../partial-registry.ts"
 
@@ -126,15 +127,15 @@ describe("addressable gate — wire fp emission", () => {
     expect(fps.get("opt-in-child")).toMatch(/^[0-9a-f]{16}$/)
   })
 
-  it("an explicit vary flips the gate on — the spec emits a fingerprint", async () => {
+  it("an explicit schema flips the gate on — the spec emits a fingerprint", async () => {
     clearRegistry("all")
 
-    // No selector, no match, but `vary` is declared. Author opted in.
+    // No selector, no match, but `schema` is declared. Author opted in.
     const VaryChild = parton(
-      function VaryOptInChildRender(_: RenderArgs) {
-        return <span data-testid="vary-opt-in-body">child</span>
+      function VaryOptInChildRender({ v }: { v: string } & RenderArgs) {
+        return <span data-testid="vary-opt-in-body">{`child-${v}`}</span>
       },
-      { vary: ({ search: { v = "x" } }) => ({ v }) },
+      { schema: () => ({ v: searchParam("v", "x") }) },
     )
 
     const Parent = parton(
@@ -158,22 +159,20 @@ describe("addressable gate — wire fp emission", () => {
     expect(fps.get("vary-opt-in-child")).toMatch(/^[0-9a-f]{16}$/)
   })
 
-  it("the parent's fingerprint moves when a non-addressable child's vary would move (fold safety)", async () => {
+  it("the parent's fingerprint moves when a non-addressable child's tracked read would move (fold safety)", async () => {
     clearRegistry("all")
 
-    // Child has its own vary on a cookie. Child is still
-    // addressable here (vary alone trips the gate), but the
-    // important assertion is that the PARENT's fp picks up the
-    // child's vary contribution through the descendant fold.
-    // Without the fold, fp-skipping the parent would serve a
-    // stale child body when only the cookie changed.
+    // Child reads a cookie via its schema. Child is still addressable
+    // here (schema alone trips the gate), but the important assertion
+    // is that the PARENT's fp picks up the child's dep contribution
+    // through the descendant fold. Without the fold, fp-skipping the
+    // parent would serve a stale child body when only the cookie
+    // changed.
     const FoldChild = parton(
       function FoldChildRender({ flag }: { flag: string } & RenderArgs) {
         return <span data-testid="fold-body">flag={flag}</span>
       },
-      {
-        vary: ({ cookies: { flag = "off" } }) => ({ flag }),
-      },
+      { schema: () => ({ flag: cookie("flag") ?? "off" }) },
     )
 
     const Parent = parton(

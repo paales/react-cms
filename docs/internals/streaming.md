@@ -1,7 +1,7 @@
 # Streaming + live updates
 
 How the framework's live-update path is shaped — what the segment
-driver does, what `expiresAt` in `vary` means, and how the opt-in
+driver does, what the `expires()` wake hint means, and how the opt-in
 heartbeat keeps a streaming connection alive.
 
 ## The render loop is top-down by design
@@ -10,7 +10,7 @@ Every server render walks the full route tree top-down. The server
 re-renders **the whole world** for every segment of a streaming
 response, and the fp-skip cascade does the pruning:
 
-- Each parton computes `fp = hash(id|matchKey|vary|schema|props|inv|desc)`.
+- Each parton computes `fp = hash(id|matchKey|schema|props|inv|deps|desc)`.
 - If the client sent that fp in `?cached=`, the parton emits an
   `<i hidden data-partial-id>` placeholder and never runs its
   Render body. Anything inside the parton is collapsed to one
@@ -37,8 +37,8 @@ any selector-routing logic that could replace it.
 
 ## How a live update lands
 
-1. **A parton declares an `expiresAt` in `vary`** (time-based) or
-   **reads a cell via `schema`** (write-driven via
+1. **A parton declares a freshness boundary via `expires()`**
+   (time-based) or **reads a cell via `schema`** (write-driven via
    `refreshSelector("cell:<id>")`).
 2. **The app's browser entry mounts `<LivePageHeartbeat />`**
    near the React root. After hydration it holds a `?live=1`
@@ -49,21 +49,22 @@ any selector-routing logic that could replace it.
    it races three arms:
    - `_waitForNextBump` — a `refreshSelector` lands (CRUD writes,
      `cell.set`, server-action invalidations) **that is relevant to
-     this route**: it matches a rendered partial's labels + vary/args
+     this route**: it matches a rendered partial's labels +
+     constraint args (match params ∪ bound cell args)
      (`_routeHasMatchingBump`, see `segment-relevance.ts`). A bump for
      a different partition (another viewer's `cartId`, another
      session's cell) re-arms the wait WITHOUT re-rendering — so one
      viewer's write doesn't wake every open stream into a fp-skip
      pass. The wake itself is global (`_waitForNextBump` resolves on
      any bump); the relevance check is what gates the re-render.
-   - `expiresAt` arm — the earliest `expiresAt` among the route's
-     snapshots elapses.
+   - Expiry arm — the earliest `expires()` boundary among the
+     route's snapshots (read through `effectiveExpiresAt`) elapses.
    - Idle timeout (~20s) — the connection closes cleanly. The
      heartbeat's next interval tick (~5s default) reopens.
-4. **On a relevant bump or an `expiresAt` boundary, the driver
+4. **On a relevant bump or an expiry boundary, the driver
    renders per-parton lanes.** The relevance check resolves WHICH
    snapshot ids the wake touched (`_routeMatchingBumpIds` for bumps;
-   the due `expiresAt` set for time wakes), and each touched parton
+   the due-expiry set for time wakes), and each touched parton
    renders in isolation through the snapshot-reconstruction path a
    `?partials=` refetch uses (`partialFromSnapshot` →
    `renderToReadableStream`). Each render's bytes frame as an
@@ -90,8 +91,8 @@ any selector-routing logic that could replace it.
    fresh subtree in place. No whole-payload `setPayload` is involved,
    so a lane commit can never remount the page shell.
 
-Relevance false-negatives (a dependency the label/vary surface doesn't
-capture) degrade to a MISSED update on the lane path, where the old
+Relevance false-negatives (a dependency the label/constraint surface
+doesn't capture) degrade to a MISSED update on the lane path, where the old
 whole-tree path degraded to a wasted re-render. The backstop is the
 keepalive cycle: the connection closes after ~20s idle, the
 heartbeat reopens it, and a reopened connection's first segment is
@@ -130,7 +131,7 @@ subscription. There are two URL flags, and conflating them is a bug:
 - **`?live=1`** (`reload({live: true})`) is the SERVER hold-open
   subscription. The segment driver parks the connection for the
   keepalive and pushes a fresh segment on every route-relevant bump /
-  `expiresAt` boundary. Only `<LivePageHeartbeat>` sets it.
+  `expires()` boundary. Only `<LivePageHeartbeat>` sets it.
 
 So the segment driver holds a response open iff `?live=1` **or** a
 render called `markConnectionLive()`. A targeted
@@ -143,7 +144,7 @@ keepalive — a one-shot refetch that held open would pin any
 
 The two subscription kinds emit differently after their first
 segment. A `?live=1` subscription switches to per-parton lanes (its
-wakes are relevance-matched bumps / `expiresAt` boundaries, which
+wakes are relevance-matched bumps / `expires()` boundaries, which
 name the partons to render). A `markConnectionLive()` subscription
 (the chat's `ChunkSlot`) stays whole-tree: its next content comes
 from the render itself resolving a producer await, not from a bump,
@@ -232,21 +233,21 @@ Behaviour:
   deferred parts) and tear the visible page through the error boundary
   (the "URL search breaks the underlying page" bug).
 - **No live-state gating.** The heartbeat is on or off at the app
-  level, not per-page. A page with no `expiresAt` / cells still
+  level, not per-page. A page with no `expires()` / cells still
   pays the cost of one open streaming connection — the fp-skip
   cascade makes that ~free, but `page.waitForLoadState("networkidle")`
   in tests won't settle.
 - **Pinned to its open-time cookies.** The stream renders against the
-  request that opened it. An action that changes a `vary`-input cookie
-  (e.g. `cart_id` on a first add to an empty cart) is NOT reflected by
-  the already-open stream — it keeps rendering the old cookie's view,
-  which can clobber a fresh action-response update on the client. The
-  action POST response is authoritative for these (its render sees the
-  new cookie via the `setCookie` overlay); the heartbeat's stale render
-  is the hazard. Pages whose action mutates a `vary` cookie rely on the
-  action response and can opt the stream out (below); reopening the
-  stream on a `vary`-cookie change would remove the hazard at the
-  source.
+  request that opened it. An action that changes a cookie some
+  parton's `cookie()` read depends on (e.g. `cart_id` on a first add
+  to an empty cart) is NOT reflected by the already-open stream — it
+  keeps rendering the old cookie's view, which can clobber a fresh
+  action-response update on the client. The action POST response is
+  authoritative for these (its render sees the new cookie via the
+  `setCookie` overlay); the heartbeat's stale render is the hazard.
+  Pages whose action mutates a tracked cookie rely on the action
+  response and can opt the stream out (below); reopening the stream
+  on a tracked-cookie change would remove the hazard at the source.
 
 What this means for tests: sync on a specific selector / element /
 DOM state, not on `networkidle`. The latter assumes "all requests
@@ -314,14 +315,14 @@ connection. Lanes regions are always safe to abort immediately: a
 torn lane rejects only its own un-committed decode, never a committed
 tree, so the deferred-abort gate applies only to payload segments.
 
-## `expiresAt` vs `cache`
+## `expires()` vs `cache`
 
 Two separate concepts:
 
-- **`expiresAt` in `vary`** declares when a partial's fp becomes
-  stale. The segment driver's expiresAt arm races against the
-  earliest expiresAt across the route's snapshots, so a clock
-  display with `expiresAt: time.nextSecond` ticks once a second on
+- **The `expires()` hook** declares when a partial's fp becomes
+  stale. The segment driver's expiry arm races against the
+  earliest boundary across the route's snapshots, so a clock
+  display with `expires(time().nextSecond)` ticks once a second on
   the open streaming connection. **No byte storage** — each
   re-render re-executes the partial's render body.
 
@@ -329,16 +330,17 @@ Two separate concepts:
   declares that the rendered Flight bytes should be stored and
   replayed on hit. Distinct on-disk/in-memory footprint; cache
   hits skip Render entirely. Today's TTL comes from `maxAge`;
-  long-term the boolean form will draw TTL from vary's `expiresAt`.
+  long-term the boolean form will draw TTL from the `expires()`
+  boundary.
 
 The two are independent. Most partons declare one or the other,
-not both. The streaming-demo's `LiveTick` uses `expiresAt`
+not both. The streaming-demo's `LiveTick` uses `expires()`
 without `cache`; the magento product-list uses `cache: { maxAge }`
-without `expiresAt`. Where both are useful (a cached product card
+without `expires()`. Where both are useful (a cached product card
 that occasionally refreshes), use whichever TTL matches your
 re-execution policy — but a "different TTL between cache and
-expiresAt" combination has no useful interpretation (the cache
-short-circuits the re-execution that expiresAt would have
+`expires()`" combination has no useful interpretation (the cache
+short-circuits the re-execution that `expires()` would have
 triggered).
 
 ## GraphQL `@defer` (incremental delivery)

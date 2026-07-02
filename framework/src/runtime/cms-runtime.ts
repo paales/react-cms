@@ -24,7 +24,7 @@ import { matchRoutePattern } from "./context.ts"
 import { getCmsStorage, type LoadedStore } from "./cms-storage.ts"
 import { CMS_DRAFT_COOKIE, EDITOR_COOKIE } from "./cms-constants.ts"
 import { getSpecById } from "../lib/spec-catalog.ts"
-import { _registerDepKind } from "../lib/server-hooks.ts"
+import { registerDepKind } from "../lib/server-hooks.ts"
 
 export { CMS_DRAFT_COOKIE, EDITOR_COOKIE }
 
@@ -469,7 +469,7 @@ export function cmsFingerprintContribution(id: string, request: Request): string
 // set at render; every fold re-reads the CURRENT hash here (committed
 // store + the requester's draft overlay), so a CMS edit moves the fp
 // with no lag and per-author drafts fold per request.
-_registerDepKind("cms", (contentKey, request) =>
+registerDepKind("cms", (contentKey, request) =>
   cmsFingerprintContribution(contentKey, request),
 )
 

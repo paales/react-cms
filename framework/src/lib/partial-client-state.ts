@@ -90,7 +90,7 @@ export function cacheStore(
 	// can fp-skip against a stale entry while the cache slot points
 	// at fresh content, and `substituteNested` lands the wrong
 	// subtree (or the right one for the wrong URL). Same matchKey
-	// with different vary outputs share a slot by design — the
+	// with different request-read values share a slot by design — the
 	// fingerprint set must shrink to "what the current slot
 	// actually represents", which is exactly the fp that
 	// `registerClientPartial` is about to write after this call.

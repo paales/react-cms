@@ -104,7 +104,7 @@ describe("parton actions — dispatch + auto-write", () => {
     // Invoke the action against the bound partition (empty — no vary)
     const req = new Request("http://t/x")
     await runWithRequestAsync(req, async () => {
-      await __partonAction("action-auto-write/save", {}, {}, { name: "Foo" })
+      await __partonAction("action-auto-write/save", {}, { name: "Foo" })
     })
 
     expect(readCell("action-auto-write/name", {})).toBe("Foo")
@@ -140,7 +140,7 @@ describe("parton actions — dispatch + auto-write", () => {
 
     const req = new Request("http://t/x")
     await runWithRequestAsync(req, async () => {
-      await __partonAction("action-handler-write/save", {}, {}, { name: "Alice" })
+      await __partonAction("action-handler-write/save", {}, { name: "Alice" })
     })
 
     expect(readCell("action-handler-write/name", {})).toBe("Alice")
@@ -180,7 +180,7 @@ describe("parton actions — dispatch + auto-write", () => {
     const req = new Request("http://t/x")
     await expect(
       runWithRequestAsync(req, async () => {
-        await __partonAction("action-rollback/save", {}, {}, { name: "should-not-stick" })
+        await __partonAction("action-rollback/save", {}, { name: "should-not-stick" })
       }),
     ).rejects.toThrow(/nope/)
 
@@ -216,7 +216,7 @@ describe("parton actions — dispatch + auto-write", () => {
 
     const req = new Request("http://t/x")
     await runWithRequestAsync(req, async () => {
-      await __partonAction("action-overlay/save", {}, {}, { name: "from-args" })
+      await __partonAction("action-overlay/save", {}, { name: "from-args" })
     })
 
     expect(observedNameValue).toBe("from-args")

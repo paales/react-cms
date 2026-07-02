@@ -1,12 +1,12 @@
 /**
  * `parton(Render, ...)` — define-step constructor.
  *
- * Replaces the old `<Partial>` JSX wrapper, the tracked-accessor
- * manifest, the per-Partial frame/CMS/manifest ALS cells, and
- * `registerBlock`. One spec call at module scope produces a placeable
- * React component. Every dependency the spec has on the request,
- * route, or CMS lives in a single sync `vary` function whose result is
- * also the cache-key surface.
+ * One spec call at module scope produces a placeable React component.
+ * `match` chooses which instance renders (variant identity, typed
+ * params); everything else the spec depends on, its schema/body READS
+ * via tracked hooks (`cookie()`, `searchParam()`, `match()`, cells,
+ * CMS) — the read IS the dependency, recorded on the render and folded
+ * into the fingerprint by store-and-reread.
  *
  *   const PokemonPage = parton(PokemonRender, '/pokemon/:id')
  *   <PokemonPage />
@@ -56,7 +56,6 @@ import {
 import {
   getSpecById,
   registerSpec,
-  type SpecCatalogVary,
   type SpecComponentProps,
 } from "./spec-catalog.ts"
 import {
@@ -126,53 +125,6 @@ export interface ActivatorProps {
 
 export type DeferSpec = true | ReactElement<ActivatorProps>
 
-export interface VaryScope {
-  /** The (frame-resolved) request URL, already parsed. Reach for
-   *  this when you need fields outside the destructurable shortcuts
-   *  (port, protocol, hash). */
-  url: URL
-  /** Shortcut for `url.pathname`. */
-  pathname: string
-  /** Search params as a destructurable record. Missing keys are
-   *  `undefined` (the type reflects this — destructure with
-   *  defaults: `{ flavor = "vanilla" }`). Multi-valued keys (rare)
-   *  carry only their first value; for `getAll`, reach into
-   *  `url.searchParams`. */
-  search: Partial<Record<string, string>>
-  /** Cookies parsed from the request's `Cookie` header, as a
-   *  destructurable record. Missing keys are `undefined`. */
-  cookies: Partial<Record<string, string>>
-  /** Request headers as a destructurable record. Keys are
-   *  lowercased per HTTP spec — destructure with quoted keys for
-   *  hyphenated names (`{ "accept-language": al }`). Missing keys
-   *  are `undefined`. */
-  headers: Partial<Record<string, string>>
-  /** Match params populated by `match` (URLPattern groups for the
-   *  pathname). */
-  params: Record<string, string>
-  /** Per-session read surface. Each `session.<type>(name, …)` call
-   *  records `name` as a dependency on this spec — server actions
-   *  that mutate the same name (`setSessionValue`) walk every
-   *  registered snapshot and refetch the specs whose vary touched it.
-   *  Sync; values are stored in the framework session store, written
-   *  by the `setSessionValue` action. */
-  session: SessionReadSurface
-  /** Wall-clock snapshot for the current request. Use the pre-
-   *  computed boundary fields (`time.nextSecond`, `time.nextMinute`,
-   *  …) or `time.in(ms)` to derive an `expiresAt` for a live tick or
-   *  TTL. The framework reads `expiresAt` / `staleUntil` off vary's
-   *  return as wake hints — they don't participate in the spec's
-   *  fingerprint and don't reach Render. See [[time-scope]]. */
-  time: TimeScope
-  /** The rendered effective id for this placement. Slot-placed
-   *  blocks receive their slot entry's id here; direct-JSX
-   *  placements get the auto-derived `spec.id`-plus-props-hash.
-   *  Most `vary` callbacks ignore this — it's the hook that lets
-   *  the CMS block wrapper (and any other per-instance extension)
-   *  contribute per-placement data to the spec's fingerprint. */
-  instanceId: string
-}
-
 /** Build a plain `{key: value}` object from a URLSearchParams. */
 function searchParamsToRecord(sp: URLSearchParams): Record<string, string> {
   const out: Record<string, string> = {}
@@ -182,7 +134,7 @@ function searchParamsToRecord(sp: URLSearchParams): Record<string, string> {
 
 /** Lowercase + flatten a `Headers` instance into a plain record.
  *  Framework-internal `x-parton-*` headers (e.g. the RSC-render marker)
- *  are dropped so they never reach a spec's `vary` header surface or
+ *  are dropped so they never reach a spec's header read surface or
  *  fold into its fingerprint. */
 function headersToRecord(h: Headers): Record<string, string> {
   const out: Record<string, string> = {}
@@ -192,39 +144,6 @@ function headersToRecord(h: Headers): Record<string, string> {
     out[lk] = v
   }
   return out
-}
-
-/** Split a vary result into the value-portion (data the rendered
- *  output depends on; feeds fp + Render props) and the wake-hint
- *  portion (`expiresAt` / `staleUntil` — TTL signals for the segment
- *  driver and the byte cache, not part of fp). Returns the input
- *  unchanged when neither reserved key is set. */
-export function stripReservedVaryKeys(varyResult: unknown): {
-  varyResult: unknown
-  expiresAt: number | undefined
-  staleUntil: number | undefined
-} {
-  if (!varyResult || typeof varyResult !== "object") {
-    return { varyResult, expiresAt: undefined, staleUntil: undefined }
-  }
-  const r = varyResult as Record<string, unknown>
-  if (typeof r.expiresAt !== "number" && typeof r.staleUntil !== "number") {
-    return { varyResult, expiresAt: undefined, staleUntil: undefined }
-  }
-  const {
-    expiresAt: e,
-    staleUntil: s,
-    ...rest
-  } = r as {
-    expiresAt?: number
-    staleUntil?: number
-    [k: string]: unknown
-  }
-  return {
-    varyResult: rest,
-    expiresAt: typeof e === "number" ? e : undefined,
-    staleUntil: typeof s === "number" ? s : undefined,
-  }
 }
 
 export interface RenderArgs {
@@ -249,7 +168,6 @@ export type MatchPattern = string | URLPatternInit
 export type PartialOptions<V> = Pick<
   InternalSpecConfig<V>,
   | "match"
-  | "vary"
   | "schema"
   | "actions"
   | "cache"
@@ -269,37 +187,32 @@ export type PartialOptions<V> = Pick<
 interface InternalSpecConfig<V> {
   /** URLPattern gate. Spec emits nothing on miss. */
   match?: MatchPattern
-  /** Request-dimensions dependency surface. Sync; result is the
-   *  cache-key surface and merged into Render's prop bag. */
-  vary?: (scope: VaryScope) => V | null
   /** Declared deps that need framework-mediated resolution — cells
    *  in particular. Sync callback receiving `{cell}` (a parton-scoped
    *  factory) and returning a record. Each entry's value can be:
    *
    *  - a **scoped cell descriptor** from the injected `cell` factory
    *    (`cell.string({initial: ""})`) — finalized with wire id
-   *    `<partonId>/<schemaKey>` and partitioned by the parton's vary
-   *    output (or a narrower subset via the descriptor's optional
+   *    `<partonId>/<schemaKey>` and partitioned by the parton's match
+   *    params (or a narrower subset via the descriptor's optional
    *    `vary` callback).
    *  - a **module-scope cell handle** imported from elsewhere
    *    (`localCell({id, vary, initial, ...})` at module scope) —
-   *    resolved via its own vary against the request scope, same as
-   *    before.
+   *    resolved via its own vary against the request scope.
    *  - any other value — passed through to Render's prop bag as-is.
+   *
+   *  Tracked hooks (`searchParam()`, `cookie()`, …) work here and fold
+   *  into the CURRENT fingerprint with no cold lag — schema runs
+   *  before the fp. Request-derived cell bindings read hooks directly:
+   *  `schema: () => ({ cart: cartCell.with({ cartId: cookie("cart_id") }) })`.
    *
    *  Resolved cells get `cell:<id>` selector labels auto-stamped on
    *  the parton so `refreshSelector` fires on `cell.set`. */
-  // 2nd arg is the parton's vary output — so a parton can bind its own
-  // cells from request-derived params: `schema: (_, vary) =>
-  // ({ cart: cartCell.with(vary as { cartId: string }) })`. Typed as the
-  // parton's `V`; the options generic widens it to `object` at the call
-  // site (TS can't thread a sibling `vary` callback's return into this
-  // position), so a parton reading specific keys narrows with a cast.
-  schema?: (scope: ScopedCellFactories<V>, vary: V) => Record<string, unknown>
+  schema?: (scope: ScopedCellFactories<V>) => Record<string, unknown>
   /** Server-side handlers declared on the parton. Each handler runs
    *  inside `runInvalidationTransaction` and receives `(scope, args)`:
-   *  scope is the parton's vary output + resolved schema + parent
-   *  (same prop bag Render gets minus children); args is caller-
+   *  scope is the parton's match params + resolved schema (same prop
+   *  bag Render gets minus children); args is caller-
    *  supplied. After the handler returns, the framework auto-writes
    *  any `args[K]` whose key matches a schema cell — atomic with the
    *  handler's own writes. A throw aborts the transaction.
@@ -324,8 +237,8 @@ interface InternalSpecConfig<V> {
   fallback?: ReactNode
   /** When `true` (default), wraps the spec's rendered body in
    *  `<Activity mode="visible">` while active and emits
-   *  `<Activity mode="hidden">` with a placeholder when `match` /
-   *  `vary` says the spec shouldn't render on this route — provided
+   *  `<Activity mode="hidden">` with a placeholder when `match` (or a
+   *  schema `park()`) says the spec shouldn't render on this route — provided
    *  the client has previously cached this id (signalled via
    *  `?cached=id:fp`). The spec component fiber lives at its natural
    *  JSX position (e.g. a root.tsx sibling), so Activity mode flips
@@ -350,7 +263,7 @@ interface InternalSpecConfig<V> {
  * Framework-managed props every spec component understands. Plain
  * pass-through props (e.g. `id` from a parent wrapper) live in the
  * `Extra` parameter of `SpecComponent<Extra>` — they flow into Render
- * alongside `vary`'s output and contribute to the cache fingerprint.
+ * alongside the match params and contribute to the cache fingerprint.
  */
 export interface PartialComponentProps {
   /** Internal: parent injected for an isolated render that's its own
@@ -366,15 +279,16 @@ export interface PartialComponentProps {
 
 /**
  * The Render function's props get split by the framework into three:
- *   - framework-managed (`parent`, `children`) — `RenderArgs`,
- *     always supplied by the framework.
- *   - vary-derived (`V`) — produced by `vary`, also framework-supplied.
+ *   - framework-managed (`children`) — `RenderArgs`, always supplied
+ *     by the framework.
+ *   - framework-derived (`V`) — match params + resolved schema +
+ *     actions, also framework-supplied.
  *   - everything else — must be passed as a JSX prop at the call site.
  *
  * `SpecExtraProps<R, V>` is the call-site prop surface: `R` minus the
- * framework keys minus the vary keys. When `vary` returns the entire
- * prop surface, `SpecExtraProps` collapses to `{}` and the call site
- * is just `<Spec />`.
+ * framework keys minus `V`'s keys. When `V` covers the entire prop
+ * surface, `SpecExtraProps` collapses to `{}` and the call site is
+ * just `<Spec />`.
  */
 /** A prop the Render receives as `ResolvedCell<T>` may be SUPPLIED at
  *  the call site as a `BoundCell<T>` (`cell.with(args)`) or a `CellInterface<T>`
@@ -444,33 +358,26 @@ export type ParseRoute<T extends string> = T extends `${string}:${infer Rest}`
  * object. Resolution order:
  *   1. string shorthand (`partial(Render, "/x/:id")`) → match-only,
  *      params auto-flow as `ParseRoute<pattern>`.
- *   2. options with `vary` → V is the vary callback's return type
- *      (null is excluded — null means "don't render").
- *   3. options with `match` but no `vary` → params auto-flow as
+ *   2. options with `match` → params auto-flow as
  *      `ParseRoute<pattern>`.
- *   4. anything else → empty: every Render prop must come from the
- *      JSX call site.
+ *   3. anything else → empty: every Render prop must come from the
+ *      JSX call site or a tracked hook read inside the body.
  *
  * This is what makes `{ match: "/pokemon/:id" }` enough to wire
- * `params.id` into a Render that takes `{ id: string }` — no
- * `vary: ({ params }) => ({ id: params.id })` boilerplate.
+ * `params.id` into a Render that takes `{ id: string }`. Everything
+ * request-shaped beyond params, a body READS — `cookie()`,
+ * `searchParam()`, `match()` — and the hook return types carry the
+ * information.
  */
-/** Reserved keys that the framework reads off `vary`'s return as
- *  wake/TTL hints and strips before feeding the result into fp and
- *  Render's prop bag. See `stripReservedVaryKeys` in partial.tsx. */
-type ReservedVaryKeys = "expiresAt" | "staleUntil"
-
-type InferVaryOrMatch<Opts> = Opts extends string
+type InferMatch<Opts> = Opts extends string
   ? ParseRoute<Opts>
-  : Opts extends { vary: (scope: VaryScope) => infer R }
-    ? Omit<Exclude<R, null>, ReservedVaryKeys>
-    : Opts extends { match: infer M }
-      ? M extends string
-        ? ParseRoute<M>
-        : M extends { pathname: infer P extends string }
-          ? ParseRoute<P>
-          : object
-      : object
+  : Opts extends { match: infer M }
+    ? M extends string
+      ? ParseRoute<M>
+      : M extends { pathname: infer P extends string }
+        ? ParseRoute<P>
+        : object
+    : object
 
 /**
  * Map cell handles + scoped descriptors in a schema record to their
@@ -489,11 +396,11 @@ type ResolveSchemaProps<S> = {
         : S[K]
 }
 
-// One pattern covers 0-, 1-, and 2-arg schema callbacks: a callback
-// taking fewer params is assignable to the 2-param shape, so `(scope,
-// vary) => S` matches `() => S` and `(scope) => S` too.
+// One pattern covers 0- and 1-arg schema callbacks: a callback taking
+// fewer params is assignable to the 1-param shape, so `(scope) => S`
+// matches `() => S` too.
 type InferSchema<Opts> = Opts extends {
-  schema: (scope: ScopedCellFactories<infer _V>, vary: infer _VO) => infer S
+  schema: (scope: ScopedCellFactories<infer _V>) => infer S
 }
   ? S extends Record<string, unknown>
     ? ResolveSchemaProps<S>
@@ -519,7 +426,7 @@ type InferActions<Opts> = Opts extends { actions: infer A }
     : object
   : object
 
-export type InferV<Opts> = Prettify<InferVaryOrMatch<Opts> & InferSchema<Opts> & InferActions<Opts>>
+export type InferV<Opts> = Prettify<InferMatch<Opts> & InferSchema<Opts> & InferActions<Opts>>
 
 /** Flatten a `T1 & T2 & …` intersection into a single object literal
  *  shape so editor hovers display the merged keys, not a chain. */
@@ -527,7 +434,7 @@ type Prettify<T> = { [K in keyof T]: T[K] } & {}
 
 /**
  * The full prop bag a spec's Render function receives:
- * vary-derived (or match-derived) keys + framework-managed keys.
+ * match/schema/action-derived keys + framework-managed keys.
  * Re-exposed as `Spec.props` (type-only phantom) for ergonomic
  * inference at the call site (`function R(p: typeof Spec.props)`).
  */
@@ -544,12 +451,13 @@ export type PartonProps<V = object> = Prettify<V & RenderArgs>
 
 /**
  * Spec component type. The JSX call-site sees framework props AND
- * any Render prop the `vary` return doesn't already provide.
+ * any Render prop the framework-derived surface doesn't already
+ * provide.
  *
  * `Props` (second generic) is a phantom that exposes the Render-side
  * prop bag via `typeof Spec.props`. The runtime never reads it; it's
  * a TypeScript-only static. Use it to derive the function signature
- * without retyping vary's return:
+ * without retyping the derived surface:
  *
  *     const Hero = parton(HeroRender, { match: "/p/:id" })
  *     type HeroProps = typeof Hero.props        // { id: string } & RenderArgs
@@ -658,7 +566,7 @@ function autoSelector(render: (...args: never[]) => unknown): SelectorTokens {
  *
  * Drop numeric keys here so only the author's named `:foo` groups
  * flow through. Authors who genuinely need a wildcard tail in their
- * dependency surface declare an explicit `vary` and read `pathname`
+ * dependency surface read `pathname()` / `searchParam()`
  * (or any other field) off the scope directly — that path is opt-in
  * and unaffected.
  */
@@ -709,7 +617,7 @@ interface PartialBoundaryProps {
   /** Resolved bound-cell args (schema + props). Snapshotted so the
    *  descendant-fold can match partition-scoped invalidation signals
    *  against the spec's effective constraint surface, not just its
-   *  match-params/vary. */
+   *  match-params. */
   constraintArgs?: Record<string, unknown>
   /** Hash of the spec's varyResult — feeds the descendant fold so
    *  ancestors' fps reflect descendants' deps. */
@@ -732,15 +640,11 @@ interface PartialBoundaryProps {
    *  so the fp-trailer flush can detect cold→warm drift and ship the
    *  warm fp to the client without an extra round-trip. */
   emittedFp?: string
-  /** Wake/TTL hints stripped from `vary`'s return. Stored on the
-   *  snapshot so the segment driver can race against the earliest
-   *  expiry, and the byte cache can use it as a freshness boundary. */
-  expiresAt?: number
-  staleUntil?: number
   /** Live wake-hint box the `expires()` / `staleUntil()` hooks write
-   *  into during Render. The render path passes the CurrentParton's
-   *  box; skip/defer paths (where Render doesn't run) thread the prior
-   *  snapshot's box through so a hook-declared wake survives. */
+   *  into during schema/Render. The render path passes the
+   *  CurrentParton's box; skip/defer paths (where Render doesn't run)
+   *  thread the prior snapshot's box through so a hook-declared wake
+   *  survives. */
   wakeHints?: WakeHints
   children: ReactNode
 }
@@ -761,8 +665,6 @@ export function PartialBoundary({
   matchKey,
   schemaKey,
   emittedFp,
-  expiresAt,
-  staleUntil,
   wakeHints,
   children,
 }: PartialBoundaryProps): ReactNode {
@@ -805,8 +707,6 @@ export function PartialBoundary({
     matchKey,
     schemaKey,
     emittedFp,
-    expiresAt,
-    staleUntil,
     wakeHints,
   })
   return children
@@ -874,7 +774,7 @@ function foldScratch(): FoldScratch {
  *
  * Walks the previous-render snapshots for descendants of `ancestorId`
  * (snapshots whose `parentPath` includes the ancestor) and resolves
- * each descendant's vary against the CURRENT request — without
+ * each descendant's stored deps against the CURRENT request — without
  * actually re-rendering the descendant. This makes the ancestor's
  * fingerprint move whenever any descendant's deps would have moved,
  * so fp-skipping the ancestor never serves a stale subtree.
@@ -911,7 +811,7 @@ function computeDescendantFold(ancestorId: string): string {
 
 /**
  * Compute one descendant's contribution to its ancestor's fp.
- * Re-evaluates the descendant's match + vary against the current
+ * Re-evaluates the descendant's match + stored deps against the current
  * request so URL/cookie/header/CMS changes flow through to the
  * ancestor's fp without lag. Falls back to the snapshot's stored
  * `varyKey` when the catalog entry isn't available (e.g. the spec
@@ -930,21 +830,20 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
   // catalog is still hydrating; lag of one render in this corner.
   if (!spec) return `${descId}:${snap.varyKey ?? ""}${invalidationKeyFromSnap(snap)}`
 
-  // Honor the descendant's framePath when re-resolving its vary. A
+  // Honor the descendant's framePath when re-reading its deps. A
   // descendant rendered under a frame chain (e.g. MenuTabPartial under
-  // ["menu","tab"]) sees the frame's URL in its render-time vary; the
-  // fold must use the same frame-resolved request so a nested-frame
-  // nav that only moves the inner frame's URL actually shifts the
+  // ["menu","tab"]) reads the frame's URL at render time; the fold
+  // must use the same frame-resolved request so a nested-frame nav
+  // that only moves the inner frame's URL actually shifts the
   // descendant's contribution and, through it, the outer wrapper's
   // fp. Without this the outer wrapper fp-skips and the cached tab
   // body persists across nested-frame moves.
   const request = snap.framePath.length > 0 ? resolveFrameRequest(snap.framePath) : getRequest()
   // Tracked-read deps the descendant recorded on its own render
   // (`cookie()`/`searchParam()` via server-hooks), re-read against the
-  // current request — the store-and-reread fold that lets an ancestor's
-  // fp move when an auto-tracked descendant's request reads change, just
-  // like the `vary` re-run below does for declared vary. Empty for any
-  // descendant that records no tracked reads (additive).
+  // current request — the store-and-reread fold that lets an
+  // ancestor's fp move when a descendant's request reads change. Empty
+  // for any descendant that records no tracked reads.
   const depsKey = evalDepKeys(snap.deps, request)
   let params: Record<string, string> = {}
   if (spec.matchPattern) {
@@ -953,60 +852,22 @@ function descendantContribution(descId: string, snap: PartialSnapshot): string {
     params = extractNamedParams(result)
   }
 
-  if (!spec.vary) {
-    // No vary → match params + bound-cell args form the constraint
-    // surface for invalidation matching. Bound args come from the
-    // snapshot's `constraintArgs` (populated during the live render
-    // from BOTH schema-resolved cells and prop-resolved BoundCells).
-    // Without folding bound args, partition-scoped `cell:<id>?<args>`
-    // signals can't match descendants that bind cells (e.g.
-    // <CartLine item={cartItemCell.with({uid})}/> or a parton with
-    // `schema: () => ({cart: cartCell})`).
-    const constraints = { ...params, ...(snap.constraintArgs ?? {}) }
-    const inv = invalidationKeyFor(snap.labels, constraints)
-    return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}${inv}${depsKey}`
-  }
-
-  // Resolve the descendant's `vary` against the current request,
-  // building the same `VaryScope` shape the live render path supplies
-  // (url / pathname / search / cookies / headers / params / session /
-  // time / instanceId). The result feeds the fold.
-  const url = new URL(request.url)
-  const result: unknown = spec.vary({
-    url,
-    pathname: url.pathname,
-    search: searchParamsToRecord(url.searchParams),
-    cookies: parseCookies(request),
-    headers: headersToRecord(request.headers),
-    params,
-    // Discard the deps set — the descendant fold consumes the
-    // resolved `result` only (it's folded into the ancestor's fp).
-    // Snapshot dep recording happens during the descendant's own
-    // render pass, not here.
-    session: createSessionReadSurface(),
-    time: buildTimeScope(),
-    instanceId: descId,
-  })
-  if (result === null) return `${descId}:varynull${invalidationKeyFromSnap(snap)}`
-  // Strip reserved keys from the descendant's vary result the same
-  // way the descendant's own render does — otherwise the fold would
-  // hash a moving wall-clock timestamp and the ancestor's fp would
-  // never stabilize even when no rendered data changed.
-  const { varyResult: cleanResult } = stripReservedVaryKeys(result)
-  const propsKey = stableStringify(snap.props ?? null)
-  // Merge bound-cell args from the snapshot's constraintArgs into the
-  // constraint surface, same as the no-vary path.
-  const constraints = {
-    ...(cleanResult as Record<string, unknown> | null),
-    ...(snap.constraintArgs ?? {}),
-  }
+  // Match params + bound-cell args form the constraint surface for
+  // invalidation matching. Bound args come from the snapshot's
+  // `constraintArgs` (populated during the live render from BOTH
+  // schema-resolved cells and prop-resolved BoundCells). Without
+  // folding bound args, partition-scoped `cell:<id>?<args>` signals
+  // can't match descendants that bind cells (e.g.
+  // <CartLine item={cartItemCell.with({uid})}/> or a parton with
+  // `schema: () => ({cart: cartCell})`).
+  const constraints = { ...params, ...(snap.constraintArgs ?? {}) }
   const inv = invalidationKeyFor(snap.labels, constraints)
-  return `${descId}:${stableStringify(cleanResult)}|${propsKey}${inv}${depsKey}`
+  return `${descId}:${stableStringify(params)}|${stableStringify(snap.props ?? null)}${inv}${depsKey}`
 }
 
 /**
  * Query the invalidation registry for the descendant's labels +
- * constraint-matched vary inputs and produce a `|inv=N` suffix when
+ * constraint-matched inputs and produce a `|inv=N` suffix when
  * any entry has fired. Folded into descendant contributions so an
  * ancestor's fp moves whenever a descendant's invalidation does —
  * without this, an ancestor's `varyKey`-only fold stays stable when
@@ -1119,7 +980,7 @@ function patternSignature(pattern: URLPattern): string {
  * spam traffic to junk URLs that all match the same pattern can't
  * displace real hot routes.
  *
- * Search and hash are request dimensions WITHIN a page — `vary`,
+ * Search and hash are request dimensions WITHIN a page — tracked reads,
  * matchKeys, and fingerprints carry them — not part of the page's
  * addressable identity. A pattern that constrains them (`match:
  * { search: "*q=:query" }`) gates its SPEC's rendering against the
@@ -1218,7 +1079,7 @@ interface InternalSpec<V> {
   matchPattern?: URLPattern
   Render: (props: V & RenderArgs) => ReactNode
   /** True iff the author explicitly declared at least one of
-   *  `selector`, `vary`, or `match`. Non-addressable specs (none of
+   *  `selector`, `schema`, or `match`. Non-addressable specs (none of
    *  the three) live entirely inside their parent's render — they
    *  have no external refetch handle, so the per-spec fp cycle is
    *  redundant for them. The render path uses this to gate the
@@ -1247,7 +1108,7 @@ const ROOT_MATCH_KEY = hash(stableStringify({}))
  *    share that variant identity even though their own bodies have no
  *    match.
  *  - No match-bearing ancestor on the URL → `ROOT_MATCH_KEY`. Specs
- *    in this branch share a single cache slot; vary-driven refreshes
+ *    in this branch share a single cache slot; fp-driven refreshes
  *    update content in place (`/cache-demo?flavor=A` ↔ `?flavor=B`).
  *
  * Self-contained: only reads from the spec catalog plus the current
@@ -1301,7 +1162,8 @@ function placeholderFor(id: string, matchKey: string): ReactElement {
 }
 
 /**
- * Parked emission for a keepalive spec whose `match`/`vary` says it
+ * Parked emission for a keepalive spec whose `match` (or a schema
+ * `park()`) says it
  * shouldn't render on this request, but the client has it cached
  * (declared via `?cached=id:matchKey:fp`). Returns one
  * `<Activity mode="hidden" key={matchKey}>` per cached matchKey,
@@ -1485,7 +1347,7 @@ function createSpecComponent<V>(
     const selfDeps = new Set<string>()
     // Keepalive defaults to true. The flag governs both the active
     // emission (wrap body in `<Activity mode="visible">`) and the
-    // parked emission on match-miss / vary-null (emit
+    // parked emission on match-miss / park() (emit
     // `<Activity mode="hidden">` + placeholder when the client has
     // this id cached). The shared Activity wrapper is what lets React
     // preserve the inner Suspense subtree's fiber identity across
@@ -1495,9 +1357,9 @@ function createSpecComponent<V>(
     // ── Frame phase ──
     // Specs inherit the frame chain from their parent (a `<Frame>`
     // ancestor extends it). The spec itself never opens a new frame.
-    // Both `match` and `vary` resolve against this (frame-resolved)
-    // request: a framed spec routes and keys on its frame's URL, not
-    // the page's.
+    // Both `match` and every tracked read resolve against this
+    // (frame-resolved) request: a framed spec routes and keys on its
+    // frame's URL, not the page's.
     const ourFrameChain = parent.frameChain
     const ourRequest = ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()
 
@@ -1505,8 +1367,7 @@ function createSpecComponent<V>(
     // `match` gates rendering against the (frame-resolved) request URL.
     // For an unframed spec that's the page URL; inside a `<Frame>` it's
     // the frame's URL — so a spec with `match: "/cart/open"` placed in a
-    // cart frame routes on the frame, consistent with how `vary` already
-    // sees the frame URL.
+    // cart frame routes on the frame.
     let params: Record<string, string> = {}
     if (spec.matchPattern) {
       const result = spec.matchPattern.exec(ourRequest.url)
@@ -1539,7 +1400,7 @@ function createSpecComponent<V>(
     //     own bodies have no match.
     //   - No match-bearing ancestor on the current URL → a constant
     //     key (`/cache-demo?flavor=A` ↔ `?flavor=B` share a slot;
-    //     content updates in place via vary/fp).
+    //     content updates in place via tracked reads/fp).
     //
     // Walking ancestors at render time (rather than threading
     // `parent.matchKey` through PartialCtx) keeps partial-refetch
@@ -1547,45 +1408,17 @@ function createSpecComponent<V>(
     // reconstructed snapshot, no extra state to thread.
     const matchKey = deriveMatchKey(spec.matchPattern, params, parent.path, ourRequest.url)
 
-    // ── Vary phase ──
-    // `vary` is request-dimensions only.
+    // ── Request-derived surface ──
+    // Match params are the only pre-declared request dimension — they
+    // fold below and auto-flow into Render's prop bag. Everything else
+    // request-shaped, the schema/body READS via tracked hooks; the
+    // reads record onto `selfDeps` and fold via store-and-reread.
+    // Call-site JSX props are a separate fp axis (their hash is in the
+    // effective id and `propsKey`).
     const session = createSessionReadSurface()
     const ourUrl = new URL(ourRequest.url)
     const time = buildTimeScope()
-    let varyResult: unknown
-    if (opts.vary) {
-      const v = opts.vary({
-        url: ourUrl,
-        pathname: ourUrl.pathname,
-        search: searchParamsToRecord(ourUrl.searchParams),
-        cookies: parseCookies(ourRequest),
-        headers: headersToRecord(ourRequest.headers),
-        params,
-        session,
-        time,
-        instanceId: id,
-      })
-      if (v === null) return emitParkedKeepalive(id, keepalive, requestState)
-      varyResult = v
-    } else {
-      // No `vary` declared — fold the match params alone. Call-site
-      // JSX props are a separate fp axis (their hash is in the
-      // effective id and `propsKey`), so they don't need to enter
-      // `varyResult`; the with-props and no-props cases reduce to the
-      // same surface.
-      varyResult = { ...params }
-    }
-
-    // ── Reserved keys: expiresAt / staleUntil ──
-    // Strip these from `varyResult` before it feeds the fp + the
-    // Render prop bag. They're wake hints for the segment driver
-    // (and TTLs for the byte cache), not data the rendered output
-    // depends on. Folding them into fp would make every wall-clock
-    // millisecond shift the fingerprint, defeating fp-skip.
-    const stripped = stripReservedVaryKeys(varyResult)
-    varyResult = stripped.varyResult
-    const expiresAt = stripped.expiresAt
-    const staleUntil = stripped.staleUntil
+    const varyResult: Record<string, unknown> = { ...params }
 
     // ── Schema phase ──
     // Resolve declared deps (cell handles + scoped cell descriptors)
@@ -1631,19 +1464,19 @@ function createSpecComponent<V>(
     }
     if (opts.schema) {
       const factories = makeScopedCellFactories<unknown>()
-      // 2nd arg: the parton's vary output, so a parton can bind its own
-      // cells (`cartCell.with({ cartId })`) from request-derived params.
       // A `park()` inside the callback throws the branded ParkSignal:
       // this request renders the parked keepalive instead of a boundary
       // — no snapshot, no fp, cached client variants preserved.
       let raw: Record<string, unknown>
       try {
-        raw = opts.schema(factories, (varyResult ?? {}) as V)
+        raw = opts.schema(factories)
       } catch (err) {
         if (_isParkSignal(err)) return emitParkedKeepalive(id, keepalive, requestState)
         throw err
       }
-      const partonVaryForCells = (varyResult ?? {}) as Record<string, unknown>
+      // Scoped-cell partitions derive from the match params (narrowed
+      // by a descriptor's own `vary` callback when declared).
+      const partonVaryForCells = varyResult
       for (const key of Object.keys(raw)) {
         const val = raw[key]
         if (isScopedCellDescriptor(val)) {
@@ -1761,23 +1594,21 @@ function createSpecComponent<V>(
     // optimistic-aware cell updates.
     const actionsResult: Record<string, ResolvedAction<unknown, unknown>> = {}
     if (opts.actions) {
-      const partonVaryForActions = (varyResult ?? {}) as Record<string, unknown>
-      // Match params bake separately from the vary output: the action
-      // POST's URL doesn't carry the route, so the dispatcher can't
-      // re-derive WHICH variant's cells to resolve — params are the one
-      // thing that must ride the ref. Everything request-shaped
-      // (cookies, session) the dispatcher reads fresh off the action's
-      // own request via the stamped CurrentParton.
+      // Match params bake into the ref: the action POST's URL doesn't
+      // carry the route, so the dispatcher can't re-derive WHICH
+      // variant's cells to resolve — params are the one thing that
+      // must ride. Everything request-shaped (cookies, session) the
+      // dispatcher reads fresh off the action's own request via the
+      // stamped CurrentParton.
       for (const actionName of Object.keys(opts.actions)) {
         const actionId = `${spec.id}/${actionName}`
         const ref = (
           __partonAction as unknown as (
             actionId: string,
-            partonVary: Record<string, unknown>,
             matchParams: Record<string, string>,
             args: unknown,
           ) => Promise<unknown>
-        ).bind(null, actionId, partonVaryForActions, params)
+        ).bind(null, actionId, params)
         actionsResult[actionName] = {
           __partonAction: true,
           ref: ref as ResolvedAction<unknown, unknown>["ref"],
@@ -1787,15 +1618,15 @@ function createSpecComponent<V>(
     }
 
     // ── Fingerprint ──
-    // The spec's "own" fp captures only what THIS spec declared:
-    // vary result, call-site props, frame URL. The full fp folds in
-    // transitive descendant deps so an ancestor's fp moves whenever
-    // a descendant's would, keeping fp-skip conservative — fp-skipping
-    // a wrapper while a descendant's deps changed would otherwise
-    // serve a stale subtree. The fold reads each descendant's
-    // `varyKey` from the previous-render snapshot AND re-evaluates
-    // its vary against the CURRENT request so URL changes are
-    // reflected at ancestor fp time without lag.
+    // The spec's "own" fp captures only what THIS spec depends on:
+    // match params, resolved cells, call-site props, tracked reads,
+    // frame URL. The full fp folds in transitive descendant deps so an
+    // ancestor's fp moves whenever a descendant's would, keeping
+    // fp-skip conservative — fp-skipping a wrapper while a
+    // descendant's deps changed would otherwise serve a stale subtree.
+    // The fold re-reads each descendant's stored dep keys against the
+    // CURRENT request so URL changes are reflected at ancestor fp time
+    // without lag.
     const ambientFrameKey =
       ourFrameChain.length > 0 ? `|inFrame=${ourFrameChain.join(".")}:${ourRequest.url}` : ""
     const propsKey =
@@ -1823,9 +1654,9 @@ function createSpecComponent<V>(
     // partons whose merged constraints contain the key=value pair —
     // so partition-scoped writes only refetch matching placements.
     const effectiveConstraints: Record<string, unknown> | null =
-      varyResult == null && Object.keys(boundArgsMerged).length === 0
+      Object.keys(varyResult).length === 0 && Object.keys(boundArgsMerged).length === 0
         ? null
-        : { ...((varyResult as Record<string, unknown> | null) ?? {}), ...boundArgsMerged }
+        : { ...varyResult, ...boundArgsMerged }
     const invalidationTs = queryMatchingTs(expandedLabels, effectiveConstraints)
     const invalidationKey = invalidationTs > 0 ? `|inv=${invalidationTs}` : ""
     // Store-and-reread for tracked reads: `cookie()` / `searchParam()`
@@ -1901,8 +1732,7 @@ function createSpecComponent<V>(
     const cachedFps = state?.cachedFingerprints.get(id)
     const fingerprintMatches = cachedFps != null && cachedFps.has(fp)
     const hasOuterChildren = outerChildren != null && outerChildren !== false
-    // Cold-record gate: a spec WITHOUT a declared `vary` may still have
-    // tracked reads in its Render body, and those only reach the fp via
+    // Cold-record gate: a spec's tracked reads only reach the fp via
     // the snapshot's dep record (store-and-reread). With no prior
     // snapshot for this route's variant, the fp above folded NO deps —
     // it can collide with a dep-less fp the client cached under
@@ -1915,10 +1745,8 @@ function createSpecComponent<V>(
     // is a fixed point — reads are conditioned only on tracked inputs,
     // so nothing can make a future render start reading). Otherwise
     // decline and render: the cold path over-fetches, never staleness.
-    // A declared `vary` is request-reproducible by contract, so those
-    // specs keep the cold-process skip.
     const coldRecordMissing =
-      opts.vary == null && priorSnap == null && committedDepsEvidence(id) !== "depless"
+      priorSnap == null && committedDepsEvidence(id) !== "depless"
     // TTL gate: a snapshot past its declared freshness boundary
     // (`expires()` hook or vary's `expiresAt`) must not be served from
     // the client's cache even when the fp matches — the boundary IS the
@@ -1945,9 +1773,8 @@ function createSpecComponent<V>(
     // `<ParentContext value={childCtx}>` (below), so child partons inherit
     // `childCtx` as their ambient parent.
     const childCtx = _childContext(parent, id)
-    // Render receives: extra JSX-prop pass-through, vary result,
-    // framework-managed (parent / children). vary wins on key
-    // collision — vary's return is the canonical surface.
+    // Render receives: extra JSX-prop pass-through, match params,
+    // resolved schema + actions, framework-managed (children).
     //
     // `__instanceId` is also forwarded — partial.tsx already used it
     // to derive the effective id, but a Render that wraps another
@@ -1998,8 +1825,6 @@ function createSpecComponent<V>(
           matchKey={matchKey}
           schemaKey={schemaKeyHash || undefined}
           emittedFp={snapshotFp}
-          expiresAt={expiresAt}
-          staleUntil={staleUntil}
           wakeHints={priorSnap?.wakeHints}
         >
           {skipBody}
@@ -2044,8 +1869,6 @@ function createSpecComponent<V>(
           matchKey={matchKey}
           schemaKey={schemaKeyHash || undefined}
           emittedFp={snapshotFp}
-          expiresAt={expiresAt}
-          staleUntil={staleUntil}
           wakeHints={priorSnap?.wakeHints}
         >
           {deferBody}
@@ -2157,8 +1980,6 @@ function createSpecComponent<V>(
           matchKey={matchKey}
           schemaKey={schemaKeyHash || undefined}
           emittedFp={snapshotFp}
-          expiresAt={expiresAt}
-          staleUntil={staleUntil}
           wakeHints={self.wakeHints}
         >
           {body}
@@ -2219,15 +2040,14 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
   const id = parsed.labels[0]
   const type = id
 
-  // Author-declared addressability: any one of selector / vary / match.
-  // Auto-derived selectors (the `?? autoSelector(Render)` fallback
-  // above) don't count — they only exist to give the catalog a
-  // unique id. A spec with none of the three is a structural child
+  // Author-declared addressability: any one of selector / schema /
+  // match. Auto-derived selectors (the `?? autoSelector(Render)`
+  // fallback above) don't count — they only exist to give the catalog
+  // a unique id. A spec with none of the three is a structural child
   // of its parent and cannot be the target of selective refetch,
   // session/tag invalidation, or URL-driven variant carve-out.
   const addressable =
     options.selector !== undefined ||
-    options.vary !== undefined ||
     options.schema !== undefined ||
     options.match !== undefined
 
@@ -2248,7 +2068,6 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
     id,
     labels: parsed.labels,
     Component: baseComponent as unknown as FC<SpecComponentProps>,
-    vary: options.vary as SpecCatalogVary | undefined,
     matchPattern,
     displayName:
       (Render as { displayName?: string; name?: string }).displayName ?? Render.name ?? "anon",
@@ -2257,8 +2076,8 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
   })
 
   // Register the schema callback (for the action dispatcher to re-run
-  // server-side with the bound parton vary). Idempotent overwrite on
-  // HMR — same semantics as the cell registry.
+  // server-side at dispatch time). Idempotent overwrite on HMR — same
+  // semantics as the cell registry.
   if (options.schema) {
     registerSchema(id, options.schema as unknown as Parameters<typeof registerSchema>[1])
   }

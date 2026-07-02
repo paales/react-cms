@@ -18,6 +18,7 @@ import {
   type ScopedCellDescriptor,
 } from "../cell.ts"
 import { runWithRequestAsync } from "../../runtime/context.ts"
+import { searchParam } from "../server-hooks.ts"
 import { hash } from "../hash.ts"
 import { stableStringify } from "../stable-stringify.ts"
 import {
@@ -105,13 +106,13 @@ describe("scoped cell — schema resolution in a parton", () => {
       {
         selector: "scoped-default-partition",
         match: "/p/:id",
-        vary: ({ params }) => ({ productId: params.id }),
         schema: ({ localCell }) => ({ notes: localCell({ shape: "string", initial: "" }) }),
       },
     )
 
-    seedCell("scoped-default-partition/notes", { productId: "A" }, "A-notes")
-    seedCell("scoped-default-partition/notes", { productId: "B" }, "B-notes")
+    // Default scoped-cell partition = the parton's match params.
+    seedCell("scoped-default-partition/notes", { id: "A" }, "A-notes")
+    seedCell("scoped-default-partition/notes", { id: "B" }, "B-notes")
 
     const a = await flightAt("http://t/p/A", <Page />)
     expect(a).toContain('"children":"A-notes"')
@@ -129,21 +130,16 @@ describe("scoped cell — schema resolution in a parton", () => {
       {
         selector: "scoped-narrow",
         match: "/p/:id",
-        vary: ({ params, search: { lang = "en" } }) => ({
-          productId: params.id,
-          locale: lang,
-        }),
-        // Narrowed: share across locales for the same product.
-        // Note: the cell's `vary` partonVary type is currently
-        // inferred as `object` (the bound on PartialOptions's
-        // generic). v2 ships a slightly weaker cascading inference
-        // here; an explicit cast is needed when destructuring
-        // narrower keys. See cells.md "Type inference" caveat.
+        // Narrowed: the descriptor's `vary` maps the parton's match
+        // params to the partition — one slot per product, shared
+        // across every other request dimension (the `?lang=` read
+        // below never enters the partition).
         schema: ({ localCell }) => ({
+          lang: searchParam("lang", "en"),
           sharedNotes: localCell({
             shape: "string",
             initial: "",
-            vary: (pv) => ({ productId: (pv as { productId: string }).productId }),
+            vary: (pv) => ({ productId: (pv as { id: string }).id }),
           }),
         }),
       },
@@ -235,12 +231,11 @@ describe("scoped cell — schema resolution in a parton", () => {
       {
         selector: "scoped-peek",
         match: "/p/:id",
-        vary: ({ params }) => ({ productId: params.id }),
         schema: ({ localCell }) => ({ notes: localCell({ shape: "string", initial: "" }) }),
       },
     )
 
-    seedCell("scoped-peek/notes", { productId: "A" }, "A-notes")
+    seedCell("scoped-peek/notes", { id: "A" }, "A-notes")
     const out = await flightAt("http://t/p/A", <Page />)
     expect(out).toContain('"children":"A-notes"')
 
@@ -249,7 +244,7 @@ describe("scoped cell — schema resolution in a parton", () => {
     const handle = getCellById("scoped-peek/notes")
     expect(handle).toBeDefined()
     const { result } = await runWithRequestAsync(new Request("http://t/p/A"), async () => ({
-      partitioned: handle!.peek({ productId: "A" }),
+      partitioned: handle!.peek({ id: "A" }),
       // No-arg peek can't re-derive the parton's partition — it reads
       // the `{}` slot, which nothing wrote. Documented limitation.
       bare: handle!.peek(),
@@ -286,11 +281,10 @@ describe("scoped cell — schema resolution in a parton", () => {
       {
         selector: "scoped-wire-partition",
         match: "/p/:id",
-        vary: ({ params }) => ({ productId: params.id }),
         schema: ({ localCell }) => ({ notes: localCell({ shape: "string", initial: "" }) }),
       },
     )
     await flightAt("http://t/p/42", <Page />)
-    expect(capturedPartition).toEqual({ productId: "42" })
+    expect(capturedPartition).toEqual({ id: "42" })
   })
 })

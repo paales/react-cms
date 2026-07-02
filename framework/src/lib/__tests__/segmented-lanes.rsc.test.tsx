@@ -30,6 +30,7 @@ import {
 } from "../../test/live-drive.tsx";
 import type { DemuxedLane } from "../fp-trailer-split.ts";
 import { PartialRoot, parton, type RenderArgs } from "../partial.tsx";
+import { expires, time } from "../server-hooks.ts";
 import { clearRegistry } from "../partial-registry.ts";
 
 // Module-scope render counters — bumped every time a Render body runs,
@@ -41,7 +42,7 @@ const FastLane = parton(
 		renders.fast++;
 		return <div data-fast-render={renders.fast}>{`fast-${renders.fast}`}</div>;
 	},
-	{ selector: "lane-fast", vary: ({ search: { q = "" } }) => ({ q }) },
+	{ selector: "lane-fast" },
 );
 
 const SlowSibling = parton(
@@ -51,7 +52,7 @@ const SlowSibling = parton(
 			<aside data-slow-render={renders.slow}>{`slow-${renders.slow}`}</aside>
 		);
 	},
-	{ selector: "lane-slow", vary: ({ search: { s = "" } }) => ({ s }) },
+	{ selector: "lane-slow" },
 );
 
 const LaneWrapper = parton(
@@ -59,7 +60,7 @@ const LaneWrapper = parton(
 		renders.wrapper++;
 		return <section data-wrapper>{children}</section>;
 	},
-	{ selector: "lane-wrapper", vary: ({ pathname }) => ({ pathname }) },
+	{ selector: "lane-wrapper" },
 );
 
 function Page(): ReactNode {
@@ -73,21 +74,18 @@ function Page(): ReactNode {
 	);
 }
 
-// Ticking parton for the expiresAt arm: vary re-derives per second, so
-// each expiry wake renders fresh content.
+// Ticking parton for the expiresAt arm: the body declares an 80ms
+// boundary via the wake hook, so each expiry wake renders fresh
+// content.
 const renders2 = { clock: 0 };
 const ExpiryClock = parton(
-	function ExpiryClockRender({ tick }: { tick: number } & RenderArgs) {
+	function ExpiryClockRender(_: RenderArgs) {
 		renders2.clock++;
+		expires(time().in(80));
+		const tick = Math.floor(Date.now() / 100);
 		return <time data-clock>{`tick-${tick}-${renders2.clock}`}</time>;
 	},
-	{
-		selector: "lane-clock",
-		vary: ({ time }) => ({
-			tick: Math.floor(Date.now() / 100),
-			expiresAt: time.in(80),
-		}),
-	},
+	{ selector: "lane-clock" },
 );
 
 beforeEach(() => {

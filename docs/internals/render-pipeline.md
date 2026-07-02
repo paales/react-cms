@@ -36,8 +36,8 @@ ids the route's hint table knows about.
    hint, find the spec component (`getSpecComponentById(id)` or
    via spec catalog by `snap.type` for slot blocks), invoke it as
    a flat sibling.
-3. The spec's body re-runs (vary, fingerprint, skip / render). No
-   ancestor execution.
+3. The spec's body re-runs (match, schema, fingerprint, skip /
+   render). No ancestor execution.
 4. On commit, the routeKey's hint is patched (not replaced) — ids
    that didn't refetch keep their existing variant pointers.
 
@@ -172,26 +172,40 @@ interface PartialSnapshot {
   parentFrameChain: readonly string[]   // for cache-mode reconstruction
   parentPath: readonly string[]
   props?: Record<string, unknown>       // captured call-site JSX props
-  varyKey?: string                      // hash of last varyResult, for descendant-fp fold
+  constraintArgs?: Record<string, unknown> // bound-cell args, for invalidation matching
+  varyKey?: string                      // stringified match params, for the descendant-fp fold
+  deps?: ReadonlySet<string>            // tracked-read dep keys recorded this render
+  matchKey?: string                     // variant key (hash of match params)
+  schemaKey?: string                    // resolved-cell fp term, for the trailer's recompute
+  emittedFp?: string                    // fp the render emitted (drift detection)
+  wakeHints?: WakeHints                 // live box written by expires()/staleUntil()
 }
 ```
 
-Snapshots store no JSX. They DO capture two derived bits:
+Snapshots store no JSX. The derived bits that matter most:
 
 - `props` — the call-site JSX props the spec was last rendered with.
   Cache-mode replays them so a child rendered via a parent wrapper
   still receives `id={...}` / `flavor={...}` etc. when the framework
   re-invokes it without going through the wrapper. Request-dependent
-  inputs flow through `vary` / `match` / cells, which re-resolve on
-  the refetch.
-- `varyKey` — hash of the spec's `varyResult` on its most-recent
-  render. Feeds the descendant-fp fold so an ancestor's fingerprint
-  reflects every descendant's deps. Without it, a wrapper whose own
-  JSX is unchanged would fp-skip and starve its descendants of a
+  inputs flow through tracked reads / `match` / cells, which
+  re-resolve on the refetch.
+- `deps` — the dependency keys the spec's tracked reads recorded on
+  its most-recent render (`"cookie:cart_id"`, `"search:q"`, …). The
+  spec's next own fp and every ancestor's descendant fold re-read
+  each key's current value (store-and-reread), so a tracked read
+  moves the fp with no declaration. The LIVE Set is stored, so reads
+  landing after the render's awaits are captured by the time the
+  next fold runs.
+- `varyKey` — the spec's match params, stable-stringified, on its
+  most-recent render. Together with `deps` it feeds the
+  descendant-fp fold so an ancestor's fingerprint reflects every
+  descendant's deps. Without them, a wrapper whose own JSX is
+  unchanged would fp-skip and starve its descendants of a
   re-evaluation even when their URL / CMS deps just changed.
 
-The `varyResult` itself is NOT stored — `vary` is recomputed on the
-current request inside the spec component. Cache-mode reconstruction
+Dep VALUES are NOT stored — every fold re-reads the recorded keys
+against the current request. Cache-mode reconstruction
 looks up the spec component by id (or by `type` for slot blocks)
 and renders it with `{parent: {path: snap.parentPath, frameChain:
 snap.parentFrameChain}}`, plus the snapshot props.
@@ -292,20 +306,23 @@ dropped, not mis-attached.
 The fp folds in:
 
 - spec id
-- vary result (stable-stringified)
+- match params (`matchKey` plus their stable-stringified values)
+- the prior render's recorded dep keys, re-read at the current
+  request (store-and-reread) — cookies, search params, headers,
+  pathname / `match()` reads, session, visibility, tags, and custom
+  dep kinds (the CMS layer's `cms:<contentKey>` content hash, which
+  is how a block's resolved fields move its fp)
+- resolved schema cells (`schemaKey`: cell-id × partition × value)
 - call-site JSX props (`extraProps`)
 - frame URL (own and ambient)
-- CMS resolved fields contribution (for `block` specs;
-  folded in via the wrapper's `vary` augmentation, keyed by the
-  instance's `__instanceId`)
-- every previously-registered descendant spec's `varyKey` snapshot,
-  resolved against the *current* request via the spec catalog's
-  `match` + `vary` (transitive descendant fp propagation — an
+- every previously-registered descendant spec's contribution — its
+  stored `varyKey` + dep record, re-evaluated against the *current*
+  request (transitive descendant fp propagation — an
   ancestor fp-skip can never serve a stale subtree). The
   descendant's request is frame-resolved through its stored
   `framePath` so a nested-frame nav that moves only an inner
   frame's URL still shifts the descendant's contribution — without
-  this, an outer `match`/`vary`-stable wrapper would fp-skip and
+  this, an outer match-stable wrapper would fp-skip and
   freeze a cached inner-frame body in place
 
 Wrappers called with `outerChildren` (transparent passthrough) skip
@@ -315,10 +332,10 @@ parent renders directly, so there's nothing for fp-skip to gate.
 ## Addressable gate
 
 A spec is *externally addressable* iff the author explicitly
-declared at least one of `selector`, `vary`, or `match`. Specs
+declared at least one of `selector`, `schema`, or `match`. Specs
 declaring none of the three are non-addressable: they have no
 external refetch handle (`reload({selector})` requires a declared
-selector, session/tag invalidation requires `vary` deps,
+selector, cell/session invalidation binds through `schema`,
 URL-driven variant carve-out requires `match`). Auto-derived
 selectors from `Render.name` don't count — they only exist to
 give the spec catalog a unique id.
@@ -343,15 +360,15 @@ wire**. The four-step fp cycle is collapsed for them:
 Critically, **the descendant fold still folds non-addressable
 specs in**. Snapshots are recorded unconditionally
 (`registerPartial` runs from every `<PartialBoundary>`), so the
-parent's `computeDescendantFold` picks up the child's `varyKey`
-contributions. The parent's wire fp moves
+parent's `computeDescendantFold` picks up the child's `varyKey` +
+dep-record contributions. The parent's wire fp moves
 whenever a non-addressable child's deps would have moved — so
 fp-skipping the parent never serves a stale child. The gate
 only collapses the *wire identity*, never the structural one.
 
 The gate is computed once at spec construction time
 (`addressable = options.selector !== undefined ||
-options.vary !== undefined || options.match !== undefined`) and
+options.schema !== undefined || options.match !== undefined`) and
 read in the render path as `spec.addressable`.
 
 ## Cold → warm fp drift and the trailer
@@ -373,7 +390,7 @@ this-pass `pendingWrites` entry anyway; folding the overlay in would
 be a no-op, so the base stays canonical-only and is memoized for the
 whole pass. The fold then walks a per-pass `ancestor → descendants`
 index (so each fold is O(its descendants), a leaf O(1)) and a per-pass
-contribution memo (each descendant's vary/dep/hash work runs once,
+contribution memo (each descendant's params/dep/hash work runs once,
 since a descendant's contribution depends only on `(descId, snap,
 current request)`, never on which ancestor folds it). The fingerprints
 are byte-identical to a per-call full-snapshot rebuild + scan; the
@@ -419,7 +436,7 @@ carries both and the server's `shouldSkip` matches whichever applies.
 Matching by `from` is load-bearing for concurrency. The trailer is
 async — it lands after its response's body has committed. A concurrent
 refetch for a DIFFERENT query against the same stable `(id, matchKey)`
-(e.g. two search queries sharing a vary+cell stage's constant matchKey)
+(e.g. two search queries sharing a tracked-read+cell stage's constant matchKey)
 can overwrite the slot — and clear its fp set — between the body commit
 and the trailer. A "latest matchKey" heuristic would then pin this warm
 fp onto the superseded slot, so `?cached=` would advertise a fingerprint

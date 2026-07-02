@@ -38,7 +38,8 @@ Two layers:
    slot instead of evicting each other from the LRU. Spam to junk
    URLs that hit the same pattern can't displace real hot entries
    for the same reason. Search and hash are request dimensions
-   *within* a page (vary, matchKeys, fingerprints carry them), so a
+   *within* a page (tracked reads, matchKeys, and fingerprints carry
+   them), so a
    search-constrained pattern (`match: { search: "*q=:query" }`)
    never splits its page's bucket — a search overlay's `?q=`
    refetches keep finding the snapshots and hints the page's earlier
@@ -84,10 +85,11 @@ auto-derived instances, or the CMS row id for slot blocks).
 
 Per-user variation (cookies, search params, A/B test buckets) is
 *not* in the variant key — that divergence flows through the
-spec's `vary` callback, which is recomputed per-request inside
-the spec component. Two concurrent users hitting the same route
-register byte-identical snapshots → idempotent overwrite, no
-clobbering.
+spec's tracked reads, whose VALUES are never stored: the snapshot
+records only the dep keys, re-read per-request inside the spec
+component (store-and-reread). Two concurrent users hitting the same
+route register structurally identical snapshots → idempotent
+overwrite, no clobbering.
 
 ## Pending vs canonical state
 
@@ -181,13 +183,15 @@ which re-registers and rebuilds the hint.
 
 ## What snapshots intentionally do not capture
 
-- **`varyResult`** — vary is per-request, recomputed by the spec
-  component on every render. No snapshot consumer reads it.
+- **Tracked-read VALUES** — the snapshot stores dep KEYS (`deps`),
+  never the values behind them; every fold re-reads the keys at the
+  current request (store-and-reread).
 - **JSX / rendered output** — `<Cache>` owns rendered-output
-  caching, keyed independently by the spec's `varyResult`.
+  caching, keyed independently by the spec's fingerprint + match
+  params.
 - **Per-request scalars** (cookies, headers, URL params) — these
-  flow through `vary`.
+  flow through tracked hooks and re-resolve per request.
 
-The snapshot is purely a structural-placement record so cache-mode
-refetches can spawn a spec component at the right point in the
-tree without re-running its ancestors.
+The snapshot is a structural-placement + dependency-key record so
+cache-mode refetches can spawn a spec component at the right point
+in the tree without re-running its ancestors.

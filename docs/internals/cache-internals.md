@@ -112,14 +112,22 @@ wire id).
 ## Cache key derivation
 
 ```ts
-key = `${spec.id}:${structuralFp}:${hash(stableStringify([varyResult]))}`
+lookup = `${spec.id}:${structuralFp}:${hash(stableStringify([matchParams]))}`
 ```
 
 `structuralFp` is the spec's fingerprint folded with its descendant
-fold, so it already moves when `vary`, schema, props, an invalidation
-bump, or any descendant's deps change — including a descendant added
-or removed (via the fold). The trailing `varyResult` hash is a stable,
-legible axis on top of that.
+fold, so it already moves when a tracked read's value, schema, props,
+an invalidation bump, or any descendant's deps change — including a
+descendant added or removed (via the fold). The trailing match-params
+hash is a stable, legible axis on top of that.
+
+The lookup fp folds the PRIOR render's dep record (store-and-reread);
+the STORE key is computed lazily after the body has rendered,
+recomputing the structural fp with the LIVE tracked-read set — so no
+entry is ever keyed dep-less. On a warm record the two keys are
+equal; on a cold record the lookup misses into a fresh render
+(over-fetch, never stale bytes served under different read values),
+and per-value entries coexist.
 
 `hash()` is a 64-bit composite — two independent 32-bit mixers
 (djb2-with-xor + FNV-1a) each run through MurmurHash3's `fmix32` and
@@ -128,7 +136,7 @@ concatenated to 16 hex chars (`framework/src/lib/hash.ts`).
 hash input — distinct sentinels for `undefined` / `NaN` / `±Infinity`
 / `BigInt`, ms-encoded `Date`, sorted-content `Set` / `Map`, and
 `<circular>` for self-referential structures so a malformed
-`vary` result fails loudly instead of recursing forever.
+key input fails loudly instead of recursing forever.
 
 ## Stale-while-revalidate
 

@@ -71,5 +71,6 @@ providers. The framework works around this by:
 - Implementing **server context** ([`server-context.md`](./server-context.md)):
   a small patch threads a parton's `parent` through React's Flight task
   graph, so partons read it ambiently without a `createContext`.
-- Passing the frame-resolved `request` to `vary` as an argument
-  (no ALS, no cell, no context).
+- Stamping the rendering parton's identity (with its frame-resolved
+  `request`) on the same per-component frame, so the tracked
+  server-hooks read it without a `createContext`.

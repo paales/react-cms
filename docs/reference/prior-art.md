@@ -177,19 +177,21 @@ args)`; downstream actions re-derive only when an upstream hash moves.
 `framework/src/lib/partial.tsx::computeDescendantFold` is structurally
 a merkle-DAG: an ancestor's fingerprint folds every transitive
 descendant's contribution. Bazel's remote action cache maps onto
-`<Cache>`. The big difference: Bazel auto-tracks inputs via filesystem
-sandboxing; `parton` requires `vary` to be hand-declared. Simpler model,
-no sandbox overhead, but the author can break it by reading something
-they didn't declare.
+`<Cache>`. The difference in mechanism: Bazel auto-tracks inputs via
+filesystem sandboxing; `parton` auto-tracks via its server-hooks — the
+hooks are the only door to the request, so the read is the record, no
+sandbox overhead. The author's remaining contract is the tracking
+invariant: don't condition reads on untracked nondeterminism.
 
 **Salsa (rust-analyzer's query engine).** The closest theoretical cousin
 in any modern production codebase. Queries are memoized; each query
 records what other queries it called; a revision counter tracks input
 mutations; re-derive walks the dependency graph and short-circuits when
-no transitive input moved. 1:1 mapping: spec ≡ query, vary ≡ inputs,
-fingerprint ≡ value hash, `descendantFold` ≡ `maybe_changed_after`
-walking dependents. Salsa auto-tracks via macro-generated proxy types;
-this framework declares. Same trade-off as Bazel.
+no transitive input moved. 1:1 mapping: spec ≡ query, tracked reads ≡
+inputs, fingerprint ≡ value hash, `descendantFold` ≡
+`maybe_changed_after` walking dependents. Salsa auto-tracks via
+macro-generated proxy types; this framework auto-tracks via
+server-hooks recording onto the render's live dep set. Same shape.
 
 **Self-adjusting computation (Umut Acar, CMU).** The PhD lineage behind
 Salsa. Acar's thesis: computations that automatically update when their
@@ -224,12 +226,12 @@ define-step parameter schema + render body + reusability.
 is the canonical example of dirty propagation in DCC. Nodes have
 attributes; attributes have connections; dirty flags propagate;
 evaluation is lazy and cached. `setAttr` / `connectAttr` is structurally
-"set vary input + auto-invalidate downstream specs."
+"set a tracked input + auto-invalidate downstream specs."
 
 **Fusion 360 / Inventor / SolidWorks (parametric CAD).** Feature-based
 modeling: a part is a *history tree* of features (extrude, fillet,
 hole); changing an upstream parameter re-evaluates downstream features.
-The feature tree is the render tree; parameters are vary inputs; the
+The feature tree is the render tree; parameters are tracked inputs; the
 rebuild operation is fp-driven re-render. CAD has dealt for 30 years
 with "ancestor cached, descendant stale" — their answer (parametric
 history with full dirty propagation) is what `descendantFold`
@@ -273,8 +275,9 @@ with overridable parameters.
 
 ## Native UI frameworks with auto-tracked reads
 
-The mirror universe: what `parton(R, opts)` would feel like if the
-runtime auto-tracked reads instead of requiring explicit declaration.
+The same family: runtimes where the body's reads are the dependency
+surface and the framework skips work when no read value moved —
+`parton`'s server-hooks are this bet applied to the request.
 
 **Apple SwiftUI.** Pure-function-of-state views; `@State` /
 `@Observable` track property-level reads; body re-runs when read
@@ -285,25 +288,28 @@ independent navigation axis with its own back/forward, scoped to a
 region.
 
 **Android Jetpack Compose.** Same family; `@Composable` functions ≡
-`Render`; `remember` / `derivedStateOf` ≡ vary-cache-key analogues.
-Compose's "skippable functions" optimization *is* fp-skip — the
-compiler checks input equality and skips re-composition. Auto-tracked
-via compiler-rewritten code.
+`Render`; `remember` / `derivedStateOf` ≡ memoized derived-input
+analogues. Compose's "skippable functions" optimization *is* fp-skip —
+the compiler checks input equality and skips re-composition.
+Auto-tracked via compiler-rewritten code.
 
 **Cocoa Bindings + KVO (Objective-C, AppKit, 2003).** The forgotten
 ancestor. `NSObjectController` + `bind:toObject:withKeyPath:options:`
 declared the dependency surface up front; KVO emitted change
 notifications; bindings auto-updated UI. "Observed key path =
-invalidation surface" is precisely "vary = cache key surface." Apple
-effectively deprecated bindings in practice because auto-tracking
-proved too magic to debug — which is exactly the case for declaring
-`vary` explicitly. The 20-year lesson is folded in.
+invalidation surface" is precisely "tracked read = cache key surface."
+Apple effectively deprecated bindings in practice because the
+observation wiring was invisible at the call site — too magic to
+debug. The 20-year lesson is folded in as legibility: tracking is
+automatic, but a dependency exists only where a hook call
+(`cookie("cart_id")`) is visible in the body, and the recorded keys
+ride the snapshot where they can be inspected.
 
 ## Adjacent server + collaborative systems
 
 **Phoenix LiveView (Elixir).** The closest non-React server-render
-cousin. `assigns` is the vary surface; templates re-render on assign
-change; the wire protocol patches the DOM at marked positions. Nested
+cousin. `assigns` is the dependency surface; templates re-render on
+assign change; the wire protocol patches the DOM at marked positions. Nested
 `LiveComponent` ≡ spec; `phx-update="ignore"` ≡ `keepalive: false`.
 The big architectural difference: LiveView holds an open websocket per
 session and pushes diffs; this framework renders per-request over plain
@@ -332,8 +338,8 @@ reactivity (Solid, MobX) than to this framework's server-first model.
 But entity addressing is the same — every Issue / Project has a stable
 id; mutations name the id; cross-references are by id. Linear's typed
 Model class gives them auto-tracked reads (a view reading `issue.assignee`
-auto-subscribes); this framework chose declared `vary`. Different bets,
-internally consistent.
+auto-subscribes); this framework's server-hooks are the same bet
+server-side — the read subscribes.
 
 **Notion.** Block-based document; every block is `{id, type, props,
 children}` — literally `cms/data/content.json`'s shape. Notion's
@@ -356,18 +362,18 @@ Not novel; the combination is uncommon.
 2. **Runtime discovery, not static analysis.** No build-time
    manifest of available blocks; no schema files; no codegen.
    `parton(...)` self-registers in the catalog at
-   module-init when it declares `tags: [".x"]`; the prerender
-   introspects each spec by invoking its `vary` once with a stub
-   request. Adding a new block type is one component file + one
-   `parton(...)` call — the editor's palette picks it up
-   on the next HMR.
+   module-init; the prerender introspects each block by invoking
+   its `schema` once with a tracking CMS surface. Adding a new
+   block type is one component file + one `parton(...)` call — the
+   editor's palette picks it up on the next HMR.
 
-3. **The cache key is what `vary` returns.** Every per-spec
-   dependency on the request, route, or CMS lives in a single sync
-   `vary` callback whose return value IS the cache-key surface.
-   Drupal had this conceptually (cache contexts); this framework
-   makes the read pattern the literal source of the key, evaluated
-   at the spec's body, no manifest cell or hoisting rule needed.
+3. **The cache key is what the body reads.** Every per-spec
+   dependency on the request, route, or CMS is a tracked read
+   recorded during the render; the recorded read set IS the
+   cache-key surface. Drupal had this conceptually (cache
+   contexts); this framework makes the read pattern the literal
+   source of the key, evaluated at the spec's body, no manifest
+   cell or hoisting rule needed.
 
 4. **One client navigation surface.** `useNavigation()` is a typed
    superset of `window.navigation`. Page nav, frame nav, and

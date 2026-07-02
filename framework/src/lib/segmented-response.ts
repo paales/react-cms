@@ -472,11 +472,10 @@ function routeHasRelevantBump(sinceTs: number): boolean {
  * no partial declared one (or the only declared values are
  * `+Infinity` — the "never" sentinel).
  *
- * Partials declare `expiresAt` from `vary`'s return (stripped before
- * fp computation — see `stripReservedVaryKeys` in partial.tsx) or by
- * calling the `expires()` hook during Render (a live box on the
- * snapshot; see `effectiveExpiresAt`). The segment driver reads the
- * snapshots after each render to derive the next wake time.
+ * Partials declare `expiresAt` by calling the `expires()` hook during
+ * schema/Render (a live box on the snapshot; see `effectiveExpiresAt`).
+ * The segment driver reads the snapshots after each render to derive
+ * the next wake time.
  */
 function computeNextExpiresAtDelay(
 	excludeIds?: ReadonlySet<string>,

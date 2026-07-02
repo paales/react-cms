@@ -12,7 +12,7 @@
  *   - `yarn dev:magento` (the remote, port 5181)
  */
 
-import { parton, type RenderArgs } from "@parton/framework"
+import { parton, searchParam, type RenderArgs } from "@parton/framework"
 import { Frame } from "@parton/framework/lib/frame.tsx"
 import { Suspense } from "react"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
@@ -53,7 +53,7 @@ const RemoteCheckoutFrame = parton(
   },
   {
     selector: "remote-checkout-frame",
-    vary: ({ search: { step = "shipping" } }) => ({ step }),
+    schema: () => ({ step: searchParam("step", "shipping") }),
   },
 )
 

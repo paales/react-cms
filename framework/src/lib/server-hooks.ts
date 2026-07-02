@@ -1,14 +1,14 @@
 /**
- * Server-hooks — free functions a parton's `Render` calls to read a
- * request dimension AND record the dependency, so it folds into the
- * fingerprint without an explicit `vary`. The auto-tracked replacement
- * for `vary`'s request reads: `cookie("cart_id")` returns the value and
+ * Server-hooks — free functions a parton's `schema` or `Render` calls
+ * to read a request dimension AND record the dependency, so it folds
+ * into the fingerprint: `cookie("cart_id")` returns the value and
  * records `"cookie:cart_id"`, so a change to that cookie moves the
- * parton's fp on the next navigation.
+ * parton's fp on the next navigation. The read IS the dependency,
+ * exactly like a cell.
  *
  * The recording rides the parton self-context ([[current-parton]]); the
  * value is read from the parton's frame-resolved request, so a framed
- * spec tracks its frame's URL/cookies (as `vary` did). Reads outside a
+ * spec tracks its frame's URL/cookies. Reads outside a
  * parton body are a no-op that returns the empty value.
  *
  * Timing: a tracked read in `Render` is recorded during the render, but
@@ -17,7 +17,7 @@
  * (store-and-reread, see `evalDepKeys`). The first render of a variant
  * has no prior record and folds nothing; it's cold (no fp-skip relies on
  * it), and the record it captures makes every subsequent render
- * fp-accurate. See `docs/notes/server-hooks.md`.
+ * fp-accurate. See `docs/reference/partial.md`.
  */
 
 import { getCurrentParton, type VisibleOptions } from "./current-parton.ts"
@@ -163,9 +163,8 @@ export function searchParam(name: string, fallback?: string): string | null {
  * lowercased per HTTP semantics (`header("Accept-Language")` and
  * `header("accept-language")` are the same read and the same dep key).
  * Framework-internal `x-parton-*` headers are invisible here — they
- * never reach a spec's dependency surface (mirroring the `vary`
- * scope's header record), so the read returns `undefined` and records
- * nothing.
+ * never reach a spec's dependency surface, so the read returns
+ * `undefined` and records nothing.
  */
 export function header(name: string): string | undefined {
   const cp = getCurrentParton()
@@ -204,8 +203,7 @@ export function param(name: string): string | undefined {
 
 /**
  * Read the current session identity and record it as an fp dependency,
- * so the parton re-renders when the session changes — the inline-tracking
- * analogue of `vary: ({session}) => ({sid: session.id})`. The value is
+ * so the parton re-renders when the session changes. The value is
  * the `__frame_sid`-cookie-backed id, or `""` for an anon request with no
  * session yet. Pair with a cell's `vary: ({session}) => ({sid})` to give
  * each session its own partition.
@@ -312,20 +310,43 @@ export function match(pattern: string | URLPatternInit): Record<string, string> 
 }
 
 /** Evaluators for dep kinds owned by OTHER layers (the CMS layer's
- *  `cms:<contentKey>` content-hash kind). Registered at module scope by
- *  the owning layer, so `evalDepKeys` stays import-cycle-free: the
- *  evaluator must be a pure sync read of (name, request) whose string
- *  encoding is injective over its observable value space. */
+ *  `cms:<contentKey>` content-hash kind, an app's file-mtime kind).
+ *  Registered at module scope by the owning layer, so `evalDepKeys`
+ *  stays import-cycle-free. */
 const depKindEvaluators = new Map<
   string,
   (name: string, request: Request) => string | null | undefined
 >()
 
-export function _registerDepKind(
+/**
+ * Register a custom dependency kind — the extension point for external
+ * re-readable dependencies the built-in hooks don't cover (a CMS row's
+ * content hash, a file's mtime). `evaluate` must be a pure sync read of
+ * `(name, request)` whose string encoding is injective over its
+ * observable value space; every fingerprint fold re-reads it
+ * (store-and-reread), so a changed value moves the fp like any tracked
+ * read.
+ *
+ * Returns the kind's tracked-read hook: calling it inside a parton body
+ * records `<kind>:<name>` on the dep set and returns the evaluated
+ * value — the same read-IS-the-dependency shape as `cookie()`.
+ *
+ *     const docMtime = registerDepKind("docmtime", (abs) =>
+ *       String(statSync(abs).mtimeMs))
+ *     // in a Render:
+ *     docMtime(resolved.abs)
+ */
+export function registerDepKind(
   kind: string,
   evaluate: (name: string, request: Request) => string | null | undefined,
-): void {
+): (name: string) => string | null | undefined {
   depKindEvaluators.set(kind, evaluate)
+  return (name: string) => {
+    const cp = getCurrentParton()
+    if (!cp) return undefined
+    cp.deps.add(`${kind}:${name}`)
+    return evaluate(name, cp.request)
+  }
 }
 
 /**
@@ -376,7 +397,7 @@ export function evalDepKeys(
       // value: a write fires `reload(cell:<id>?<partition>)`, bumping the
       // ts so the parton re-renders next nav. The value isn't re-derivable
       // later (it's loaded), so the tag drives freshness — see
-      // docs/notes/server-hooks.md "fold the tag, not the value". `key` is
+      // "fold the tag, not the value" (docs/reference/cells.md). `key` is
       // the partition-scoped selector; parse it and query with the
       // partition so a partition-scoped bump is matched, not only a bare
       // one.
@@ -395,10 +416,8 @@ export function evalDepKeys(
     }
     // Absence is a VALUE: `?search=` (empty string, dialog open) and no
     // `?search` at all (dialog closed) must fold differently — the hooks
-    // return `""` vs `null` and Renders branch on it, exactly like a
-    // declared vary distinguished `""` from `undefined` via
-    // stableStringify. Encode absent as the bare key (no `=`), which no
-    // present value can collide with.
+    // return `""` vs `null` and Renders branch on it. Encode absent as
+    // the bare key (no `=`), which no present value can collide with.
     parts.push(value == null ? key : `${key}=${value}`)
   }
   return `|deps=${parts.join("&")}`

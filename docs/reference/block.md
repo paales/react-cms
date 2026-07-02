@@ -38,11 +38,17 @@ refetch path. Differences:
   `selector: "#app-nav"` (or just `selector: "app-nav"`) has id
   `"app-nav"` — also the CMS storage row it reads from. Placed once
   via JSX; the framework binds its CMS content by id.
+- **Content changes move the fingerprint via a tracked dep.** The
+  block wrapper records a `cms:<contentKey>` dependency for the
+  instance's content row; every fingerprint fold re-reads the row's
+  content hash (committed store plus the requester's draft overlay),
+  so a CMS edit re-renders exactly the blocks that read the edited
+  row.
 
 ## Options
 
 ```ts
-interface BlockOptions<V, S> {
+interface BlockOptions<S> {
   /** Refetch labels. Plain strings; leading `#` / `.` are cosmetic
    *  and stripped. The first label is also the spec's catalog id
    *  (slot lookup type, and for singletons the CMS storage key).
@@ -50,12 +56,8 @@ interface BlockOptions<V, S> {
    *  → `"hero"`). */
   selector?: SelectorTokens
   /** CMS reads + child slot composition. Result is merged into
-   *  Render's prop bag alongside `vary`'s. */
+   *  Render's prop bag alongside the match params. */
   schema?: (scope: { cms: CmsReadSurface }) => S
-  /** Request-dimensions vary (URL / cookies / headers / session).
-   *  Same shape as on `parton`. Rare on blocks — content
-   *  side lives on `schema`. */
-  vary?: (scope: VaryScope) => V | null
   cache?: CacheOptions
   defer?: DeferSpec
   fallback?: ReactNode
@@ -65,8 +67,7 @@ interface BlockOptions<V, S> {
 | Option | Notes |
 |---|---|
 | `selector` | One or more refetch labels. The first label is the spec's catalog id (also the CMS storage row for singletons). Slot-allow filters and `nav.reload({selector: "…"})` match any label. Cosmetic `#`/`.` prefixes are stripped. |
-| `schema` | Sync. Returns content reads (`cms.text(...)`, `cms.enum(...)`) and child slot compositions (`cms.blocks(...)`, `cms.block(...)`). Both flow into Render as props. |
-| `vary` | Request-dim deps. Most blocks don't have request deps; their content comes from `schema`. |
+| `schema` | Sync. Returns content reads (`cms.text(...)`, `cms.enum(...)`) and child slot compositions (`cms.blocks(...)`, `cms.block(...)`). Both flow into Render as props. Request-dimension deps come from the tracked server-hooks (`searchParam()`, `cookie()`, …), same as on `parton` — rare on blocks, whose content side lives on the `cms` surface. |
 | `cache`, `defer`, `fallback` | Same as `parton`. |
 
 ## `cms` surface on schema

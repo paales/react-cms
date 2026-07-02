@@ -19,6 +19,10 @@
 import {
   EDITOR_COOKIE,
   parton,
+  cookie,
+  getCurrentParton,
+  pathname,
+  searchParam,
   getCatalogManifest,
   getRouteSnapshots,
   getSlotBlockMeta,
@@ -128,14 +132,6 @@ function buildPreviewRequest(currentUrl: URL, headers: Headers): Request {
   const url = new URL(currentUrl)
   stripEditorAndInternalParams(url)
   return new Request(url, { headers, method: "GET" })
-}
-
-function headersFromRecord(record: Partial<Record<string, string>>): Headers {
-  const h = new Headers()
-  for (const [k, v] of Object.entries(record)) {
-    if (typeof v === "string") h.set(k, v)
-  }
-  return h
 }
 
 interface HrefOpts {
@@ -461,11 +457,18 @@ export const EditorTreePartial = parton(
   },
   {
     selector: "#cms-edit-tree",
-    vary: ({ url, search: { select = null } }) => ({
-      selected: select,
-      currentUrl: url.toString(),
-    }),
-    schema: () => ({ treeStyle: editorTreeStyle }),
+    schema: () => {
+      // Tracked reads: selection + page identity. The full URL is a
+      // derived output for link-building; its nav-relevant dimensions
+      // are the recorded pathname/select reads.
+      const selected = searchParam("select")
+      pathname()
+      return {
+        treeStyle: editorTreeStyle,
+        selected,
+        currentUrl: getCurrentParton()?.request.url ?? "",
+      }
+    },
   },
 )
 
@@ -511,7 +514,7 @@ export const EditorSettingsPartial = parton(
   },
   {
     selector: "#cms-edit-settings",
-    vary: ({ pathname }) => ({ pathname }),
+    schema: () => ({ pathname: pathname() }),
   },
 )
 
@@ -650,14 +653,23 @@ export const EditorFieldPanelPartial = parton(
   },
   {
     selector: "#cms-edit-fields",
-    vary: ({ url, headers, search: { select = null, config = null } }) => {
+    schema: () => {
+      // Tracked reads: selection, requested config tab, page identity —
+      // plus the selected node's content row (`cms:` dep), which is what
+      // moves `effectiveIndex` when configs are edited.
+      const select = searchParam("select")
+      const config = searchParam("config")
+      pathname()
+      const cp = getCurrentParton()
+      const url = new URL(cp?.request.url ?? "http://localhost/")
       const requested = config != null ? Number(config) : null
       let effectiveIndex = -1
       if (select && !parseSlotEntryId(select)) {
+        cp?.deps.add(`cms:${select}`)
         const node = lookupDraftNode(select)
         const configs = node?.configs ?? []
         if (configs.length > 0) {
-          const previewReq = buildPreviewRequest(url, headersFromRecord(headers))
+          const previewReq = buildPreviewRequest(url, cp?.request.headers ?? new Headers())
           effectiveIndex = pickEffectiveConfig(configs, requested, previewReq)
         }
       }
@@ -1320,40 +1332,49 @@ export const EditorShell = parton(
     )
   },
   {
-    vary: ({ url, search: { select: selectedParam = null }, cookies }) => {
+    schema: () => {
       // Cookie is the sole source of truth for editor on/off.
       // Entry/exit (deep-links, click triggers, tests) all flow through
       // `nav.navigate(url, {cookies: {[EDITOR_COOKIE]: "1" | ""}})` —
       // there's no URL-param sync side-effect. Tests set the cookie
       // directly via `context.addCookies` before navigating.
-      const editor = cookies[EDITOR_COOKIE] === "1"
-      // When the editor is off — every non-authoring visit, the common
-      // case — the Render returns `null`, so feed the fingerprint STABLE
-      // values rather than the live URL. That keeps editor-shell's fp
-      // constant across navigation: after the first (null-body) render it
-      // fp-skips to a bare placeholder instead of re-emitting its
-      // error-boundary and drifting on `currentUrl` every single nav.
-      // Editor on: the real URL drives the chrome and its (legitimate)
-      // per-page fingerprint. Parking via a `null` vary is wrong here —
-      // keepalive would leave the prior chrome hidden in the DOM, so the
-      // close button couldn't clear it.
-      const isPreviewFrameRefetch = editor && url.searchParams.getAll("__frame").includes("preview")
+      const editor = cookie(EDITOR_COOKIE) === "1"
+      // Editor off — every non-authoring visit, the common case: read
+      // NOTHING beyond the cookie, so the fp folds only that one read
+      // and stays constant across navigation. After the first
+      // (null-body) render the shell fp-skips to a bare placeholder
+      // instead of re-emitting its error-boundary on every nav.
+      // Parking is wrong here — keepalive would leave the prior chrome
+      // hidden in the DOM, so the close button couldn't clear it.
+      let selected: string | null = null
+      let currentUrl = ""
+      let previewUrl = ""
+      let isPreviewFrameRefetch = false
+      if (editor) {
+        // Editor on: selection + page identity are the tracked nav
+        // axes; the full URL is a derived output for chrome links.
+        selected = searchParam("select")
+        searchParam("__frame")
+        pathname()
+        const url = new URL(getCurrentParton()?.request.url ?? "http://localhost/")
+        isPreviewFrameRefetch = url.searchParams.getAll("__frame").includes("preview")
+        currentUrl = url.toString()
+        previewUrl = derivePreviewUrl(url)
+      }
       return {
         editor,
-        selected: editor ? selectedParam : null,
-        currentUrl: editor ? url.toString() : "",
-        previewUrl: editor ? derivePreviewUrl(url) : "",
+        selected,
+        currentUrl,
+        previewUrl,
         isPreviewFrameRefetch,
+        leftTab: editorLeftTab,
+        treeStyle: editorTreeStyle,
+        palette: editorPalette,
+        surface: editorSurface,
+        attachment: editorAttachment,
+        device: editorDevice,
       }
     },
-    schema: () => ({
-      leftTab: editorLeftTab,
-      treeStyle: editorTreeStyle,
-      palette: editorPalette,
-      surface: editorSurface,
-      attachment: editorAttachment,
-      device: editorDevice,
-    }),
   },
 )
 

@@ -3,24 +3,26 @@
 /**
  * Parton-action dispatcher.
  *
- * One generic action: `__partonAction(actionId, partonVary, args)`. Each
- * action declared on a parton (`actions: {save: async (scope, args) =>
- * ...}`) gets a bound reference for the Render prop bag:
+ * One generic action: `__partonAction(actionId, matchParams, args)`.
+ * Each action declared on a parton (`actions: {save: async (scope,
+ * args) => ...}`) gets a bound reference for the Render prop bag:
  *
- *   __partonAction.bind(null, "<partonId>/<actionName>", partonVary)
+ *   __partonAction.bind(null, "<partonId>/<actionName>", matchParams)
  *
- * Client invokes `(args)`; server receives `(actionId, partonVary, args)`
- * and dispatches.
+ * Client invokes `(args)`; server receives `(actionId, matchParams,
+ * args)` and dispatches under a stamped CurrentParton (id, the
+ * action's own request, the baked params).
  *
  * Resolution path inside the dispatcher:
  *
  *   1. Look up handler in the action registry. Unknown id → throw.
- *   2. Look up the parton's schema callback in the schema registry.
- *      Resolve schema against the bound `partonVary` — every cell gets
- *      its value read from storage at the partition derived from the
- *      cell's vary (scoped cells: partonVary or descriptor.varyFn output;
- *      module cells: their own vary against the action's request scope).
- *   3. Build the handler scope: vary output + resolved schema + parent.
+ *   2. Look up the parton's schema callback in the schema registry and
+ *      re-run it — tracked hooks read the action's request; every cell
+ *      gets its value read from storage at the partition derived from
+ *      the cell's vary (scoped cells: matchParams or descriptor.varyFn
+ *      output; module cells: their own vary against the action's
+ *      request scope).
+ *   3. Build the handler scope: match params + resolved schema.
  *      Args overlay onto matching cells' `.value` so the handler sees
  *      "post-args" state via `scope.cardName.value`.
  *   4. Run the handler inside `runInvalidationTransaction`. Author may
@@ -92,14 +94,16 @@ function buildCellVaryScope(): CellVaryScope {
 }
 
 /**
- * Resolve a parton's schema against a bound parton vary. Returns the
- * resolved record (cells become ResolvedCells, plain values pass
- * through) plus a map of which schema keys are scoped cells (for
- * auto-write).
+ * Resolve a parton's schema at dispatch time. Returns the resolved
+ * record (cells become ResolvedCells, plain values pass through) plus
+ * a map of which schema keys are scoped cells (for auto-write).
+ * Scoped-cell partitions derive from the ref's baked match params;
+ * tracked hooks inside the callback read the action's own request via
+ * the stamped CurrentParton.
  */
 function resolveSchemaForAction(
   partonId: string,
-  partonVary: Record<string, unknown>,
+  matchParams: Record<string, unknown>,
 ): {
   resolved: Record<string, unknown>
   cellsByKey: Map<string, ResolvedCell<unknown>>
@@ -129,9 +133,9 @@ function resolveSchemaForAction(
       const descriptor = val as ScopedCellDescriptor<unknown>
       const cell = finalizeScopedCell(descriptor, partonId, key)
       const partitionVary = descriptor.varyFn
-        ? descriptor.varyFn(partonVary as never)
-        : partonVary
-      const partitionKey = computeScopedCellPartitionKey(descriptor, partonVary)
+        ? descriptor.varyFn(matchParams as never)
+        : matchParams
+      const partitionKey = computeScopedCellPartitionKey(descriptor, matchParams)
       const stored = cellStorageForArgs(cell, partitionVary).read(getScope(), cell.id, partitionKey)
       const value = stored === undefined ? cell.defaultValue : stored
       const resolvedCell = buildResolvedCell(cell, value, partitionVary)
@@ -206,14 +210,14 @@ interface PendingWrite {
  *  storage write lands.
  */
 function buildHandlerScope(
-  partonVary: Record<string, unknown>,
+  matchParams: Record<string, unknown>,
   resolved: Record<string, unknown>,
   cellsByKey: Map<string, ResolvedCell<unknown>>,
   args: Record<string, unknown>,
   pending: Map<string, PendingWrite>,
 ): Record<string, unknown> {
   const scope: Record<string, unknown> = {
-    ...partonVary,
+    ...matchParams,
   }
   for (const [key, resolvedVal] of Object.entries(resolved)) {
     const cell = cellsByKey.get(key)
@@ -253,21 +257,20 @@ function buildHandlerScope(
 
 /**
  * Generic action dispatcher. Bound at parton-resolution time as
- * `__partonAction.bind(null, actionId, partonVary, matchParams)`; the
- * client's action invocation lands here with `(actionId, partonVary,
- * matchParams, args)`.
+ * `__partonAction.bind(null, actionId, matchParams)`; the client's
+ * action invocation lands here with `(actionId, matchParams, args)`.
  *
  * The dispatch runs under a stamped `CurrentParton` (see
  * `_runWithCurrentParton`): id = the bound parton, request = the
- * action's OWN request, params = the baked match-param record. Tracked
- * hooks inside the schema callback (or the handler) therefore read the
- * caller's current cookies/session — strictly more correct than
- * replaying render-time values. The dep/tag sets it accumulates go
- * nowhere: an action registers no snapshot.
+ * action's OWN request, params = the baked match-param record — the
+ * one thing that must ride the ref, since the POST URL doesn't carry
+ * the route. Tracked hooks inside the schema callback (or the handler)
+ * read the caller's current cookies/session — strictly more correct
+ * than replaying render-time values. The dep/tag sets it accumulates
+ * go nowhere: an action registers no snapshot.
  */
 export async function __partonAction(
   actionId: string,
-  partonVary: Record<string, unknown>,
   matchParams: Record<string, string>,
   args: Record<string, unknown>,
 ): Promise<unknown> {
@@ -287,9 +290,9 @@ export async function __partonAction(
   }
 
   return await _runWithCurrentParton(self, () => runInvalidationTransaction(async () => {
-    const { resolved, cellsByKey } = resolveSchemaForAction(partonId, partonVary)
+    const { resolved, cellsByKey } = resolveSchemaForAction(partonId, matchParams ?? {})
     const pending = new Map<string, PendingWrite>()
-    const scope = buildHandlerScope(partonVary, resolved, cellsByKey, args, pending)
+    const scope = buildHandlerScope(matchParams ?? {}, resolved, cellsByKey, args, pending)
 
     // Stage args as pending writes BEFORE the handler runs. The
     // handler can read them via overlayed `.value` and can overwrite

@@ -4,7 +4,7 @@
  * Setting the `cache` prop activates byte-level caching: the
  * framework stores the rendered Flight bytes for the spec's
  * subtree and replays them on hit. Distinct from `expiresAt` in
- * `vary` — that controls when the fp becomes stale (wake hint for
+ * `expires()` — that controls when the fp becomes stale (wake hint for
  * the segment driver, no byte storage). Caching needs an explicit
  * opt-in via this prop.
  *

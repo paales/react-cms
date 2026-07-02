@@ -148,24 +148,36 @@ baseline); CPU profiles (`--prof`) and scratch logs stay local
 ## Spec authoring rules
 
 - Three constructors, one engine. Pick by role:
-  - `parton(Render, '/path')` / `parton(Render, {match, vary, …})` — addressable subtree, request-dimensions only. The everything-else case.
+  - `parton(Render, '/path')` / `parton(Render, {match, schema, …})` — addressable subtree, request-dimensions only. The everything-else case.
   - `block(Render, {selector, schema, …})` — slot-placeable, CMS-driven. `schema({cms}) => ({…})` is where CMS reads live.
   - `<Frame name initialUrl>{…}</Frame>` — plain component, opens a per-name URL scope for descendants (which inherit the frame chain via server context).
-- `vary` is sync and must be pure. It sees `{url, pathname, search, cookies, headers, params, session}` — **no `cms`**. CMS reads (`cms.text(...)`, `cms.enum(...)`, `cms.reference(...)`, `cms.blocks(...)`, `cms.block(...)`) live inside a block's `schema` callback. Async loaders run in `render`.
-- **Wrapper specs need a `vary` that captures their descendants'
-  URL deps**, otherwise fp-skip on the wrapper blocks descendant
-  re-renders. With no `vary`, only NAMED `match` params (`:id`)
-  flow into the default dependency surface — anonymous `*` captures
-  and unspecified URL parts (search/hash) do NOT. So `match:
-  "/inspect{/*}?"` produces a stable fingerprint across `/inspect`
-  and `/inspect/p/3`; specs that genuinely depend on the wildcard
-  tail or query string declare `vary` and read `pathname` /
-  `search` off the scope explicitly.
+- **The read IS the dependency.** A spec's request surface is what
+  its schema/body actually reads via tracked hooks — `cookie()`,
+  `searchParam()`, `header()`, `pathname()`, `match()`, `session()`,
+  `visible()`, `tag()` — recorded per render and folded into the
+  fingerprint by store-and-reread. Schema-phase reads fold with no
+  cold lag (schema runs pre-fp); render-body reads lag one render,
+  healed in-response by the fp-trailer. The tracking invariant: a
+  body's read set must be a function of tracked inputs, props, and
+  invalidation-covered data (cells/tags) — never of untracked
+  nondeterminism (no `Date.now()` branching into a `cookie()` read).
+  CMS reads (`cms.text(...)`, `cms.blocks(...)`, …) live inside a
+  block's `schema` callback. Async loaders run in `render`.
+- **Wake hints are hooks, park is a hook.** `expires(at)` /
+  `staleUntil(at)` declare freshness boundaries (live-driver wakes +
+  the fp-skip TTL gate); `time()` is the render clock
+  (`expires(time().nextSecond)`). `park()` (schema-phase) is the
+  value-conditional gate `match` can't express — parked keepalive,
+  cached client variants preserved; `return null` from Render renders
+  an empty body instead. Wrappers need NO declaration for their
+  descendants' sake: same-bucket changes ride the descendant fold,
+  new-bucket first visits ride the cold-record gate (over-fetch,
+  never stale).
 - **`match` is strict URLPattern** — no auto-suffixing. `match:
   "/inspect/*"` means `/inspect/<rest>` and does NOT match bare
   `/inspect`. To match both, use `match: "/inspect{/*}?"`.
 - **Slot blocks** are constructed via `block`; they self-register in the type catalog under their auto-derived `type` (`HeroRender` → `"hero"`). `selector` is a flat list of refetch labels (`"page-block"` or `["page-block", "composed-hero"]`); leading `#`/`.` is cosmetic and stripped. The first label is the spec's catalog id — and for singleton blocks, also the CMS storage key. Slots are composed from inside a host's `schema` via `cms.blocks(slot, selector?)` / `cms.block(slot, selector?)` — author code never threads `host` / per-instance content keys; the framework wires it internally.
-- **No `parent` prop.** A parton reads its `parent` (id path + frame chain) from server context — the ambient parton, threaded through a per-component ALS frame (see [`docs/internals/server-context.md`](./docs/internals/server-context.md), backed by a `@vitejs/plugin-rsc` patch in `.yarn/patches/`). Place specs as `<Spec />`, never `<Spec parent={…} />`. `Render` receives `{...vary, ...schema, children}` — no `parent`, no `id`. CMS content flows via `schema` reads bound by the framework.
+- **No `parent` prop.** A parton reads its `parent` (id path + frame chain) from server context — the ambient parton, threaded through a per-component ALS frame (see [`docs/internals/server-context.md`](./docs/internals/server-context.md), backed by a `@vitejs/plugin-rsc` patch in `.yarn/patches/`). Place specs as `<Spec />`, never `<Spec parent={…} />`. `Render` receives `{...matchParams, ...schema, ...actions, children}` — no `parent`, no `id`. CMS content flows via `schema` reads bound by the framework.
 
 ## Comments
 

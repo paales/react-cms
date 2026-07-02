@@ -13,7 +13,6 @@ export {
   type SpecExtraProps,
   type SelectorToken,
   type SelectorTokens,
-  type VaryScope,
   type RenderArgs,
   type PartonProps,
   type ActivatorProps,
@@ -41,10 +40,10 @@ export {
   type ServerContext,
 } from "./server-context.ts"
 
-// Server-hooks — free functions a parton's Render calls to read a request
-// dimension AND record it as an fp dependency (the inline-tracking
-// replacement for `vary`): `cookie()`, `searchParam()`, `param()`. Plus
-// `tag()` (a render-time invalidation label) and `getCurrentParton()` (the
+// Server-hooks — free functions a parton's schema/Render calls to read
+// a request dimension AND record it as an fp dependency: `cookie()`,
+// `searchParam()`, `param()`, the wake hooks, `park()`. Plus `tag()`
+// (a render-time invalidation label) and `getCurrentParton()` (the
 // parton's own identity). See current-parton.ts / server-hooks.ts.
 export {
   cookie,
@@ -59,6 +58,7 @@ export {
   expires,
   staleUntil,
   time,
+  registerDepKind,
 } from "./server-hooks.ts"
 export { tag, getCurrentParton, type CurrentParton, type VisibleOptions } from "./current-parton.ts"
 

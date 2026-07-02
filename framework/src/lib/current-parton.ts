@@ -9,13 +9,9 @@
  * It rides the same per-render FRAME in the `partonStorage` ALS the
  * server-context reader uses (`__partonStorage`; see [[server-context]]),
  * so a read is valid anywhere in the body — before or after awaits — and
- * sibling renders stay isolated. That isolation is the property the old
- * tracked-accessor manifest lacked: it pointed at "the current partial"
- * through a request-level cell that drifted across awaits and siblings,
- * which is why dependency reads had to move into an explicit `vary`
- * (commit 2d607fc). Riding the per-component frame makes the attribution
- * reliable, so reads can be tracked back to the parton that did them
- * again.
+ * sibling renders stay isolated. That per-component isolation is what
+ * makes read attribution reliable: a request-level slot would drift
+ * across awaits and sibling renders, mis-attributing reads.
  *
  * Unlike `createServerContext`, this is read-your-OWN-value: a context
  * provider scopes DESCENDANTS via the frame's `childCtx` and deliberately
@@ -78,13 +74,12 @@ export interface CurrentParton {
    *  (`cookie()`, `searchParam()`, …) during this render — e.g.
    *  `"cookie:cart_id"`. The wrapper stores the (live) Set on the
    *  snapshot; the NEXT render re-reads each key's current value and
-   *  folds it into the fingerprint (store-and-reread), so a tracked read
-   *  moves the fp like a `vary` axis without an explicit `vary`. The
-   *  descendant fold re-reads them too. Mutable; the wrapper owns it. */
+   *  folds it into the fingerprint (store-and-reread), so a tracked
+   *  read moves the fp. The descendant fold re-reads them too.
+   *  Mutable; the wrapper owns it. */
   readonly deps: Set<string>
   /** The parton's frame-resolved request — what tracked hooks read
-   *  from, so a framed spec tracks its frame's URL/cookies (consistent
-   *  with how `vary` already saw the frame-resolved request). */
+   *  from, so a framed spec tracks its frame's URL/cookies. */
   readonly request: Request
   /** Resolved match params (`/pokemon/:id` → `{id}`), read by `param()`.
    *  NOT dep-recorded — match params already fold into the fp via
@@ -94,7 +89,7 @@ export interface CurrentParton {
    *  — the hook writes it; the wrapper reads it back to build the cullable
    *  boundary's observer config. */
   visibleOptions?: VisibleOptions
-  /** Which wrapper phase is executing. `"schema"` spans match → vary →
+  /** Which wrapper phase is executing. `"schema"` spans match →
    *  schema → fingerprint — everything BEFORE the fp is computed, where
    *  `park()` is legal; `"render"` is the Render body. The wrapper flips
    *  it just before invoking Render. Mutable; the wrapper owns it. */

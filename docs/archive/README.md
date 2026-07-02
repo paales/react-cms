@@ -58,6 +58,8 @@ For that, start at [`../reference/intro.md`](../reference/intro.md).
 |---|---|
 | `AGENTS.md` | Old `<Partials namespace="...">` API. Replaced by `<PartialRoot>` + `<Partial>`. Was at repo root; moved here 2026-04-18. |
 | `BARE_KEY_REFETCH.md` | Switch from version-stamped Suspense keys to bare `key={id}`. Insights rolled into `LESSONS.md`. |
+| `auto-tracked-vary.md` | Design + spike log for replacing the declared `vary` callback with tracked reads. Shipped 2026-07-02; `docs/reference/partial.md` describes the live design. |
+| `server-hooks.md` | The tracked-read mechanism note (`getCurrentParton`, store-and-reread, the dep record) that led to `vary`'s removal. Superseded by `docs/reference/partial.md`. |
 | `PARTIAL_WRAPPER_DESIGN.md` | Original `<PartialRoot>` + `<Partial>` proposal + activator pattern + rejection of HTMX-style trigger DSL. Implemented; kept as rationale. |
 | `PLAN.md` | Original proxy-based data layer plan. Direction abandoned in favor of hand-written GraphQL queries with `graphql-request` + gql.tada. See `proxy-design/README.md`. |
 | `REFACTOR_PROGRESS.md` | In-progress log from the 2026-04-18 unified-path refactor. |

@@ -215,15 +215,11 @@ describe("constraint surface merges vary + bound args", () => {
       }: { item: ResolvedCell<{ v: number } | null>; catId: string } & RenderArgs) {
         return <span>{item.value?.v ?? "—"}</span>
       },
-      {
-        selector: "mixed",
-        match: "/m/:catId",
-        vary: ({ params }) => ({ catId: params.catId }),
-      },
+      { selector: "mixed", match: "/m/:catId" },
     )
 
     // Two placements: same itemId, different catId. Their fp differ
-    // because vary's catId is in the constraint surface.
+    // because the match param catId is in the constraint surface.
     const a = await flightAt(
       "http://t/m/1",
       <Mixed item={item.with({ itemId: "A" })} />,
@@ -378,8 +374,7 @@ describe("merged cart granularity — parent re-renders, only the touched line f
       {
         selector: "gran-cart",
         match: "/gc",
-        vary: () => ({ cartId: "c1" }),
-        schema: (_f, vary) => ({ cart: cart.with(vary as { cartId: string }) }),
+        schema: () => ({ cart: cart.with({ cartId: "c1" }) }),
       },
     )
 

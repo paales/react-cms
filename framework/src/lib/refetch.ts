@@ -119,7 +119,7 @@ interface RefetchBatchEntry {
   signal?: AbortSignal
   /** Extra query params appended to the refetch url (not the page url).
    *  Mirrors `FrameworkReloadOptions.params` — ephemeral per-request
-   *  view state read by `vary`'s `search`. */
+   *  view state read via tracked `searchParam()` reads. */
   params?: Record<string, string>
   /** Resolver for this entry's `streaming` milestone — called when the
    *  flushed batch's first segment lands. */

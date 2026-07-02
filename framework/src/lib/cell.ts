@@ -46,19 +46,35 @@ import { getRequest, getScope, parseCookies } from "../runtime/context.ts"
 import { createSessionReadSurface } from "../runtime/session.ts"
 import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
-import { buildTimeScope } from "./time.ts"
-import type { VaryScope } from "./partial.tsx"
+import { buildTimeScope, type TimeScope } from "./time.ts"
 import type { SessionId } from "../runtime/session.ts"
 
 // ─── Public types ─────────────────────────────────────────────────────
 
 /**
- * Sync request scope a cell's `vary` callback sees. Same shape as a
- * parton's `VaryScope` minus `instanceId` (cells aren't per-placement)
- * and with the narrower `SessionId`.
+ * Sync request scope a cell's `vary` callback sees. Cells keep a
+ * declared partition callback — unlike partons, a partition must be
+ * re-derivable OUTSIDE a render (action dispatch resolves cells
+ * against the caller's request), so it can't be an in-body read.
  */
-export type CellVaryScope = Omit<VaryScope, "instanceId" | "session"> & {
+export interface CellVaryScope {
+  /** The (frame-resolved) request URL, already parsed. */
+  url: URL
+  /** Shortcut for `url.pathname`. */
+  pathname: string
+  /** Search params as a destructurable record. Missing keys are
+   *  `undefined`. Multi-valued keys carry only their first value. */
+  search: Partial<Record<string, string>>
+  /** Cookies parsed from the request's `Cookie` header. */
+  cookies: Partial<Record<string, string>>
+  /** Request headers as a destructurable record, lowercased keys. */
+  headers: Partial<Record<string, string>>
+  /** Match params of the enclosing parton, when resolved inside one. */
+  params: Record<string, string>
+  /** Session identity — the partition axis for per-user cells. */
   session: SessionId
+  /** Wall-clock snapshot for the current request. */
+  time: TimeScope
 }
 
 /** Args object — the placement/partition inputs that hash to a

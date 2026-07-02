@@ -130,19 +130,14 @@ state buckets (`<Cache>` store, registry, sessions, GraphQL cache).
 The basic shape of a partial-system test:
 
 ```ts
-import { parton, ROOT } from "../../lib"
+import { parton } from "../partial.tsx"
+import { searchParam } from "../server-hooks.ts"
 
 const TestPartial = parton(
   ({ value }) => <span>{value}</span>,
-  { selector: "#test", vary: ({ request }) => ({ value: new URL(request.url).searchParams.get("v") ?? "" }) }
+  { selector: "#test", schema: () => ({ value: searchParam("v", "") }) }
 )
 
 const { rendered } = await renderRsc(<TestPartial />, { url: "/?v=hello" })
 expect(rendered).toContain("hello")
 ```
-
-The `<Partial>` JSX wrapper, tracked accessors (`getCookie`,
-`getSearchParam`, …), `runWithCacheManifest`, and
-`HoistingViolationError` are all gone — see `archive/` for the
-historical surface and `notes/partial-define-step-api.md` for the
-design rationale behind the constructor.

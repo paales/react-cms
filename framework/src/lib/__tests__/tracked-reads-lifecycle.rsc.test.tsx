@@ -1,30 +1,31 @@
 /**
- * Auto-tracked vary parity — a hooks-only parton (tracked reads in its
- * Render body, no `vary` option) behaves like its declared-`vary` twin
- * across the full fp-skip lifecycle:
+ * Tracked reads through the fp-skip lifecycle — the read IS the
+ * dependency surface:
  *
  *   - fp stable while the tracked value is stable (warm renders),
  *   - fp-skip when the client declares the matching `?cached=` fp,
  *   - fresh render when the tracked value changes under that same
  *     `?cached=` declaration,
- *   - the descendant fold moves an ancestor's fp when a nested
- *     hooks-only spec's read changes — and un-skips the ancestor.
+ *   - the cold-record gate: no dep record → no skip (over-fetch,
+ *     never stale) — on a cold process and on a first visit to a new
+ *     route bucket,
+ *   - the descendant fold moves an ancestor's fp when a nested spec's
+ *     read changes — and un-skips the ancestor.
  *
- * The one intended divergence is cold-render lag: a hooks-only spec's
- * FIRST render of a variant has no recorded deps, so its emitted fp
- * differs from every later (deps-folded) render. That drift is shipped
- * to the client by the fp-trailer in the same response (see
- * fp-trailer.ts `computeFpUpdates`); here it surfaces as `fp(r1) !==
- * fp(r2)` and is asserted explicitly so the lag stays a documented
- * contract, not an accident. See docs/notes/auto-tracked-vary.md.
+ * Cold-render lag is the documented contract: a spec's FIRST render
+ * of a variant has no recorded deps, so its emitted fp differs from
+ * every later (deps-folded) render. That drift is shipped to the
+ * client by the fp-trailer in the same response (see fp-trailer.ts
+ * `computeFpUpdates`); here it surfaces as `fp(r1) !== fp(r2)` and is
+ * asserted explicitly so the lag stays a contract, not an accident.
  *
- * Also covers the two tracked-read hooks that complete the VaryScope
- * surface: `header()` (request header) and `pathname()` (whole-path
- * dependence, the escape hatch for wildcard tails).
+ * Also covers `header()` (request header) and `pathname()` (whole-path
+ * dependence, the escape hatch for wildcard tails), and that the dep
+ * encoding keeps absence distinct from emptiness.
  */
 
 import { describe, expect, it, beforeEach } from "vitest"
-import { parton, PartialRoot, type RenderArgs, type VaryScope } from "../partial.tsx"
+import { parton, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { clearRegistry } from "../partial-registry.ts"
 import { cookie, header, pathname, searchParam } from "../server-hooks.ts"
@@ -51,17 +52,7 @@ async function flightAt(
 /** matchKey for a spec with no own match and no match-bearing ancestor. */
 const ROOT_MK = hash(stableStringify({}))
 
-// ── Twins: declared `vary` vs hooks-only, same cookie dependence ──────
-
-const DeclaredCookie = parton(
-  function DeclaredCookieRender({ pref }: { pref: string } & RenderArgs) {
-    return <span>{`declared-cookie-body:${pref}`}</span>
-  },
-  {
-    selector: "#atv-declared-cookie",
-    vary: ({ cookies: { pref } }: VaryScope) => ({ pref: pref ?? "" }),
-  },
-)
+// ── Cookie-reading spec — the lifecycle subject ───────────────────────
 
 const HooksCookie = parton(
   function HooksCookieRender(_: RenderArgs) {
@@ -116,25 +107,10 @@ async function lifecycle(
   }
 }
 
-describe("hooks-only parton matches its declared-vary twin through the fp-skip lifecycle", () => {
+describe("tracked reads through the fp-skip lifecycle", () => {
   beforeEach(() => clearRegistry("all"))
 
-  it("declared-vary twin: stable fp, fp-skip on match, fresh render on cookie change", async () => {
-    const tree = (
-      <PartialRoot>
-        <DeclaredCookie />
-      </PartialRoot>
-    )
-    const r = await lifecycle(tree, "atv-declared-cookie", "declared-cookie-body")
-    expect(r.warmFp).toBeDefined()
-    expect(r.coldFp).toBe(r.warmFp) // declared vary folds from render 1
-    expect(r.warmFp2).toBe(r.warmFp)
-    expect(r.skippedWhenCachedSameValue).toBe(true)
-    expect(r.freshWhenCachedChangedValue).toBe(true)
-    expect(r.changedBody).toContain("declared-cookie-body:b")
-  })
-
-  it("hooks-only twin: same skip/refetch behavior; cold fp lags one render (trailer's job)", async () => {
+  it("skip on stable value, fresh render on change; cold fp lags one render (trailer's job)", async () => {
     const tree = (
       <PartialRoot>
         <HooksCookie />
@@ -221,26 +197,6 @@ describe("cold-record gate: no snapshot → no skip for a hooks-only spec", () =
     expect(fresh).toContain("gate-tail-body:b")
   })
 
-  it("a declared-vary spec keeps the cold-process skip (request-reproducible fp)", async () => {
-    const tree = (
-      <PartialRoot>
-        <DeclaredCookie />
-      </PartialRoot>
-    )
-    const url = "http://t/atv-cold-declared"
-    const r1 = await flightAt(url, tree, { cookie: "pref=a" })
-    const fp = fpById(r1).get("atv-declared-cookie")
-    expect(fp).toBeDefined()
-
-    // Same restart scenario — but a declared `vary` re-derives its full
-    // surface from the request, so the fp match is trustworthy and the
-    // skip goes through (placeholder, no body).
-    clearRegistry("all")
-    const skipped = await flightAt(`${url}?cached=atv-declared-cookie:${ROOT_MK}:${fp}`, tree, {
-      cookie: "pref=a",
-    })
-    expect(skipped).not.toContain("declared-cookie-body")
-  })
 })
 
 // ── Absence is a value: `?flag=` (empty) ≠ no `?flag` at all ──────────

@@ -12,6 +12,7 @@
 
 import {
   parton,
+  park,
   searchParam,
   type RenderArgs,
   type ResolvedCell,
@@ -37,10 +38,11 @@ export function extractSprite(sprites: unknown): string | null {
 }
 
 export const HeaderPartial = parton(
-  function HeaderRender({
-    showControls,
-    search,
-  }: { showControls: boolean; search: string | undefined } & RenderArgs) {
+  function HeaderRender({ showControls }: { showControls: boolean } & RenderArgs) {
+    // Tracked read: the header re-renders when the search dialog's URL
+    // presence flips. `?search=` (present, empty) and no `?search` at
+    // all fold distinctly — absence is a value.
+    const search = searchParam("search") ?? undefined
     return (
       <header className="mb-4">
         <div className="flex items-center justify-between">
@@ -51,9 +53,8 @@ export const HeaderPartial = parton(
       </header>
     )
   },
-  {
-    vary: ({ search: { search } }) => ({ search }),
-  },
+  // Explicit selector keeps the spec addressable (fp on the wire).
+  { selector: "#header" },
 )
 
 // ─── Search areas (page + frame scopes) ────────────────────────────────
@@ -346,9 +347,9 @@ function makeListPagePartial(page: number) {
     },
     {
       selector: `#page-${page}` as const,
-      vary: ({ search: { pages: pagesRaw } }) => {
-        const pages = Math.max(1, Number(pagesRaw) || 1)
-        if (page > pages) return null
+      schema: () => {
+        const pages = Math.max(1, Number(searchParam("pages")) || 1)
+        if (page > pages) park()
         return { page, isFirst: page === 1 }
       },
     },
@@ -361,14 +362,12 @@ const ListPagePartials = Array.from({ length: MAX_LIST_PAGES }, (_, i) =>
 )
 
 const LoadMorePartial = parton(
-  function LoadMoreRender({ nextPage }: { nextPage: number } & RenderArgs) {
+  function LoadMoreRender(_: RenderArgs) {
+    const nextPage = Math.max(1, Number(searchParam("pages")) || 1) + 1
     return <LoadMoreClient nextPage={nextPage} />
   },
-  {
-    vary: ({ search: { pages } }) => ({
-      nextPage: Math.max(1, Number(pages) || 1) + 1,
-    }),
-  },
+  // Explicit selector keeps the spec addressable (fp on the wire).
+  { selector: "#load-more" },
 )
 
 // ─── Outer wrapper — matches /, composes the overview ─────────────────

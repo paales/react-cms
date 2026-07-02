@@ -25,8 +25,9 @@ The public surface is five things:
 | `<RemoteFrame url capability>` | Cross-process composition — embeds a parton hosted by a different process (same- or cross-origin). | Federated UI: payment forms hosted by a payment provider, marketing widgets from a CMS, etc. |
 
 A spec is constructed once at module scope; every dependency it has on
-the request lives in a single sync `vary` callback (CMS reads live on
-blocks' `schema`).
+the request is a tracked read — `searchParam()`, `cookie()`,
+`header()`, … — recorded wherever the spec's `schema` or `Render`
+actually reads it (CMS reads live on blocks' `schema`).
 
 ```tsx
 const PokemonPage = parton(PokemonRender, "/pokemon/:id")
@@ -50,7 +51,8 @@ A spec is:
 - **Independently re-renderable** — a targeted refetch re-runs only
   the requested spec's body without re-executing any ancestor.
 - **Fingerprinted** — every render computes a hash from the spec
-  id, the render function reference, and the `vary` result. The
+  id, its match params, its resolved schema, and its recorded
+  tracked reads re-evaluated at the current request. The
   client sends the fingerprints it has on every refetch; the server
   emits a 3-byte placeholder for any spec whose fingerprint is
   unchanged, and the client paints the cached subtree from its
@@ -67,7 +69,7 @@ A spec is:
 > asked for, the client merges them into a persisted template.
 
 Every render decision lives inside the spec component the
-constructor returns: pattern match, vary computation, fingerprint,
+constructor returns: pattern match, schema resolution, fingerprint,
 skip, fall through. Specs placed inside opaque server components or
 `.map()` loops register themselves the same way as top-level
 placements.

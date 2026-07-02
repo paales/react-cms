@@ -204,17 +204,16 @@ When the cookie is set, `<EditorShell>` paints three panes:
   other-roots are filtered out automatically. Chrome that renders on every
   page (e.g. the `AppNavBlock` singleton placed at the page root)
   appears on every page; per-page roots only appear where their
-  partial mounts. Folds the previewed `pathname` into its `vary` so
-  cross-page navigation invalidates the tree fp.
+  partial mounts. Reads the previewed `pathname()` (a tracked dep)
+  so cross-page navigation invalidates the tree fp.
 - Preview — the page itself, rendered inline inside the editor's
-  middle pane. Page placements render at the root; their `vary`
-  callbacks see the window URL with editor-internal params present
-  (`?select=…`, `?config=…`). Specs whose `vary` only reads the
-  pathname or page-relevant search params naturally ignore those.
+  middle pane. Page placements render at the root; their tracked
+  reads see the window URL with editor-internal params present
+  (`?select=…`, `?config=…`). Specs that only read the pathname or
+  page-relevant search params naturally ignore those.
 - Field form (`#cms-edit-fields`) — per-config tabs + form fields
-  derived from the catalog manifest. Folds `pathname` into its
-  `vary` so `pickBestConfigIndex` re-evaluates as the previewed
-  page changes.
+  derived from the catalog manifest. Reads `pathname()` so
+  `pickBestConfigIndex` re-evaluates as the previewed page changes.
 
 Server actions (`saveCmsFields`, `publishCmsDraft`,
 `addBlockToSlot`, `removeBlockFromSlot`, `moveBlockInSlot`,
@@ -223,11 +222,11 @@ Server actions (`saveCmsFields`, `publishCmsDraft`,
 ## Catalog prerender
 
 The editor's field form needs to know which fields each block type
-declares. The catalog prerender walks every registered spec, calls
-its `vary` once with a stub request and a tracking CMS surface, and
-records the field reads.
+declares. The catalog prerender walks every registered block type,
+calls its `schema` once with a tracking CMS surface, and records
+the field reads.
 
-`vary` is sync and pure-of-state — the prerender doesn't enter
+`schema` is sync and pure-of-state — the prerender doesn't enter
 React, doesn't render JSX, doesn't suspend. Every accessor read in
-`vary` is captured, regardless of order or position relative to
+`schema` is captured, regardless of order or position relative to
 hypothetical awaits.

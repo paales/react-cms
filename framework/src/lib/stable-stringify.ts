@@ -4,7 +4,7 @@
  * The output is the canonical form fed to `hash()` for cache keys,
  * fingerprints, and registry variant keys. Two semantically-equivalent
  * inputs MUST produce byte-identical output; two semantically-different
- * inputs MUST produce different output (within the value space `vary`
+ * inputs MUST produce different output (within the value space the fold
  * results actually use). Hash collision properties are the hash
  * function's job — this layer is responsible for canonicalization
  * only.

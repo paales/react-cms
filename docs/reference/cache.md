@@ -2,8 +2,8 @@
 
 Server-side render-output caching. A parton opts in by setting the
 `cache` prop; the framework stores the rendered Flight bytes for
-the spec's subtree and replays them on hit. Distinct from
-`expiresAt` in `vary` — that controls when the fp becomes stale
+the spec's subtree and replays them on hit. Distinct from the
+`expires()` wake hint — that controls when the fp becomes stale
 (wake hint for the segment driver, no byte storage). Caching needs
 an explicit opt-in.
 
@@ -11,10 +11,7 @@ an explicit opt-in.
 const ProductHero = parton(ProductHeroRender, {
   match: "/p/:slug",
   cache: { maxAge: 60, staleWhileRevalidate: 30 },
-  vary: ({ params, search: { variant = "default" } }) => ({
-    slug: params.slug,
-    variant,
-  }),
+  schema: () => ({ variant: searchParam("variant", "default") }),
 })
 ```
 
@@ -34,41 +31,43 @@ interface CacheOptions {
 
 ## Time-based reactivity vs. byte caching
 
-The `vary` scope exposes a `time` object that lets a parton declare
-**when its fp becomes stale** without caching anything:
+The `expires()` hook lets a parton declare **when its fp becomes
+stale** without caching anything:
 
-```ts
-vary: ({ time }) => ({
-  tick: Math.floor(time.now / 1000),
-  expiresAt: time.nextSecond,
-})
+```tsx
+function LiveClockRender() {
+  const clock = time()
+  expires(clock.nextSecond)
+  return <span>{new Date(clock.now).toISOString()}</span>
+}
 ```
 
-`expiresAt` is a reserved key in vary's return — the framework
-strips it from the value used in fp + Render, and uses it as a
-wake hint for the segment driver's live-update loop. Each segment
-emits a fresh render at the boundary. **No byte storage.**
+`expires()` writes a wake hint onto the snapshot — never into the
+fp or Render props — and the segment driver's live-update loop wakes
+at the boundary. Each segment emits a fresh render. **No byte
+storage.**
 
-To combine both — cached AND time-reactive — set `cache` and
-declare `expiresAt`:
+To combine both — cached AND time-reactive — set `cache` and call
+`expires()` in the body:
 
 ```tsx
 const HotProduct = parton(HotProductRender, {
   match: "/p/:slug",
   cache: { maxAge: 60 },
-  vary: ({ params, time }) => ({
-    slug: params.slug,
-    expiresAt: time.in(60_000),
-  }),
 })
+
+async function HotProductRender({ slug }: { slug: string } & RenderArgs) {
+  expires(time().in(60_000))
+  …
+}
 ```
 
 There's no useful configuration where the two TTLs differ — the
-cache short-circuits the re-execution that `expiresAt` would
+cache short-circuits the re-execution that `expires()` would
 trigger. Future direction: `cache: true` boolean form that pulls
-TTL from `expiresAt` directly.
+TTL from the `expires()` boundary directly.
 
-## `time` helpers
+## `time()` helpers
 
 ```ts
 interface TimeScope {
@@ -85,16 +84,22 @@ interface TimeScope {
 ## Cache key
 
 ```ts
-key = `${spec.id}:${structuralFingerprint}:${hash([spec.varyResult])}`
+lookup = `${spec.id}:${structuralFingerprint}:${hash([matchParams])}`
 ```
 
-`structuralFingerprint` already folds `vary`, schema reads, call-site
-props, invalidation bumps, and the descendant fold — so it moves
-whenever any of those change (including an inner partial added or
-removed). The trailing `varyResult` hash is a stable, legible axis on
-top of that. `expiresAt` / `staleUntil` are stripped from `vary`'s
-return before it reaches the fingerprint, so a per-millisecond wake
-hint never shifts the key.
+`structuralFingerprint` folds the spec's prior dep record (re-read at
+the current request), schema reads, call-site props, invalidation
+bumps, and the descendant fold — so it moves whenever any of those
+change (including an inner partial added or removed). The trailing
+match-params hash is a stable, legible axis on top of that.
+
+The WRITE key is computed after the render, folding the LIVE tracked-
+read set — so no entry is ever keyed dep-less. A cold record (no
+prior snapshot, empty pre-render fold) therefore misses into a fresh
+render rather than serving bytes keyed under different read values,
+and per-value entries coexist: the cold path over-fetches, never
+serves stale. Wake hints (`expires()` / `staleUntil()`) never enter
+the key, so a per-millisecond boundary never shifts it.
 
 ## Composition with inner partials
 
@@ -150,26 +155,27 @@ Three axes:
    > viewer — one user's mutation fans out to every other user's
    > next nav. For per-request state, add a query-string fragment:
    > `reload({ selector: "cart?cart_id=" + cartId })` matches only
-   > partons whose `vary` output contains `cart_id=<cartId>`. The
-   > author owns this discipline; the framework can't auto-scope
-   > because it doesn't know which `vary` keys are partition axes
-   > vs incidental reads. See "Sharp edge: `reload({selector})`
+   > partons whose effective constraint surface (match params ∪
+   > bound cell args) contains `cart_id=<cartId>`. The author owns
+   > this discipline; the framework can't auto-scope because it
+   > doesn't know which constraint keys are partition axes vs
+   > incidental reads. See "Sharp edge: `reload({selector})`
    > is too broad by default" in
    > [`../notes/IDEAS.md`](../notes/IDEAS.md) for the ergonomic
    > follow-up being tracked.
-2. **Vary-result change.** A page nav whose URL changes a value in
-   the spec's vary result produces a different cache key. The old
-   entry stays in the store but isn't queried.
+2. **Tracked-input change.** A page nav that changes a tracked
+   read's value (or a match param) produces a different cache key.
+   The old entry stays in the store but isn't queried.
 3. **TTL elapsing.** Past `maxAge` (no swr) or `maxAge + swr`, the
    entry is treated as a miss; next render is fresh.
 
 ## Live updates
 
 See [`docs/internals/streaming.md`](../internals/streaming.md) for
-the time-based reactivity path. Short version: `expiresAt` in vary
-is a wake hint for the segment driver's `?streaming=1` long-poll
+the time-based reactivity path. Short version: the `expires()`
+boundary is a wake hint for the segment driver's `?live=1` long-poll
 loop. The `cache` prop is independent — caching is byte storage,
-expiresAt is a freshness boundary.
+`expires()` is a freshness boundary.
 
 ## Related
 

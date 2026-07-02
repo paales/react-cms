@@ -18,7 +18,7 @@
 
 import { readFile, stat } from "node:fs/promises"
 import { statSync } from "node:fs"
-import { parton, notFound, type RenderArgs } from "@parton/framework"
+import { parton, notFound, registerDepKind, type RenderArgs } from "@parton/framework"
 import { Markdown } from "@parton/copies/components/ui/markdown"
 import { DocsSidebar } from "../components/docs-sidebar.tsx"
 import {
@@ -171,9 +171,22 @@ async function FileView({ resolved }: { resolved: ResolvedDoc }) {
 
 // ─── Page wrapper ───────────────────────────────────────────────────────
 
-async function DocsRender({ filepath }: { filepath: string } & RenderArgs) {
-  const resolved = resolveDocPath(filepath)
+// Tracked file-freshness read: the doc's mtime folds into the fp
+// through a registered dep kind (re-read at every fold), so an edited
+// file re-renders on the next visit instead of fp-skipping into stale
+// bytes. A missing file folds "0" — the render handles the 404.
+const docMtime = registerDepKind("docmtime", (abs) => {
+  try {
+    return String(statSync(abs).mtimeMs)
+  } catch {
+    return "0"
+  }
+})
+
+async function DocsRender({ filepath }: { filepath?: string } & RenderArgs) {
+  const resolved = resolveDocPath(filepath ?? "")
   if (!resolved) notFound()
+  docMtime(resolved.abs)
   const stats = await stat(resolved.abs).catch(() => notFound())
   const tree = await readDocTree()
   const title = resolved.rel === "" ? "Docs" : resolved.rel
@@ -203,17 +216,4 @@ async function DocsRender({ filepath }: { filepath: string } & RenderArgs) {
 export const DocsPage = parton(DocsRender, {
   match: "/docs/:filepath*",
   keepalive: false,
-  vary: ({ params }) => {
-    const filepath = params.filepath ?? ""
-    const resolved = resolveDocPath(filepath)
-    let mtime = 0
-    if (resolved) {
-      try {
-        mtime = statSync(resolved.abs).mtimeMs
-      } catch {
-        // Missing file — render handles the 404; mtime stays 0.
-      }
-    }
-    return { filepath, mtime }
-  },
 })

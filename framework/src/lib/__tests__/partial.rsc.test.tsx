@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest"
 import { parton, ROOT, PartialRoot, type RenderArgs } from "../partial.tsx"
+import { cookie, park, pathname, searchParam } from "../server-hooks.ts"
 import { Frame } from "../frame.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { setCookie } from "../../runtime/context.ts"
@@ -43,21 +44,24 @@ describe("parton — match + skip", () => {
     expect(out).not.toContain("should-not-appear")
   })
 
-  it("emits nothing when vary returns null", async () => {
+  it("emits nothing when the schema parks", async () => {
     const Page = parton(
-      function VaryNullTargetRender({}: RenderArgs) {
-        return <span data-testid="vary-null-target">x</span>
+      function ParkedTargetRender({}: RenderArgs) {
+        return <span data-testid="parked-target">x</span>
       },
       {
         match: "/x",
-        selector: "#vary-null-spec",
-        vary: ({ search: { on } }) => (on === "1" ? {} : null),
+        selector: "#parked-spec",
+        schema: () => {
+          if (searchParam("on") !== "1") park()
+          return {}
+        },
       },
     )
     const off = await flightAt("http://t/x", <Page />)
-    expect(off).not.toContain("vary-null-target")
+    expect(off).not.toContain("parked-target")
     const on = await flightAt("http://t/x?on=1", <Page />)
-    expect(on).toContain("vary-null-target")
+    expect(on).toContain("parked-target")
   })
 
   it("a framed spec's match gates on the frame URL, not the page URL", async () => {
@@ -89,17 +93,14 @@ describe("parton — match + skip", () => {
   })
 })
 
-describe("parton — vary + render", () => {
-  it("threads vary result into render props", async () => {
+describe("parton — tracked reads + render", () => {
+  it("a body's tracked read IS the request surface", async () => {
     const Page = parton(
-      function FlavorPageRender({ flavor }: { flavor: string } & RenderArgs) {
+      function FlavorPageRender({}: RenderArgs) {
+        const flavor = searchParam("flavor", "vanilla")
         return <span data-testid="flavor">{flavor}</span>
       },
-      {
-        match: "/flavors",
-        selector: "#flavor-spec",
-        vary: ({ search: { flavor = "vanilla" } }) => ({ flavor }),
-      },
+      { match: "/flavors", selector: "#flavor-spec" },
     )
     const v = await flightAt("http://t/flavors?flavor=chocolate", <Page />)
     expect(v).toContain("chocolate")
@@ -118,7 +119,7 @@ describe("parton — vary + render", () => {
     expect(out).toContain("hello-world")
   })
 
-  it("merges match params + vary additional fields", async () => {
+  it("merges match params + schema-read fields", async () => {
     const Page = parton(
       function MergedRender({
         slug,
@@ -136,10 +137,7 @@ describe("parton — vary + render", () => {
       {
         match: "/p/:slug",
         selector: "#merged-spec",
-        vary: ({ params, search: { page = "1" } }) => ({
-          slug: params.slug,
-          page: Number(page),
-        }),
+        schema: () => ({ page: Number(searchParam("page", "1")) }),
       },
     )
     const out = await flightAt("http://t/p/x?page=3", <Page />)
@@ -198,7 +196,7 @@ describe("parton — children passthrough", () => {
 })
 
 describe("parton — call-site prop pass-through", () => {
-  it("forwards JSX call-site props to Render alongside vary", async () => {
+  it("forwards JSX call-site props to Render alongside schema reads", async () => {
     const Inner = parton(
       function PassthroughInnerRender({
         pokemonId,
@@ -215,21 +213,17 @@ describe("parton — call-site prop pass-through", () => {
       },
       {
         selector: "#passthrough-inner",
-        vary: ({ search: { flavor = "vanilla" } }) => ({ flavor }),
+        schema: () => ({ flavor: searchParam("flavor", "vanilla") }),
       },
     )
     // Outer wrapper: parses :id from URL, passes pokemonId as a JSX
-    // prop to Inner. Inner gets `flavor` from its own vary and
+    // prop to Inner. Inner gets `flavor` from its own schema read and
     // `pokemonId` from the call-site prop.
     const Outer = parton(
-      function PassthroughOuterRender({ pokemonId }: { pokemonId: number } & RenderArgs) {
-        return <Inner pokemonId={pokemonId} />
+      function PassthroughOuterRender({ id }: { id: string } & RenderArgs) {
+        return <Inner pokemonId={Number(id)} />
       },
-      {
-        match: "/p/:id",
-        selector: "#passthrough-outer",
-        vary: ({ params }) => ({ pokemonId: Number(params.id) }),
-      },
+      { match: "/p/:id", selector: "#passthrough-outer" },
     )
     const out = await flightAt("http://t/p/9?flavor=mint", <Outer />)
     expect(out).toContain("passthrough-out")
@@ -237,9 +231,9 @@ describe("parton — call-site prop pass-through", () => {
     expect(out).toContain('9,"/","mint"')
   })
 
-  it("inner spec without vary receives props directly from the call site", async () => {
-    // The whole point: zero `vary` ceremony. Outer parses the URL,
-    // Inner just takes pokemonId as a prop.
+  it("inner spec receives props directly from the call site", async () => {
+    // Zero declaration ceremony: Outer's match parses the URL, Inner
+    // just takes pokemonId as a prop.
     const Inner = parton(
       function NoVaryInnerRender({ pokemonId }: { pokemonId: number } & RenderArgs) {
         return <span data-testid="no-vary-inner">id-{pokemonId}</span>
@@ -247,14 +241,10 @@ describe("parton — call-site prop pass-through", () => {
       { selector: "#no-vary-inner" },
     )
     const Outer = parton(
-      function NoVaryOuterRender({ pokemonId }: { pokemonId: number } & RenderArgs) {
-        return <Inner pokemonId={pokemonId} />
+      function NoVaryOuterRender({ id }: { id: string } & RenderArgs) {
+        return <Inner pokemonId={Number(id)} />
       },
-      {
-        match: "/no-vary/:id",
-        selector: "#no-vary-outer",
-        vary: ({ params }) => ({ pokemonId: Number(params.id) }),
-      },
+      { match: "/no-vary/:id", selector: "#no-vary-outer" },
     )
     const out = await flightAt("http://t/no-vary/77", <Outer />)
     expect(out).toContain("no-vary-inner")
@@ -278,14 +268,11 @@ describe("parton — two-step builder", () => {
     expect(out).toContain("hello")
   })
 
-  it("builder threads vary's return through the same way single-step does", async () => {
+  it("builder threads schema reads through the same way single-step does", async () => {
     const Builder = parton({
       match: "/builder/:slug",
       selector: "#two-step-vary",
-      vary: ({ params, search: { variant = "default" } }) => ({
-        slug: params.slug,
-        variant,
-      }),
+      schema: () => ({ variant: searchParam("variant", "default") }),
     })
     function BuilderVaryRender(p: typeof Builder.props) {
       return (
@@ -326,18 +313,16 @@ describe("parton — match grammar inference", () => {
 })
 
 describe("<Frame> — scope opener", () => {
-  it("descendant partials see the frame-resolved request in vary", async () => {
+  it("descendant partials' tracked reads see the frame-resolved request", async () => {
     // <Frame> writes its initialUrl to session if absent; the inner
     // partial's resolveFrameRequest then reads that URL via session,
-    // and `vary` sees it as `pathname` instead of the page URL.
+    // and `pathname()` sees it instead of the page URL.
     const Inner = parton(
-      function FramedInnerRender({ framePath }: { framePath: string } & RenderArgs) {
+      function FramedInnerRender({}: RenderArgs) {
+        const framePath = pathname()
         return <span data-testid="frame-pathname">{framePath}</span>
       },
-      {
-        selector: "#framed-inner",
-        vary: ({ pathname }) => ({ framePath: pathname }),
-      },
+      { selector: "#framed-inner" },
     )
     const out = await flightAt(
       "http://t/frame-host",
@@ -350,28 +335,26 @@ describe("<Frame> — scope opener", () => {
   })
 })
 
-describe("parton — vary sees mid-request setCookie writes", () => {
+describe("parton — cookie() sees mid-request setCookie writes", () => {
   // The cart pattern (e2e-testing/src/app/pages/magento/cart-actions.ts):
   // an action calls `setCookie("cart_id", X)` to persist a freshly-
   // created cart, then `getServerNavigation().reload({selector: "cart"})`.
-  // The re-rendered cart spec's vary reads `cookies.cart_id` — without the
+  // The re-rendered cart spec reads `cookie("cart_id")` — without the
   // overlay it sees the stale request header (undefined / old value),
   // and the cart badge stays at 0 until the next nav. With the overlay,
   // the immediate re-render sees the new id, hits Magento, and the
   // badge updates as the reload intended.
-  it("setCookie before a descendant spec is visible to that spec's vary", async () => {
+  it("setCookie before a descendant spec is visible to that spec's cookie() read", async () => {
     function CookiePreloader({ children }: { children: React.ReactNode }) {
       setCookie("cart_id", "fresh-cart-123")
       return children
     }
     const CartBadge = parton(
-      function CartBadgeRender({ cartId }: { cartId: string | undefined } & RenderArgs) {
+      function CartBadgeRender({}: RenderArgs) {
+        const cartId = cookie("cart_id")
         return <span data-testid="cart-id-out">cart={cartId ?? "none"}</span>
       },
-      {
-        selector: "#cart-vary-cookies",
-        vary: ({ cookies: { cart_id: cartId } }) => ({ cartId }),
-      },
+      { selector: "#cart-vary-cookies" },
     )
     const out = await flightAt(
       "http://t/",
@@ -384,19 +367,17 @@ describe("parton — vary sees mid-request setCookie writes", () => {
     expect(out).not.toContain('"cart=","none"')
   })
 
-  it("setCookie overrides a request-header cookie value for vary", async () => {
+  it("setCookie overrides a request-header cookie value for cookie()", async () => {
     function ThemeFlipper({ children }: { children: React.ReactNode }) {
       setCookie("theme", "dark")
       return children
     }
     const Themed = parton(
-      function ThemedRender({ theme }: { theme: string } & RenderArgs) {
+      function ThemedRender({}: RenderArgs) {
+        const theme = cookie("theme") ?? "light"
         return <span data-testid="theme-out">theme={theme}</span>
       },
-      {
-        selector: "#themed-vary-cookies",
-        vary: ({ cookies: { theme = "light" } }) => ({ theme }),
-      },
+      { selector: "#themed-vary-cookies" },
     )
     const { stream } = await renderWithRequest(
       "http://t/",

@@ -1,16 +1,15 @@
 /**
- * Time scope for vary callbacks.
+ * Time scope — the render clock.
  *
- * `vary` receives a `time` field carrying a snapshot of the current
- * request's wall-clock time plus a handful of pre-computed boundary
- * timestamps. Authors compute `expiresAt` from these without calling
- * `Date.now()` themselves — keeping `vary` pure and the captured
- * timestamp consistent across all derived values in one call.
+ * The `time()` hook (and a cell partition callback's `time` field)
+ * carries a snapshot of the current request's wall-clock time plus a
+ * handful of pre-computed boundary timestamps. Authors derive wake
+ * boundaries from these without `Date.now()` math inline, and all
+ * derived values in one call see a consistent capture.
  *
- *   vary: ({ time }) => ({
- *     minute: Math.floor(time.now / 60_000),
- *     expiresAt: time.nextMinute,
- *   })
+ *   const clock = time()
+ *   expires(clock.nextMinute)
+ *   const minute = Math.floor(clock.now / 60_000)
  *
  * `nextSecond` / `nextMinute` / `nextHour` are epoch boundaries
  * (same in every timezone). `nextDay` is a UTC-day boundary.
@@ -21,8 +20,8 @@
 
 export interface TimeScope {
   /** Current Unix epoch ms, captured once per scope construction. All
-   *  derived fields are computed against this value, so a single vary
-   *  call sees consistent time. */
+   *  derived fields are computed against this value, so one capture
+   *  sees consistent time. */
   readonly now: number
   /** Timestamp of the next whole-second boundary after `now`. */
   readonly nextSecond: number
@@ -33,8 +32,7 @@ export interface TimeScope {
   /** Timestamp of the next UTC-day boundary after `now`. */
   readonly nextDay: number
   /** Returns `now + ms`. Useful for explicit fixed lifetimes:
-   *  `vary: () => ({ expiresAt: time.in(60_000) })` keeps the
-   *  fp stable for 60s. */
+   *  `expires(time().in(60_000))` declares a 60s freshness window. */
   in(ms: number): number
   /** Sentinel for "never expires" (`Number.POSITIVE_INFINITY`). */
   readonly never: number

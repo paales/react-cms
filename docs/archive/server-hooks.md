@@ -1,3 +1,6 @@
+> Superseded 2026-07-02 by [docs/reference/partial.md](../reference/partial.md) — the
+> `vary` option is removed; tracked reads are the shipped design.
+
 # Server hooks
 
 Status: active. Foundation landed (`getCurrentParton`, `tag`); the rest is a

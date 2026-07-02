@@ -17,8 +17,10 @@
  */
 
 import {
+	expires,
 	localCell,
 	parton,
+	time,
 	type RenderArgs,
 	type ResolvedCell,
 } from "@parton/framework";
@@ -40,7 +42,12 @@ export const laneSlowVersion = localCell({
 const SLOW_RENDER_MS = 2_500;
 
 const LaneClock = parton(
-	function LaneClockRender({ second }: { second: number } & RenderArgs) {
+	function LaneClockRender(_: RenderArgs) {
+		// Wake boundary: the live driver opens a fresh lane every second;
+		// fp-skip declines a snapshot past the boundary (TTL gate).
+		const clock = time();
+		expires(clock.nextSecond);
+		const second = Math.floor(clock.now / 1000);
 		return (
 			<div
 				className="font-mono text-sm"
@@ -51,13 +58,7 @@ const LaneClock = parton(
 			</div>
 		);
 	},
-	{
-		selector: "lanes-demo-clock",
-		vary: ({ time }) => ({
-			second: Math.floor(time.now / 1000),
-			expiresAt: time.nextSecond,
-		}),
-	},
+	{ selector: "lanes-demo-clock" },
 );
 
 const LaneSlowCounter = parton(

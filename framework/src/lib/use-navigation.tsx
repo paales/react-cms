@@ -597,12 +597,12 @@ export function useNavigation(name?: string): FrameworkNavigation {
  *
  * Note: activators are triggers. If the activated content needs
  * dynamic data, the activator writes that data to a scope the spec
- * reads via `vary` — the page URL via `useNavigation().navigate`, a
+ * reads via tracked hooks — the page URL via `useNavigation().navigate`, a
  * frame URL via `useNavigation("name").navigate`, or a cookie — so the
  * server re-resolves it on the refetch.
  */
 /** Fire signature: an activation trigger. Request-dependent inputs
- *  reach the activated spec through `vary` / `match` / cells, which
+ *  reach the activated spec through tracked reads / `match` / cells, which
  *  re-resolve on the refetch. */
 export type ActivatorFire = () => void
 

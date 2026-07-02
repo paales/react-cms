@@ -54,10 +54,7 @@ const RemoteFastGreeting = parton(
       </RemoteCard>
     )
   },
-  {
-    selector: "remote-fast",
-    vary: () => ({ tick: Date.now() }),
-  },
+  { selector: "remote-fast" },
 )
 
 const RemoteMidGreeting = parton(

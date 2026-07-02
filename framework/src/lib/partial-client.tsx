@@ -22,7 +22,7 @@
  * `selector` option (CSS-style `#id` / `.class` tokens) — see
  * {@link FrameworkNavigateOptions}. State lives in a URL (the page URL
  * or a frame URL); a spec's request-dependent inputs reach it through
- * `vary` / `match` / cells, which re-resolve on each refetch.
+ * tracked reads / `match` / cells, which re-resolve on each refetch.
  *
  * This module is the composition point and the `"use client"` boundary
  * — the machinery lives in focused siblings, re-exported below:

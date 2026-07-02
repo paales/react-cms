@@ -7,7 +7,7 @@
  * once per id.
  */
 
-import { parton, type PartialCtx, type RenderArgs } from "@parton/framework"
+import { park, parton, searchParam, type PartialCtx, type RenderArgs } from "@parton/framework"
 import { Frame } from "@parton/framework/lib/frame.tsx"
 import { ChatMessage } from "./piece.tsx"
 import {
@@ -71,10 +71,9 @@ const MessagePartials = AVAILABLE_FILES.map((fileId) =>
     },
     {
       selector: `#chat-msg-${fileId}`,
-      vary: ({ search }) => {
-        const { msgs: msgsRaw = null } = search
-        const msgs = parseMsgs(msgsRaw)
-        if (!msgs.includes(fileId)) return null
+      schema: () => {
+        const msgs = parseMsgs(searchParam("msgs"))
+        if (!msgs.includes(fileId)) park()
         return {}
       },
     },
@@ -102,7 +101,7 @@ export const ChatListPartial = parton(
   },
   {
     selector: "#chat-list",
-    vary: ({ search: { msgs = null } }) => ({ msgIds: parseMsgs(msgs) }),
+    schema: () => ({ msgIds: parseMsgs(searchParam("msgs")) }),
   },
 )
 
@@ -137,9 +136,9 @@ export const ChatOverlayPartial = parton(
   },
   {
     selector: "#chat-overlay",
-    vary: ({ search: { chat, msgs = null } }) => {
-      const msgIds = parseMsgs(msgs)
-      return { open: chat === "open", msgIds, nextHref: computeNextHref(msgIds) }
+    schema: () => {
+      const msgIds = parseMsgs(searchParam("msgs"))
+      return { open: searchParam("chat") === "open", nextHref: computeNextHref(msgIds) }
     },
   },
 )
