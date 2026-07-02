@@ -390,6 +390,6 @@ yarn preview:all     # serves both: host:5173, magento:5181
 - [`partial.md`](./partial.md) — the `parton` constructor.
 - [`cache.md`](./cache.md) — caching options that apply to a
   remote spec (the cache lives at the remote, not the host).
-- [`docs/internals/cache-internals.md`](../internals/cache-internals.md)
-  — the cache's auto-detect path (same `flight-rewrite` primitive
-  as `<RemoteFrame>`).
+- [`../internals/cache-internals.md`](../internals/cache-internals.md)
+  — the cache's hole strip/splice, built on the same Flight
+  row-parsing primitive as `<RemoteFrame>`'s rewriter.

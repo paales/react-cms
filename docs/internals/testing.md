@@ -1,19 +1,25 @@
 # Testing
 
-Four Vitest projects:
+Four Vitest projects (root `vitest.config.ts` + the project configs
+in `framework/`). The tier is chosen by filename suffix, matched
+across every workspace (`{framework,cms,copies,e2e-testing,e2e-magento}/**`):
 
-| Project | Where | Runs |
+| Project | Suffix | Runs |
 |---|---|---|
-| `node` | `framework/src/lib/__tests__/*.test.ts(x)` (jsdom-safe), `cms/src/editor/__tests__/*` | Plain TS / DOM-safe units. |
-| `rsc` | `framework/src/lib/__tests__/*.rsc.test.tsx`, `framework/src/runtime/__tests__/*` | In-process Flight render via `framework/src/test/rsc-server.ts` — the **dev** Flight build. |
-| `rsc-prod` | `framework/src/lib/__tests__/*.rsc-prod.test.tsx` | The same harness against the **production** Flight build. `yarn test:rsc:prod` sets `NODE_ENV=production`, which the vendored `server.edge` entry uses to require the prod build. The dev and prod builds schedule tasks differently, so prod-only regressions (e.g. the server-context carrier) need their own tier — every other tier runs the dev build. Tests `skipIf(NODE_ENV !== "production")`, so a plain all-projects run skips them. |
-| `browser` | `framework/src/lib/__tests__/*.browser.test.ts(x)` | Real Chromium via Vitest browser mode. |
+| `node` | `*.test.ts(x)` (anything not claimed by a suffix below) | jsdom units — hooks, client merge walks, pure TS. Setup file `framework/vitest.setup.ts` installs the Navigation API shim. |
+| `rsc` | `*.rsc.test.ts(x)` | In-process Flight render via `framework/src/test/rsc-server.ts` — the **dev** Flight build, under the `react-server` condition (`framework/vitest.rsc.config.ts`). |
+| `rsc-prod` | `*.rsc-prod.test.ts(x)` | The same harness against the **production** Flight build. `yarn test:rsc:prod` sets `NODE_ENV=production`, which the vendored `server.edge` entry uses to require the prod build. The dev and prod builds schedule tasks differently, so prod-only regressions (the server-context carrier, duplicate model rows, task settle, the cache write key) need their own tier — every other tier runs the dev build. Tests guard with `describe.skipIf(process.env.NODE_ENV !== "production")`, so a plain all-projects run skips them instead of asserting against the wrong build. |
+| `browser` | `*.browser.test.ts(x)` | Real Chromium via Vitest browser mode (`framework/vitest.browser.config.ts`). |
+
+`yarn test` = typecheck + `node` + `rsc` + `rsc-prod`. The browser
+tier is opt-in (`yarn test:browser`) to skip the browser-boot cost
+on every run.
 
 Plus Playwright:
 
 | Suite | Where |
 |---|---|
-| e2e | `e2e/*.spec.ts` |
+| e2e | `e2e-testing/e2e/*.spec.ts` |
 
 ## Playwright — deterministic by construction
 
@@ -32,10 +38,10 @@ manual `yarn dev:magento` terminal — the cross-origin specs always
 run. The magento readiness URL is a real remote endpoint
 (`/__remote/magento-greeting`), so the first parton compile happens
 during boot, not inside a spec's timeout. The two ports live in
-single constants at the top of the config; the config exports
-`MAGENTO_REMOTE_ORIGIN` to the host server (the generated bindings in
-`src/remote/magento/` read it) and to the spec workers, so a worktree
-port remap is a two-constant change.
+single constants at the top of the config; the config sets
+`process.env.MAGENTO_REMOTE_ORIGIN` for the spawned dev servers (the
+generated bindings in `src/remote/magento/` read it) and the spec
+workers, so a worktree port remap is a two-constant change.
 
 ### Warmup project
 
@@ -109,35 +115,56 @@ the same committed bytes) instead of a strict single-match locator.
 
 ## RSC harness
 
-`framework/src/test/rsc-server.ts` wraps the same Flight encode → decode
-round-trip the production renderer uses, but inside a single Node
-process. Use it to assert against the exact tree the client would
-render:
+`framework/src/test/rsc-server.ts` drives the same vendored Flight
+encode → decode round-trip the production renderer uses, inside the
+Vitest worker itself — no dev server, no subprocess. Client / server
+references resolve through permissive Proxy manifests, so tests can
+inspect the Flight payload or the element tree without shipping real
+chunks. The surface:
 
-```ts
-const { rendered } = await renderRsc(<Root />, { url: "/cache-demo" })
-expect(rendered).toContain("Cache size:")
-```
+- `renderWithRequest(url, node, {headers?, signal?, onError?})` —
+  render inside a real request context (`runWithRequestAsync` opens
+  the ALS store so tracked hooks and `<PartialRoot>` resolve).
+  Returns `{stream, cookies}`. It tees and drains the stream before
+  returning so every `<PartialBoundary>` has registered by the time
+  the request context's auto-commit fires — the caller's side is a
+  frozen recording.
+- `renderServerToFlight(node)` / `flightToString(stream)` /
+  `consumePayload(stream)` / `renderAndInspect(node)` — raw Flight
+  render, string-level assertions, decoded payload, or both.
 
-## Per-test scope
+## State isolation
 
-Every RSC + Vitest test gets a per-test scope token via
-`x-test-scope`. Parallel tests don't contend on the per-scope
-state buckets (`<Cache>` store, registry, sessions, GraphQL cache).
+The framework's server state is module-global, bucketed by scope
+(see [`server-isolation.md`](./server-isolation.md)). Two isolation
+regimes:
+
+- **Playwright** stamps every request with a per-worker
+  `x-test-scope: worker-<N>` header (`e2e/fixtures.ts`), so parallel
+  workers land in disjoint buckets of the `<Cache>` store, registry,
+  sessions, and cell storage.
+- **Vitest** tests share the worker's default scope and reset
+  explicitly instead: `beforeEach` calls the clear helpers
+  (`clearRegistry("all")`, `_clearCache()`,
+  `_clearInvalidationRegistry()`, …) as needed.
 
 ## Spec test shape
 
 The basic shape of a partial-system test:
 
 ```ts
-import { parton } from "../partial.tsx"
+import { parton, PartialRoot } from "../partial.tsx"
 import { searchParam } from "../server-hooks.ts"
+import { renderWithRequest } from "../../test/rsc-server.ts"
 
 const TestPartial = parton(
   () => <span>{searchParam("v", "")}</span>,
-  { selector: "#test" }
+  { selector: "#test" },
 )
 
-const { rendered } = await renderRsc(<TestPartial />, { url: "/?v=hello" })
-expect(rendered).toContain("hello")
+const { stream } = await renderWithRequest(
+  "http://localhost/?v=hello",
+  <PartialRoot><TestPartial /></PartialRoot>,
+)
+expect(await new Response(stream).text()).toContain("hello")
 ```

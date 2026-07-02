@@ -468,7 +468,7 @@ naming it: `peek(partitionArgs)`.
    - Stamp `cell:<id>` onto labels; merge args into the constraint
      surface; fold `cellId × partition × value` into the `schema=`
      fp term.
-3. **fp** = `id|matchKey|schema=<cellHashes>|props|inv|deps`. `inv` folds the latest `queryMatchingTs(labels, matchParams ∪ args)` — partition-scoped invalidations move fp only for matching placements. `deps` re-reads the prior render's recorded dep keys at the current request (store-and-reread).
+3. **fp** = `hash(id|matchKey|vary|schema=<cellHashes>|props|inv|deps)` folded with the frame key and the descendant fold. `schema` hashes `cellId × partition × value` per resolved prop cell; `inv` folds the latest `queryMatchingTs(labels, matchParams ∪ args)` — partition-scoped invalidations move fp only for matching placements; `deps` re-reads the prior render's recorded dep keys at the current request (store-and-reread).
 4. **Render** runs with the merged prop bag. In-body resolutions
    (`cell.resolve()`, inline `localCell`) and tracked reads record
    their deps onto the live set — the partition-scoped `cell:`
@@ -585,8 +585,7 @@ the auto-hydration path — e.g. to clear a removed line's slot
 
 `useCell(resolvedCell)` returns a `ClientCell` with optimistic-aware
 `.value`, microtask-batched `set`, and controlled-input bindings.
-See [`./useCell` section below](#client-side-mutation) — unchanged from
-prior versions.
+See [Client-side mutation](#client-side-mutation) below.
 
 ## Deferred (stream-only) writes
 
@@ -664,13 +663,6 @@ See [`../internals/streaming.md`](../internals/streaming.md) §
 "Deferred (stream-only) writes" for the wire mechanics (the null-root
 action response and the client's skip-commit guard).
 
-## Controlled-input discipline (four rules)
-
-See [`useCell` section](#client-side-mutation) — same as before.
-Cells driven by a controlled input use `useCell(cell).input(opts)`
-to get the four behaviours (display-local-first, single-inflight
-batch, caret restoration, safe-moment adoption) for free.
-
 ## Client-side mutation
 
 ```tsx
@@ -703,9 +695,13 @@ export function MessageField({ message }: { message: ResolvedCell<string> }) {
 }
 ```
 
-See [`../internals/cell-internals.md`](../internals/cell-internals.md)
+Cells driven by a controlled input use `useCell(cell).input(opts)`
+to get the four controlled-input behaviours — display-local-first,
+single-inflight batch, caret restoration, safe-moment adoption — for
+free. See
+[`../internals/cell-internals.md`](../internals/cell-internals.md)
 for the client-side batcher, optimistic value tracking, and the
-`cell.input()` controlled-input binding.
+`cell.input()` binding mechanics.
 
 ## Examples table
 
@@ -715,8 +711,8 @@ for the client-side batcher, optimistic value tracking, and the
 | User palette / locale | `localCell({partition: ({session}) => ({sid: session.id}), ...})` |
 | Cart contents (per session) | `localCell({partition: ({cookies}) => ({cartId: cookies.cart_id}), ...})` |
 | Per cart-line | `cartItemCell.with({uid})` — placement-bound |
-| GraphQL-loaded product | `magentoQuery(\`query Product($sku){...}\`).with({sku})` |
-| Per-line entity, auto-hydrated + value-keyed set | `fragmentCell(LineFragment, {key: d => ({uid: d.uid})})` |
+| GraphQL-loaded product | `magento.query(\`query Product($sku){...}\`).with({sku})` |
+| Per-line entity, auto-hydrated + value-keyed set | `magento.fragment(\`fragment Line on …\`, {key: d => ({uid: d.uid})})` |
 | Add-to-cart form draft per product | `localCell({partition: ({session, params}) => ({sid, productId}), ...})` |
 
 What's NOT a cell:

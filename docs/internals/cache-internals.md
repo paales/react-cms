@@ -112,8 +112,12 @@ wire id).
 ## Cache key derivation
 
 ```ts
-lookup = `${spec.id}:${structuralFp}:${hash(stableStringify([matchParams]))}`
+lookup = `${id}:${structuralFp}:${hash(stableStringify([matchParams]))}`
 ```
+
+`id` is the placement's effective render id (`__instanceId` / the
+call-site-props hash included), so two placements of one spec never
+share an entry.
 
 `structuralFp` is the spec's fingerprint folded with its descendant
 fold, so it already moves when a tracked read's value, a
@@ -145,8 +149,8 @@ key input fails loudly instead of recursing forever.
 { maxAge: 60, staleWhileRevalidate: 30 }
 ```
 
-`Entry` carries `expiresAt` (now + maxAge*1000) and `staleUntil`
-(expiresAt + swr*1000). On hit:
+`Entry` carries `expiresAt` (now + maxAge*1000; `+Infinity` when no
+`maxAge`) and `staleUntil` (expiresAt + swr*1000). On hit:
 
 - `expiresAt > now` — fresh hit. Serve.
 - `staleUntil > now` — stale-but-servable. Serve, kick off async

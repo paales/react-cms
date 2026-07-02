@@ -44,7 +44,8 @@ For a frame at path `[outer, inner]` (joined as `"outer.inner"`):
 
 1. Server session entry for that path (cookie-backed; survives
    nav).
-2. The spec's `frameUrl` option (cold-session default).
+2. The frame's `initialUrl` prop (cold-session default — `<Frame>`
+   writes it to the session on first render).
 3. The page request (frame and page agree — no-op frame).
 
 ## Nested frames
@@ -167,10 +168,9 @@ handles ordering and the React transition wrapper handles visual
 continuity.
 
 When called with no name, `useNavigation()` looks up the closest
-ambient frame from the React context (set by the spec's frame
-wrapper) and falls back to the window. Buttons inside a framed
-spec naturally navigate that frame; buttons outside drive the
-window.
+ambient frame from the React context (set by `<Frame>`) and falls
+back to the window. Buttons inside a framed spec naturally navigate
+that frame; buttons outside drive the window.
 
 ### Multiple buttons in one component
 
@@ -282,9 +282,10 @@ spec reads it: the page URL (`navigate(url, { selector })`), a frame
 URL, or a cookie (`navigate(url, { cookies, selector })`). A
 cache-mode refetch derives its fingerprint from the recorded read set
 re-evaluated at the current request, so an input moves the result
-when it flows through one of those scopes. Activators (`useActivate` —
-`<WhenVisible>`, `<WhenMounted>`, manual buttons) are triggers that
-fire `reload({ selector })`.
+when it flows through one of those scopes. Activators (the
+framework's `useActivate`; the example app's `<WhenVisible>` /
+`<WhenMounted>` wrappers; manual buttons) are triggers that fire
+`reload({ selector })`.
 
 ### Other commit knobs
 
@@ -293,8 +294,9 @@ fire `reload({ selector })`.
 | `streaming: true` | Progressive reveal — commit without `startTransition`, so Suspense fallbacks paint and Flight chunks land per-row. Default is `false` (transition-wrapped, atomic swap, no fallback flash). A CLIENT commit-mode switch only — it does **not** hold the connection open. Not to be confused with the `streaming` milestone in `progress` — the option is a behavior switch, the milestone is an event marker. |
 | `live: true` | Open the reload as a live subscription — the server holds the connection open (up to its keepalive) and pushes a fresh segment on every route-relevant bump / `expires()` boundary. `reload`-only; `<LivePageHeartbeat>` is the canonical caller. Orthogonal to `streaming` (commit mode): a plain `reload({selector, streaming: true})` stays one-shot. Pair with a `signal` so navigating away tears the long-poll down. |
 | `silent: true` | Update the URL without firing any refetch. Wins over `selector` if both are set. Ignored on frame handles. `navigate`-only. |
-| `props` | See above. |
-| `cookies` | Write client-side cookies before the refetch fires. `navigate`-only — `reload` does not accept it. |
+| `signal` | Caller-supplied `AbortSignal` — aborting cancels the in-flight fetch (and a `live` long-poll's server-side driver). `reload`-only. |
+| `params` | Extra query params appended to the REFETCH url only — never the page URL, never persisted. They reach the re-rendered specs through tracked `searchParam()` reads (the view-culling controller's `?visible=` set rides here). `reload`-only. |
+| `cookies` | Write client-side cookies before the refetch fires. `navigate`-only — `reload` does not accept it. See [Cookies](#cookies). |
 
 ### Cookies
 

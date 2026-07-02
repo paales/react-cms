@@ -108,20 +108,30 @@ interface RequestRegistry {
 Lookups during the request's render see pending state first, then
 fall back to the route's committed hint:
 
-1. `pendingInvalidations.has(id)` → return `undefined`.
+1. `ctx.invalidations.has(id)` → return `undefined`.
 2. `pendingWrites.get(id)` → return that snapshot.
 3. `pendingHints.get(id)` → resolve to the variant in `partials`.
-4. `hints.get(route)?.get(id)` → resolve to the canonical variant.
+4. `hints.get(routeKey)?.get(id)` → resolve to the canonical variant.
 
-The canonical store is **immutable within a request** — writes
-buffer into the pending sets and only land at commit. Two reads lean
-on that. `getRouteSnapshots()` merges the route's committed hint with
-the live overlay (invalidations delete, `pendingWrites` set) and is
-the general route-snapshot view. The descendant fold instead reads
-`getFoldBaseSnapshots()` — the committed hint snapshots with
-`invalidations` applied but **no `pendingWrites` overlay** — and
-memoizes it for the whole pass (keyed on the canonical store identity
-+ routeKey). The overlay is omitted on purpose: React renders
+Registration is double-written. `registerPartial` buffers into the
+pending sets AND eagerly publishes the variant + hint entry to the
+canonical store — additive only, freshness-guarded (`_seq`, below).
+A CONCURRENT request must be able to see a partial before this
+request's commit fires: an activator-driven refetch that lands while
+the initial page's RSC stream is still flushing would otherwise hit
+registry-miss and get a full streaming-mode response instead of its
+targeted partial. The atomic prune/merge at commit still owns the
+FINAL hint shape.
+
+Two fold reads rely on per-pass stability. `getRouteSnapshots()`
+merges the route's committed hint with the live overlay
+(invalidations delete, `pendingWrites` set) and is the general
+route-snapshot view. The descendant fold instead reads
+`getFoldBaseSnapshots()` — a per-pass MATERIALIZED map of the
+committed hint snapshots with `invalidations` applied but **no
+`pendingWrites` overlay** — memoized on the ctx (keyed by canonical
+store identity + routeKey), so this pass's eager publishes never
+shift it mid-fold. The overlay is omitted on purpose: React renders
 top-down, so every ancestor folds before any descendant re-registers,
 and an ancestor's fold never observes a descendant's this-pass
 `pendingWrites` entry. Folding the overlay in would be a no-op, so the
@@ -129,12 +139,16 @@ base stays canonical-only and stable, which is what lets the fold
 cache it once per pass instead of rebuilding per parton. See the
 "Cold → warm fp drift" section in `render-pipeline.md`.
 
-`commitRequestRegistry` runs on stream flush and atomically applies
-the pending sets to the canonical store. Snapshots merge into
-`partials[id][variantKey]` — same structural placement → same
-variant key → idempotent, subject to the freshness guard below. The
-hint table is also MERGED: `pendingHints` overlays the existing hint
-for the route, with `ctx.invalidations` removing specific ids.
+`commitRequestRegistry` runs on stream flush — once per ctx, via the
+`committed` latch — and applies the pending sets to the canonical
+store. Snapshots merge into `partials[id][variantKey]` — same
+structural placement → same variant key → idempotent, subject to the
+freshness guard below. The hint table is also MERGED: `pendingHints`
+overlays the existing hint for the route, with `ctx.invalidations`
+removing specific ids. The stream wrappers first
+`Promise.allSettled` the ctx's `pendingDefers` list — `<RemoteFrame>`
+registers a promise there so the remote's trailer snapshots are in
+the pending sets before commit runs.
 
 ### Registration-sequence freshness guard
 
@@ -170,21 +184,27 @@ mis-firing further up the tree. Merging keeps the prior commit's
 descendant entries alive as long as the ancestor stays on the page.
 
 Stale entries that legitimately need removal flow through
-`ctx.invalidations`: server-side `getServerNavigation().reload({selector})`
-calls bump the invalidation registry, and on commit the dispatcher
-converts each bumped name into an id-wide invalidation
-(`invalidateSnapshot(id)` clears every variant of the id and every
-hint pointing at it). CMS edits flow through the same `reload()`
-path.
+`ctx.invalidations` via `invalidateSnapshot(id)` — an id-wide drop
+of every variant and every hint pointing at it, applied at commit.
 
-## Invalidation
+## Invalidation — two channels
 
-`invalidateSnapshot(id)` clears every variant of that id from the
-variant store and every hint pointing at it. Server-side
-`getServerNavigation().reload({ selector: "cart" })` bumps the
-invalidation registry under the name `cart`; the meaning is "this
-content has changed for every placement of any partial carrying
-the `cart` label or id."
+Content changes and record removal are separate mechanisms:
+
+- **Fingerprint invalidation** (the live path). Server-side
+  `getServerNavigation().reload({ selector: "cart" })` bumps the
+  *invalidation registry* (`refreshSelector`) under the name
+  `cart`: every placement carrying the `cart` label or id folds the
+  bump's timestamp into its fp (`|inv=`), mismatches the client's
+  cached fp, and re-renders fresh on the next pass. Snapshots stay —
+  the registry record is structural placement, which a content
+  change doesn't move. Cell writes and CMS edits ride this channel.
+- **Snapshot invalidation.** `invalidateSnapshot(id)` removes the
+  id's registry records entirely (inside a request: buffered into
+  `ctx.invalidations`, applied at commit; outside: direct canonical
+  delete). For entries whose *placement* is gone — the next refetch
+  for the id falls through to a streaming-mode re-render that
+  re-registers it.
 
 ## LRU bound
 

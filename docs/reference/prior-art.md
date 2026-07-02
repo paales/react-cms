@@ -26,7 +26,7 @@ modules contributed blocks via mergeable handle files
 `_construct` (data-loading) and `_toHtml` (render); Varnish + ESI
 hole-punched the dynamic regions out of an otherwise-cacheable HTML
 shell. Block-level cache keys, action-dispatched region refreshes,
-contribution-point composition. The `<Partial>` primitive maps 1:1
+contribution-point composition. The parton primitive maps 1:1
 onto the M1 block; `cache` maps onto Varnish ESI; selector
 invalidation maps onto cache-tag invalidation.
 
@@ -34,7 +34,7 @@ invalidation maps onto cache-tag invalidation.
 the most architecturally complete extension model in web history.
 Anything goes anywhere; cache contexts (per-user, per-locale,
 per-URL) drive both invalidation and key derivation. The
-manifest-as-cache-key idea in `cache.md` is the same insight as
+read-set-as-cache-key idea in `partial.md` is the same insight as
 Drupal's cache contexts, rephrased.
 
 **WordPress, TYPO3, Sitecore, AEM.** Same shape, varying complexity.
@@ -64,23 +64,23 @@ live partials reinject on the way out.
 **Zalando Mosaic, Finn.no Podium, OpenTable OpenComponents.** Each
 solves "compose a page from fragments coming from different origins,
 each with its own lifecycle, cache, and deploy cadence." The
-deployment-unit angle in `notes/IDEAS.md` (a Partial that lives in
-a different process) is structurally the same problem.
+same problem `<RemoteFrame>` ([remote-frame.md](./remote-frame.md))
+solves at the Flight wire level.
 
 **Hotwire Turbo Frames.** Probably the closest to the runtime shape
-of `<Partial frame>`. Each frame is a mini-browser: its own URL, its
+of `<Frame>`. Each frame is a mini-browser: its own URL, its
 own navigation, its own back stack. Frames navigate independently;
 a click inside a frame stays inside that frame. The differences:
 
-- Turbo Frames are HTML custom elements. `<Partial frame>` is a
-  pure RSC construct — the frame boundary is a scope-cell mutation,
+- Turbo Frames are HTML custom elements. `<Frame>` is a pure RSC
+  construct — the frame boundary is a server-context extension,
   not a DOM element.
 - Turbo Frames have one URL axis (the frame's own); browser
-  back/forward operates across frame URLs uniformly. `<Partial
-frame>` has two axes — browser history (page URLs) and per-entry
+  back/forward operates across frame URLs uniformly. `<Frame>` has
+  two axes — browser history (page URLs) and per-entry
   `__frameHistory` (frame URLs scoped to each browser entry) — so
   drawer-shape frames don't pollute browser back.
-- Turbo doesn't have a built-in invalidation graph. `<Partial>` does
+- Turbo doesn't have a built-in invalidation graph. Partons do
   (selector tokens + `getServerNavigation().reload({selector})` from
   server actions or any server-side task).
 
@@ -128,8 +128,8 @@ ships here today; flagged for follow-up.
 
 ## Liquid and the Shopify theme editor
 
-Worth its own section because the editor in `docs/cms.md` borrows
-the layout (tree / preview / fields) directly.
+Worth its own section because the editor in [`cms.md`](./cms.md)
+borrows the layout (tree / preview / fields) directly.
 
 **Shopify Liquid.** Synchronous, intentionally limited template
 engine. Data loading is array-access on a fixed root scope; you
@@ -351,7 +351,7 @@ match clauses.
 
 Not novel; the combination is uncommon.
 
-1. **The Partial primitive does one of every job.** Render unit,
+1. **The parton primitive does one of every job.** Render unit,
    cache unit, invalidation unit, fingerprint unit, CMS storage
    unit, frame unit. One JSX wrapper opens scopes for all of them.
    Most prior systems split these (M1: blocks for render, ESI for
@@ -380,11 +380,12 @@ Not novel; the combination is uncommon.
    targeted refetch are all `navigate(url, options)` with
    different option fields. No second client API to learn.
 
-5. **State lives in URLs.** No client→server prop-override channel.
-   Page URL for shareable, frame URL for subtree-scoped. The
-   combination of tracked accessors + URL-driven state means a
-   Partial's render is reproducible from its URL alone — refresh
-   the page, get the same scene back.
+5. **Shareable state lives in URLs.** No client→server prop-override
+   channel. Page URL for shareable, frame URL for subtree-scoped;
+   server-owned state that doesn't fit a URL lives in cells. Tracked
+   accessors + URL-driven state make a parton's render reproducible
+   from its URL plus server state — refresh the page, get the same
+   scene back.
 
 ## What's missing
 
@@ -397,10 +398,11 @@ Not novel; the combination is uncommon.
   Astro-shape "islands of dynamism in a static shell." Aligned
   with the project name; not built.
 
-- **Distributed runtime.** Each Partial in a different process /
-  worker / CDN edge. The strip-and-reinject mechanics already
-  support this structurally — the outer cached bytes can come from
-  anywhere. Filed; not built.
+- **Worker / CDN-edge placement.** `<RemoteFrame>` covers the
+  different-process case; running individual partons in workers or
+  at the CDN edge is the remaining step. The strip-and-reinject
+  mechanics already support it structurally — the outer cached
+  bytes can come from anywhere. Filed; not built.
 
 - **Cache invalidation by manifest value.** "Invalidate every
   cache entry that read `cookie:user_id=42`." Falls out nearly for

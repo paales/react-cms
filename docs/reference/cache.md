@@ -1,7 +1,7 @@
 # Cache
 
 Server-side render-output caching. A parton opts in by setting the
-`cache` prop; the framework stores the rendered Flight bytes for
+`cache` option; the framework stores the rendered Flight bytes for
 the spec's subtree and replays them on hit. Distinct from the
 `expires()` wake hint — that controls when the fp becomes stale
 (wake hint for the segment driver, no byte storage). Caching needs
@@ -63,8 +63,7 @@ async function HotProductRender({ slug }: { slug: string } & RenderArgs) {
 
 There's no useful configuration where the two TTLs differ — the
 cache short-circuits the re-execution that `expires()` would
-trigger. Future direction: `cache: true` boolean form that pulls
-TTL from the `expires()` boundary directly.
+trigger, so keep them aligned.
 
 ## `time()` helpers
 
@@ -83,7 +82,7 @@ interface TimeScope {
 ## Cache key
 
 ```ts
-lookup = `${spec.id}:${structuralFingerprint}:${hash([matchParams])}`
+lookup = `${spec.id}:${structuralFingerprint}:${hash(matchParams)}`
 ```
 
 `structuralFingerprint` folds the spec's prior dep record (re-read at
@@ -178,8 +177,8 @@ loop. The `cache` prop is independent — caching is byte storage,
 
 ## Related
 
-- [`docs/partial.md`](./partial.md) for the constructor surface
-- [`docs/frames-navigation.md`](./frames-navigation.md) for frames
-- [`docs/cms.md`](./cms.md) for CMS-driven cache key contributions
-- [`docs/internals/streaming.md`](../internals/streaming.md) for the
+- [`partial.md`](./partial.md) for the constructor surface
+- [`frames-navigation.md`](./frames-navigation.md) for frames
+- [`cms.md`](./cms.md) for CMS-driven cache key contributions
+- [`../internals/streaming.md`](../internals/streaming.md) for the
   live-update path

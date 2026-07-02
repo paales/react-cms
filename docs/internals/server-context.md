@@ -29,7 +29,7 @@ The unit threaded through the ALS is a per-render **frame** —
 - `ctx` is the immutable context map this subtree READS (`getServerContext`).
 - `settle` is the nearest enclosing parton's settlement scope — the refcount
   of unfinished Flight tasks in that parton's subtree, behind
-  `_onPartonSettled` (see [`../notes/task-settle.md`](../notes/task-settle.md)).
+  `_onPartonSettled` (see [`../archive/task-settle.md`](../archive/task-settle.md)).
 - `parton` is the rendering parton's self-identity (`getCurrentParton`),
   read-your-own and not inherited — see [`current-parton.ts`](../../framework/src/lib/current-parton.ts).
 
@@ -68,7 +68,7 @@ build (dev + prod edge):
    task's scope chain; a scope draining to zero fires its `onSettled` exactly
    once. This is the per-parton subtree-settlement signal behind
    `_onPartonSettled` — lifecycle map, refcount design, and edge cases in
-   [`../notes/task-settle.md`](../notes/task-settle.md).
+   [`../archive/task-settle.md`](../archive/task-settle.md).
 
 The edge build never imports `AsyncLocalStorage` (edge runtimes lack
 `async_hooks`). `@vitejs/plugin-rsc` injects `globalThis.AsyncLocalStorage`

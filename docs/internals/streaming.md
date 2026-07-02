@@ -10,7 +10,11 @@ Every server render walks the full route tree top-down. The server
 re-renders **the whole world** for every segment of a streaming
 response, and the fp-skip cascade does the pruning:
 
-- Each parton computes `fp = hash(id|matchKey|schema|props|inv|deps|desc)`.
+- Each parton computes
+  `fp = hash(id|matchKey|vary|schema|props|inv|deps)` folded with
+  its frame URL and the descendant fold (see
+  [`render-pipeline.md`](./render-pipeline.md) §Fingerprint
+  protocol).
 - If the client sent that fp in `?cached=`, the parton emits an
   `<i hidden data-partial-id>` placeholder and never runs its
   Render body. Anything inside the parton is collapsed to one
@@ -213,8 +217,13 @@ import { LivePageHeartbeat } from "@parton/framework/lib/live-page-heartbeat.tsx
 
 Behaviour:
 
-- **Initial fire** deferred by one macrotask so React's commit
-  phase (which wires `setPayloadRaw`) runs first. Then
+- **Initial fire** waits for two events: React's first commit (the
+  effect runs post-commit, once `PartialErrorBoundary` renders have
+  populated the cold fps) AND the browser `load` event (which is
+  when the SSR HTML's `<!--fp-trailer:…-->` comment has been parsed
+  and its warm-fp corrections applied — firing earlier would send
+  cold-only fps and re-render every drifted parton, a visible flash
+  for time-dependent content). Then
   `nav.reload({streaming: true, live: true})` opens the long-poll
   connection — `live` holds it open, `streaming` commits each pushed
   segment progressively.

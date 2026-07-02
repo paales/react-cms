@@ -36,12 +36,16 @@ spec component itself.
 ))}
 ```
 
-## Lazy refs inside cached bytes
+## Decoding flattens streaming
 
-`createFromReadableStream` returns a tree whose nested chunks may
-still be represented as Flight lazy refs. `cache.tsx::resolveLazies`
-forces resolution before re-stripping dynamic wrappers — both cache
-hit and miss paths return an equivalent fully-materialized tree.
+`createFromReadableStream` returns a tree whose nested chunks are
+Flight lazy refs; forcing them (a decode → re-encode round-trip)
+resolves every Suspense boundary and destroys streaming pacing.
+That's why the byte cache and `<RemoteFrame>` never decode stored /
+proxied payloads to React trees — they rewrite at the row/line
+level (`flight-graph.ts`, `flight-rewrite.ts`) and let the client
+resolve lazies natively. See
+[`cache-internals.md`](./cache-internals.md).
 
 ## `data-partial-id` + `data-partial-match` on placeholders
 

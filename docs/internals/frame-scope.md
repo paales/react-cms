@@ -8,7 +8,7 @@ framed spec keys on its frame's URL.
 
 ```ts
 // inside createSpecComponent (framework/src/lib/partial.tsx):
-const parent = getAmbientParent()
+const parent = __injectedParent ?? getServerContext(ParentContext)
 const ourFrameChain = parent.frameChain
 const ourRequest =
   ourFrameChain.length > 0 ? resolveFrameRequest(ourFrameChain) : getRequest()

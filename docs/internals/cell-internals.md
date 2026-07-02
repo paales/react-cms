@@ -28,9 +28,10 @@ _recordCellWrite(            ← tallies this write (and whether the cell
   cell.deferred === true)      is `deferred`) on the request store, for
                                the deferred-commit decision (below)
 ↓
-refreshSelector(             ← bumps the invalidation registry with
-  "cell:" + id +               partition-scoped constraints encoded
-  "?<argsEncoded>")            as the query-string fragment
+getServerNavigation()        ← bumps the invalidation registry with
+  .reload({selector:           the partition-scoped selector
+    buildCellSelector(          ("cell:<id>?<argsEncoded>",
+      id, args)})               constraints as the query fragment)
 ```
 
 The whole pipeline runs inside a `runInvalidationTransaction`. A
@@ -124,7 +125,11 @@ future work).
 `set` is `__cellWrite.bind(null, cellId)` — Flight handles bound
 server-action refs natively (React 19+). The client invokes
 `.set(v)` and the framework re-resolves `partitionKey` from the
-action invocation's request scope. The action returns
+action invocation's request scope. A cell resolved WITH explicit
+args (a bound-cell prop) instead carries a `partition` field and a
+`set` bound to `__scopedCellWrite` with those args baked, so client
+invocations land on the right partition regardless of URL changes
+between render and call. The action returns
 `Promise<void>`; refetch is driven by
 `getServerNavigation().reload({selector: "cell:<id>"})` inside
 the action, which bumps the invalidation registry and shifts the
@@ -204,33 +209,30 @@ app policy, not framework default.
 
 ## Resolution path — parton's wrapper component
 
-`createSpecComponent` builds an async React component for every spec.
-On each render the wrapper:
+The full wrapper pipeline (match gate → props cell resolution →
+fingerprint → skip decision → render → boundary registration) is
+documented in [`render-pipeline.md`](./render-pipeline.md) §"The
+spec wrapper pipeline". The cell-specific parts:
 
-1. **match phase** — the compiled gate (`compileMatch` in
-   `lib/match.ts`) evaluates the frame-resolved request. Mismatch →
-   parked keepalive.
-2. **Props phase** — walk top-level JSX props:
-   - For each prop whose value is a `Cell<T>` or `BoundCell<T>`,
-     await `resolveCellValue(cell, args)` (storage hit returns sync;
-     storage miss + `load` defined runs loader), replace the prop
-     with `ResolvedCell<T>`, stamp the `cell:<id>` label, add args to
-     `boundArgsMerged`, and fold `cellId × partitionKey × value` into
-     the `schema=` fp term.
-3. **Constraint surface** — `effectiveConstraints = matchParams ∪
-   boundArgsMerged`. Passed to `queryMatchingTs(labels, surface)` →
-   `inv` fold. Matching is type-aware: non-string partition values
-   (number, boolean, null) match type-exactly, so `{uid:123}` and
-   `{uid:"123"}` stay distinct — mirroring the partition key
-   (`hash(stableStringify(args))`). Bare string tokens still match
-   loosely, so a hand-authored `cart_id=1234` matches a string
-   constraint value `"1234"`.
-4. **fp** = `id|matchKey|schema=<cellHashes>|props|inv|deps` —
-   `deps` re-reads the prior render's recorded dep keys at the
-   current request (store-and-reread).
-5. **Render** with the assembled prop bag (match params, resolved
-   props). In-body resolutions and tracked reads record onto the
-   live dep set for the NEXT fp.
+- **Props phase** — the wrapper walks top-level JSX props; for each
+  prop whose value is a `Cell<T>` or `BoundCell<T>` it awaits
+  `resolveCellValue(cell, args)` (storage hit returns sync; storage
+  miss + `load` defined runs the loader), replaces the prop with
+  `ResolvedCell<T>`, stamps the `cell:<id>` label, adds the args to
+  `boundArgsMerged`, and folds `cellId × partitionKey × value` into
+  the `|schema=` fp term.
+- **Constraint surface** — `effectiveConstraints = matchParams ∪
+  boundArgsMerged`, passed to `queryMatchingTs(labels, surface)` →
+  the `|inv=` fold. Matching is type-aware: non-string partition
+  values (number, boolean, null) match type-exactly, so `{uid:123}`
+  and `{uid:"123"}` stay distinct — mirroring the partition key
+  (`hash(stableStringify(args))`). Bare string tokens still match
+  loosely, so a hand-authored `cart_id=1234` matches a string
+  constraint value `"1234"`.
+- **fp** = `id|matchKey|vary|schema=<cellHashes>|props|inv|deps` —
+  `deps` re-reads the recorded dep keys at the current request
+  (store-and-reread). In-body resolutions and tracked reads record
+  onto the live dep set during Render, for the NEXT fp.
 
 **In-body resolution dep stamping.** `handle.resolve(args?)` (and the
 inline `localCell(key, opts)` form, which builds its handle via

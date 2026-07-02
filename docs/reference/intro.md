@@ -24,12 +24,6 @@ The public surface is five things:
 | `<Frame name initialUrl>` | Scope opener — extends the ambient frame chain so descendants see the frame-resolved request. | Any region whose URL is independent of the window URL. |
 | `<RemoteFrame url capability>` | Cross-process composition — embeds a parton hosted by a different process (same- or cross-origin). | Federated UI: payment forms hosted by a payment provider, marketing widgets from a CMS, etc. |
 
-A spec is constructed once at module scope; every dependency it has on
-the request is a tracked read — `searchParam()`, `cookie()`,
-`header()`, … — recorded where the spec's `Render` actually reads it
-(CMS reads live on a block's `schema({cms})` callback — the one
-declared resolution surface in the framework).
-
 ```tsx
 const PokemonPage = parton(PokemonRender, "/pokemon/:id")
 
@@ -40,29 +34,36 @@ function PokemonRender({ id }: { id: string } & RenderArgs) {
 <PokemonPage />
 ```
 
-A spec is:
-
-- **Addressable** — `selector="cart"` (auto-derived from
-  `Render.name` when omitted) makes it the target of the client-side
-  `[reload] = useNavigation().reload(); reload({ selector: "cart" })`
-  and of the server-side `getServerNavigation().reload({ selector:
-  "cart" })` (callable from a server action body or any server-side
-  task). Cosmetic `#`/`.` prefixes on labels are stripped and don't
-  change behaviour.
-- **Independently re-renderable** — a targeted refetch re-runs only
-  the requested spec's body without re-executing any ancestor.
-- **Fingerprinted** — every render computes a hash from the spec
-  id, its match params, its resolved cells, and its recorded
-  tracked reads re-evaluated at the current request. The
-  client sends the fingerprints it has on every refetch; the server
-  emits a 3-byte placeholder for any spec whose fingerprint is
-  unchanged, and the client paints the cached subtree from its
-  module-level `_currentPagePartials`.
-- **Pattern-as-router** — when `match: "/pokemon/:id"` is set, the
-  spec emits nothing on a pattern miss. A page is a list of pattern-
-  gated specs; only the matching ones render.
-
 ## The mental model
+
+A spec is constructed once at module scope; every render of it runs
+one pipeline:
+
+1. **Match gate.** `match` decides which instance exists on this
+   request — variant identity (named params), route buckets,
+   existence. A miss parks the client's cached variants; only
+   matching specs render.
+2. **Body reads.** Everything else the spec depends on, its `Render`
+   *reads*: request dimensions via tracked hooks (`searchParam()`,
+   `cookie()`, `header()`, `visible()`, …), data via cells
+   (`cell.resolve()`, inline `localCell`, `.with()` prop binding),
+   CMS content via a block's `schema({cms})`. The read IS the
+   dependency — recorded per render, no declarations.
+3. **Fingerprint.** Each render hashes the spec id, match params,
+   resolved cells, call-site props, invalidation bumps, the recorded
+   reads re-evaluated at the current request, and every descendant's
+   contribution. The client sends the fingerprints it has on every
+   refetch; the server emits a placeholder for any spec whose fp is
+   unchanged, and the client paints the cached subtree from its
+   client-side partial cache.
+4. **Per-parton wire.** Every navigation can ask for any subset of
+   specs (`selector` labels); the server returns only what was asked
+   for, the client merges the parts into a persisted template.
+   Independently re-renderable: a targeted refetch re-runs only the
+   requested spec's body, never its ancestors.
+5. **Writes.** Plain `"use server"` functions that import cells and
+   call `.set`, wrapped in `atomic(fn)` for one transactional commit;
+   invalidation fans back out to every parton that read the cell.
 
 > Render the whole tree on a full request. After that, every
 > client-initiated render is a navigation, and every navigation can
@@ -86,10 +87,12 @@ register themselves the same way as top-level placements.
 
 ## Reading order
 
-1. [`partial.md`](./partial.md) — the base constructor.
+1. [`partial.md`](./partial.md) — the base constructor: the match
+   gate, tracked reads, fingerprinting, skip semantics.
 2. [`block.md`](./block.md) — the CMS-slot-placeable constructor.
 3. [`cells.md`](./cells.md) — typed server-state slots (the data
-   primitive partons and blocks read).
+   primitive partons and blocks read) and the write surface
+   (`atomic`, bound writes, `useCell`).
 4. [`cache.md`](./cache.md) — server-side render-output cache.
 5. [`cms.md`](./cms.md) — CMS layer + editor.
 6. [`frames-navigation.md`](./frames-navigation.md) — `<Frame>`

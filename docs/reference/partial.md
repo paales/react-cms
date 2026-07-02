@@ -12,7 +12,7 @@ through the tracked server-hooks (`searchParam()`, `cookie()`, …),
 and its data is whatever cells it resolves there: the read IS the
 dependency, recorded per render and folded into the fingerprint.
 
-> **Three constructors, one engine.** `partial` is the base case.
+> **Three constructors, one engine.** `parton` is the base case.
 > Slot-placeable CMS-driven units use [`block`](./block.md);
 > frame-scope openers use the `<Frame>` component
 > ([frames-navigation.md](./frames-navigation.md)). All three produce
@@ -20,7 +20,7 @@ dependency, recorded per render and folded into the fingerprint.
 > same refetch path.
 
 ```tsx
-import { parton, ROOT, type RenderArgs } from "./lib"
+import { parton, type RenderArgs } from "@parton/framework"
 
 const PokemonPage = parton(PokemonRender, "/pokemon/:id")
 
@@ -222,7 +222,7 @@ dependency, exactly like a cell.
 | `searchParam(name, fallback?)` | URL search param. The two-argument form defaults an ABSENT param only — a present-but-empty `?q=` still returns `""`. Absence is a value; the fp folds the two distinctly. | `search:<name>` |
 | `header(name)` | Request header, name lowercased per HTTP semantics. Framework-internal `x-parton-*` headers are invisible — the read returns `undefined` and records nothing. | `header:<name>` |
 | `pathname()` | The (frame-resolved) request pathname. The whole-pathname axis — it moves the fp on EVERY path change, so prefer `match()` / `param()` when a named segment is enough. | `pathname:` |
-| `match(pattern)` | Runs `pattern` (same shape as the `match` option; string patterns typed via `ParseRoute`) against the request URL; returns the named captures or `null`. Folds only the MATCHED PARAMS — the spec varies when its captured segment changes, never on every navigation. | `match:<pattern>` |
+| `match(pattern)` | Runs `pattern` — a pathname string (typed via `ParseRoute`) or a `URLPatternInit` — against the request URL; returns the named captures or `null`. URL-pattern matching only, no predicate gates (those live on the `match` option). Folds only the MATCHED PARAMS — the spec varies when its captured segment changes, never on every navigation. | `match:<pattern>` |
 | `param(name)` | A resolved match param (`/pokemon/:id` → `param("id")`). Pure read, records NOTHING — match params already fold into the fp via `matchKey`. | — |
 | `session()` | `{ id }` — the session identity; `""` for an anon request with no session yet. | `session:` |
 | `visible(options?)` | The parton's viewport visibility (tri-state; `undefined` pre-measurement). Calling it makes the parton cullable — entering/leaving the viewport moves its fp. | `visible:<id>` |
@@ -241,6 +241,37 @@ removes the cookie from the overlay; a non-zero `Max-Age` with an
 empty value reads as the empty string. (Match `cookies` gates
 deliberately bypass this overlay — see
 [The match gate](#the-match-gate--gating-the-request).)
+
+### View culling — `visible()`
+
+`visible(options?)` is the viewport analogue of `cookie()`: one read
+makes the parton **cullable**. Its fingerprint folds its viewport
+state, so entering or leaving the viewport moves the fp and the
+parton self-refetches — full content in view, whatever the body
+renders for out-of-view (typically a space-reserving skeleton)
+otherwise. A parton that never calls it is invariant to scrolling.
+
+The value is tri-state: `true` (client reported in view, expanded by
+the observer's runway margin), `false` (reported, outside the
+margin), `undefined` (no client report yet — the cold/SSR
+pre-measurement state, global to the request, not per-parton). Seed
+the cold decision off an anchor:
+
+```tsx
+const vis = visible({ rootMargin: "900px 0px" })   // runway config
+const show = vis ?? Math.abs(page - anchorPage) <= 2  // cold seed
+return show ? <PageProducts page={page} /> : <GridSkeleton />
+```
+
+On the client the framework observes the parton's rendered children
+through a `<Fragment ref>` + IntersectionObserver (no wrapper
+element), coalesces a frame's worth of in/out flips, and refetches
+the changed partons by id, carrying the full visible set as
+`?visible=` so each re-render's `visible()` reads its own bit.
+Reservation is the parton's contract: a culled parton must hold its
+space or the document collapses. Worked demo:
+`e2e-testing/src/app/pages/magento/product-browse.tsx`; design
+rationale in [`../notes/view-culling.md`](../notes/view-culling.md).
 
 ### Timing — store-and-reread
 
@@ -424,15 +455,15 @@ function HeroRender({ id }: HeroProps) { … }
 // `.props` has no runtime value — it's a type-only phantom.
 ```
 
-The forward-reference shape (`const Spec = partial(R, opts);
+The forward-reference shape (`const Spec = parton(R, opts);
 function R(p: typeof Spec.props)`) hits a circular initializer in TS.
 Use the two-step builder below if you need the type before the Render
 exists.
 
-### Two-step builder — `partial(opts)`
+### Two-step builder — `parton(opts)`
 
 When the Render is declared after the spec OR you want the prop type
-to drive the function signature directly, call `partial` with just
+to drive the function signature directly, call `parton` with just
 options. The result is a callable builder that exposes `.props` for
 forward-reference inference:
 
@@ -472,45 +503,19 @@ const Hero = parton(function HeroRender({
 
 This is what makes nested wrappers work: an outer wrapper matches
 the URL once, then threads typed props down to its children without
-forcing each child to re-parse the URL.
+forcing each child to re-parse the URL — see
+[Page-level routing](#page-level-routing--wrapper-specs) for the
+worked example.
 
-```tsx
-const PokemonDetailPage = parton(
-  function PokemonDetailRender({ id }: { id: string } & RenderArgs) {
-    return (
-      <>
-        <Hero id={id} />
-        <Stats id={id} />
-        <Species id={id} />
-      </>
-    )
-  },
-  { match: "/pokemon/:id" },
-)
-
-// Inner specs have no `match`, no reads of their own — the wrapper
-// gates the route once and passes `id` as a prop.
-const Hero = parton(async function HeroRender({
-  id,
-}: { id: string } & RenderArgs) {
-  const data = await client.request(PokemonHeroQuery, { id: Number(id) })
-  …
-})
-```
-
-`{ match: "/pokemon/:id" }` alone is enough — `ParseRoute<P>` extracts
-`:id` from the pattern at the type level and auto-flows it as a typed
-`{ id: string }` into Render. Call-site props are part of the cache
-fingerprint automatically — two parents passing different `id` values
-produce different cache entries.
-
-The framework captures the call-site props in the spec's snapshot
-so a partial-refetch (cache-mode `?partials=…`) can re-invoke the
-child without going through its parent and still receive the same
-props. This is per-user-session state — concurrent requests from
-the same scope passing different prop values for the same partial
-id could race; the proper fix is wiring props through the client
-so refetches carry the props they were originally rendered with.
+Call-site props are part of the fingerprint automatically — and part
+of the render identity: a placement with call-site props gets a
+per-instance id (`<spec-id>:<props-hash>`), so `<LivePrice sku="A" />`
+and `<LivePrice sku="B" />` are distinct registry entries with
+independent snapshots and cache slots, while both still carry the
+spec's labels for fan-out refetch. The framework captures the
+call-site props in the snapshot so a partial-refetch (cache-mode
+`?partials=…`) can re-invoke the child without going through its
+parent and still receive the same props.
 
 ## Slots
 
@@ -520,8 +525,8 @@ hosts CMS-managed children, use [`block`](./block.md) and declare the
 slot via `cms.blocks(slot, selector?)` / `cms.block(slot, selector?)`
 inside its `schema`. A partial that happens to render a singleton
 block can still place it directly via JSX (`<SomeBlock />`); the
-block's CMS row falls out of its spec id (the first selector label,
-or `Render.name`-derived).
+block's CMS row falls out of its spec id (a `#`-pinned selector
+label, or `Render.name`-derived — see [`block.md`](./block.md)).
 
 ## Selector grammar
 
@@ -536,13 +541,13 @@ selector: "page-block hero"        // two labels
 selector: ["page-block", "hero"]   // same
 ```
 
-Leading `#` and `.` are stripped on parse — cosmetic only, kept for
-back-compat. `"#hero"`, `".hero"`, and `"hero"` are equivalent.
+Leading `#` and `.` are stripped on parse — cosmetic on `parton`.
+`"#hero"`, `".hero"`, and `"hero"` are equivalent. (On `block`, a
+leading `#` pins the spec id — see [`block.md`](./block.md).)
 
 The **first label** is also the spec's catalog id (the wire `id`,
 the snapshot key, the id that `selector: "@self"` resolves to from
-inside the partial). For singleton blocks, it's also the CMS storage
-row the spec reads from.
+inside the partial).
 
 Auto-derived from `Render.name` when omitted: `PokemonHeroRender` →
 `"pokemon-hero"`.
@@ -550,9 +555,11 @@ Auto-derived from `Render.name` when omitted: `PokemonHeroRender` →
 There's no per-page uniqueness check. Multiple placements of the
 same spec share their labels and fan out under refetch — for the
 common LivePrice-per-product case, that's the intended model.
-Per-instance addressing for keyless multi-placements isn't a
-framework concern; if you need per-row identity, route the content
-through a CMS slot.
+Placements with distinct call-site props additionally get distinct
+per-instance render ids (`<spec-id>:<props-hash>`), so each is
+individually addressable (`@self`, view culling) while the shared
+labels keep the fan-out; zero-prop placements collapse onto the
+spec id and refetch as one.
 
 ## Skip semantics
 
@@ -750,9 +757,9 @@ The set is populated as a side-effect of every `parton(…,
   navigation instead of letting it fp-skip). `useNavigation()` is
   isomorphic, so the value is correct on the first server paint too —
   see [`frames-navigation.md`](./frames-navigation.md#navigation).
-- **`closest` / ancestor `provides`.** Punted. Specs that need
-  ancestor data should accept it as a render prop (manual threading
-  from a parent spec).
+- **No ancestor data channel.** There is no `closest`/`provides`
+  lookup — specs that need ancestor data accept it as a JSX prop
+  (manual threading from a parent spec).
 - **Spec metadata doesn't cross the RSC boundary.** Spec components
   are server-only — don't import a spec into a client component to
   reach for its `id`. Reload calls stay stringly-typed

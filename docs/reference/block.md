@@ -34,15 +34,15 @@ A block is internally a partial — same fingerprint pipeline, same
 refetch path. Differences:
 
 - **Slot-placeable, type-catalog-registered.** Registered under its
-  auto-derived name (`HeroRender` → `"hero"`); slots look it up via
-  `cms.blocks("body", "page-block")` calls in their host's `schema`.
-- **`selector` declares refetch labels.** Same grammar as `partial`'s
+  spec id (see [Spec id](#spec-id--the--rule) below; `HeroRender` →
+  `"hero"`); slots look it up via `cms.blocks("body", "page-block")`
+  calls in their host's `schema`.
+- **`selector` declares refetch labels.** Same grammar as `parton`'s
   selector; the labels are matched by `nav.reload({selector: "…"})`
   and by slot-allow filters. Multiple labels per spec are allowed.
-- **Singleton CMS binding falls out of the spec's id.** A spec like
-  `selector: "#app-nav"` (or just `selector: "app-nav"`) has id
-  `"app-nav"` — also the CMS storage row it reads from. Placed once
-  via JSX; the framework binds its CMS content by id.
+- **Singleton CMS binding falls out of the spec's id.** A singleton
+  block placed directly via JSX reads the CMS storage row matching
+  its spec id.
 - **Content changes move the fingerprint via a tracked dep.** The
   block wrapper records a `cms:<contentKey>` dependency for the
   instance's content row; every fingerprint fold re-reads the row's
@@ -50,59 +50,67 @@ refetch path. Differences:
   so a CMS edit re-renders exactly the blocks that read the edited
   row.
 
+## Spec id — the `#` rule
+
+A block's spec id (catalog type, and for singletons the CMS storage
+key) comes from exactly one of two places:
+
+- **A leading-`#` selector token pins it.** `selector: "#app-nav"` →
+  id `"app-nav"`.
+- **Otherwise it auto-derives from `Render.name`** (`HeroRender` →
+  `"hero"`, `Page`/`Block`/`Render`/`Partial`/`Component` suffixes
+  stripped, kebab-cased).
+
+Unprefixed labels (and `.`-prefixed ones) are refetch labels only —
+they never set the id. `selector: "page-block composed-hero"` on
+`HeroRender` gives id `"hero"` with labels
+`["hero", "page-block", "composed-hero"]`. This differs from
+`parton`, where the first label (prefix-stripped) IS the id.
+
 ## Options
 
 ```ts
-interface BlockOptions<S> {
-  /** Refetch labels. Plain strings; leading `#` / `.` are cosmetic
-   *  and stripped. The first label is also the spec's catalog id
-   *  (slot lookup type, and for singletons the CMS storage key).
-   *  Auto-derives from `Render.name` when omitted (`HeroRender`
-   *  → `"hero"`). */
+interface BlockOptions<V, S> {
+  /** Refetch labels. A leading-`#` token pins the spec id; other
+   *  tokens are fan-out labels. Id auto-derives from `Render.name`
+   *  when no `#` token is present. */
   selector?: SelectorTokens
   /** CMS reads + child slot composition. Result is merged into
    *  Render's prop bag alongside the match params. */
   schema?: (scope: { cms: CmsReadSurface }) => S
+  match?: MatchPattern
   cache?: CacheOptions
   defer?: DeferSpec
   fallback?: ReactNode
+  keepalive?: boolean
 }
 ```
 
 | Option | Notes |
 |---|---|
-| `selector` | One or more refetch labels. The first label is the spec's catalog id (also the CMS storage row for singletons). Slot-allow filters and `nav.reload({selector: "…"})` match any label. Cosmetic `#`/`.` prefixes are stripped. |
+| `selector` | Refetch labels; `#` pins the id (see above). Slot-allow filters and `nav.reload({selector: "…"})` match any label. |
 | `schema` | Sync. Receives `{ cms }` — the CMS read surface, nothing else. Returns content reads (`cms.text(...)`, `cms.enum(...)`) and child slot compositions (`cms.blocks(...)`, `cms.block(...)`); both flow into Render as props. Request-dimension deps come from the tracked server-hooks (`searchParam()`, `cookie()`, …) read in the Render body, same as on `parton` — rare on blocks, whose content side lives on the `cms` surface. |
-| `cache`, `defer`, `fallback` | Same as `parton`. |
+| `match`, `cache`, `defer`, `fallback`, `keepalive` | Same as [`parton`](./partial.md#options). |
 
 ## `cms` surface on schema
 
-```ts
-interface CmsReadSurface {
-  text(name: string): string
-  richText(name: string): string
-  number(name: string): number
-  boolean(name: string): boolean
-  enum<T extends string>(name: string, values: readonly T[]): T
-  image(name: string): { src: string; alt: string }
-  reference(name: string, type: string): string | null
-  block(slot: string, selector?: string): ReactNode
-  blocks(slot: string, selector?: string): ReactNode
-}
-```
-
-Field reads (`text`/`enum`/etc.) return values from the host's CMS
-content row; `block` / `blocks` return ReactNode for the host's slot
-children. The framework binds the surface to the host's content row
-internally — the schema never threads any of it.
+The `cms` argument is the read surface bound to the block's effective
+CMS content row. Field getters (`text`, `richText`, `number`,
+`boolean`, `enum`, `image`, `reference`) return values resolved from
+the row's config cascade; `block(slot, selector?)` /
+`blocks(slot, selector?)` return ReactNode for the block's slot
+children. All sync; the full getter table with return types and
+empty-row defaults is in [`cms.md`](./cms.md#read-surface).
 
 `cms.blocks(slot, selector?)` resolves the slot's entries against the
 selector (label filter, e.g. `"page-block"`), looks each entry up by
 its `type` in the catalog, and renders the matching block. The
 returned ReactNode is dropped into the Render's JSX position.
-
 `cms.block(slot, selector?)` is the singular variant — renders at
 most one entry, returns `null` when the slot is empty.
+
+The framework binds the surface to the block's content row internally
+— the schema never threads any of it.
 
 ## How blocks get placed
 
@@ -132,8 +140,8 @@ Each slot entry's id becomes its rendered effective id; refetch by
 ### 2. By direct JSX (singleton)
 
 A singleton block is constructed once and placed once. Its CMS
-content row matches its spec id (the first selector label, or
-`Render.name`-derived):
+content row matches its spec id — pin it with a `#` token (or rely on
+the `Render.name` derivation):
 
 ```tsx
 const AppNav = block(NavRootRender, {
@@ -166,10 +174,10 @@ const LivePrice = parton(LivePriceRender, { selector: "price" })
 ## Self-refresh from inside an instance
 
 Client components inside a block's render can refetch their enclosing
-instance via the `@self` selector token. For singleton blocks and
-slot-placed instances (each entry has a unique id), this gives
-per-instance addressing. For keyless multi-instance specs (multiple
-JSX placements sharing an id) it refreshes the spec's whole fan-out.
+instance via the `@self` selector token — resolved at fire time to
+the instance's effective id (the slot entry id for slot-placed
+blocks, the spec id for singletons), so per-instance addressing needs
+no threading:
 
 ```tsx
 "use client"
@@ -186,30 +194,19 @@ export function RefreshSelfButton() {
 }
 ```
 
-`@self` resolves to a React Context the framework populates in
-`PartialErrorBoundary` — every block instance has the context set to
-its runtime effective id (the slot entry id for slot-placed, the spec
-id for singletons). Used outside any partial, `@self` throws a
-typed `NavigationError` at fire time so the wiring mistake is loud.
+Full `@self` semantics — mixing with other labels, the loud failure
+when fired outside any partial — are in
+[`frames-navigation.md`](./frames-navigation.md#self--refetch-the-enclosing-partial).
 
 ## Editor catalog manifest
 
-`schema` is the SOLE declarative surface the editor reads. At first
-catalog request, `cms-prerender.ts` walks every registered block
-type and invokes its `schema` with a tracking CMS surface. Each
-`cms.text(name)` / `cms.enum(name, values)` / `cms.image(name)` /
-`cms.reference(name, type)` records the field's name + kind. Each
-`cms.block(slot, selector)` / `cms.blocks(slot, selector)` records
-the slot's allow filter + arity.
-
-The resulting `BlockManifest` drives:
-
-- Which field inputs the editor's field panel shows.
-- Slot-allow filtering when offering "Add block" options for each
-  slot — the manifest's `labels` are matched against the slot's
-  `allow` string.
-
-Pure runtime — no static analysis, no JSX walking.
+`schema` is the SOLE declarative surface the editor reads: the
+catalog prerender invokes each block type's `schema` once with a
+tracking CMS surface and records the field reads and slot
+declarations into the `BlockManifest` that drives the editor's field
+panel and slot-allow filtering. Pure runtime — no static analysis, no
+JSX walking. Details in
+[`cms.md`](./cms.md#catalog-prerender).
 
 ## Sharp edges
 
@@ -219,18 +216,21 @@ Pure runtime — no static analysis, no JSX walking.
   override CMS bindings from a JSX call site.
 - **There is no public per-instance id override.** If you place the
   same spec multiple times in JSX with no slot wiring, all placements
-  share the spec's id and fan out under refetch. To get per-instance
-  CMS rows, route through a slot.
+  share the spec's labels and fan out under refetch (placements with
+  distinct call-site props get distinct render ids — see
+  [`partial.md`](./partial.md#selector-grammar)). To get
+  per-instance CMS rows, route through a slot.
 - **Refetch addressing is by label OR by id.** Both work the same.
   `reload({selector: "app-nav"})` matches the singleton; the same
   call matches every spec whose `selector` includes `"app-nav"` as
-  a label. `#` and `.` prefixes on a selector are cosmetic.
+  a label.
 
 ## Related
 
 - [`partial.md`](./partial.md) — the base addressable-render-unit
   constructor.
 - [`cms.md`](./cms.md) — content store, draft/published model, match
-  clauses on configs.
+  clauses on configs, the `cms` getter table.
 - [`frames-navigation.md`](./frames-navigation.md) — `<Frame>` scope
-  opener (separate from partials/blocks).
+  opener (separate from partials/blocks) and the `useNavigation`
+  surface.

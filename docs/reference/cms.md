@@ -94,7 +94,7 @@ break by config-array order (earlier wins).
 
 ```tsx
 // e2e-testing/src/app/blocks/promo.tsx
-import { block, type RenderArgs } from "../../lib"
+import { block, type RenderArgs } from "@parton/framework"
 
 export const PromoBlock = block(
   function PromoRender({ headline, body, tone }: { ... } & RenderArgs) {
@@ -112,8 +112,9 @@ export const PromoBlock = block(
 ```
 
 That's it — no `registerBlock` call. The constructor self-registers
-under its auto-derived id (`PromoRender` → `"promo"`); override the
-first label in `selector` to pin a different id. Import the file once
+under its auto-derived id (`PromoRender` → `"promo"`); pin a
+different id with a leading-`#` selector token (see
+[`block.md`](./block.md#spec-id--the--rule)). Import the file once
 for its side effect (`e2e-testing/src/app/blocks/catalog.ts` does
 this for the demo app).
 
@@ -121,37 +122,12 @@ this for the demo app).
 
 Slot composition lives on the schema. `cms.blocks(slot, selector?)`
 returns a ReactNode that resolves every entry under `node.slots[slot]`
-to a rendered block via the type catalog. `cms.block(slot, selector?)`
-is the singular variant (at most one entry).
-
-```tsx
-import type { ReactNode } from "react"
-
-export const PageRootBlock = block(
-  function PageRootRender({ body, sidebar }: {
-    body: ReactNode
-    sidebar: ReactNode
-  } & RenderArgs) {
-    return (
-      <main>
-        {body}
-        <aside>{sidebar}</aside>
-      </main>
-    )
-  },
-  {
-    schema: ({ cms }) => ({
-      body: cms.blocks("body", "page-block"),
-      sidebar: cms.block("sidebar", "widget"),
-    }),
-  },
-)
-```
-
-The framework wires the rendered instance's CMS storage key into the
-`cms` surface implicitly. Author code doesn't thread any of it. Each slot entry's id becomes its rendered
-block instance's effective CMS row via the framework-internal slot
-wiring.
+to a rendered block via the type catalog; `cms.block(slot, selector?)`
+is the singular variant (at most one entry). The framework wires each
+slot entry's id into the rendered instance's `cms` surface as its
+effective CMS row — author code doesn't thread any of it. Placement
+patterns and a worked host example are in
+[`block.md`](./block.md#how-blocks-get-placed).
 
 ## References + entity loaders
 
@@ -171,7 +147,8 @@ const ProductHero = block(
 )
 ```
 
-The id contributes to the cache key via the schema result; the async
+A changed reference moves the row's content hash, and with it the
+block's `cms:<contentKey>` tracked dep and fingerprint; the async
 loader runs in `Render`. Loaders are userspace (`e2e-testing/src/app/loaders/`).
 
 ## Draft + published
@@ -183,8 +160,11 @@ loader runs in `Render`. Loaders are userspace (`e2e-testing/src/app/loaders/`).
 | `Cookie: __editor=1` | Editor mode implies draft visibility. |
 
 `lookupCmsNode(id, request)` checks draft first when any of these
-hold, else falls back to published. Cache keys naturally vary across
-modes because `cms.*` reads return different values inside `schema`.
+hold, else falls back to published. Fingerprints vary across modes
+because the block's `cms:<contentKey>` dep folds the row's content
+hash with the requester's draft overlay applied — an edit re-renders
+exactly the blocks that read the edited row, for draft viewers only
+until publish.
 
 ## Editor mode
 
