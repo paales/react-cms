@@ -199,6 +199,24 @@ Content changes and record removal are separate mechanisms:
   cached fp, and re-renders fresh on the next pass. Snapshots stay —
   the registry record is structural placement, which a content
   change doesn't move. Cell writes and CMS edits ride this channel.
+
+  The invalidation registry is compacted latest-per-key: ONE entry
+  per (name, canonical-constraints) pair —
+  `Map<name, Map<stableStringify(constraints), {name, constraints, ts}>>`
+  — and a same-pair bump overwrites that entry's `ts` in place.
+  Lossless by construction: every consumer reads through
+  `queryMatchingTs` (the MAX `ts` whose name matches and whose
+  constraints are a subset of the fold's constraint surface), and two
+  same-pair entries match exactly the same surfaces, so the newer
+  `ts` subsumes the older for every possible query. Storage is
+  bounded by live (name × constraint-tuple) cardinality, never by
+  bump count — a ticker bumping one partition every 100ms holds one
+  entry no matter how long the server has been up. The website's
+  `world.pulse` (up to 512 partitions under one selector name,
+  bumping every 0.1–5s) is the motivating shape; the bench's
+  `pulse/*` scenarios gate it. The bump counter (`_currentTs` /
+  `_waitForNextBump`) advances monotonically per bump, independent
+  of what's stored.
 - **Snapshot invalidation.** `invalidateSnapshot(id)` removes the
   id's registry records entirely (inside a request: buffered into
   `ctx.invalidations`, applied at commit; outside: direct canonical

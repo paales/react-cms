@@ -118,7 +118,7 @@ test(
       throw new Error(`correctness gate FAILED for: ${unfaithful.map((r) => r.name).join(", ")}`)
     }
   },
-  // Plain timeout (ms): ~12 scenarios × (warmup + measure) renders, with
+  // Plain timeout (ms): ~14 scenarios × (warmup + measure) renders, with
   // N=1000 ticks at tens of ms each, runs minutes — far past the 5s default.
   600_000,
 )

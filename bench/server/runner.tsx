@@ -102,6 +102,13 @@ export interface RunOptions {
    *  dashboard amortization case: one segment carrying M changes, so the
    *  fixed per-tick overhead is shared across M re-renders). */
   bumpMode?: "single" | "all"
+  /** Historical `refreshSelector` bumps fired (round-robin across the
+   *  live selectors) BEFORE the cold render — a server whose tickers
+   *  have been running long before this request lands. The website's
+   *  world pulse produces ~100–5000 bumps/s across up to 512 partitions
+   *  of one selector name; the registry must answer fold queries at the
+   *  same cost regardless of how many bumps preceded the request. */
+  soakBumps?: number
 }
 
 // ─── Harness ──────────────────────────────────────────────────────────
@@ -158,6 +165,13 @@ export async function runScenario(
   const { Page, liveSelectors } = fixture
   if (liveSelectors.length === 0) {
     throw new Error(`scenario "${name}": needs at least 1 live cell to bump`)
+  }
+
+  // Pre-request ticker history: the registry state a long-up server has
+  // accumulated before this request's first render.
+  const soakBumps = options.soakBumps ?? 0
+  for (let i = 0; i < soakBumps; i++) {
+    refreshSelector(liveSelectors[i % liveSelectors.length])
   }
 
   // Bump the live cell(s) this tick. `"single"` round-robins one cell;
@@ -314,4 +328,32 @@ export const DEPTH_SWEEP: ScenarioSpec[] = [1, 4, 16].map((d) => ({
   params: { partons: 100, liveCells: 1, depth: d },
 }))
 
-export const ALL_SCENARIOS: ScenarioSpec[] = [...SCALING_SWEEP, ...DASHBOARD_SWEEP, ...DEPTH_SWEEP]
+/** Pulse soak (registry compaction): the website world-pulse shape —
+ *  P live leaves reading partitions of ONE shared cell, so every leaf's
+ *  fold queries the SAME selector name (`cell:bench.pulse`). Both rows
+ *  start with every partition populated (soak ≥ P); they differ ONLY in
+ *  how much ticker history preceded the request — one bump per
+ *  partition vs ~39 (a few minutes of the website's 512 tickers at
+ *  0.1–5s each). The pair is the invalidation-registry gate: warm
+ *  ticks must cost the same in both rows — registry queries bounded by
+ *  partition cardinality, never by how long the server has been
+ *  ticking. */
+export const PULSE_SWEEP: ScenarioSpec[] = [
+  {
+    name: "pulse/P=512",
+    params: { partons: 512, liveCells: 512, depth: 2, sharedPulseCell: true },
+    options: { soakBumps: 512 },
+  },
+  {
+    name: "pulse/P=512+20k",
+    params: { partons: 512, liveCells: 512, depth: 2, sharedPulseCell: true },
+    options: { soakBumps: 20_000 },
+  },
+]
+
+export const ALL_SCENARIOS: ScenarioSpec[] = [
+  ...SCALING_SWEEP,
+  ...DASHBOARD_SWEEP,
+  ...DEPTH_SWEEP,
+  ...PULSE_SWEEP,
+]

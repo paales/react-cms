@@ -15,7 +15,7 @@ yarn bench:server                 # full matrix, DEV Flight → table + JSON
 yarn bench:server --prod          # full matrix, PRODUCTION Flight → .prod.json
 yarn bench:server --prof          # profile scaling/N=1000 under Node --cpu-prof
 yarn bench:server --prod --prof   # profile the PRODUCTION runtime
-yarn bench:server --only=depth    # one category (scaling | dashboard | depth)
+yarn bench:server --only=depth    # one category (scaling | dashboard | depth | pulse)
 yarn bench:server --only=scaling/N=1000   # one exact scenario
 yarn bench:server --warmup=20 --measure=200   # shorter run while iterating
 ```
@@ -136,6 +136,7 @@ Which to use:
 | **scaling** (headline) | N ∈ {10, 50, 100, 500, 1000} | M=1, D=2 | warm-tick µs vs world size — the O(tree) tax curve |
 | **dashboard** | M ∈ {1, 10, 50, 200} | N=200, D=2 | cost per tick as change-density rises; each tick bumps ALL M cells so one segment carries M changes and the fixed overhead amortizes |
 | **depth** | D ∈ {1, 4, 16} | N=100, M=1 | descendant-fold cost of proving a deep subtree unchanged |
+| **pulse** | soak ∈ {512, 20k} | N=M=512, D=2, one shared cell | invalidation-registry query cost under ticker history — the two rows must cost the same |
 
 The fixture is `buildDashboardPage({ partons: N, liveCells: M, depth: D })`
 (`bench/server/fixture.tsx`): N addressable leaf partons, M of them live
@@ -143,6 +144,20 @@ The fixture is `buildDashboardPage({ partons: N, liveCells: M, depth: D })`
 leaf i's fingerprint), nested D wrappers deep. Each Render is trivial (a
 span with the cell value) so the measurement isolates framework overhead,
 not user work.
+
+The **pulse** category flips the fixture's cell topology
+(`sharedPulseCell: true`): all 512 live leaves read partitions
+`{part: i}` of ONE shared module cell — the website world-pulse shape
+(`world.pulse` partitioned per chunk coordinate), where every leaf's
+fold queries the SAME selector name in the invalidation registry.
+Both rows pre-fire ticker bumps (`soakBumps`) before the request's
+first render so every partition is populated; they differ only in
+history length — one bump per partition (`P=512`) vs ~39 per
+partition (`+20k`, a few minutes of 512 tickers at 0.1–5s each). The
+pair is the registry-compaction gate: the registry stores one entry
+per (name, constraints) pair, so bump history must not change fold
+cost — if `+20k` costs more than `P=512`, registry queries are
+scaling with bump count instead of partition cardinality.
 
 ## Reading the numbers
 

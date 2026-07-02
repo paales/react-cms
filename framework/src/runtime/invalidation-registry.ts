@@ -1,12 +1,22 @@
 /**
  * Server-side invalidation registry.
  *
- * Flat append-only list of `{name, constraints, ts}` entries. Each
- * `refreshSelector(spec)` call adds one entry; partial fingerprints
- * fold in the latest matching `ts` so any tagged invalidation shifts
- * the partial's fp on the next render. Pure version-stamp model, no
- * per-client bookkeeping — the client's `?cached=` is the source of
- * truth for what fp it has.
+ * Compacted latest-per-key store of `{name, constraints, ts}` entries:
+ * exactly ONE entry per (name, canonical-constraints) pair. Each
+ * `refreshSelector(spec)` call stamps a fresh monotonic `ts`; a bump
+ * for a pair already present overwrites that entry's `ts` in place.
+ * Lossless: consumers only ever read the MAX matching `ts`
+ * (`queryMatchingTs`), and two same-pair entries match exactly the
+ * same constraint surfaces, so the newer `ts` subsumes the older for
+ * every possible query. Storage is therefore bounded by live
+ * (name × constraint-tuple) cardinality, never by bump count — a
+ * ticker bumping one partition every 100ms holds one entry no matter
+ * how long the server has been up.
+ *
+ * Partial fingerprints fold in the latest matching `ts` so any tagged
+ * invalidation shifts the partial's fp on the next render. Pure
+ * version-stamp model, no per-client bookkeeping — the client's
+ * `?cached=` is the source of truth for what fp it has.
  *
  * Selector grammar (matches the client-side `selector` vocabulary —
  * same labels declared via `selector: ["cart"]` on a spec):
@@ -73,9 +83,13 @@ const TYPE_TAG = "\x01"
 // ─── Module state ─────────────────────────────────────────────────────
 
 let nextTs = 1
-const entries: InvalidationEntry[] = []
-/** Lookup by name. Mirrors `entries`; mutations stay in lockstep. */
-const byName = new Map<string, InvalidationEntry[]>()
+/** name → (canonical constraints key → entry). The constraints key is
+ *  `stableStringify(constraints)` — key-sorted and type-preserving, so
+ *  a string constraint `{uid: "123"}` and a number constraint
+ *  `{uid: 123}` stay distinct entries (they match different surfaces,
+ *  mirroring the partition-key identity). One entry per key: a newer
+ *  same-key bump overwrites `ts` in place. */
+const byName = new Map<string, Map<string, InvalidationEntry>>()
 
 interface InvalidationTransaction {
   pending: ParsedSelector[]
@@ -201,11 +215,21 @@ export function refreshSelector(spec: string | string[]): void {
 }
 
 function commitOne(parsed: ParsedSelector): void {
-  const entry: InvalidationEntry = { name: parsed.name, constraints: parsed.constraints, ts: nextTs++ }
-  entries.push(entry)
-  const list = byName.get(parsed.name)
-  if (list) list.push(entry)
-  else byName.set(parsed.name, [entry])
+  const ts = nextTs++
+  let perName = byName.get(parsed.name)
+  if (!perName) {
+    perName = new Map()
+    byName.set(parsed.name, perName)
+  }
+  const key = stableStringify(parsed.constraints)
+  const existing = perName.get(key)
+  if (existing) {
+    // Same (name, constraints) pair — the newer ts supersedes the older
+    // for every max-query, so overwrite in place instead of appending.
+    existing.ts = ts
+  } else {
+    perName.set(key, { name: parsed.name, constraints: parsed.constraints, ts })
+  }
   notifyWaiters()
 }
 
@@ -318,9 +342,9 @@ export function queryMatchingTs(
   if (labels.length === 0) return 0
   let max = 0
   for (const label of labels) {
-    const list = byName.get(label)
-    if (!list) continue
-    for (const entry of list) {
+    const perName = byName.get(label)
+    if (!perName) continue
+    for (const entry of perName.values()) {
       if (entry.ts <= max) continue
       if (matchesConstraints(varyInputs, entry.constraints)) {
         max = entry.ts
@@ -356,14 +380,17 @@ function matchesConstraints(
 
 // ─── Test / debug ─────────────────────────────────────────────────────
 
-/** Test/debug: snapshot of registry state. */
+/** Test/debug: snapshot of registry state. `entries` counts stored
+ *  (compacted) entries — one per (name, constraints) pair, not one per
+ *  bump. */
 export function _registryStats(): { entries: number; nextTs: number; byName: number } {
-  return { entries: entries.length, nextTs, byName: byName.size }
+  let entries = 0
+  for (const perName of byName.values()) entries += perName.size
+  return { entries, nextTs, byName: byName.size }
 }
 
 /** Test-only: wipe all entries and reset `ts`. */
 export function _clearInvalidationRegistry(): void {
-  entries.length = 0
   byName.clear()
   nextTs = 1
 }

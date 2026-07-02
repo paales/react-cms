@@ -18,7 +18,7 @@
  * increments it by a small constant (≈ 1 + depth), never by N.
  */
 
-import { localCell } from "@parton/framework/lib/cell.ts"
+import { localCell, type LocalCell } from "@parton/framework/lib/cell.ts"
 import { PartialRoot, parton, type RenderArgs } from "@parton/framework/lib/partial.tsx"
 import { buildCellSelector } from "@parton/framework/runtime/invalidation-registry.ts"
 import type { ReactNode } from "react"
@@ -49,6 +49,13 @@ export interface DashboardParams {
   /** Wrapper nesting depth around the leaves. `0` places leaves directly
    *  under PartialRoot; `D` wraps them under D addressable wrappers. */
   depth: number
+  /** Live leaves read partitions `{part: i}` of ONE shared module cell
+   *  instead of a distinct inline cell each — the website world-pulse
+   *  shape (`world.pulse` partitioned per chunk coordinate), where every
+   *  leaf's fold queries the SAME selector name in the invalidation
+   *  registry. Exercises registry query cost under sustained ticker
+   *  bumps against one name. */
+  sharedPulseCell?: boolean
 }
 
 export interface DashboardFixture {
@@ -71,6 +78,27 @@ function makeLiveLeaf(i: number) {
     async function LiveLeafRender(_: RenderArgs) {
       renderCount++
       const v = await localCell("value", { shape: "number", initial: 0 })
+      return <span data-leaf={i}>{String(v.value)}</span>
+    },
+    { selector: `#leaf-${i}` },
+  )
+}
+
+/** The shared-cell id every pulse leaf partitions — one selector name
+ *  (`cell:bench.pulse`) carrying every partition's bumps, exactly like
+ *  the website's `world.pulse`. */
+const PULSE_CELL_ID = "bench.pulse"
+
+/** A pulse leaf reads partition `{part: i}` of the ONE shared cell —
+ *  mirrors the website's chunk pulse (`chunkPulse.resolve({cx, cy})`).
+ *  Its fp dep is `cell:bench.pulse?part=<i>`: partition-scoped, so a
+ *  bump for partition i re-renders only leaf i, but every leaf's fold
+ *  queries the same `cell:bench.pulse` name in the registry. */
+function makePulseLeaf(i: number, pulse: LocalCell<number>) {
+  return parton(
+    async function PulseLeafRender(_: RenderArgs) {
+      renderCount++
+      const v = await pulse.resolve({ part: i })
       return <span data-leaf={i}>{String(v.value)}</span>
     },
     { selector: `#leaf-${i}` },
@@ -122,15 +150,30 @@ export function buildDashboardPage(params: DashboardParams): DashboardFixture {
   const partons = Math.max(0, params.partons)
   const liveCells = Math.min(Math.max(0, params.liveCells), partons)
   const depth = Math.max(0, params.depth)
+  const sharedPulseCell = params.sharedPulseCell ?? false
+
+  // The shared cell all pulse leaves partition. Constructed per fixture
+  // build (after the runner's resetWorld) so scenario runs don't collide
+  // in the cell registry.
+  const pulse = sharedPulseCell
+    ? localCell({ id: PULSE_CELL_ID, shape: "number", initial: 0 })
+    : null
 
   const liveSelectors: string[] = []
   const leaves: ReactNode[] = []
   for (let i = 0; i < partons; i++) {
     if (i < liveCells) {
-      const Leaf = makeLiveLeaf(i)
-      leaves.push(<Leaf key={i} />)
-      // Inline cell id is `<partonId>/value`; single-slot partition `{}`.
-      liveSelectors.push(buildCellSelector(`leaf-${i}/value`, {}))
+      if (pulse) {
+        const Leaf = makePulseLeaf(i, pulse)
+        leaves.push(<Leaf key={i} />)
+        // The exact selector a `pulse.set(v, {partition: {part: i}})` fires.
+        liveSelectors.push(buildCellSelector(PULSE_CELL_ID, { part: i }))
+      } else {
+        const Leaf = makeLiveLeaf(i)
+        leaves.push(<Leaf key={i} />)
+        // Inline cell id is `<partonId>/value`; single-slot partition `{}`.
+        liveSelectors.push(buildCellSelector(`leaf-${i}/value`, {}))
+      }
     } else {
       const Leaf = makeStaticLeaf(i)
       leaves.push(<Leaf key={i} />)
@@ -143,6 +186,6 @@ export function buildDashboardPage(params: DashboardParams): DashboardFixture {
   return {
     Page,
     liveSelectors,
-    params: { partons, liveCells, depth },
+    params: { partons, liveCells, depth, sharedPulseCell },
   }
 }
