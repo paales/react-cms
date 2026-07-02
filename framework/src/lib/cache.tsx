@@ -233,6 +233,14 @@ async function replayEntry(entry: Entry, options: CacheOptions): Promise<ReactNo
 interface CacheProps {
   id: string
   fingerprint: string
+  /** Store-time fingerprint. Called AFTER the body has rendered, so it
+   *  folds the LIVE tracked-read set — an entry is never keyed
+   *  dep-less unless the body truly reads nothing. The pre-render
+   *  `fingerprint` (folding the prior dep record) stays the lookup
+   *  key: a lookup either hits a deps-complete entry or misses into a
+   *  fresh render, so a cold record over-fetches, never serves stale
+   *  bytes keyed under different read values. */
+  writeFingerprint: () => string
   options: CacheOptions
   /** vary result from the spec — IS the cache-key surface (minus
    *  `expiresAt` / `staleUntil` reserved keys, which the framework
@@ -244,6 +252,7 @@ interface CacheProps {
 export async function Cache({
   id,
   fingerprint,
+  writeFingerprint,
   options,
   varyResult,
   children,
@@ -253,12 +262,13 @@ export async function Cache({
   // the parton's child context). The isolated body renders are seeded with
   // it so their partons thread correctly.
   const bodyParent = getServerContext(ParentContext)
-  return cacheImpl(id, fingerprint, options, varyResult, children, bodyParent)
+  return cacheImpl(id, fingerprint, writeFingerprint, options, varyResult, children, bodyParent)
 }
 
 async function cacheImpl(
   id: string,
   fingerprint: string,
+  writeFingerprint: () => string,
   options: CacheOptions,
   varyResult: unknown,
   children: ReactNode,
@@ -271,6 +281,9 @@ async function cacheImpl(
   // appended for legibility / a stable explicit axis.
   const baseKey = `${id}:${fingerprint}`
   const key = `${baseKey}:${hashParts(varyResult)}`
+  // Store-time key — evaluated lazily, once the body's tracked reads
+  // have all landed. On a warm record it equals `key`.
+  const storeKeyOf = () => `${id}:${writeFingerprint()}:${hashParts(varyResult)}`
   const now = Date.now()
 
   // ── Hit path ──
@@ -278,7 +291,7 @@ async function cacheImpl(
   if (existing && (existing.expiresAt > now || existing.staleUntil > now)) {
     if (existing.expiresAt <= now && !refreshing.has(key)) {
       refreshing.add(key)
-      void refreshEntry(key, children, options, bodyParent)
+      void refreshEntry(storeKeyOf, children, options, bodyParent)
         .catch((err) => console.error(`[cache] SWR refresh failed for ${key}:`, err))
         .finally(() => refreshing.delete(key))
     }
@@ -288,7 +301,7 @@ async function cacheImpl(
   // ── Miss path ──
   let pending = inFlightMiss.get(baseKey)
   if (!pending) {
-    pending = renderMissAndStore(key, children, options, bodyParent).finally(() =>
+    pending = renderMissAndStore(storeKeyOf, children, options, bodyParent).finally(() =>
       inFlightMiss.delete(baseKey),
     )
     inFlightMiss.set(baseKey, pending)
@@ -298,7 +311,7 @@ async function cacheImpl(
 }
 
 async function renderMissAndStore(
-  key: string,
+  storeKeyOf: () => string,
   children: ReactNode,
   options: CacheOptions,
   bodyParent: PartialCtx,
@@ -308,12 +321,14 @@ async function renderMissAndStore(
   const [userBranch, storageBranch] = stream.tee()
 
   // Storage: buffer the rendered bytes, strip holes, capture snapshots.
-  // Runs in the background — doesn't block the user-facing render.
+  // Runs in the background — doesn't block the user-facing render. The
+  // store key is computed HERE, after readAll — the render has settled,
+  // so the write fingerprint folds the complete read set.
   const storagePromise = (async () => {
     const rawBytes = await readAll(storageBranch)
     const { bytes, holes, meta } = stripHoles(rawBytes)
     await store.set(
-      key,
+      storeKeyOf(),
       freshEntry(
         bytes,
         enrichHoles(holes),
@@ -325,7 +340,7 @@ async function renderMissAndStore(
     )
   })()
   storagePromise.catch((err) => {
-    console.error(`[cache] storage finalize failed for ${key}:`, err)
+    console.error(`[cache] storage finalize failed for ${storeKeyOf()}:`, err)
   })
 
   // User branch: decode immediately and return the live tree. Inner
@@ -336,7 +351,7 @@ async function renderMissAndStore(
 }
 
 async function refreshEntry(
-  key: string,
+  storeKeyOf: () => string,
   children: ReactNode,
   options: CacheOptions,
   bodyParent: PartialCtx,
@@ -347,7 +362,7 @@ async function refreshEntry(
   )
   const { bytes, holes, meta } = stripHoles(rawBytes)
   await store.set(
-    key,
+    storeKeyOf(),
     freshEntry(
       bytes,
       enrichHoles(holes),

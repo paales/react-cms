@@ -1841,10 +1841,10 @@ function createSpecComponent<V>(
     // empty set → "" (byte-identical).
     const foldDeps = new Set<string>(selfDeps)
     if (priorSnap?.deps) for (const k of priorSnap.deps) foldDeps.add(k)
+    const ownFpSource = (deps: string) =>
+      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}${deps}`
     const depsKey = evalDepKeys(foldDeps, ourRequest)
-    const ownStructuralFp = hash(
-      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}${depsKey}`,
-    )
+    const ownStructuralFp = hash(ownFpSource(depsKey))
     const descendantFold = computeDescendantFold(id)
     const structuralFp = hash(`${ownStructuralFp}${descendantFold}`)
     const fp = hash(`${ownStructuralFp}${ambientFrameKey}${descendantFold}`)
@@ -2056,8 +2056,22 @@ function createSpecComponent<V>(
     const cullable = hasVisibleDep(selfDeps) ? (self.visibleOptions ?? {}) : undefined
 
     if (opts.cache !== undefined) {
+      // Store-time key: recompute the structural fp with the LIVE
+      // tracked-read set once the body has rendered, so no cache entry
+      // is ever keyed dep-less. The pre-render `structuralFp` (which
+      // folds the PRIOR record) stays the lookup key — a lookup either
+      // hits a deps-complete entry or misses into a fresh render, so
+      // the cold path over-fetches, never serves stale bytes.
+      const cacheWriteFingerprint = () =>
+        hash(`${hash(ownFpSource(evalDepKeys(selfDeps, ourRequest)))}${descendantFold}`)
       body = (
-        <Cache id={id} fingerprint={structuralFp} options={opts.cache} varyResult={varyResult}>
+        <Cache
+          id={id}
+          fingerprint={structuralFp}
+          writeFingerprint={cacheWriteFingerprint}
+          options={opts.cache}
+          varyResult={varyResult}
+        >
           {body}
         </Cache>
       )
