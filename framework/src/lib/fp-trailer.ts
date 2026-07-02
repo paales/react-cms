@@ -393,7 +393,27 @@ export function wrapStreamWithFpTrailer(
   // last-wins semantics (the splitter's trailer map, `?cached=`
   // registration) without merge logic.
   const cumulative: FpUpdatesPayload = {}
+  /** Entries already shipped. Each marker carries only the DELTA since
+   *  the previous one — the client folds markers per-id (last-wins),
+   *  so re-shipping the accumulated map would only repeat what it
+   *  already applied: on a many-parton page (hundreds of chunks) the
+   *  cumulative form made the trailer bytes quadratic in settles. */
+  const emitted: FpUpdatesPayload = {}
   const incremental = opts?.incremental !== false && request !== null
+
+  const emitDelta = (
+    controller: TransformStreamDefaultController<Uint8Array>,
+  ): void => {
+    const delta: FpUpdatesPayload = {}
+    for (const [id, entry] of Object.entries(cumulative)) {
+      const sent = emitted[id]
+      if (sent && sent.to === entry.to && sent.from === entry.from) continue
+      delta[id] = entry
+    }
+    if (Object.keys(delta).length === 0) return
+    emitTrailer(controller, delta)
+    Object.assign(emitted, delta)
+  }
 
   /** Fold the current route snapshots into `cumulative` — either the
    *  subtree under `withinId` (settle-time: that parton + everything
@@ -440,7 +460,7 @@ export function wrapStreamWithFpTrailer(
         _setSettleTrailerSink((partonId) => {
           if (!foldUpdates(partonId)) return
           try {
-            emitTrailer(controller, cumulative)
+            emitDelta(controller)
           } catch {}
         })
       },
@@ -471,7 +491,7 @@ export function wrapStreamWithFpTrailer(
         // between a parton's settle and stream end). No wire bytes when
         // the settle-time entries already covered everything.
         if (!foldUpdates()) return
-        emitTrailer(controller, cumulative)
+        emitDelta(controller)
       },
     }),
   )
