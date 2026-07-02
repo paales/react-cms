@@ -39,14 +39,17 @@ export function ensurePulseTicker(cx: number, cy: number): void {
   tickers.add(key)
 
   const base = 400 + ((((cx * 7 + cy * 13) % 9) + 9) % 9) * 500
+  const started = Date.now()
   const schedule = (): void => {
     const jitter = 0.5 + Math.random()
     const delay = Math.min(5_000, Math.max(100, base * jitter))
     setTimeout(() => {
       if (!tickers.has(key)) return
-      const next = chunkPulse.peek({ cx, cy }) + 1
-      void chunkPulse.set(next, { partition: { cx, cy } }).then(schedule, schedule)
+      // The value is milliseconds-alive since this server boot first
+      // loaded the chunk — time-shaped, not an opaque count, and fresh
+      // each run rather than resuming a persisted number.
+      void chunkPulse.set(Date.now() - started, { partition: { cx, cy } }).then(schedule, schedule)
     }, delay)
   }
-  schedule()
+  void chunkPulse.set(0, { partition: { cx, cy } }).then(schedule, schedule)
 }

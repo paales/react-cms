@@ -145,8 +145,19 @@ export function VisibilityObserver({
   useEffect(() => {
     const inst = ref.current
     if (!inst || typeof inst.observeUsing !== "function") return
+    // An IO callback batch contains only the nodes whose intersection
+    // CHANGED — with many observed children (a fragment of chunk
+    // subtrees), one leaving node must not read as "the whole parton
+    // left". Track per-node state and report the aggregate.
+    const nodeState = new Map<Element, boolean>()
     const io = new IntersectionObserver(
-      (entries) => reportVisible(id, entries.some((e) => e.isIntersecting)),
+      (entries) => {
+        for (const e of entries) nodeState.set(e.target, e.isIntersecting)
+        for (const el of [...nodeState.keys()]) {
+          if (!el.isConnected) nodeState.delete(el)
+        }
+        reportVisible(id, [...nodeState.values()].some(Boolean))
+      },
       { rootMargin },
     )
     inst.observeUsing(io)

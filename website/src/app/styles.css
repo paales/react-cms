@@ -96,6 +96,14 @@ body {
   height: 512px;
 }
 
+/* Letter-spacing trails each glyph, leaving it left-hugged in its
+   tile; half the gap as lead-in centers glyph boxes on tile cells. */
+.chunk__coord,
+.chunk__pulse,
+.card {
+  padding-left: calc((var(--tile) - 1ch) / 2);
+}
+
 .chunk__coord {
   position: absolute;
   top: 0;

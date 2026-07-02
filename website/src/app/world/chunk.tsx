@@ -61,8 +61,8 @@ const ChunkPulse = parton(
     const pulse = await chunkPulse.resolve({ cx, cy })
     return (
       <>
-        <ActivityLight ck={`${cx},${cy}`} />
-        <span className="chunk__pulse">{pulse.value}</span>
+        <ActivityLight ck={`${cx},${cy}`} stamp={pulse.value} />
+        <span className="chunk__pulse">{pulse.value}ms</span>
       </>
     )
   },

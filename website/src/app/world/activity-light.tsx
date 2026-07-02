@@ -24,11 +24,21 @@ function recordArrival(ck: string): number {
   return recent.length
 }
 
-export function ActivityLight({ ck }: { ck: string }) {
-  const [tone, setTone] = useState<"idle" | "green" | "blue" | "white">("idle")
+export function ActivityLight({ ck, stamp }: { ck: string; stamp?: unknown }) {
+  const [pulse, setPulse] = useState<{ tone: string; seq: number }>({ tone: "idle", seq: 0 })
+  // A lane commit reconciles this element in place (identity-stable by
+  // design), so arrival is "the stamp changed", not "the component
+  // mounted". The seq keys the flash span so the animation restarts.
   useEffect(() => {
     const n = recordArrival(ck)
-    setTone(n >= 5 ? "white" : n >= 2 ? "blue" : "green")
-  }, [ck])
-  return <span className={`chunk__light chunk__light--${tone}`} data-testid={`light-${ck}`} aria-hidden />
+    setPulse((p) => ({ tone: n >= 5 ? "white" : n >= 2 ? "blue" : "green", seq: p.seq + 1 }))
+  }, [ck, stamp])
+  return (
+    <span
+      key={pulse.seq}
+      className={`chunk__light chunk__light--${pulse.tone}`}
+      data-testid={`light-${ck}`}
+      aria-hidden
+    />
+  )
 }
