@@ -2,10 +2,12 @@
 
 > Live design doc. Originally captured 2026-05-16 from a design
 > conversation exploring how Unreal Engine's actor replication
-> model maps onto parton primitives. Latest pass: 2026-05-22 —
-> narrowed scope after rolling back the `usePartialReconcile`
-> prototype and recognising that cells already cover the
-> typed-value lane. The doc now describes the *current* model
+> model maps onto parton primitives. 2026-05-22 pass narrowed scope
+> after rolling back the `usePartialReconcile` prototype and
+> recognising that cells already cover the typed-value lane. Latest
+> pass: 2026-07-02 — terminology refreshed for the read-is-the-
+> dependency model (`vary`/`schema` are gone; a body's tracked reads
+> are its request surface). The doc describes the *current* model
 > (cells + `useOptimistic` + in-body `reload()`) and a small set
 > of genuinely open questions.
 >
@@ -50,10 +52,11 @@ tick-loop / FPS assumptions.
   cover the typed-value lane cleanly, `useOptimistic` covers the
   structural-prediction lane. A queued-replay primitive hasn't
   found an in-tree case where neither suffices.
-- **Reliable vs lossy channels.** Reliable (server actions) is the
-  default and exists today. Lossy is filed in
-  [`IDEAS.md`](./IDEAS.md) under "Restart-streaming via segmented
-  Flight."
+- **Reliable vs lossy channels.** Both exist now. Reliable (server
+  actions) is the default; the lossy lane is `deferred` cells riding
+  the live segment stream — writes skip the action-response
+  re-render and the open connection carries whatever the value is
+  when the next segment renders (cursor / presence broadcast).
 
 ## Authority taxonomy
 
@@ -65,8 +68,8 @@ framework owns the cascade.
 
 | Mode | Where it lives | API surface | Example |
 |---|---|---|---|
-| **server-only** | `vary` / `schema` output | normal parton render | price, inventory, permissions |
-| **server-with-cell** | server-authoritative typed value, partition-keyed | `cell(...)` + `useCell` (optimistic-aware value, batched `set`, `input()` bindings) | counter, draft text, drawer-open state, anything keyed by partition |
+| **server-only** | the Render body — tracked request reads + async loaders | normal parton render | price, inventory, permissions |
+| **server-with-cell** | server-authoritative typed value, partition-keyed | `localCell` / `gqlCell` resolved in-body (`cell.resolve()`, inline `localCell`, or a `BoundCell` prop) + `useCell` on the client (optimistic-aware value, batched `set`, `input()` bindings) | counter, draft text, drawer-open state, anything keyed by partition |
 | **server-with-optimistic-shape** | server-authoritative + client structural prediction | React-native `useOptimistic` (single-shot) | add-to-cart (line disappears optimistically; totals/taxes from server), drag-reorder |
 | **client-only** | React memory | plain `useState` | hover, focus, drag-position-during-drag |
 
@@ -118,23 +121,26 @@ export async function addToCart(sku: string) {
 ```
 
 The selector's query-string fragment (`?cart_id=${cart.id}`)
-scopes the bump: only partons whose `vary` output contains
-`cart_id=<cart.id>` get a fresh fingerprint. Bare `"cart"` (no
-constraints) would fan out to every cart-tagged parton across
-every user — overwhelmingly the wrong default for per-user state.
-The author owns this discipline; the framework doesn't auto-scope
-because it doesn't know which `vary` keys are partition axes vs
-incidental reads.
+scopes the bump: only partons whose constraint surface (match
+params + bound cell args) contains `cart_id=<cart.id>` get a fresh
+fingerprint. Bare `"cart"` (no constraints) would fan out to every
+cart-tagged parton across every user — overwhelmingly the wrong
+default for per-user state. The author owns this discipline; the
+framework doesn't auto-scope because it doesn't know which of an
+action body's reads are partition axes vs incidental reads (render
+bodies get this attribution for free via tracked hooks; action
+bodies have no equivalent — see the "sharp edge" item in
+[`IDEAS.md`](./IDEAS.md)).
 
 The action's response render fires immediately after the body
 returns — every parton whose selector matches the bumped name AND
 constraints sees a fresh fingerprint and emits new bytes on the
 same response. No URL rewrite, no return-value lifting.
 
-Cell writes do this automatically: `cell.set(v)` calls
-`getServerNavigation().reload({ selector: "cell:<id>" })` after
-the write, so every parton whose `schema` reads the cell
-re-renders.
+Cell writes do this automatically and partition-scoped:
+`cell.set(v)` bumps `cell:<id>?<partition-args>` after the write,
+so exactly the partons that resolved that cell at that partition
+re-render.
 
 ### Action results
 
@@ -157,14 +163,12 @@ until a concrete in-tree use case lands.
 ```tsx
 // Server
 const Cart = parton(
-  async function CartRender({ cartId }: { cartId: string } & RenderArgs) {
+  async function CartRender() {
+    const cartId = cookie("cart_id")   // tracked read — the read IS the dependency
     const cart = await loadCart(cartId)
     return <CartClient initial={cart.items} />
   },
-  {
-    selector: "cart",
-    vary: ({ cookies: { cart_id: cartId } }) => ({ cartId }),
-  },
+  { selector: "cart" },
 )
 
 // Client
@@ -227,9 +231,9 @@ the action's in-body `reload({ selector: "cart" })` lands.
    values" (single-tab durability) and "Cross-tab sync via
    BroadcastChannel" (multi-tab coherence).
 4. **Cell dimensionality.** Cells today carry one value per
-   partition (`vary` output). Time (history / undo), translations,
-   currency, domain — these all want different storage shapes and
-   different fallback chains. Lives in
+   partition (the hashed args record). Time (history / undo),
+   translations, currency, domain — these all want different storage
+   shapes and different fallback chains. Lives in
    [`cell-dimensionality.md`](./cell-dimensionality.md).
 
 ## Related
@@ -242,8 +246,8 @@ the action's in-body `reload({ selector: "cart" })` lands.
 - [`./cell-dimensionality.md`](./cell-dimensionality.md) —
   exploration of further axes for cell storage (time,
   translations, currency, domain).
-- [`./IDEAS.md`](./IDEAS.md) — broader backlog; persistence,
-  cross-tab, restart-streaming all live there.
+- [`./IDEAS.md`](./IDEAS.md) — broader backlog; optimistic-value
+  persistence and cross-tab sync live there.
 - [`../reference/partial.md`](../reference/partial.md) — the
   `parton` constructor surface.
 - [`../reference/frames-navigation.md`](../reference/frames-navigation.md)

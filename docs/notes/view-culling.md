@@ -7,11 +7,11 @@
 This note is the design and the framework-level findings — the substrate for
 a future framework `<Scroller>`.
 
-This is the shipped form of the "Activate ⇄ deactivate symmetry" backlog
-item in [`IDEAS.md`](./IDEAS.md), and it supersedes the earlier
-windowed-anchor sketch (a client camera reloading a list partial with an
-`?visible=N` anchor): culling is now a per-parton read-tracked signal, not a
-list-level camera.
+This is the shipped form of what [`IDEAS.md`](./IDEAS.md) filed as
+"Activate ⇄ deactivate symmetry" (now collapsed there to a pointer here),
+and it supersedes the earlier windowed-anchor sketch (a client camera
+reloading a list partial with an `?visible=N` anchor): culling is a
+per-parton read-tracked signal, not a list-level camera.
 
 ## The model — culling is a tracked read
 

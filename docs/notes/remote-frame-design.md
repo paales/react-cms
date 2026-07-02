@@ -1,18 +1,20 @@
 # RemoteFrame — open design questions
 
-> Captured 2026-05-17 from an extended design conversation. Snapshots
+> Captured 2026-05-17 from an extended design conversation; shipped-
+> state list and terminology refreshed 2026-07-02. Snapshots
 > the open questions and tentative directions for `<RemoteFrame>`
 > beyond what's shipped today. Pick up by reading the current state in
 > [`docs/reference/remote-frame.md`](../reference/remote-frame.md),
 > then walking this doc's sections in roughly the priority order at
-> the bottom.
+> the bottom. Every section is an open direction — parked, not dead.
 
 ## What's shipped
 
-- `<RemoteFrame url parent capability? namespace?>` — streams Flight
+- `<RemoteFrame url capability? namespace?>` — streams Flight
   bytes from a remote endpoint, decodes, registers snapshots, stitches.
-  Always streams; trailer arrives at end-of-stream and lands before
-  host commit via `deferCommitUntil`.
+  (No `parent` prop — the ambient parton flows through server
+  context, like any other placement.) Always streams; trailer arrives
+  at end-of-stream and lands before host commit via `deferCommitUntil`.
 - `remote<Cap>({ origin, selector, namespace })` typed binding factory.
 - `parton add|update|remove|list` CLI that installs bindings into the
   host repo under `src/remote/<name>/`.
@@ -24,7 +26,9 @@
   remotes and making selectors self-describing.
 - Cross-origin selector-refetch routing via `snap.source.{origin,
   remoteId, capability}` — nested addressable partials route correctly
-  on the very first render.
+  on the very first render. (Same-origin remotes skip the `source`
+  stamp: the host has the spec in its own catalog, and the local
+  Component path is strictly faster than a fresh RemoteFrame fetch.)
 - Capability scoping: host-declared values reach the remote via
   `x-parton-capability` header; remote sees nothing else (no cookies,
   no host URL, `credentials: omit`).
@@ -101,15 +105,15 @@ schema. CLI emits a `block()` wrapper alongside the `remote()` one:
 
 ```ts
 // generated when the remote declares a schema
-export const MagentoStocksBlock = block({
-  selector: "magento-stocks",
-  schema: ({ cms }) => ({
-    symbols: cms.text("symbols", "Symbols to show"),
-  }),
-  Render: ({ symbols, parent }) => (
-    <MagentoStocks parent={parent} searchParams={{ symbols }} />
-  ),
-})
+export const MagentoStocksBlock = block(
+  ({ symbols }) => <MagentoStocks searchParams={{ symbols }} />,
+  {
+    selector: "magento-stocks",
+    schema: ({ cms }) => ({
+      symbols: cms.text("symbols", "Symbols to show"),
+    }),
+  },
+)
 ```
 
 CMS author places `MagentoStocksBlock`, edits `symbols` in the editor,
@@ -137,15 +141,16 @@ a CMS field type vocabulary.
 **Question.** When the remote's inputs haven't changed, don't even
 hit the remote.
 
-**Tentative shape.** Wrap the binding in a parton with `vary` reading
-the inputs (searchParams + capability hash), plus `cache: { maxAge }`.
-The framework's cache primitive already handles fp-based skip — if
-the wrapper's fp matches a cached entry, the cache replays bytes and
-the RemoteFrame inside never gets called.
+**Tentative shape.** Wrap the binding in a parton whose body reads
+the inputs through tracked hooks (`searchParam()` + a capability
+hash) — the reads fold into its fingerprint automatically — plus
+`cache: { maxAge }`. The framework's cache primitive already handles
+fp-based skip — if the wrapper's fp matches a cached entry, the cache
+replays bytes and the RemoteFrame inside never gets called.
 
-The CLI could emit bindings pre-wrapped in such a parton, with a
-default `vary` over the obvious inputs and a conservative default
-cache (short maxAge or dedup-within-request).
+The CLI could emit bindings pre-wrapped in such a parton, reading the
+obvious inputs, with a conservative default cache (short maxAge or
+dedup-within-request).
 
 **Open:**
 - Cache-by-default for every binding, or opt-in? Commerce caching has
@@ -313,10 +318,11 @@ GET carried. Untested; probably broken.
 - Probably needs a wrapper around action dispatch that knows
   "this action lives at remote X, attach capability Y" — the host's
   browser code injects the header automatically.
-- Action response stitching: the action returns a payload + possibly
-  a refetch directive (`{revalidate: {selector}}`). For a remote
-  action, the refetch needs to route back through the same remote
-  endpoint with capability.
+- Action response stitching: the action returns a payload and may
+  bump selectors in-body (`getServerNavigation().reload({selector})`)
+  — but the bump lands in the REMOTE's invalidation registry. For a
+  remote action, the resulting refetch needs to route back through
+  the same remote endpoint with capability.
 
 **Open:**
 - Cookie passing — actions today rely on the browser sending cookies
@@ -486,14 +492,15 @@ component function fails.
 host running. How do they iterate?
 
 **Tentative shape.** `/__dev/<selector>` route on any parton-serving
-app — renders the spec centered with a URL bar above (drives `vary`
-inputs), a capability form on the side (provides capability values),
-a refresh button. Storybook for partons, in-framework.
+app — renders the spec centered with a URL bar above (drives the
+spec's tracked request reads — `match` params, `searchParam()`), a
+capability form on the side (provides capability values), a refresh
+button. Storybook for partons, in-framework.
 
 **Open:**
 - Should this be a framework helper (`createDevHandler`) the apps opt
   into, or always on?
-- For specs whose `vary` reads cookies/session, the dev form needs to
+- For specs that read cookies/session, the dev form needs to
   fake those — how is "fake session" surfaced?
 - Story persistence: can authors save a set of "test cases" (URL +
   capability combos) for regression?

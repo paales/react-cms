@@ -19,9 +19,9 @@
   the source thereafter. No TTL, no `freshFor` — that was an
   anti-pattern. Mutations write the cell explicitly; reads dedupe.
 - **Partition-scoped invalidation.** Cell writes emit
-  `cell:<id>?<args>` selectors; only placements whose merged
-  constraints (vary ∪ bound args) match refetch. 200 cart lines, one
-  update, one refetch.
+  `cell:<id>?<args>` selectors; only placements whose constraint
+  surface (match params ∪ bound cell args) matches refetch. 200 cart
+  lines, one update, one refetch.
 - **`hydrate(value)` for parent loaders.** Sync write without firing
   the signal — solves the cascade-on-cold-load problem when a parent
   cell's loader populates child cells.
@@ -47,15 +47,15 @@
 
 ## What's still open
 
-### 1. ~~Typed args~~ → shipped; residue: `localCell` + the `key` callback
+### 1. ~~Typed args~~ → shipped; residue: `localCell`
 
-`gqlCell.with()` is typed (`GqlCell<TResult, TVars>`), and value-keyed
-`.set` is typed off the fragment value. Two residues remain: `localCell`'s
-`.with()` is still `Record<string, unknown>` (no caller has needed it
-typed), and `fragmentCell`'s `key` callback param is typed `any` — gql.tada
-can't resolve `ResultOf<F>` in a contravariant position for an inferred
-generic `F` (it collapses to `never`), so authors annotate
-`(d: ResultOf<typeof Frag>)` explicitly if they want the check.
+`gqlCell.with()` is typed (`GqlCell<TResult, TVars>`), value-keyed
+`.set` is typed off the fragment value, and `fragmentCell`'s `key`
+callback now receives `ResultOf<F>` (the opts are
+`FragmentCellOpts<ResultOf<F>, V>`, so `key: (d) => ({uid: d.uid})`
+type-checks unannotated). One residue remains: `localCell`'s
+`.with()` / `.resolve()` args are still `Record<string, unknown>` (no
+caller has needed them typed).
 
 **Gotcha learned:** gql.tada does NOT validate a fragment's type condition
 against the schema. `fragment X on CartItem` (a type that doesn't exist —
@@ -109,8 +109,9 @@ const updateLineMutation = gqlMutation({
 
 The framework reads `writes`, finds the corresponding field in the
 mutation response, calls the bound cell's `.set()` with the field
-value. Reduces action boilerplate; ensures the cell update happens
-inside the same transaction as the mutation.
+value. Reduces action boilerplate; the transactional substrate
+already exists (`atomic()` buffers cell writes and commits/discards
+with the action), so the declarative layer is purely ergonomic.
 
 Needs typed paths (`"data.cartItem"`) — gql.tada's response type can
 drive this with a tagged-template path utility. Adjacent to (3); same

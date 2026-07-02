@@ -1,9 +1,11 @@
 # Forward-looking ideas
 
-Open backlog. Resolved items aren't tracked here — they're either
-deleted (when there's no useful pre-shipment rationale to preserve)
-or moved to [`../archive/`](../archive/) with a Superseded banner
-(when the design exploration is worth keeping for context).
+Open backlog. Resolved items aren't tracked here — they're deleted
+(when there's no useful pre-shipment rationale to preserve), collapsed
+to a one-line resolved pointer (when readers are likely to come
+looking for what happened), or moved to [`../archive/`](../archive/)
+with a Superseded banner (when the design exploration is worth
+keeping for context).
 
 ---
 
@@ -12,10 +14,10 @@ or moved to [`../archive/`](../archive/) with a Superseded banner
 ### Scoped selectors
 
 Resolve selector tokens (`#foo` / `.bar`) per module or per spec-tree
-path instead of in a global flat namespace. Today the framework
-throws on duplicate `#` tokens at render time, forcing factories to
-hand-disambiguate internal names; scoping lets the same name be
-reused across invocations.
+path instead of in a global flat namespace. Today the spec catalog is
+one flat map keyed by id (last registration wins, silently), forcing
+factories to hand-disambiguate internal names; scoping lets the same
+name be reused across invocations.
 
 String tokens are brittle past a single codebase — highest-leverage
 backlog item before multi-team adoption.
@@ -32,7 +34,7 @@ that depended on it without the caller knowing each affected partial
 id.
 
 Open questions:
-- **Storage shape.** Vary results are hashed into the cache key, not
+- **Storage shape.** Dep records are hashed into the cache key, not
   stored as queryable fields. Either keep a side-index
   `(key → depsKey)` to walk, or accept O(n) scan over cache
   entries on invalidation (probably fine for sub-10k entries).
@@ -46,7 +48,7 @@ Open questions:
 
 ### Cross-tab sync via BroadcastChannel
 
-When tab A runs a server action that invalidates `["cart"]`, tab B is stale. A BroadcastChannel propagating invalidation signals across same-origin tabs would make multi-tab behaviour correct by default. Strictly simpler than server-push realtime (no websocket infra) and probably what 90% of apps actually need.
+When tab A runs a server action that invalidates `["cart"]`, tab B is stale — unless it holds a `?live=1` heartbeat connection, in which case the process-global invalidation registry wakes its segment stream and pushes the update. But the heartbeat is opt-in and costs one long-poll connection per tab. A BroadcastChannel propagating invalidation signals across same-origin tabs would make multi-tab behaviour correct by default without every tab holding a stream open (one tab holds the connection, the others hear the bump and refetch).
 
 ### Persist optimistic unsaved cell values
 
@@ -56,13 +58,13 @@ Persist `latestSentByCell` to `sessionStorage` (or IndexedDB for larger payloads
 
 ### Sharp edge: `reload({selector})` is too broad by default
 
-Today `getServerNavigation().reload({ selector: "cart" })` with no constraints bumps **every** cart-tagged parton across every connected viewer. The grammar supports per-request scoping via query-string constraints (`cart?cart_id=${cartId}`), but the safe pattern is opt-in: forget the constraint and one user's cart mutation causes every other viewer's cart to refetch on their next nav. Silent footgun — the caller sees correct local behaviour; the cross-user fan-out only shows up under load or as unnecessary upstream round-trips.
+Today `getServerNavigation().reload({ selector: "cart" })` with no constraints bumps **every** cart-tagged parton across every connected viewer. The grammar supports per-request scoping via query-string constraints (`cart?cart_id=${cartId}`, matched as a subset of the parton's constraint surface — match params + bound cell args), but the safe pattern is opt-in: forget the constraint and one user's cart mutation causes every other viewer's cart to refetch on their next nav. Silent footgun — the caller sees correct local behaviour; the cross-user fan-out only shows up under load.
 
-Cells partially mitigate via the value-fold (re-renders that produce identical bytes hit fp-skip on the way out), but the registry walk + re-render still happens. For GraphQL-backed partons like `cart`, the re-render is a real Magento round-trip per viewer.
+Cells mitigate twice: partition-scoped writes (`cell.set` bumps `cell:<id>?<args>`, never the bare label) and storage-as-authoritative reads (a bare-bump re-render reads cell storage, so no upstream round-trip unless the loader misses). But the registry walk + re-render still happens per viewer, and any non-cell loader in the re-rendered body is a real upstream round-trip.
 
 Possible directions:
 - **Syntactic sugar.** `reload({ selector: "cart", scope: { cart_id: cartId } })` as a readable alternative to query-string interpolation. Same semantics; easier to read for multi-key cases.
-- **Auto-scope from declared read keys.** If the framework tracks which `readCookie` / `readHeader` calls happened during the action body, fold those into default constraints. Small instrumentation cost, large ergonomic win — the action says what it touched without naming each axis.
+- **Auto-scope from declared read keys.** If the framework tracks which `readCookie` / `readHeader` calls happened during the action body, fold those into default constraints. Render bodies already get this for free (the read is the dependency — tracked hooks fold into the fp via dep records); action bodies have no equivalent instrumentation yet. Small cost, large ergonomic win — the action says what it touched without naming each axis.
 - **Dev warning on bare bumps.** Warn when a `reload({selector})` would match >1 distinct constraint tuple in the current registry snapshot. Catches the footgun in development; ships nothing to production.
 
 Not urgent: the cart action is the only real per-user mutation in-tree today; CMS draft is process-global; cells absorb the bare-bump cost via fp-skip. Real pressure arrives when a multi-user app ships several per-user mutating actions and the upstream round-trips start showing in flame graphs.
@@ -76,10 +78,12 @@ and [`../internals/render-pipeline.md`](../internals/render-pipeline.md)
 § "Cold → warm fp drift and the trailer". Two extensions remain:
 
 - **Server-driven cache-control on the wire.** Today `keepalive`
-  has no time component — variants stay cached until the next
-  layout boundary prunes them. The natural extension is to surface
-  the spec's `cache: { maxAge, staleWhileRevalidate }` numbers via
-  the same trailer channel and have the client use them to decide
+  has no time component on the client — variants stay cached until
+  the next layout boundary prunes them. The server side already has
+  the freshness vocabulary (`expires()` / `staleUntil()` wake hints,
+  `cache: { maxAge, staleWhileRevalidate }`); the extension is to
+  surface those numbers via the same trailer channel and have the
+  client use them to decide
   when to even send the id in `?cached=` on the next nav (within
   `maxAge`: paint cached, skip the network round-trip for this id
   entirely; within SWR window: include in `?cached=` and
@@ -98,74 +102,26 @@ and [`../internals/render-pipeline.md`](../internals/render-pipeline.md)
 Both can be layered on the current trailer + matchKey infrastructure
 without breaking the API surface.
 
-### Restart-streaming via segmented Flight (cursor-frequency updates)
+### Restart-streaming via segmented Flight — resolved by the live segment driver
 
-The fp-trailer is one segment after the main Flight bytes. The same
-framing (4-byte sentinel-with-tag + length-prefix per segment)
-generalises to N segments: server keeps the response stream open,
-emits Flight payload + sentinel + Flight payload + sentinel + …,
-client splits on sentinels and calls `setPayload(payload)` once per
-segment. Effectively Server-Sent Events with Flight payloads as
-events — the client just keeps reconciling into the same React tree
-on every segment.
+Shipped as the segmented live response: the driver keeps the stream
+open for `?live=1` subscriptions (the opt-in `<LivePageHeartbeat>`
+long-poll) or `markConnectionLive()`, wakes on any invalidation-registry
+bump or `expires()` boundary, re-renders, and emits the next
+`next`-tagged segment; per-parton lanes multiplex high-frequency
+streams. The open questions resolved themselves: the iteration loop is
+the registry wait + wake hints (no `useRevalidate`), framing reuses the
+fp-trailer sentinel with distinct tags, and backpressure is intrinsic —
+each segment renders *current* state, so intermediate states coalesce.
+See [`../internals/streaming.md`](../internals/streaming.md).
 
-For a cursor-position firehose (10–60 updates/sec), the server-side
-shape is: render-to-readable-stream → wait for next state mutation →
-render again → emit as next segment, looping until the request
-aborts. State-push from client to server stays a separate channel
-(parallel POST stream, websocket, or just a different `Request`) —
-the asymmetry (RSC down, state up) is intrinsic.
+### Activate ⇄ deactivate symmetry — resolved by read-tracked culling
 
-Open questions if/when we build this:
-- **Server-side iteration loop.** How does `<Root>` know to
-  re-render? Probably an explicit `useRevalidate` primitive or an
-  external state observer.
-- **Segment framing in flight-trailer-marker.** Vary the tag to
-  distinguish `next-payload` from `fp-updates` — same sentinel
-  shape, different ASCII tag means same parser dispatches on it.
-- **Backpressure.** If client renders slowly, server keeps emitting.
-  Bounded queue + drop-oldest is probably what we want for cursor
-  positions.
-
-### Activate ⇄ deactivate symmetry (deferred + infinite-scroll unload)
-
-> **Built** — see [`view-culling.md`](./view-culling.md) and
-> `/magento/browse`. The shape that worked is *not* a per-item
-> `deactivate()` on `useActivate`, nor the client-camera-reloads-a-windowed-
-> list sketch: it's **read-tracked culling**. A parton calls `visible()` (a
-> tri-state server-hook); reading it folds the parton's viewport state into
-> its fingerprint via the same dep-record path as `cookie()` / a cell, so it
-> self-refetches as it enters or leaves view. The framework observes each
-> cullable boundary through a React 19.3 `<Fragment ref>` + `observeUsing`
-> (no wrapper DOM, no id stamping — the boundary knows its own id) and
-> coalesces reports into one self-refetch carrying the live `?visible=` set.
-> The notes below are the original `deactivate()` sketch; the build
-> supersedes them.
-
-Today `useActivate(partialId, subscribe)` fires once and the partial
-stays live. There's no path back to dormant. The infinite-scroll
-case wants symmetry: as items leave the viewport, the framework
-should drop them from the rendered tree and re-stub them as deferred
-placeholders, so a 50,000-row list doesn't grow unbounded in memory.
-
-Same primitive shape, two phases:
-- **Activation.** `<WhenVisible>` fires `useActivate(id).fire()` when
-  the placeholder enters the viewport.
-- **Deactivation.** When it leaves, fire `useActivate(id).deactivate()`,
-  which re-stubs the partial back to its `fallback` and frees the
-  rendered subtree.
-
-Open questions:
-- **Lifecycle policy per spec.** `unmountWhen={<WhenHidden/>}`, TTL
-  after last activation, memory-pressure eviction. Probably layered.
-- **Scroll restoration.** The placeholder takes some space; the
-  framework needs to either reserve the original height or accept
-  reflow. The current `<WhenVisible>` already deals with this on
-  activate; the deactivation side needs the mirror.
-- **State on reactivation.** Does deactivation re-read the deps on the
-  next activation? If yes, infinite-scroll back-up re-fetches stale
-  rows; if no, stale snapshots accumulate. Probably: deactivation
-  freezes the snapshot, reactivation re-reads fresh.
+Shipped as `visible()` — not the per-item `deactivate()` sketch, but a
+tri-state tracked read that folds a parton's viewport state into its
+fingerprint, so it self-refetches (full ⇄ skeleton) as it enters or
+leaves view. Design + framework-level findings live in
+[`view-culling.md`](./view-culling.md).
 
 ### Speculation Rules API — cross-document prefetch complement
 
@@ -214,32 +170,6 @@ Open questions for that surface:
 
 [spec-rules]: https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API
 
-### Side-channel re-render directives on every response
-
-Server actions today can `return { invalidate: { selector } }` and
-the framework refetches the targeted partials on the next render.
-That's the only path from server to client for triggering an
-out-of-band partial re-render. A generalisation: every response —
-not just action returns — could carry zero-or-more invalidate /
-re-render directives that travel alongside the actual payload.
-
-Use cases:
-- **Flash / toast tied to an action.** `return { flash: "Added to
-  cart" }` displayed by a `<FlashPartial>` subscribed to the action
-  return channel.
-- **Server-side staleness detection.** While handling any request,
-  the server notices a partial the client is showing is now stale
-  (price changed in DB, stock dropped to zero, etc.) and tells the
-  client to refetch it.
-- **Coalesced realtime.** Instead of websockets, every navigation
-  or partial refetch pulls down any pending directives the server
-  has accumulated for this session/user.
-
-Not a new primitive — extends the existing action-return directive
-surface to non-action requests. Open question: what's the wire
-shape (piggyback in the RSC stream as a synthetic
-`invalidate-partial` frame, or a sidecar JSON field on the response)?
-
 ### Sitemap / route list generation + prerender
 
 The framework knows every URLPattern any spec was constructed with
@@ -263,17 +193,23 @@ Open questions:
 - **Enumerate API shape.** Async generator? Paginated callback?
   Static array?
 - **Opt-in vs opt-out.** Some specs depend on cookies/headers and
-  can't be sensibly prerendered; the `vary` signature already tells
-  us which. Default could be "prerender any spec whose `vary` reads
-  only `params` + `pathname`."
+  can't be sensibly prerendered; the recorded dep sets already tell
+  us which (the read is the dependency). Default could be "prerender
+  any spec whose tracked reads are only `params` + `pathname`" — with
+  the caveat that dep records exist only after a first render, so the
+  gate needs a warm registry or a dry render.
 - **Sitemap-only vs sitemap+prerender.** They share the enumeration
   but have different cost profiles; probably two phases of the same
   pipeline.
 
 ### Pluggable stores for horizontal scale
 
-Define a `Store<K, V>` interface for sessions, render cache, and
-partial registry, and audit each store for value serializability.
+Cells (`setCellStorage`, the `CellStorage` adapter contract) and CMS
+content (`setCmsStorage`) already have pluggable backends. Still
+per-process: sessions (in-memory with a TTL sweep;
+`configureSessionStore` configures, doesn't swap the store), the
+render byte-cache, and the partial registry. Define a `Store<K, V>`
+interface for those three and audit each for value serializability.
 Sessions and the render cache are JSON-serializable; partial registry
 snapshots carry `fallback: ReactNode` — either drop and re-derive on
 lookup, or accept that the registry stays per-instance (warms at
@@ -290,18 +226,25 @@ per-process JSON cache keyed on `Date.now()` — demo-only.
 
 ### Auth and CSRF
 
-Decide whether the principal is a `vary` axis (so per-user cache keys
-derive automatically) or stays action-handler-only. Investigate
-whether CSRF protection inherits from same-origin + session cookies
-(Next.js's stance) or needs a framework-issued token. Provider impl
-downstream.
+Per-user fingerprints already derive automatically the moment a body
+reads the principal through a tracked hook (`session()` / a `cookie()`
+read) — the read is the dependency. What's undecided: whether the
+principal becomes a first-class hook (`user()`, with the provider
+wiring behind it) or stays an app-level cookie read + action-handler
+concern. Investigate whether CSRF protection inherits from
+same-origin + session cookies (Next.js's stance) or needs a
+framework-issued token. Provider impl downstream.
 
 ### Head metadata
 
-Surface a sync `title` contribution per spec (e.g. a `title` field in
-`vary`'s return) that the framework collects and emits in `<head>`
-before the body streams. Today's inline `<title>` only resolves after
-the stream awaits — too late for first paint. Open Graph / canonical /
+Surface a sync per-spec `title` contribution the framework collects
+and emits in `<head>` before the body streams. React 19's metadata
+hoisting handles *placement* (an inline `<title>` rendered anywhere
+hoists), but not *timing* — a title rendered after an await arrives
+too late in the stream for first paint. The contribution needs a
+pre-body surface, and the spec constructor has no pre-render callback
+to hang it on — the natural candidate is a spec option (static or a
+sync function of match params). Open Graph / canonical /
 structured-data not urgent.
 
 ### Performance tracing
@@ -311,12 +254,16 @@ Add a per-partial instrumentation interface (`onPartialStart` /
 propagation across partial boundaries, and cache hit/miss metrics.
 OpenTelemetry adapter as one impl; bring-your-own logger as another.
 
-### i18n as a vary axis
+### i18n — locale routing + translations
 
-Add locale as a first-class `vary` axis alongside cookies / headers /
-session, with locale-aware routing and a translation function.
-Required for the "CMS" framing — multi-locale content is table-stakes
-for a CMS.
+Locale as a request *dimension* already works with zero declaration: a
+body that reads the locale cookie/header through a tracked hook folds
+it into its fingerprint like any other read. What's missing is
+everything above that: locale-aware routing (`/nl/p/:slug`), a
+translation function, and locale as a CMS content axis (see
+[`cell-dimensionality.md`](./cell-dimensionality.md) for the storage
+side). Required for the "CMS" framing — multi-locale content is
+table-stakes for a CMS.
 
 ### Error recovery
 
@@ -324,26 +271,11 @@ Layer on top of `PartialErrorBoundary`: typed errors, retry/backoff
 policies, circuit breakers, serve-stale-on-error (reuse the SWR
 entry on transient errors), error → observability hook.
 
-### Testing harness for partials
-
-A primitive for unit-testing a single partial with a mocked request
-context. Forces `getRequest()` / `getCookie()` / etc. to be
-injectable (not just ambient); pays large DX dividends.
-
 ### a11y defaults for refetch
 
 `aria-busy` during pending refetches, focus restoration policy
 across swaps, live-region announcements. Currently on the app —
 will be pile-of-ad-hoc in a year without framework-level defaults.
-
-### Abolish id
-
-The id concept resolves through too many paths (spec auto-derive,
-JSX prop, slot-wiring's `__contentKey` internal channel, singleton via
-selector `#token`). Goal is to remove it almost entirely from the
-public surface — identity should fall out of placement, not be
-threaded as a separate prop. Touches partial.tsx, slot wiring, and
-the CMS storage layer.
 
 ### Split framework barrel into server + client
 
@@ -362,29 +294,6 @@ server axis instead of their current names.
 session from `?__frame=&__frameUrl=` URL params on every request.
 Two paths into one store — worth checking if they can collapse.
 
-### RemoteFrame v2 — cross-origin refetch routing
-
-Same-origin v1 of `<RemoteFrame>` routes selector-targeted
-refetches through the host's local spec catalog. That works
-because both processes share the same parton definitions in dev.
-For true cross-origin (different deployments, different
-codebases), the host doesn't have the remote's spec — the
-refetch needs to round-trip back to the remote endpoint.
-
-The fix: when the snapshot trailer carries snapshots from a
-remote, annotate them with `source: "remote:<origin>"`. The
-host's refetch dispatcher checks the field: if remote-sourced,
-fire a fetch to `<origin>/__remote/<id>` instead of running the
-local spec. The response stitches in via the same RemoteFrame
-machinery (snapshot trailer, module-ref rewrite, etc.).
-
-Open questions: how does the targeted-refetch URL carry the
-parent-path context? Today partial-refetch URLs use the host's
-URL; for a remote refetch they'd need to point at the remote
-endpoint with a way to carry capability + selector-token info.
-Probably: same `?partials=<id>` shape but origin from the
-snapshot's `source` field.
-
 ### RemoteFrame v2 — signed capability tokens
 
 Today the capability header is trust-the-network: the remote
@@ -393,7 +302,8 @@ real third-party deployments, the remote needs to verify the
 host's claims (this cart-id actually exists, this user actually
 owns it, this total is what was quoted). HMAC-signed tokens
 with an expiration and an issuer are the obvious shape — pick
-JWT or PASETO depending on team taste.
+JWT or PASETO depending on team taste. Full design cut in
+[`remote-frame-design.md`](./remote-frame-design.md) §6.
 
 The signing key lives at the host; the verification key is
 either the host's public key (asymmetric) or a shared secret
@@ -404,10 +314,9 @@ it's overkill.
 
 ### RemoteFrame — same-origin batching
 
-Today `<RemoteFrame>` dedups identical `(src, capability)`
-placements (single fetch shared across copies). But multiple
-RemoteFrames pointing at DIFFERENT ids on the same origin still
-fire N separate requests. Common case in commerce: a checkout
+Today every `<RemoteFrame>` placement fires its own fetch — N
+placements against the same origin are N separate requests
+(even identical `(url, capability)` copies). Common case in commerce: a checkout
 page with three Stripe remotes (payment-method picker, summary,
 upsells) — three round-trips to Stripe instead of one.
 
@@ -459,14 +368,16 @@ original doc remain open and live below as standalone backlog items.
 ## Per-tab session axis
 
 Original framing: Direction C from the archived `transient-client-state`
-doc. Cells today are global or session-scoped (cookie-shared across
-tabs). The cross-tab leak via session-scoped frame URL — tab A opens
-a drawer, tab B's drawer opens on next render — wants a per-tab axis
-the server can read sync. Stamp a per-tab id (`sessionStorage`-backed
-nonce) into a header on every request; expose as
-`vary: ({tab}) => ({...})` and `useTabState("key", value)` on the
-client. Sharp constraint (JSON-serializable, small) so it doesn't
-become the dumping ground for "state I didn't want to think about."
+doc. Cells today are global or session-scoped (`partition:
+({session}) => …` — cookie-shared across tabs). The cross-tab leak via
+session-scoped frame URL — tab A opens a drawer, tab B's drawer opens
+on next render — wants a per-tab axis the server can read sync. Stamp
+a per-tab id (`sessionStorage`-backed nonce) into a header on every
+request; expose as a tracked read (`tab()`, folding into the fp like
+`session()`) and as a cell partition axis, plus `useTabState("key",
+value)` on the client. Sharp constraint (JSON-serializable, small) so
+it doesn't become the dumping ground for "state I didn't want to
+think about."
 
 ## `<PartialForm>` as a composed primitive
 
