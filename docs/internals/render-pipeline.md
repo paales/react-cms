@@ -204,6 +204,7 @@ Wire layer (trailers, segments, lanes — see
 | `fp-trailer-split.ts` | The client splitter: `splitSegments` (no-holdback, milestone-gated cooperative abort), `splitAtFpTrailer`. |
 | `segment-trailers-client.ts` | Applying a segment's standard trailers client-side — `fp` via `_applyFpUpdates`, `url` via `_windowNav().navigate(…, { silent: true })`. |
 | `segmented-response.ts` / `segment-relevance.ts` / `parton-mux.ts` | The server segment driver + lane pump, the bump-relevance predicate, and the per-parton lane mux/demux framing. |
+| `connection-session.ts` / `visibility-protocol.ts` | Per-live-connection session state keyed by the client-minted `?__conn=` id — the visible set behind `visible()` on a live connection, the visibility-report registry (`reportConnectionVisibility`, the `POST /__parton/visible` handler), and the shared wire shape (`VisibilityReport`). See [streaming.md](./streaming.md) §Visibility rides the connection. |
 
 Client merge layer:
 
@@ -218,8 +219,8 @@ Client merge layer:
 | `frame-client.tsx` | The frames tree on the nav entry (read/write + the write serialiser), `FrameNameProvider`, frame refetch dispatch, and the window/frame imperative handle builders. |
 | `use-navigation.tsx` | The `useNavigation()` hook layer (`[fire, progress]` tuples, `@self` resolution, preload), `useActivate`, `useScrollRestore`, `PageUrlContext`, `PartialIdContext`. |
 | `cell-client.tsx` | `useCell` + the client-side write batcher (see [`cell-internals.md`](./cell-internals.md)). |
-| `live-page-heartbeat.tsx` | The `?live=1` long-poll (mounted by `bootBrowser`) + the `data-parton-live` marker (see [`streaming.md`](./streaming.md)). |
-| `visibility.tsx` / `page-interactive.ts` | The viewport observer for `visible()`-cullable partons (`?visible=` reporting); the `data-parton-interactive` root marker. |
+| `live-page-heartbeat.tsx` | The `?live=1` long-poll (mounted by `bootBrowser`) + the `data-parton-live` marker (its value is the minted `?__conn=` connection id), the `?visible=` seed, and the connection-id publication the visibility controller keys its transport on (see [`streaming.md`](./streaming.md)). |
+| `visibility.tsx` / `page-interactive.ts` | The viewport observer for `visible()`-cullable partons + the flip controller (report POSTs onto the open live connection; `?visible=` render-reload fallback); the `data-parton-interactive` root marker. |
 
 `framework/src/runtime/` holds the request plumbing: `context.ts`
 (request ALS, scope derivation, the cached-fp override carrier, the
@@ -270,6 +271,22 @@ behind the search disappears" bug). The streaming-mode path gets this
 for free (it prunes only in its non-pending branch); the cache-mode
 path guards explicitly via `treeHasPendingLazy(rendered)` and defers
 the prune to a later commit whose render is whole.
+
+A second bound, `CLIENT_POOL_CAP`, caps the number of distinct ids
+retained across a long journey (a scroll across a cullable field
+registers an entry per parton ever visited). Eviction is
+oldest-registered-first but **exempts ids the live tree still
+references** (the prune set from the most recent payload commit,
+recorded as `_liveTreeIds`): the template re-substitutes those ids'
+placeholders from the cache on every re-render, so destroying one
+blanks that subtree permanently — nothing refetches it, because the
+fp-skip placeholder is the server saying "you have this". The page
+shell is the canonical would-be victim: its element identity is
+stable, React bails out of re-rendering its boundary, and it never
+re-registers for recency — under churn it becomes the pool's oldest
+entry while being the subtree everything hangs off. A page whose
+live tree alone exceeds the cap keeps every live entry (correctness
+bounds memory there); the cap bounds everything else.
 
 ## Preload (warm-only client commit)
 
@@ -364,15 +381,19 @@ Wire params:
 | `partials` | Selector labels (cosmetic `#`/`.` stripped). Resolves against snapshot `labels` AND `id` for fan-out targeting. |
 | `cached` | `id:matchKey:fp,…` — fingerprints the client has |
 | `live` / `streaming` | Server hold-open subscription / client commit mode — see [`streaming.md`](./streaming.md) |
+| `__conn` | The live connection's session id (heartbeat-minted; keys the connection-session state visibility reports address) |
 | `__frame=...&__frameUrl=...` | session-write a frame URL before render |
-| `visible` | The viewport-report id set `visible()` reads |
-| `__cullFlip` | The visibility controller's revalidation stamp — its explicit `?partials=` targets may fp-skip (see *Cull-to-park*) |
+| `visible` | The viewport-report id set `visible()` reads — on a live request it seeds the connection session's set |
+| `__cullFlip` | The visibility controller's revalidation stamp on the reload fallback — its explicit `?partials=` targets may fp-skip (see *Cull-to-park*) |
 | `__populateCache` | Post-action full render that repopulates the client cache without treating `?partials=` as a filter |
 
-`partials`, `cached`, `live`, `streaming`, `__frame`, `__frameUrl`
-and `__cullFlip` are the `TRANSPORT_PARAMS` (`lib/match.ts`) —
-`match` never sees them. `visible` is a real request dimension (the
-`visible()` hook reads it and it folds into fps).
+`partials`, `cached`, `live`, `streaming`, `visible`, `__conn`,
+`__cullFlip`, `__frame` and `__frameUrl` are the `TRANSPORT_PARAMS`
+(`lib/match.ts`) — `match` never sees them. `visible` is still a real
+request dimension — the `visible()` HOOK reads it (session-first, URL
+fallback) and it folds into fps — it is only invisible to match
+gates, where it would otherwise split variant identity by transport
+noise.
 
 After a server function commits, refetch routing is driven entirely by
 the invalidation registry — cell writes fire their `cell:` selectors
@@ -422,15 +443,21 @@ moving parts, end to end:
   (`useSyncExternalStore` over `cull-park.ts`) — the flip shows the
   moment the observer reports; the content slot stays visible until a
   skeleton exists to hold the space.
-- **The revalidation** (`?__cullFlip=1`). The controller's flush
-  (`visibility.tsx` → `enqueueRefetch({cullFlip: true})`) keeps its
-  targets' `?cached=` tokens (a normal explicit target's are
-  stripped) and stamps the request, letting explicit targets fp-skip.
-  An fp match answers with a CONFIRMATION placeholder
-  (`data-partial-confirm` — distinct from a plain hole; ordinary
-  fp-skips are verdicts on their own request's `?visible=`-less state
-  and must not confirm a parked copy); a moved fp answers with fresh
-  bytes.
+- **The revalidation.** With a live connection open, flips ride the
+  connection as session state (a visibility-report POST; the flipped
+  partons come back as lane segments — see
+  [`streaming.md`](./streaming.md)); otherwise the controller's flush
+  fires the reload fallback (`enqueueRefetch({cullFlip: true})`),
+  which keeps its targets' `?cached=` tokens (a normal explicit
+  target's are stripped) and stamps `?__cullFlip=1`, letting the
+  explicit targets fp-skip. On either transport the render reads the
+  connection's CURRENT visible set, so an fp match answers with a
+  CONFIRMATION placeholder (`data-partial-confirm` — a cull-capable
+  spec's skip verdict at a MEASURED visible set, distinct from a
+  plain hole; an unmeasured skip says nothing about a parked fiber's
+  state and carries no marker); a moved fp answers with fresh bytes.
+  Flip lanes keep their promoted fps — the per-state variants make an
+  fp-skip restore the right state's body by construction.
 - **Drop-on-drift** (`cull-park.ts`). The content slot's `<Activity>`
   is keyed by a per-id GENERATION. A fresh content store for an id
   whose mounted fiber has been parked since its bytes were minted

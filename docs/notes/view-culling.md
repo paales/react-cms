@@ -15,12 +15,19 @@ specs in `e2e/product-browse-culling.spec.ts`,
 This note remains the design rationale and framework-level findings —
 the substrate for a future framework `<Scroller>`.
 
+The refetch dispatch described below is now the NO-LIVE-CONNECTION
+fallback: with the heartbeat's stream open, flips travel as
+fire-and-forget report POSTs onto the connection's session and come
+back as lane segments — see
+[`../internals/streaming.md`](../internals/streaming.md) §Visibility
+rides the connection.
+
 Cull-to-park closed the note's original gap: a culling flip no longer
 replaces the mounted content (which destroyed client state and made
 re-entry a cold remount). The culled state is a parked VARIANT — a
 stable two-slot Activity pair whose modes flip with the viewport
-report, revalidated by the flip's `?__cullFlip=1` reload under fp-skip
-semantics, budgeted by an LRU of the 64 most-recently-culled subtrees.
+report, revalidated by the flip's dispatch under fp-skip semantics,
+budgeted by an LRU of the 64 most-recently-culled subtrees.
 
 This is the shipped form of what [`IDEAS.md`](./IDEAS.md) filed as
 "Activate ⇄ deactivate symmetry" (now collapsed there to a pointer here),

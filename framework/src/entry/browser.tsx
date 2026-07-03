@@ -153,6 +153,7 @@ async function main() {
 			"cached",
 			"streaming",
 			"live",
+			"__conn",
 			"visible",
 			"page",
 			"__frame",

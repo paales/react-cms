@@ -1031,20 +1031,22 @@ function hasVisibleDep(deps: ReadonlySet<string> | undefined): boolean {
  *   - a HOLE (`confirm` absent) — a position the client MAY fill from
  *     cache: parked-keepalive variants, a cull pair's off slot, and
  *     ordinary fp-skips (heartbeat segments, navigations);
- *   - a CULLING CONFIRMATION (`confirm: true`) — the fp-skip verdict
- *     for an explicit `?__cullFlip=1` target: the server computed the
- *     fingerprint of the state the flip is entering and it matched
- *     the client's advertisement, so the parked copy is provably
- *     current for THAT state.
+ *   - a CULLING CONFIRMATION (`confirm: true`) — a cull-capable
+ *     spec's fp-skip verdict computed against a MEASURED visible set
+ *     (a `?__cullFlip=1` reload target, a live connection's lane or
+ *     segment — anything whose `visible()` read is not the
+ *     pre-measurement `undefined`): the fingerprint of the state
+ *     being served matched the client's advertisement, so the
+ *     client's copy of THAT state is provably current.
  *
  * The distinction rides the wire as `data-partial-confirm` because
  * one consumer needs it exactly: the cull-park drop-on-drift decision
  * (`contentSlotConfirmed` in the commit walk). A restored parked
  * fiber is confirmed by its flip's placeholder — race-free, in the
  * same commit pipeline that would otherwise deliver the replacing
- * bytes. Ordinary fp-skips must NOT carry it: a heartbeat segment's
- * skip is a verdict on the heartbeat's own request (no `?visible=` —
- * the pre-measurement state), not on the state a parked fiber holds.
+ * bytes. An UNMEASURED skip must not carry it — a verdict at the
+ * pre-measurement state says nothing about the state a parked fiber
+ * holds.
  */
 function placeholderFor(id: string, matchKey: string, confirm?: boolean): ReactElement {
   return (
@@ -1706,7 +1708,7 @@ function createSpecComponent<V>(
       const placeholder = placeholderFor(
         id,
         culled ? culledKey(matchKey) : matchKey,
-        isExplicit && (state?.cullFlip ?? false),
+        cullCapable && visibleValue !== undefined,
       )
       const skipBody: ReactNode = keepalive
         ? emitWithVariantSiblings(id, matchKey, placeholder, state, cullCapable ? { culled } : undefined)

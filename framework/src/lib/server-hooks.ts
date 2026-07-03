@@ -21,7 +21,7 @@
  */
 
 import { getCurrentParton, type VisibleOptions } from "./current-parton.ts"
-import { parseCookies } from "../runtime/context.ts"
+import { _getConnectionVisibleSet, parseCookies } from "../runtime/context.ts"
 import { getSessionId } from "../runtime/session.ts"
 import { parseSelector, queryMatchingTs } from "../runtime/invalidation-registry.ts"
 import { buildTimeScope, type TimeScope } from "./time.ts"
@@ -171,9 +171,9 @@ export function session(): { readonly id: string } {
  *     here, e.g. `const show = visible() ?? nearAnchor(searchParam("page"))`,
  *     so the first paint reserves the right neighborhood.
  *
- * `undefined` is GLOBAL — it means the request carries no `?visible=` at
- * all, not that this one parton is unmeasured. Once the client sends
- * `?visible=`, every parton is in (`true`) or out (`false`); the
+ * `undefined` is GLOBAL — it means the connection carries no visible set
+ * at all, not that this one parton is unmeasured. Once the client
+ * reports one, every parton is in (`true`) or out (`false`); the
  * observer's `rootMargin` is the runway, so "out" is the correct skeleton
  * state for everything past it.
  *
@@ -189,12 +189,21 @@ export function visible(options?: VisibleOptions): boolean | undefined {
   return readVisible(new URL(cp.request.url).searchParams, cp.id)
 }
 
-/** Resolve a parton's visibility from a request's `?visible=<id>,…` set:
- *  absent param → `undefined` (cold / pre-measurement), present →
- *  membership. Shared by the `visible()` hook, `evalDepKeys`'
+/** Resolve a parton's visibility from the connection's current visible
+ *  set. Two carriers, one precedence order: a live connection's session
+ *  set first (seeded from the `?live=1` request's `?visible=` param and
+ *  updated by visibility-report POSTs — see
+ *  `../runtime/context.ts::_getConnectionVisibleSet`), then the
+ *  request's own `?visible=<id>,…` param (one-shot culling reloads, the
+ *  no-connection fallback). Absent from both → `undefined` (cold /
+ *  pre-measurement). Shared by the `visible()` hook, `evalDepKeys`'
  *  store-and-reread, AND the spec wrapper's culled-state derivation
- *  (partial.tsx) so no consumer of the visibility signal can drift. */
+ *  (partial.tsx) so no consumer of the visibility signal can drift:
+ *  every one reads the connection's CURRENT set at its own evaluation
+ *  time. */
 export function readVisible(search: URLSearchParams, id: string): boolean | undefined {
+  const connectionSet = _getConnectionVisibleSet()
+  if (connectionSet !== null) return connectionSet.has(id)
   const raw = search.get("visible")
   if (raw === null) return undefined
   return raw.split(",").includes(id)
@@ -345,10 +354,11 @@ export function evalDepKeys(
       const sel = parseSelector(key)
       value = String(queryMatchingTs([sel.name], sel.constraints))
     } else if (kind === "visible") {
-      // `name` is the parton's own id. Re-read the request's `?visible=`
-      // set (store-and-reread): in → "1", out → "0", absent (cold) → "u".
-      // Three distinct strings so entering view, leaving view, and the
-      // first client report each move the fp.
+      // `name` is the parton's own id. Re-read the connection's current
+      // visible set (store-and-reread; session-first, `?visible=` URL
+      // fallback): in → "1", out → "0", absent (cold) → "u". Three
+      // distinct strings so entering view, leaving view, and the first
+      // client report each move the fp.
       const v = readVisible(url.searchParams, name)
       value = v === undefined ? "u" : v ? "1" : "0"
     } else {
