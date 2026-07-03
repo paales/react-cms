@@ -71,7 +71,15 @@ any selector-routing logic that could replace it.
    - Visibility arm (lane driver only) — a visibility report lands on
      the connection session, naming flipped parton ids.
    - Idle timeout (~20s) — the connection closes cleanly. The
-     heartbeat's next interval tick (~5s default) reopens.
+     heartbeat's next interval tick (~5s default) reopens. In the
+     lane loop the deadline is anchored at the last USEFUL activity
+     (a lane started, a flip processed), not re-armed per wake: bump
+     wakes whose touched set comes up empty (all matches parked)
+     ship nothing, and a torn connection is only detectable at
+     enqueue time — a per-wake re-arm would let steady bump traffic
+     hold a fully-parked, possibly torn connection open forever,
+     each wake re-scanning the route (zombie connections accumulate
+     one per refresh and peg the server).
 4. **On a relevant bump, an expiry boundary, or a visibility flip,
    the driver renders per-parton lanes.** The wake resolves WHICH
    snapshot ids it touched (`_routeMatchingBumpIds` for bumps;

@@ -460,6 +460,18 @@ async function driveLaneStream(
 	// materialize linger harmlessly until the connection closes.
 	const deferredFlips = new Set<string>();
 
+	// Keepalive anchored at the last USEFUL activity (a lane started, a
+	// flip processed) — not re-armed per wake. Bump wakes whose touched
+	// set comes up empty (all matches parked) loop without shipping a
+	// byte, and a torn connection is only detectable at enqueue time —
+	// re-arming per wake would let steady bump traffic hold a fully-
+	// parked, possibly torn connection open FOREVER, each wake
+	// re-scanning the route (the zombie-connection leak: every refresh
+	// tears one, they accumulate, the server pegs). A healthy client's
+	// connection closing idle is the normal contract — the heartbeat's
+	// next tick reopens it.
+	let idleDeadline = Date.now() + KEEPALIVE_MS;
+
 	let since = sinceTs;
 	while (!closed) {
 		// A report that landed while the driver was busy (rendering lanes,
@@ -476,6 +488,7 @@ async function driveLaneStream(
 						laneDrained,
 						visibilityFlip: session?.flipped,
 						session,
+						deadline: idleDeadline,
 					});
 		if (wake === false) break;
 		if (wake === "lane-drained") {
@@ -544,6 +557,7 @@ async function driveLaneStream(
 			}
 		}
 		if (touched.length === 0) continue;
+		idleDeadline = Date.now() + KEEPALIVE_MS;
 		// Fresh registry pass per wake: descendant folds and lookups read
 		// the canonical store as of NOW (with every prior lane's commit
 		// applied) instead of the initial segment's memoized fold base.
@@ -586,6 +600,12 @@ interface SegmentWakeOptions {
 	 *  at arm time so a report landing between wakes moves the very
 	 *  next arm. */
 	session?: ConnectionSession | null;
+	/** Absolute idle deadline (ms epoch) overriding the default
+	 *  now+KEEPALIVE_MS anchor. The lane driver passes its
+	 *  activity-anchored deadline so a run of wakes that ship nothing
+	 *  can't extend the connection's life — see the zombie-connection
+	 *  note in `driveLaneStream`. */
+	deadline?: number;
 }
 
 /**
@@ -612,7 +632,7 @@ async function waitForSegmentWake(
 	sinceTs: number,
 	options?: SegmentWakeOptions,
 ): Promise<SegmentWake> {
-	const keepaliveDeadline = Date.now() + KEEPALIVE_MS;
+	const keepaliveDeadline = options?.deadline ?? Date.now() + KEEPALIVE_MS;
 	const expiresAtDelay = computeNextExpiresAtDelay(
 		options?.excludeExpiryIds,
 		options?.session,
