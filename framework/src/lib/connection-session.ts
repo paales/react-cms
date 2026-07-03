@@ -43,7 +43,9 @@ export interface ConnectionSession {
 	/** Last applied report seq — the stale-report gate for `visible`. */
 	lastSeq: number;
 	/** Flipped ids awaiting a lane render. The driver drains via
-	 *  `takeConnectionFlips`. */
+	 *  `takeConnectionFlips`. Insertion order is delivery order — reports
+	 *  send in-view flips first, so lanes for the visible world start
+	 *  before stale cull-outs'. */
 	readonly pendingFlips: Set<string>;
 	/** Resolves when a report lands — the segment driver's visibility
 	 *  wake arm. Re-armed by `takeConnectionFlips`. */

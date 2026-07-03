@@ -32,7 +32,9 @@ export interface VisibilityReport {
 	 *  their lane render (the CURRENT set decides what they render). */
 	seq: number;
 	/** Parton ids whose in/out state flipped since the last report — the
-	 *  ids the segment driver renders as lanes. */
+	 *  ids the segment driver renders as lanes. Ordered viewport-first
+	 *  (in-view flips before cull-outs); the driver starts lanes in this
+	 *  order so the visible world's renders lead. */
 	changed: string[];
 	/** The complete visible set as of this report. Replaces the
 	 *  connection's set wholesale (no incremental merge). */

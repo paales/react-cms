@@ -254,7 +254,17 @@ The pieces:
   re-entry to a placeholder while the client's cache slot holds the
   other state's body; a flip is an explicit target, like
   `?partials=`, and must re-render), and starts a lane per id
-  through the same `partialFromSnapshot` path bump lanes use.
+  through the same `partialFromSnapshot` path bump lanes use. Lanes
+  start in report order — the controller sends in-view flips before
+  cull-outs, so the visible world's renders lead. A flip whose id
+  has NO route snapshot yet (the report raced the render that first
+  materializes its parton — a chunk reported in-view while its
+  container's flip-in lane is still streaming) is DEFERRED, never
+  dropped: the client reports each flip exactly once, so a drop
+  would leave the parton stale until the next whole-tree
+  reconciliation. Deferred ids re-resolve on every subsequent wake
+  (the materializing lane's drain is itself a wake) and never arm
+  one, so an id that never materializes can't busy-loop the driver.
 - **The read stays request-reproducible.** `visible()` and the fp
   fold's store-and-reread both resolve through one function
   (`readVisible` in `server-hooks.ts`): the connection session's set
@@ -268,8 +278,10 @@ The pieces:
   flush recompute reads the same set, so hook read and fold agree.
 
 Client-side transport selection lives in the controller
-(`lib/visibility.tsx`): flips coalesce per animation frame as before,
-and each flush checks `_getLiveConnectionId()`
+(`lib/visibility.tsx`): flips coalesce per animation frame, ordered
+viewport-first on both transports (in-view flips outrank stale
+cull-outs — across batches, since the cap slices in-view first, and
+within one dispatch), and each flush checks `_getLiveConnectionId()`
 (`partial-client-state.ts`) — non-null routes the batch (cap 256;
 ids ride the JSON body, so no request-line limit) to the POST,
 `null` falls back to the one-shot

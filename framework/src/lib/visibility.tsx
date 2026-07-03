@@ -147,9 +147,16 @@ async function flush(): Promise<void> {
   // supersede or tear a mid-flight route swap the way a reload can.
   const connection = _getLiveConnectionId()
   if (connection !== null) {
+    // Viewport first — the same rule as the reload path below: flips the
+    // user can SEE outrank stale cull-outs, both across batches (the cap
+    // slices in-view flips first) and within one report (the server
+    // starts lanes in `changed` order, so in-view renders lead).
     const all = [...changed]
-    const targets = all.slice(0, POST_FLUSH_BATCH)
-    changed = new Set(all.slice(POST_FLUSH_BATCH))
+    const inViewFlips = all.filter((id) => inView.has(id))
+    const outFlips = all.filter((id) => !inView.has(id))
+    const ordered = [...inViewFlips, ...outFlips]
+    const targets = ordered.slice(0, POST_FLUSH_BATCH)
+    changed = new Set(ordered.slice(POST_FLUSH_BATCH))
     inFlight = true
     try {
       const delivered = await postVisibilityReport(connection, targets)

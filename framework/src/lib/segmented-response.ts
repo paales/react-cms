@@ -393,11 +393,26 @@ async function driveLaneStream(
 		}
 	};
 
+	// Flips whose ids had no route snapshot when their report arrived — a
+	// report racing the render that first materializes its parton (a
+	// chunk reported in-view while its bigChunk's flip-in lane is still
+	// streaming). Deferred, never dropped: the client reports each flip
+	// exactly once (the IntersectionObserver only fires on change), so a
+	// dropped flip would leave that parton stale until the next
+	// whole-tree reconciliation. Re-checked against fresh snapshots on
+	// every subsequent wake — the materializing lane's own drain is a
+	// wake — and resolved ids lane like any other flip. Ids that never
+	// materialize linger harmlessly until the connection closes.
+	const deferredFlips = new Set<string>();
+
 	let since = sinceTs;
 	while (!closed) {
 		// A report that landed while the driver was busy (rendering lanes,
 		// or between the lanes hand-off and this loop) is already queued on
 		// the session — consume it without parking on the wake arms first.
+		// Deferred flips deliberately do NOT short-circuit the wait: they
+		// only re-resolve on a real wake, so an unknown id can't busy-loop
+		// the driver.
 		const wake: SegmentWake =
 			session !== null && session.pendingFlips.size > 0
 				? "visibility"
@@ -415,22 +430,40 @@ async function driveLaneStream(
 		const snapshots = _readSnapshotsForRoute(scope, routeKey);
 		if (snapshots.size === 0) break;
 		const touched: string[] = [];
-		if (wake === "visibility" && session !== null) {
-			// The report names the flipped ids; the CURRENT session set (the
-			// one the lane renders read) already reflects it. Ids the route
-			// never rendered have no snapshot to reconstruct — drop them.
-			const override = _getCachedOverride();
-			for (const id of takeConnectionFlips(session)) {
-				if (!snapshots.has(id)) continue;
-				touched.push(id);
-				// A flip is an explicit target: drop its promoted fps so the
-				// lane render can't fp-skip against the pre-flip state.
-				override?.fingerprints.delete(id);
+		const override = _getCachedOverride();
+		// Resolve flips — the wake's fresh ids after any deferred ones (a
+		// deferred flip has waited at least one wake already; reports are
+		// ordered viewport-first, and this keeps that order within each
+		// group). A DIRECT flip is an explicit target: drop its promoted
+		// fps so the lane render can't fp-skip against the pre-flip state
+		// (a visibility fp cycles between the same two values, and the
+		// client's cache slot holds the OTHER state's body, so a stale
+		// override entry WOULD match). A DEFERRED flip keeps its fps: its
+		// parton was just materialized by another lane, whose commit
+		// promoted the fp the client's slot actually holds — fp-skip is
+		// then the precise stale-detector (the materializing render read
+		// the current set → fp matches → cheap placeholder lane; it read
+		// an older set → fp differs → the body re-renders).
+		const directFlips =
+			wake === "visibility" && session !== null
+				? takeConnectionFlips(session)
+				: [];
+		const directFlipSet = new Set(directFlips);
+		for (const id of [...deferredFlips, ...directFlips]) {
+			if (!snapshots.has(id)) {
+				deferredFlips.add(id);
+				continue;
 			}
-		} else if (wake === "bump") {
+			deferredFlips.delete(id);
+			// An id can be BOTH deferred and freshly flipped (it flipped again
+			// while waiting): the fresh flip's fp-delete wins.
+			if (directFlipSet.has(id)) override?.fingerprints.delete(id);
+			if (!touched.includes(id)) touched.push(id);
+		}
+		if (wake === "bump") {
 			touched.push(..._routeMatchingBumpIds(snapshots, since));
 			since = _currentTs();
-		} else {
+		} else if (wake !== "visibility") {
 			// Expiry wake, or a drained lane whose fresh snapshot may carry
 			// a due deadline: render every parton past its `expiresAt`.
 			// Open lanes are skipped — their stale snapshots still show the
