@@ -269,6 +269,22 @@ for free (it prunes only in its non-pending branch); the cache-mode
 path guards explicitly via `treeHasPendingLazy(rendered)` and defers
 the prune to a later commit whose render is whole.
 
+A second bound, `CLIENT_POOL_CAP`, caps the number of distinct ids
+retained across a long journey (a scroll across a cullable field
+registers an entry per parton ever visited). Eviction is
+oldest-registered-first but **exempts ids the live tree still
+references** (the prune set from the most recent payload commit,
+recorded as `_liveTreeIds`): the template re-substitutes those ids'
+placeholders from the cache on every re-render, so destroying one
+blanks that subtree permanently — nothing refetches it, because the
+fp-skip placeholder is the server saying "you have this". The page
+shell is the canonical would-be victim: its element identity is
+stable, React bails out of re-rendering its boundary, and it never
+re-registers for recency — under churn it becomes the pool's oldest
+entry while being the subtree everything hangs off. A page whose
+live tree alone exceeds the cap keeps every live entry (correctness
+bounds memory there); the cap bounds everything else.
+
 ## Preload (warm-only client commit)
 
 `useNavigation().preload(target)` (see
