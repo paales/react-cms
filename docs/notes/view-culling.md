@@ -5,7 +5,12 @@
 `framework/src/lib/visibility.tsx` + `server-hooks.ts` `visible()`, specs in
 `e2e/product-browse-culling.spec.ts` + `__tests__/visible-fp.rsc.test.tsx`).
 This note is the design and the framework-level findings — the substrate for
-a future framework `<Scroller>`.
+a future framework `<Scroller>`. The refetch dispatch described below is now
+the NO-LIVE-CONNECTION fallback: with the heartbeat's stream open, flips
+travel as fire-and-forget report POSTs onto the connection's session and come
+back as lane segments — see
+[`../internals/streaming.md`](../internals/streaming.md) §Visibility rides
+the connection.
 
 This is the shipped form of what [`IDEAS.md`](./IDEAS.md) filed as
 "Activate ⇄ deactivate symmetry" (now collapsed there to a pointer here),

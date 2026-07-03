@@ -174,8 +174,11 @@ Rules that make the gate sound:
   route keys come from the URL-pattern half alone.
 - **Transport params are invisible.** The framework mints search
   params for its own transport — refetch targeting (`partials`), the
-  client cache manifest (`cached`), live holds (`live`), commit mode
-  (`streaming`), frame routing (`__frame`, `__frameUrl`) — so the SAME
+  client cache manifest (`cached`), live holds (`live`) and their
+  connection id (`__conn`), commit mode (`streaming`), the
+  viewport-visibility report set (`visible` — read by the `visible()`
+  HOOK, a tracked dependency, never a match dimension), frame routing
+  (`__frame`, `__frameUrl`) — so the SAME
   page arrives with and without them (SSR, targeted refetch, live
   heartbeat). Match evaluation and param extraction strip them first;
   a wildcard search capture like `"*q=:query"` never swallows them
@@ -254,8 +257,8 @@ otherwise. A parton that never calls it is invariant to scrolling.
 The value is tri-state: `true` (client reported in view, expanded by
 the observer's runway margin), `false` (reported, outside the
 margin), `undefined` (no client report yet — the cold/SSR
-pre-measurement state, global to the request, not per-parton). Seed
-the cold decision off an anchor:
+pre-measurement state, global to the connection, not per-parton).
+Seed the cold decision off an anchor:
 
 ```tsx
 const vis = visible({ rootMargin: "900px 0px" })   // runway config
@@ -265,13 +268,30 @@ return show ? <PageProducts page={page} /> : <GridSkeleton />
 
 On the client the framework observes the parton's rendered children
 through a `<Fragment ref>` + IntersectionObserver (no wrapper
-element), coalesces a frame's worth of in/out flips, and refetches
-the changed partons by id, carrying the full visible set as
-`?visible=` so each re-render's `visible()` reads its own bit.
-Reservation is the parton's contract: a culled parton must hold its
-space or the document collapses. Worked demo:
-`e2e-testing/src/app/pages/magento/product-browse.tsx`; design
-rationale in [`../notes/view-culling.md`](../notes/view-culling.md).
+element) and coalesces a frame's worth of in/out flips. Delivery
+depends on whether the page holds a live connection:
+
+- **Live connection open** (the heartbeat's `?live=1` stream): the
+  flips travel as a fire-and-forget POST to the framework's
+  visibility endpoint (`204`, no body), addressed to the connection
+  by its explicit id. The server stores the set as connection-session
+  state, treats the flipped ids like an invalidation wake, and
+  renders them as lane segments on the EXISTING stream — `visible()`
+  reads the connection's current set, so flips never race the live
+  connection with a second render channel.
+- **No live connection**: the controller refetches the changed
+  partons by id, carrying the full visible set as `?visible=` so each
+  re-render's `visible()` reads its own bit.
+
+Either way the visible set is part of the connection's request state
+— the heartbeat seeds each `?live=1` fire with the current set, and
+`visible()`/the fp fold read session-first with the `?visible=` URL
+param as the one-shot fallback. Reservation is the parton's contract:
+a culled parton must hold its space or the document collapses. Worked
+demo: `e2e-testing/src/app/pages/magento/product-browse.tsx`; design
+rationale in [`../notes/view-culling.md`](../notes/view-culling.md);
+wire mechanics in
+[`../internals/streaming.md`](../internals/streaming.md).
 
 ### Timing — store-and-reread
 

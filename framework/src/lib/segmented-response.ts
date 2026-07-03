@@ -36,6 +36,7 @@ import {
 	_clearRequestEphemeralStorage,
 	_getCachedOverride,
 	_isConnectionLive,
+	_setConnectionSession,
 	getRequest,
 	getScope,
 } from "../runtime/context.ts";
@@ -43,6 +44,12 @@ import {
 	_currentTs,
 	_waitForNextBump,
 } from "../runtime/invalidation-registry.ts";
+import {
+	_closeConnectionSession,
+	_openConnectionSession,
+	type ConnectionSession,
+	takeConnectionFlips,
+} from "./connection-session.ts";
 import { renderToReadableStream } from "./flight-runtime.ts";
 import { wrapStreamWithFpTrailer } from "./fp-trailer.ts";
 import {
@@ -98,92 +105,140 @@ export async function driveSegmentedResponse(
 	const nextMarker = buildMarker(TAG_NEXT_SEGMENT, 0);
 	const settledMarker = buildMarker(TAG_SEGMENT_SETTLED, 0);
 
-	let segmentIndex = 0;
-	let lastTs = _currentTs();
-
-	while (true) {
-		_clearConnectionLive();
-
-		if (segmentIndex > 0) {
-			controller.enqueue(nextMarker);
+	// A live subscription carrying a connection id gets a connection
+	// session — the per-connection state slot visibility-report POSTs
+	// address. Opened BEFORE the first segment renders so a report can
+	// land at any point of the connection's lifetime, and so the first
+	// whole-tree segment already reads the client's measured set (the
+	// session seeds from the request's `?visible=` param). Closed when
+	// the drive loop exits: a report for a closed session gets a `404`,
+	// the client controller's explicit fall-back-to-reload signal.
+	const session = openLiveConnectionSession();
+	try {
+		await driveSegments();
+	} finally {
+		if (session) {
+			_setConnectionSession(null);
+			_closeConnectionSession(session.id);
 		}
-
-		const flightStream = renderSegment();
-		const reader = flightStream.getReader();
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				if (value) controller.enqueue(value);
-			}
-		} finally {
-			reader.releaseLock();
-		}
-
-		// The render for this segment has fully drained — its body bytes and
-		// the `fp`/`url` trailers are all on the wire. Emit the `settled`
-		// milestone so the client knows the iteration is complete: from this
-		// point the connection is parked (held open awaiting the next bump),
-		// and an abort can cancel the reader WITHOUT tearing a mid-render
-		// body. The client's cooperative abort (the live heartbeat tearing
-		// down on navigate) gates on this marker — see `SegmentIterator` in
-		// `fp-trailer-split.ts`.
-		controller.enqueue(settledMarker);
-
-		if (onSegmentEnd) onSegmentEnd();
-
-		// Live subscription (`?live=1`, the heartbeat's long-poll): after
-		// the initial whole-tree segment, the connection switches to
-		// per-parton lanes — each wake renders only the partons the bump /
-		// expiresAt boundary actually touched, and their payloads
-		// interleave as independent `mux` frames, so one parton's slow
-		// Suspense boundary never head-of-line-blocks another parton's
-		// next update. Relevance false-negatives (a dependency the
-		// label/dep surface doesn't capture) are reconciled by the next
-		// whole-tree render: the keepalive close forces the heartbeat to
-		// reopen, and the reopened connection's first segment is always
-		// whole-tree.
-		if (isLiveSubscription()) {
-			promoteSnapshotsToCachedOverride();
-			controller.enqueue(nextMarker);
-			controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
-			await driveLaneStream(controller, lastTs, settledMarker);
-			return;
-		}
-
-		// Server-side multi-segment opt-in: this segment's render called
-		// `markConnectionLive()` (producer-await sentinels like the chat's
-		// `ChunkSlot`). Those stay whole-tree — their next content comes
-		// from the render itself resolving, not from a relevance-matched
-		// bump, so per-parton lanes have nothing to key on. A bare
-		// `?streaming=1` targeted refetch is NOT a subscription — it's a
-		// one-shot that commits its segment and closes.
-		if (!_isConnectionLive()) break;
-
-		// Promote just-emitted (id, matchKey, fp) tokens into the
-		// request-scoped cached override so the NEXT segment's render
-		// fp-skips the unchanged partials. We append to the in-memory
-		// Maps shared with PartialRoot's state — no URL rewrite, no
-		// re-parse. Safe under live partials because the descendant-fold
-		// (both live in `descendantContribution` and snapshot-based in
-		// `descendantContributionFromSnapshot`) folds each descendant's
-		// invalidation ts in — when a hot-bumping descendant's `|inv=N`
-		// shifts, the ancestor's fold moves with it, the ancestor's fp
-		// moves, the promoted fp from the prior segment no longer
-		// matches, the ancestor body re-runs, and the descendant is
-		// re-instantiated.
-		promoteSnapshotsToCachedOverride();
-
-		// Wait for a reason to emit the next segment, or for the keepalive
-		// to elapse. Only a bump RELEVANT to this route's rendered partials
-		// (or an expiresAt boundary) emits another segment; bumps in other
-		// sessions/scopes — which this stream would only fp-skip — re-arm
-		// without re-rendering. See waitForSegmentWake.
-		const proceed = await waitForSegmentWake(lastTs);
-		if (proceed === false) break;
-		lastTs = _currentTs();
-		segmentIndex++;
 	}
+
+	async function driveSegments(): Promise<void> {
+		let segmentIndex = 0;
+		let lastTs = _currentTs();
+
+		while (true) {
+			_clearConnectionLive();
+
+			if (segmentIndex > 0) {
+				controller.enqueue(nextMarker);
+			}
+
+			const flightStream = renderSegment();
+			const reader = flightStream.getReader();
+			try {
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					if (value) controller.enqueue(value);
+				}
+			} finally {
+				reader.releaseLock();
+			}
+
+			// The render for this segment has fully drained — its body bytes and
+			// the `fp`/`url` trailers are all on the wire. Emit the `settled`
+			// milestone so the client knows the iteration is complete: from this
+			// point the connection is parked (held open awaiting the next bump),
+			// and an abort can cancel the reader WITHOUT tearing a mid-render
+			// body. The client's cooperative abort (the live heartbeat tearing
+			// down on navigate) gates on this marker — see `SegmentIterator` in
+			// `fp-trailer-split.ts`.
+			controller.enqueue(settledMarker);
+
+			if (onSegmentEnd) onSegmentEnd();
+
+			// Live subscription (`?live=1`, the heartbeat's long-poll): after
+			// the initial whole-tree segment, the connection switches to
+			// per-parton lanes — each wake renders only the partons the bump /
+			// expiresAt boundary actually touched, and their payloads
+			// interleave as independent `mux` frames, so one parton's slow
+			// Suspense boundary never head-of-line-blocks another parton's
+			// next update. Relevance false-negatives (a dependency the
+			// label/dep surface doesn't capture) are reconciled by the next
+			// whole-tree render: the keepalive close forces the heartbeat to
+			// reopen, and the reopened connection's first segment is always
+			// whole-tree.
+			if (isLiveSubscription()) {
+				promoteSnapshotsToCachedOverride();
+				controller.enqueue(nextMarker);
+				controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
+				await driveLaneStream(controller, lastTs, settledMarker, session);
+				return;
+			}
+
+			// Server-side multi-segment opt-in: this segment's render called
+			// `markConnectionLive()` (producer-await sentinels like the chat's
+			// `ChunkSlot`). Those stay whole-tree — their next content comes
+			// from the render itself resolving, not from a relevance-matched
+			// bump, so per-parton lanes have nothing to key on. A bare
+			// `?streaming=1` targeted refetch is NOT a subscription — it's a
+			// one-shot that commits its segment and closes.
+			if (!_isConnectionLive()) break;
+
+			// Promote just-emitted (id, matchKey, fp) tokens into the
+			// request-scoped cached override so the NEXT segment's render
+			// fp-skips the unchanged partials. We append to the in-memory
+			// Maps shared with PartialRoot's state — no URL rewrite, no
+			// re-parse. Safe under live partials because the descendant-fold
+			// (both live in `descendantContribution` and snapshot-based in
+			// `descendantContributionFromSnapshot`) folds each descendant's
+			// invalidation ts in — when a hot-bumping descendant's `|inv=N`
+			// shifts, the ancestor's fold moves with it, the ancestor's fp
+			// moves, the promoted fp from the prior segment no longer
+			// matches, the ancestor body re-runs, and the descendant is
+			// re-instantiated.
+			promoteSnapshotsToCachedOverride();
+
+			// Wait for a reason to emit the next segment, or for the keepalive
+			// to elapse. Only a bump RELEVANT to this route's rendered partials
+			// (or an expiresAt boundary) emits another segment; bumps in other
+			// sessions/scopes — which this stream would only fp-skip — re-arm
+			// without re-rendering. See waitForSegmentWake.
+			const proceed = await waitForSegmentWake(lastTs);
+			if (proceed === false) break;
+			lastTs = _currentTs();
+			segmentIndex++;
+		}
+	}
+}
+
+/**
+ * Open the connection session for the active request when it is a live
+ * subscription carrying a `?__conn=` connection id, seeding the visible
+ * set from the request's `?visible=` param (`null` when absent — the
+ * pre-measurement state). The session is stamped onto the request's ALS
+ * store so `visible()` / `evalDepKeys` read it for the connection's
+ * whole lifetime. Returns `null` for one-shot requests and id-less live
+ * subscriptions (no POST can address those, so no session is needed).
+ */
+function openLiveConnectionSession(): ConnectionSession | null {
+	let request: Request;
+	try {
+		request = getRequest();
+	} catch {
+		return null;
+	}
+	const params = new URL(request.url).searchParams;
+	if (params.get("live") !== "1") return null;
+	const id = params.get("__conn");
+	if (!id) return null;
+	const rawVisible = params.get("visible");
+	const seed =
+		rawVisible === null ? null : new Set(rawVisible.split(",").filter(Boolean));
+	const session = _openConnectionSession(id, seed);
+	_setConnectionSession(session);
+	return session;
 }
 
 /** One open lane: a parton whose payload is currently rendering and
@@ -220,11 +275,23 @@ interface LaneRuntime {
  * The `settled` milestone is written at quiesce (every lane drained),
  * marking a safe abort point; mid-lane aborts are also safe client-side
  * because a torn lane rejects only its own un-committed decode.
+ *
+ * Visibility flips are the fourth wake: a report POST updates the
+ * connection session's visible set and names the flipped ids, and the
+ * driver renders exactly those ids as lanes — with `visible()` (and the
+ * fp fold's store-and-reread) reading the session's CURRENT set. A
+ * flipped id's fps are dropped from the cached override first: a
+ * visibility fp CYCLES between the same two values (in ↔ out), so a
+ * stale override entry would fp-skip a re-entry to a placeholder whose
+ * client-side cache slot now holds the other state's body. Same rule as
+ * an explicit `?partials=` target — a flip must re-render, never
+ * match-and-skip.
  */
 async function driveLaneStream(
 	controller: ReadableStreamDefaultController<Uint8Array>,
 	sinceTs: number,
 	settledMarker: Uint8Array,
+	session: ConnectionSession | null,
 ): Promise<void> {
 	let request: Request;
 	let scope: string;
@@ -286,9 +353,13 @@ async function driveLaneStream(
 				// that parton's completion, and lanes run concurrently (the
 				// one-sink-per-request settle slot doesn't model that), so
 				// settle-time emission is off here.
-				const wrapped = wrapStreamWithFpTrailer(flight, _captureCommitHandle(), {
-					incremental: false,
-				});
+				const wrapped = wrapStreamWithFpTrailer(
+					flight,
+					_captureCommitHandle(),
+					{
+						incremental: false,
+					},
+				);
 				const reader = wrapped.getReader();
 				try {
 					while (true) {
@@ -322,12 +393,34 @@ async function driveLaneStream(
 		}
 	};
 
+	// Flips whose ids had no route snapshot when their report arrived — a
+	// report racing the render that first materializes its parton (a
+	// chunk reported in-view while its bigChunk's flip-in lane is still
+	// streaming). Deferred, never dropped: the client reports each flip
+	// exactly once (the IntersectionObserver only fires on change), so a
+	// dropped flip would leave that parton stale until the next
+	// whole-tree reconciliation. Re-checked against fresh snapshots on
+	// every subsequent wake — the materializing lane's own drain is a
+	// wake — and resolved ids lane like any other flip. Ids that never
+	// materialize linger harmlessly until the connection closes.
+	const deferredFlips = new Set<string>();
+
 	let since = sinceTs;
 	while (!closed) {
-		const wake = await waitForSegmentWake(since, {
-			excludeExpiryIds: openLaneIds,
-			laneDrained,
-		});
+		// A report that landed while the driver was busy (rendering lanes,
+		// or between the lanes hand-off and this loop) is already queued on
+		// the session — consume it without parking on the wake arms first.
+		// Deferred flips deliberately do NOT short-circuit the wait: they
+		// only re-resolve on a real wake, so an unknown id can't busy-loop
+		// the driver.
+		const wake: SegmentWake =
+			session !== null && session.pendingFlips.size > 0
+				? "visibility"
+				: await waitForSegmentWake(since, {
+						excludeExpiryIds: openLaneIds,
+						laneDrained,
+						visibilityFlip: session?.flipped,
+					});
 		if (wake === false) break;
 		if (wake === "lane-drained") {
 			laneDrained = new Promise<void>((resolve) => {
@@ -337,10 +430,40 @@ async function driveLaneStream(
 		const snapshots = _readSnapshotsForRoute(scope, routeKey);
 		if (snapshots.size === 0) break;
 		const touched: string[] = [];
+		const override = _getCachedOverride();
+		// Resolve flips — the wake's fresh ids after any deferred ones (a
+		// deferred flip has waited at least one wake already; reports are
+		// ordered viewport-first, and this keeps that order within each
+		// group). A DIRECT flip is an explicit target: drop its promoted
+		// fps so the lane render can't fp-skip against the pre-flip state
+		// (a visibility fp cycles between the same two values, and the
+		// client's cache slot holds the OTHER state's body, so a stale
+		// override entry WOULD match). A DEFERRED flip keeps its fps: its
+		// parton was just materialized by another lane, whose commit
+		// promoted the fp the client's slot actually holds — fp-skip is
+		// then the precise stale-detector (the materializing render read
+		// the current set → fp matches → cheap placeholder lane; it read
+		// an older set → fp differs → the body re-renders).
+		const directFlips =
+			wake === "visibility" && session !== null
+				? takeConnectionFlips(session)
+				: [];
+		const directFlipSet = new Set(directFlips);
+		for (const id of [...deferredFlips, ...directFlips]) {
+			if (!snapshots.has(id)) {
+				deferredFlips.add(id);
+				continue;
+			}
+			deferredFlips.delete(id);
+			// An id can be BOTH deferred and freshly flipped (it flipped again
+			// while waiting): the fresh flip's fp-delete wins.
+			if (directFlipSet.has(id)) override?.fingerprints.delete(id);
+			if (!touched.includes(id)) touched.push(id);
+		}
 		if (wake === "bump") {
 			touched.push(..._routeMatchingBumpIds(snapshots, since));
 			since = _currentTs();
-		} else {
+		} else if (wake !== "visibility") {
 			// Expiry wake, or a drained lane whose fresh snapshot may carry
 			// a due deadline: render every parton past its `expiresAt`.
 			// Open lanes are skipped — their stale snapshots still show the
@@ -367,9 +490,10 @@ async function driveLaneStream(
 const IDLE_TIMEOUT = Symbol("idle-timeout");
 const EXPIRES_AT_WAKE = Symbol("expires-at-wake");
 const LANE_DRAINED_WAKE = Symbol("lane-drained-wake");
+const VISIBILITY_WAKE = Symbol("visibility-wake");
 
 /** Which arm woke a segment/lane wait. `false` closes the stream. */
-type SegmentWake = false | "bump" | "expiry" | "lane-drained";
+type SegmentWake = false | "bump" | "expiry" | "lane-drained" | "visibility";
 
 interface SegmentWakeOptions {
 	/** Parton ids whose `expiresAt` must NOT arm the expiry timer —
@@ -384,6 +508,10 @@ interface SegmentWakeOptions {
 	 *  bump+keepalive alone and the parton's next tick would starve
 	 *  until the keepalive closed the connection. */
 	laneDrained?: Promise<void>;
+	/** Extra wake arm: resolves when a visibility report lands on the
+	 *  connection session (per-parton driver only). The caller drains
+	 *  the flipped ids via `takeConnectionFlips`, which re-arms. */
+	visibilityFlip?: Promise<void>;
 }
 
 /**
@@ -400,6 +528,8 @@ interface SegmentWakeOptions {
  *   - the keepalive cap, measured from the last segment so a run of
  *     irrelevant bumps can't hold the connection open indefinitely.
  *   - optionally, a lane draining (per-parton driver only).
+ *   - optionally, a visibility report landing on the connection
+ *     session (per-parton driver only).
  *
  * Returns the arm that fired, or `false` to close the stream (the
  * client's heartbeat reopens on its next tick).
@@ -435,12 +565,16 @@ async function waitForSegmentWake(
 		if (options?.laneDrained) {
 			arms.push(options.laneDrained.then(() => LANE_DRAINED_WAKE));
 		}
+		if (options?.visibilityFlip) {
+			arms.push(options.visibilityFlip.then(() => VISIBILITY_WAKE));
+		}
 		const result = await Promise.race(arms);
 		if (kaTimer) clearTimeout(kaTimer);
 		if (expTimer) clearTimeout(expTimer);
 		if (result === IDLE_TIMEOUT) return false;
 		if (result === EXPIRES_AT_WAKE) return "expiry";
 		if (result === LANE_DRAINED_WAKE) return "lane-drained";
+		if (result === VISIBILITY_WAKE) return "visibility";
 		// A bump won the race. Emit only if it touched something this route
 		// actually renders; otherwise advance the cursor and re-arm.
 		if (routeHasRelevantBump(since)) return "bump";

@@ -15,14 +15,17 @@ export const HEADER_RSC_RENDER = "x-parton-render"
 /** Framework-internal query params appended to RSC fetch URLs. They drive
  *  `PartialRoot`'s refetch routing (`partials`/`cached`), the client commit
  *  mode (`streaming`), the segment driver's hold-open subscription
- *  (`live`), and post-action cache repopulation (`__populateCache`) —
- *  all consumed off the raw `getRequest()` before any spec renders. They're
+ *  (`live`) and its connection-session id (`__conn`), and post-action
+ *  cache repopulation (`__populateCache`) — all consumed off the raw
+ *  `getRequest()` before any spec renders. They're
  *  stripped from the page URL serialized into the payload for descendant
  *  client components (`PageUrlProvider`): meaningless to app code, and — for
  *  `cached` — kilobytes that would otherwise echo back in every payload.
  *
  *  `__frame` / `__frameUrl` are deliberately NOT here: a spec may read them
- *  legitimately (the CMS editor checks `__frame=preview`). A real SSR
+ *  legitimately (the CMS editor checks `__frame=preview`). Neither is
+ *  `visible` — the `visible()` hook reads it off the request URL as the
+ *  no-connection fallback carrier. A real SSR
  *  document load carries none of these params anyway, so the serialized
  *  page URL is already clean there — this is belt-and-braces. */
 export const FRAMEWORK_URL_PARAMS = [
@@ -30,6 +33,7 @@ export const FRAMEWORK_URL_PARAMS = [
   "cached",
   "streaming",
   "live",
+  "__conn",
   "__populateCache",
   "__nojs",
 ] as const

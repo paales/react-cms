@@ -135,15 +135,35 @@ export const CACHED_MANIFEST_CAP = 96;
  *  across a cullable field accumulates entries for every parton ever
  *  visited; past the cap the OLDEST-registered ids are destroyed
  *  (cache + fps) — they re-render cold on a return visit. Bounds
- *  memory the same way the manifest cap bounds the URL. */
+ *  memory the same way the manifest cap bounds the URL.
+ *
+ *  Ids the LIVE TREE still references are exempt (see `_liveTreeIds`):
+ *  the template re-substitutes their placeholders from the cache on
+ *  every re-render, so destroying one blanks that subtree permanently —
+ *  nothing refetches it (the fp-skip placeholder is the server saying
+ *  "you have this"). The page shell is the canonical victim: its
+ *  element identity is stable, so React bails out of re-rendering its
+ *  boundary and it never re-registers for recency — under heavy
+ *  registration churn (a scroll across a cullable field) it becomes
+ *  the oldest entry while still being the subtree everything hangs
+ *  off. A page whose live tree alone exceeds the cap keeps every live
+ *  entry — correctness bounds memory there, the cap bounds the rest. */
 export const CLIENT_POOL_CAP = 512;
 
+/** Ids referenced by the current template's rendered tree — the
+ *  prune set from the most recent payload commit. The template's
+ *  placeholder-reference structure only changes on payload commits,
+ *  so between commits this is exactly the set of ids whose cache
+ *  entries a template re-render may need to substitute. */
+let _liveTreeIds: ReadonlySet<string> = new Set();
+
 function evictOldest(): void {
-	while (_currentPageFingerprints.size > CLIENT_POOL_CAP) {
-		const oldest = _currentPageFingerprints.keys().next().value;
-		if (oldest === undefined) return;
-		_currentPageFingerprints.delete(oldest);
-		_currentPagePartials.delete(oldest);
+	if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return;
+	for (const id of [..._currentPageFingerprints.keys()]) {
+		if (_liveTreeIds.has(id)) continue;
+		_currentPageFingerprints.delete(id);
+		_currentPagePartials.delete(id);
+		if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return;
 	}
 }
 
@@ -237,7 +257,7 @@ export function getCachedPartialIds(): string[] {
 	const out: string[] = [];
 	// Insertion order tracks registration recency (re-registration
 	// re-inserts) — walk newest-first and stop at the manifest cap.
-	const ids = [...(_currentPageFingerprints.keys())].reverse();
+	const ids = [..._currentPageFingerprints.keys()].reverse();
 	outer: for (const id of ids) {
 		const byMatchKey = _currentPageFingerprints.get(id);
 		if (!byMatchKey) continue;
@@ -262,6 +282,10 @@ export function getCachedPartialIds(): string[] {
  * anywhere drops.
  */
 export function pruneToLive(live: Map<string, Set<string>>): void {
+	// Record the live id set for the pool-cap eviction guard: these are
+	// the ids the committed template can re-substitute at any re-render,
+	// so `evictOldest` must not destroy them.
+	_liveTreeIds = new Set(live.keys());
 	for (const map of [_currentPagePartials, _currentPageFingerprints]) {
 		for (const [id, byMatchKey] of map) {
 			const liveMks = live.get(id);
@@ -299,6 +323,28 @@ export function subscribeLaneCommits(cb: () => void): () => void {
 
 export function notifyLaneCommit(): void {
 	for (const cb of [..._laneCommitSubscribers]) cb();
+}
+
+// ─── Live connection id ───────────────────────────────────────────
+
+/**
+ * The connection id of the currently-established live stream, or
+ * `null` when none is open. Owned by `<LivePageHeartbeat>`: it mints a
+ * fresh id per fire (sent as `?__conn=` on the `?live=1` request),
+ * publishes it here when the subscription's first segment commits (the
+ * server has the session open by then), and clears it when the
+ * connection settles. The visibility controller reads it to decide the
+ * flip transport: id in hand → fire-and-forget report POST onto the
+ * open connection; `null` → the one-shot render-reload fallback.
+ */
+let _liveConnectionId: string | null = null;
+
+export function _setLiveConnectionId(id: string | null): void {
+	_liveConnectionId = id;
+}
+
+export function _getLiveConnectionId(): string | null {
+	return _liveConnectionId;
 }
 
 // ─── Structural template ──────────────────────────────────────────

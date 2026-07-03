@@ -12,8 +12,12 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import {
   CACHED_MANIFEST_CAP,
+  CLIENT_POOL_CAP,
   FP_CAP_PER_VARIANT,
+  cacheLookup,
+  cacheStore,
   getCachedPartialIds,
+  getCurrentPagePartials,
   pruneToLive,
   registerClientPartial,
 } from "../partial-client-state.ts"
@@ -106,5 +110,62 @@ describe("getCachedPartialIds — manifest cap", () => {
     const out = getCachedPartialIds()
     expect(out[0]).toBe("p-0:mk:fp0")
     expect(out[1]).toBe("p-0:mk:fp0b")
+  })
+})
+
+describe("CLIENT_POOL_CAP eviction — live-tree exemption", () => {
+  it("never evicts an id the live tree still references", () => {
+    const cache = getCurrentPagePartials()
+    // The page shell: registered FIRST (oldest pool position), cached,
+    // and referenced by the committed template. Its element identity is
+    // stable, so it never re-registers for recency — exactly the entry
+    // naive oldest-first eviction would destroy.
+    registerClientPartial("world", "mk", "fp-world")
+    cacheStore(cache, "world", "mk", "WORLD-SUBTREE")
+    registerClientPartial("world", "mk", "fp-world")
+    // A sacrificial non-live entry registered before the flood.
+    registerClientPartial("stale-chunk", "mk", "fp-stale")
+    cacheStore(cache, "stale-chunk", "mk", "STALE-SUBTREE")
+    registerClientPartial("stale-chunk", "mk", "fp-stale")
+    // The payload commit's prune records what the template references.
+    pruneToLive(
+      new Map([
+        ["world", new Set(["mk"])],
+        ["stale-chunk", new Set(["mk"])],
+      ]),
+    )
+    // …then the template moves on without stale-chunk (next commit).
+    pruneToLive(new Map([["world", new Set(["mk"])]]))
+
+    // A scroll's worth of fresh registrations blows past the pool cap.
+    for (let i = 0; i < CLIENT_POOL_CAP + 40; i++) {
+      registerClientPartial(`chunk-${i}`, "mk", `fp${i}`)
+      cacheStore(cache, `chunk-${i}`, "mk", `SUBTREE-${i}`)
+    }
+
+    // The live-referenced shell survived: a template re-render can still
+    // substitute its placeholder (destroying it would blank the page
+    // permanently — the server keeps fp-skipping what the client keeps
+    // advertising).
+    expect(cacheLookup(cache, "world", "mk")).toBe("WORLD-SUBTREE")
+    // Non-live oldest entries were destroyed to hold the cap.
+    expect(cacheLookup(cache, "chunk-0", "mk")).toBeUndefined()
+  })
+
+  it("exceeds the cap rather than destroy live-referenced entries", () => {
+    const cache = getCurrentPagePartials()
+    const total = CLIENT_POOL_CAP + 20
+    const live = new Map<string, Set<string>>()
+    for (let i = 0; i < total; i++) live.set(`p-${i}`, new Set(["mk"]))
+    pruneToLive(live)
+    for (let i = 0; i < total; i++) {
+      registerClientPartial(`p-${i}`, "mk", `fp${i}`)
+      cacheStore(cache, `p-${i}`, "mk", `SUBTREE-${i}`)
+      registerClientPartial(`p-${i}`, "mk", `fp${i}`)
+    }
+    // Every entry is template-referenced: correctness wins over the
+    // bound — nothing was destroyed.
+    expect(cacheLookup(cache, "p-0", "mk")).toBe("SUBTREE-0")
+    expect(cacheLookup(cache, `p-${total - 1}`, "mk")).toBe(`SUBTREE-${total - 1}`)
   })
 })

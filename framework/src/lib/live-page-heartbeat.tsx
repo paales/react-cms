@@ -2,6 +2,8 @@
 
 import { useEffect } from "react"
 import { useNavigation } from "./partial-client.tsx"
+import { _getLiveConnectionId, _setLiveConnectionId } from "./partial-client-state.ts"
+import { _syncConnectionVisibility, _visibleSetParam } from "./visibility.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
 
 /** Default interval between periodic re-fires. While a streaming
@@ -85,6 +87,17 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
       if (!alive) return
       if (inFlight) return
       inFlight = new AbortController()
+      // Each fire is one connection, identified by a fresh id the
+      // server's segment driver keys its connection session on
+      // (`?__conn=`). The session is what visibility-report POSTs
+      // address; seeding the fire with the controller's current
+      // `?visible=` set (absent while unmeasured) means the whole-tree
+      // first segment already renders against the client's measured
+      // viewport instead of the cold anchor seed.
+      const connectionId = crypto.randomUUID()
+      const params: Record<string, string> = { __conn: connectionId }
+      const visibleSeed = _visibleSetParam()
+      if (visibleSeed !== undefined) params.visible = visibleSeed
       // `live: true` holds the connection open as a whole-route
       // subscription (the server parks it for the keepalive and pushes
       // a segment on every relevant bump / expiresAt boundary).
@@ -95,6 +108,7 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         streaming: true,
         live: true,
         signal: inFlight.signal,
+        params,
       })
       // `<html data-parton-live>` is the connection's own liveness
       // marker: set when this fire's first segment has committed
@@ -105,9 +119,19 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
       // instead of guessing whether a stream happens to be open.
       // Fires are strictly sequential (`inFlight` gates), so the
       // remove of one fire always precedes the set of the next.
+      // The connection id publishes on the same milestone — the first
+      // segment committing proves the server has the session open, so
+      // the visibility controller can start addressing it with report
+      // POSTs — and the sync call pushes the full current set right
+      // after: flips that fired between this fire's `?visible=` seed
+      // and now rode the reload fallback, and the session's set must
+      // catch up to them.
       streaming
         .then(() => {
-          if (alive) document.documentElement.setAttribute("data-parton-live", "")
+          if (!alive) return
+          document.documentElement.setAttribute("data-parton-live", connectionId)
+          _setLiveConnectionId(connectionId)
+          _syncConnectionVisibility(connectionId)
         })
         .catch(() => {})
       finished
@@ -117,6 +141,7 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         })
         .finally(() => {
           document.documentElement.removeAttribute("data-parton-live")
+          if (_getLiveConnectionId() === connectionId) _setLiveConnectionId(null)
           inFlight = null
         })
     }

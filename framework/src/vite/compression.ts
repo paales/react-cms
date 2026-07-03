@@ -34,6 +34,15 @@
  *     closes. `Z_SYNC_FLUSH` (gzip) and `BROTLI_OPERATION_FLUSH`
  *     (brotli) emit any pending bytes downstream without ending the
  *     stream.
+ *
+ *  4. This middleware OWNS the encoding decision: it strips the
+ *     request's `Accept-Encoding` after capturing it, so vite
+ *     preview's built-in compression middleware (which never flushes
+ *     mid-stream) stands down. And it honors
+ *     `Cache-Control: no-transform` — the segment driver stamps that
+ *     on held-open streams whose framed lanes must not sit in ANY
+ *     compressor buffer (see docs/internals/streaming.md § The stream
+ *     must pass through untransformed).
  */
 
 import {
@@ -145,6 +154,18 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
   const encoding = pickEncoding(req.headers["accept-encoding"])
   if (!encoding) return next()
 
+  // Own the encoding decision: strip the request's Accept-Encoding so
+  // every downstream compressor stands down. Vite's preview server
+  // ships its own compression middleware (`@polka/compression`) that
+  // would otherwise wrap the same response — and it never flushes
+  // mid-stream, so on a held-open segment connection whose traffic has
+  // gone quiet, framed lanes sit inside its brotli block indefinitely
+  // and the client pipeline appears frozen. With the header stripped,
+  // this middleware is the only compressor that may touch these
+  // responses — and it honors `no-transform` (below), so the streams
+  // that must not be buffered aren't compressed at all.
+  delete req.headers["accept-encoding"]
+
   const origWrite = res.write.bind(res)
   const origEnd = res.end.bind(res)
   const origWriteHead = res.writeHead.bind(res)
@@ -155,8 +176,16 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
   function shouldCompress(
     contentType: string | undefined,
     contentLength: number | undefined,
+    cacheControl: string | undefined,
   ): boolean {
     if (res.statusCode === 204 || res.statusCode === 304) return false
+    // `Cache-Control: no-transform` is the producer's declaration that
+    // the payload's byte timing IS the protocol — the segment driver
+    // stamps it on held-open streams whose framed lanes must reach the
+    // client the moment they drain. Compressing such a stream couples
+    // its delivery to compressor block/flush behavior; honoring the
+    // header keeps every transform off the wire.
+    if (cacheControl != null && /no-transform/i.test(cacheControl)) return false
     if (!contentType || !COMPRESSIBLE_CT.test(contentType)) return false
     if (contentLength != null && contentLength < THRESHOLD) return false
     return true
@@ -225,7 +254,9 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
         typeof lenHeader === "number" ? lenHeader : parseInt(String(lenHeader), 10)
       if (!Number.isNaN(n)) len = n
     }
-    if (!shouldCompress(ctStr, len)) return
+    const cc = res.getHeader("cache-control")
+    const ccStr = cc == null ? undefined : Array.isArray(cc) ? cc.join(", ") : String(cc)
+    if (!shouldCompress(ctStr, len, ccStr)) return
     res.removeHeader("content-length")
     res.setHeader("content-encoding", encoding!)
     const vary = res.getHeader("vary")
@@ -274,9 +305,15 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
     })()
     const contentType = fromArg.contentType ?? fromSet.contentType
     const contentLength = fromArg.contentLength ?? fromSet.contentLength
+    const cacheControl =
+      readHeader(headers, "cache-control") ??
+      (() => {
+        const cc = res.getHeader("cache-control")
+        return cc == null ? undefined : Array.isArray(cc) ? cc.join(", ") : String(cc)
+      })()
     res.statusCode = statusCode
 
-    if (!shouldCompress(contentType, contentLength)) {
+    if (!shouldCompress(contentType, contentLength, cacheControl)) {
       return origWriteHead(statusCode, statusMessage as any, headers as any)
     }
     let nextHeaders = removeHeader(headers, "content-length")
