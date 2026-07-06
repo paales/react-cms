@@ -304,7 +304,12 @@ The pieces:
   materializing render's just-promoted fps are exactly what the
   client's slot received. Per-lane fp-trailers also fold their warm
   fps back into the override (`onUpdates`), so a drift between a
-  lane's render and its flush stays tracked. Lanes start in report order — the
+  lane's render and its flush stays tracked. Every promotion path
+  bounds the override's per-id fp/matchKey sets at `OVERRIDE_SET_CAP`
+  (8), oldest-first — the server-side mirror of the client's
+  `FP_CAP_PER_VARIANT`: a parton drifting every lane would otherwise
+  grow its sets for the connection's whole lifetime, and an evicted
+  entry only costs an over-fetch, never staleness. Lanes start in report order — the
   controller sends in-view flips before cull-outs, so the visible
   world's renders lead. A flip whose id has NO route snapshot yet
   (the report raced the render that first materializes its parton —

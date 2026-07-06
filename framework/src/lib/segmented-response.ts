@@ -931,12 +931,28 @@ function applyReportedCached(
 	override.matchKeys.set(id, mks);
 }
 
+/** Per-id bound on the override's fp / matchKey sets — same shape as
+ *  the client's `FP_CAP_PER_VARIANT`: a live parton drifting every
+ *  lane (each bump folds a fresh invalidation ts) would grow its set
+ *  unboundedly over a long-held connection. Oldest-first eviction
+ *  keeps the newest few — enough for the next render's skip check;
+ *  an evicted entry only costs an over-fetch, never staleness. */
+const OVERRIDE_SET_CAP = 8;
+
+function capOverrideSet(set: Set<string>): void {
+	while (set.size > OVERRIDE_SET_CAP) {
+		const oldest = set.values().next().value;
+		if (oldest === undefined) break;
+		set.delete(oldest);
+	}
+}
+
 /** Fold a trailer's `{from, to}` warm-fp entries into the live
  *  connection's cached override — the server-side mirror of the
  *  client's `_applyFpUpdates`. The override's fp sets are per id;
  *  additions are safe (a candidate fp is computed fresh each render,
  *  so matching any accumulated fp means the fold values genuinely
- *  coincide) and bounded per set below. */
+ *  coincide) and bounded per set by `capOverrideSet`. */
 function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 	const override = _getCachedOverride();
 	if (!override) return;
@@ -947,15 +963,7 @@ function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 			override.fingerprints.set(id, fpSet);
 		}
 		fpSet.add(entry.to);
-		// Same shape as the client's FP_CAP_PER_VARIANT: a live parton
-		// drifting every lane would grow the set unboundedly over a
-		// long-held connection. Oldest-first eviction keeps the newest
-		// few — enough for the next render's skip check.
-		while (fpSet.size > 8) {
-			const oldest = fpSet.values().next().value;
-			if (oldest === undefined) break;
-			fpSet.delete(oldest);
-		}
+		capOverrideSet(fpSet);
 	}
 }
 
@@ -990,12 +998,14 @@ export function promoteSnapshotsToCachedOverride(withinId?: string): void {
 			override.fingerprints.set(id, fpSet);
 		}
 		fpSet.add(snap.emittedFp);
+		capOverrideSet(fpSet);
 		let mkSet = override.matchKeys.get(id);
 		if (!mkSet) {
 			mkSet = new Set();
 			override.matchKeys.set(id, mkSet);
 		}
 		mkSet.add(snap.matchKey);
+		capOverrideSet(mkSet);
 	}
 }
 
