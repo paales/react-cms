@@ -1,21 +1,26 @@
 /**
- * Probe: `visible()` is a read-tracked culling signal. A parton that
- * reads it records `visible:<id>` and its fingerprint folds the
- * per-request `?visible=` membership via store-and-reread — so entering
- * or leaving the `?visible=` set moves the fp (the parton self-refetches),
- * while a spec that never calls `visible()` is invariant to it (the read
- * IS the dependency, exactly like `searchParam()` / a cell).
+ * Probe: the `cull` gate folds the RESOLVED viewport state.
  *
- * The `undefined` (cold / no `?visible=`) state is a distinct fold token
- * from in/out, so the FIRST client report also moves the fp — the cold
- * paint commits to its measured state.
+ * A parton declared with `cull:` records `visible:<id>?seed=<0|1>` —
+ * the seed's VALUE rides the dep key — and its fingerprint folds
+ * `measurement ?? seed` via store-and-reread. The consequence under
+ * test: an unmeasured render and a measured one that RESOLVE the same
+ * way fold the SAME fp (the first client report moves only the
+ * partons it actually flips), while a resolution change (measured
+ * against the seed, or in against out) moves it. A spec without the
+ * gate is invariant to `?visible=` entirely.
+ *
+ * The seed runs in the parton's tracking context: an anchor-driven
+ * seed's `searchParam()` read records as a dep, so a moved anchor
+ * re-resolves the gate.
  */
 
 import { describe, expect, it, beforeEach } from "vitest"
 import { parton, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { clearRegistry } from "../partial-registry.ts"
-import { visible } from "../server-hooks.ts"
+import { searchParam } from "../server-hooks.ts"
+import { SkelBox } from "./cull-skeleton-fixture.tsx"
 
 function fpById(flight: string): Map<string, string> {
   const out = new Map<string, string>()
@@ -24,22 +29,23 @@ function fpById(flight: string): Map<string, string> {
   while ((m = re.exec(flight)) !== null) out.set(m[1], m[2])
   return out
 }
-async function fpAt(url: string, node: React.ReactNode, id: string): Promise<string | undefined> {
+async function flightAt(url: string, node: React.ReactNode): Promise<string> {
   const { stream } = await renderWithRequest(url, node)
-  const text = await new Response(stream).text()
-  return fpById(text).get(id)
+  return await new Response(stream).text()
+}
+async function fpAt(url: string, node: React.ReactNode, id: string): Promise<string | undefined> {
+  return fpById(await flightAt(url, node)).get(id)
 }
 
-// Reads visible() and branches — the cullable spec.
+// Gated with the default seed (always in view cold) — the common case.
 const Culled = parton(
   function CulledRender(_: RenderArgs) {
-    const v = visible()
-    return <div data-testid="culled">{v === undefined ? "cold" : v ? "full" : "skeleton"}</div>
+    return <div data-testid="culled">full</div>
   },
-  { selector: "#culled-probe" },
+  { selector: "#culled-probe", cull: { skeleton: SkelBox } },
 )
 
-// Never reads visible() — the control. ?visible= must not move its fp.
+// Never gated — the control. ?visible= must not move its fp.
 const Plain = parton(
   function PlainRender(_: RenderArgs) {
     return <div data-testid="plain" />
@@ -47,31 +53,48 @@ const Plain = parton(
   { selector: "#plain-probe" },
 )
 
-describe("visible(): read-tracked culling folds into the fingerprint", () => {
+// Anchor-driven seed: in view cold iff `?anchor=` names it.
+const Anchored = parton(
+  function AnchoredRender(_: RenderArgs) {
+    return <div data-anchored>full</div>
+  },
+  {
+    selector: "#anchored-probe",
+    cull: { skeleton: SkelBox, seed: () => searchParam("anchor") === "me" },
+  },
+)
+
+describe("cull gate: the fp folds the resolved viewport state", () => {
   beforeEach(() => clearRegistry("all"))
 
-  it("entering / leaving the ?visible= set moves the fp; the cold state is distinct", async () => {
+  it("unmeasured and measured-in fold the same fp; measured-out moves it", async () => {
     const tree = (
       <PartialRoot>
         <Culled />
       </PartialRoot>
     )
-    // r1 is cold (records visible:culled-probe); the warm renders fold its
-    // value via store-and-reread. Warm up at each state, then compare.
-    await fpAt("http://t/x", tree, "culled-probe") // cold — records the dep
-    const fpCold = await fpAt("http://t/x", tree, "culled-probe") // u
+    await flightAt("http://t/x", tree) // cold — records the gate dep
+    const fpCold = await fpAt("http://t/x", tree, "culled-probe") // u → seed(1)
     const fpIn = await fpAt("http://t/x?visible=culled-probe", tree, "culled-probe") // 1
-    const fpOut = await fpAt("http://t/x?visible=other", tree, "culled-probe") // 0
-    const fpIn2 = await fpAt("http://t/x?visible=culled-probe", tree, "culled-probe") // 1 again
-
     expect(fpCold).toBeDefined()
-    expect(fpIn).not.toBe(fpCold) // first client report (u→1) moved the fp
-    expect(fpOut).not.toBe(fpIn) // leaving view (1→0) moved the fp
-    expect(fpOut).not.toBe(fpCold) // measured-out (0) ≠ unmeasured (u)
-    expect(fpIn2).toBe(fpIn) // same state → same fp (no churn)
+    // THE headline: the first measurement that agrees with the seed is
+    // not a change — the client's cached copy stays fp-valid.
+    expect(fpIn).toBe(fpCold)
+
+    // Measured OUT resolves differently: the culled path takes over —
+    // no body render, no wire fp, the pair carries the skeleton ref.
+    const culledFlight = await flightAt("http://t/x?visible=other", tree)
+    expect(fpById(culledFlight).get("culled-probe")).toBeUndefined()
+    expect(culledFlight).not.toContain('data-testid="culled"')
+    expect(culledFlight).toContain('"id":"culled-probe"')
+    expect(culledFlight).toContain('"culled":true')
+
+    // Back in: same resolution as before → same fp, no churn.
+    const fpIn2 = await fpAt("http://t/x?visible=culled-probe", tree, "culled-probe")
+    expect(fpIn2).toBe(fpIn)
   })
 
-  it("a spec that never reads visible() is invariant to ?visible=", async () => {
+  it("a spec without the gate is invariant to ?visible=", async () => {
     const tree = (
       <PartialRoot>
         <Plain />
@@ -81,6 +104,25 @@ describe("visible(): read-tracked culling folds into the fingerprint", () => {
     const fpA = await fpAt("http://t/x", tree, "plain-probe")
     const fpB = await fpAt("http://t/x?visible=plain-probe", tree, "plain-probe")
     expect(fpA).toBeDefined()
-    expect(fpB).toBe(fpA) // no visible() read → ?visible= is invisible to the fp
+    expect(fpB).toBe(fpA)
+  })
+
+  it("the seed's tracked reads re-resolve the gate: a moved anchor flips the cold state", async () => {
+    const tree = (
+      <PartialRoot>
+        <Anchored />
+      </PartialRoot>
+    )
+    // Anchored at me: cold renders full.
+    const inFlight = await flightAt("http://t/x?anchor=me", tree)
+    expect(inFlight).toContain("data-anchored")
+    // Anchor moved: the seed resolves false, the gate culls — body
+    // skipped, skeleton ref only.
+    const outFlight = await flightAt("http://t/x?anchor=elsewhere", tree)
+    expect(outFlight).not.toContain("data-anchored")
+    expect(outFlight).toContain('"culled":true')
+    // A measurement beats the seed regardless of the anchor.
+    const measured = await flightAt("http://t/x?anchor=elsewhere&visible=anchored-probe", tree)
+    expect(measured).toContain("data-anchored")
   })
 })

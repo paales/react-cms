@@ -2,9 +2,10 @@
  * Cull-to-park — the client pool mechanics (`cull-park.ts`).
  *
  *   - the parked-by-culling LRU: most-recently-culled kept; past the
- *     cap the oldest id's parked CONTENT slots (base variants) are
- *     destroyed while its `~cull` skeleton entries survive, so the
- *     visible skeleton keeps holding its space;
+ *     cap the oldest id's parked content (cache slots + advertised
+ *     fps) is destroyed — its skeleton needs no cache entry (it
+ *     renders from the pair's inline element), so it keeps holding
+ *     the parton's space regardless;
  *   - the drop-on-drift generation: a fresh content store for a slot
  *     whose fiber has been parked since its bytes were minted bumps
  *     the generation (remount); a confirmed restore
@@ -15,7 +16,6 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest"
-import { culledKey } from "../cull-key.ts"
 import {
 	_isParkedSince,
 	_parkedIds,
@@ -40,12 +40,10 @@ import {
 
 const MK = "0123456789abcdef"
 
-function seedPair(id: string): void {
+function seedContent(id: string): void {
 	const cache = getCurrentPagePartials()
 	cacheStore(cache, id, MK, `content-${id}`)
 	registerClientPartial(id, MK, `fp-${id}`)
-	cacheStore(cache, id, culledKey(MK), `skeleton-${id}`)
-	registerClientPartial(id, culledKey(MK), `fp-cull-${id}`)
 }
 
 beforeEach(() => {
@@ -54,28 +52,28 @@ beforeEach(() => {
 })
 
 describe("parked-by-culling LRU", () => {
-	it("evicts the oldest parked id's content slots past the cap; skeletons survive", () => {
+	it("evicts the oldest parked id's content past the cap", () => {
 		const ids = Array.from({ length: CULL_PARK_CAP + 2 }, (_, i) => `chunk-${i}`)
-		for (const id of ids) seedPair(id)
+		for (const id of ids) seedContent(id)
 		for (const id of ids) reportCullState(id, false)
 
 		// Two oldest culled ids fell off the LRU.
 		expect(_parkedIds()).toEqual(ids.slice(2))
 		const cache = getCurrentPagePartials()
 		for (const id of ids.slice(0, 2)) {
-			// Content destroyed — a return visit renders cold…
+			// Content destroyed — a return visit renders cold. (The skeleton
+			// keeps holding the parton's space regardless: it renders from
+			// the pair's inline element, never the cache.)
 			expect(cacheLookup(cache, id, MK)).toBeUndefined()
 			expect(getCachedPartialIds().some((t) => t.startsWith(`${id}:${MK}:`))).toBe(false)
-			// …but the skeleton keeps holding the parton's space.
-			expect(cacheLookup(cache, id, culledKey(MK))).toBe(`skeleton-${id}`)
 		}
-		// Survivors keep both slots.
+		// Survivors keep their content.
 		expect(cacheLookup(cache, ids[2], MK)).toBe(`content-${ids[2]}`)
 	})
 
 	it("a cull-in removes the id from the pool; re-culling re-inserts at the tail", () => {
-		seedPair("a")
-		seedPair("b")
+		seedContent("a")
+		seedContent("b")
 		reportCullState("a", false)
 		reportCullState("b", false)
 		expect(_parkedIds()).toEqual(["a", "b"])
@@ -134,7 +132,7 @@ describe("observer refcount", () => {
 	})
 
 	it("gone drops every trace of the id", () => {
-		seedPair("a")
+		seedContent("a")
 		reportCullState("a", false)
 		cullStateGone("a")
 		expect(reportedVisibility("a")).toBeUndefined()

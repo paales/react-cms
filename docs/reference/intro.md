@@ -45,10 +45,12 @@ one pipeline:
    matching specs render.
 2. **Body reads.** Everything else the spec depends on, its `Render`
    *reads*: request dimensions via tracked hooks (`searchParam()`,
-   `cookie()`, `header()`, `visible()`, …), data via cells
+   `cookie()`, `header()`, …), data via cells
    (`cell.resolve()`, inline `localCell`, `.with()` prop binding),
    CMS content via a block's `schema({cms})`. The read IS the
-   dependency — recorded per render, no declarations.
+   dependency — recorded per render, no declarations. (Viewport
+   visibility is an existence gate like `match`, not a body read —
+   the `cull` spec option.)
 3. **Fingerprint.** Each render hashes the spec id, match params,
    resolved cells, call-site props, invalidation bumps, the recorded
    reads re-evaluated at the current request, and every descendant's

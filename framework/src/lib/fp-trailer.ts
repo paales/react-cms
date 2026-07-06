@@ -39,7 +39,11 @@ import {
   getRequest,
   getScope,
 } from "../runtime/context.ts"
-import { queryMatchingTs } from "../runtime/invalidation-registry.ts"
+import {
+  _currentTs,
+  _registryEpoch,
+  queryMatchingTs,
+} from "../runtime/invalidation-registry.ts"
 import { getSessionFrameUrl } from "../runtime/session.ts"
 import {
   buildMarker,
@@ -355,6 +359,16 @@ export function wrapSsrStreamWithFpTrailer(
         const routeKey = computeRouteKey(request.url)
         const snapshots = _readSnapshotsForRoute(scope, routeKey)
         if (snapshots.size === 0) return
+        // The live catch-up anchor: this document IS the page state as
+        // of the registry timeline point below, so the heartbeat's
+        // first `?live=1` fire presents it (`?since=<epoch>:<ts>`) and
+        // the connection opens straight into lanes — only what bumped
+        // after this document renders, never a whole-route replay of
+        // bytes the document just delivered. Emitted before (and
+        // independently of) the fp updates: a document with zero
+        // cold→warm drift still anchors.
+        const anchor = JSON.stringify({ epoch: _registryEpoch(), ts: _currentTs() })
+        controller.enqueue(new TextEncoder().encode(`<!--live-anchor:${anchor}-->`))
         const updates = computeFpUpdates(snapshots, request)
         if (!updates) return
         // Escape `-->` (the only sequence that would prematurely end

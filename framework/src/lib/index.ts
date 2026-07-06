@@ -7,6 +7,8 @@ export {
   ROOT,
   type PartialCtx,
   type PartialOptions,
+  type CullConfig,
+  type CullProps,
   type PartialComponentProps,
   type PartialBuilder,
   type SpecComponent,
@@ -51,7 +53,6 @@ export {
   param,
   match,
   session,
-  visible,
   header,
   pathname,
   expires,
@@ -59,7 +60,7 @@ export {
   time,
   registerDepKind,
 } from "./server-hooks.ts"
-export { tag, getCurrentParton, type CurrentParton, type VisibleOptions } from "./current-parton.ts"
+export { tag, getCurrentParton, type CurrentParton } from "./current-parton.ts"
 
 export {
   PartialsClient,

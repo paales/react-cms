@@ -5,19 +5,22 @@
  * fire-and-forget POSTs addressed to the live connection's explicit
  * `__conn` id; the segment driver stores the set as connection-session
  * state and treats each report like an invalidation wake, rendering the
- * flipped partons as lanes on the EXISTING stream with `visible()`
- * reading the session's CURRENT set.
+ * flipped-IN partons as lanes on the EXISTING stream with the cull
+ * gate reading the session's CURRENT set.
  *
  * The claims under test:
  *   1. the `?visible=` seed on the `?live=1` request drives the
- *      whole-tree first segment (no cold-anchor clobber);
- *   2. a report wakes a lane for EXACTLY the flipped parton, rendered
- *      against the reported set — untouched siblings never re-render;
+ *      whole-tree first segment (no cold-seed clobber): out-of-set
+ *      partons emit the pair (body skipped), in-set ones render;
+ *   2. a report wakes a lane for EXACTLY the flipped-IN parton,
+ *      rendered against the reported set — untouched siblings never
+ *      re-render, and a cull-OUT lanes NOTHING (the client swaps to
+ *      its inline skeleton locally; the report's only server effect is
+ *      the session-set update that keeps lane parking honest);
  *   3. a flip cycle (in → out → in) settles the returning state with
- *      fp-skip semantics: each state is its own cache variant
- *      (cull-to-park), so cycling back to an unchanged state answers
- *      with the zero-byte confirmation placeholder — the body never
- *      re-runs for content the client provably holds;
+ *      fp-skip semantics: the content fp is unchanged, so cycling back
+ *      answers with the zero-byte confirmation placeholder — the body
+ *      never re-runs for content the client provably holds;
  *   4. a flip whose parton has no route snapshot yet (the report raced
  *      the render that first materializes it) is DEFERRED, not dropped —
  *      it resolves into a lane on a later wake once the snapshot lands;
@@ -27,13 +30,12 @@
  *      maps apply/refuse/malformed to 204/404/400;
  *   6. report ordering — a stale report (older seq) can't regress the
  *      set, but its flips still merge;
- *   7. PARKED partons don't lane — a bump or `expiresAt` deadline
- *      touching a parton outside the session's measured visible set
- *      renders nothing (its client copy is a hidden Activity slot);
+ *   7. PARKED partons don't lane — a bump touching a parton outside
+ *      the session's measured visible set renders nothing, and a
+ *      culled parton has NO wake surface at all (its snapshot records
+ *      the gate's reads only: no cell labels, no expires deadline);
  *      the flip-in revalidation re-renders the returning state fresh,
- *      folding everything that landed while parked. Without the skip,
- *      a held connection lane-renders every parton the client ever
- *      scrolled past, at full invalidation rate, forever.
+ *      folding everything that landed while parked.
  */
 
 import type { ReactNode } from "react";
@@ -58,33 +60,29 @@ import {
 import type { DemuxedLane } from "../fp-trailer-split.ts";
 import { PartialRoot, parton, type RenderArgs } from "../partial.tsx";
 import { clearRegistry } from "../partial-registry.ts";
-import { expires, time, visible } from "../server-hooks.ts";
+import { expires, time } from "../server-hooks.ts";
 import { VISIBILITY_ENDPOINT } from "../visibility-protocol.ts";
+import { SkelBox } from "./cull-skeleton-fixture.tsx";
 
-// Module-scope render counters — bumped every time a Render body runs,
-// so assertions can distinguish "re-rendered" from "served placeholder".
+// Module-scope render counters — bumped every time a Render body runs.
+// Under the gate a culled parton's body NEVER runs, so these count
+// content renders exactly.
 const renders = { a: 0, b: 0 };
 
 const CullA = parton(
 	function CullARender(_: RenderArgs) {
 		renders.a++;
-		const v = visible();
-		return (
-			<div data-a>{`a:${v === undefined ? "cold" : v ? "full" : "skeleton"}:${renders.a}`}</div>
-		);
+		return <div data-a>{`a:full:${renders.a}`}</div>;
 	},
-	{ selector: "cull-a" },
+	{ selector: "cull-a", cull: { skeleton: SkelBox } },
 );
 
 const CullB = parton(
 	function CullBRender(_: RenderArgs) {
 		renders.b++;
-		const v = visible();
-		return (
-			<div data-b>{`b:${v === undefined ? "cold" : v ? "full" : "skeleton"}:${renders.b}`}</div>
-		);
+		return <div data-b>{`b:full:${renders.b}`}</div>;
 	},
-	{ selector: "cull-b" },
+	{ selector: "cull-b", cull: { skeleton: SkelBox } },
 );
 
 function Page(): ReactNode {
@@ -96,21 +94,18 @@ function Page(): ReactNode {
 	);
 }
 
-// Live-data cullable for the parked-skip probe: an unconditional
-// `expires()` boundary (the culled snapshot carries a due deadline too,
-// the hot-spin shape) over a body whose state string exposes which
-// visibility state each render saw.
+// Live-data cullable for the parked-wake probe: an `expires()` boundary
+// over the content body. The culled snapshot records the gate's reads
+// only — no deadline, no cell labels — so a parked parton has no wake
+// surface at all.
 const renders3 = { pulse: 0 };
 const CullPulse = parton(
 	function CullPulseRender(_: RenderArgs) {
 		renders3.pulse++;
-		const v = visible();
 		expires(time().in(120));
-		return (
-			<div data-pulse>{`pulse:${v ? "full" : "skeleton"}:${renders3.pulse}`}</div>
-		);
+		return <div data-pulse>{`pulse:full:${renders3.pulse}`}</div>;
 	},
-	{ selector: "cull-pulse" },
+	{ selector: "cull-pulse", cull: { skeleton: SkelBox } },
 );
 
 // Parent/child pair for the deferral probe: the child only exists in
@@ -119,16 +114,13 @@ const CullPulse = parton(
 // flip races.
 const CullChildLate = parton(
 	function CullChildLateRender(_: RenderArgs) {
-		const v = visible();
-		return <div data-child>{`child:${v ? "full" : "skeleton"}`}</div>;
+		return <div data-child>child:full</div>;
 	},
-	{ selector: "cull-child-late" },
+	{ selector: "cull-child-late", cull: { skeleton: SkelBox } },
 );
 
 const CullParent = parton(
 	function CullParentRender(_: RenderArgs) {
-		const v = visible();
-		if (!v) return <div data-parent>parent-skeleton</div>;
 		return (
 			<div data-parent>
 				parent-full
@@ -136,7 +128,7 @@ const CullParent = parton(
 			</div>
 		);
 	},
-	{ selector: "cull-parent" },
+	{ selector: "cull-parent", cull: { skeleton: SkelBox } },
 );
 
 function NestedPage(): ReactNode {
@@ -168,7 +160,7 @@ async function nextLane(
 }
 
 describe("connection-session visibility", () => {
-	it("the ?visible= seed drives the first segment; reports lane-render exactly the flipped partons against the current set", async () => {
+	it("the ?visible= seed drives the first segment; in-flips lane, out-flips don't", async () => {
 		const conn = "conn-vis-1";
 		await withLiveDrive(
 			`http://localhost/world?live=1&__conn=${conn}&visible=cull-a`,
@@ -176,14 +168,17 @@ describe("connection-session visibility", () => {
 			freshLiveScope("conn-vis"),
 			async (h) => {
 				// Segment 0: whole tree, rendered against the SEEDED set — a is
-				// in (full), b is out (skeleton). Neither reads "cold": the
-				// session's seed is the measurement, not the anchor fallback.
+				// in (body renders), b is out (body SKIPPED: the pair ships with
+				// the skeleton reference, zero body bytes, zero body runs).
 				const first = await h.segments.next();
 				if (first.done || first.value.kind !== "payload")
 					throw new Error("expected payload segment 0");
 				const seg0 = await drainPayloadSegment(first.value);
 				expect(seg0).toContain("a:full:1");
-				expect(seg0).toContain("b:skeleton:1");
+				expect(seg0).not.toContain("b:full");
+				expect(seg0).toContain('"id":"cull-b"');
+				expect(seg0).toContain('"culled":true');
+				expect(renders.b).toBe(0);
 
 				// Flip b IN. The driver must answer with a lane for cull-b only,
 				// rendered against the updated session set.
@@ -197,25 +192,28 @@ describe("connection-session visibility", () => {
 
 				const laneIn = await nextLane(laneIter);
 				expect(laneIn.partonId).toBe("cull-b");
-				expect((await decodeLane(laneIn)).bodyText).toContain("b:full:2");
+				expect((await decodeLane(laneIn)).bodyText).toContain("b:full:1");
 				// The sibling never re-ran — the report named only cull-b.
 				expect(renders.a).toBe(1);
 
-				// Flip b OUT again…
+				// Flip b OUT: NOTHING lanes — the client already swapped to its
+				// inline skeleton; the report's server effect is the session-set
+				// update alone. Prove it by bumping a next: the next lane on the
+				// wire is a's, and b's body never re-ran.
 				expect(
 					reportConnectionVisibility(conn, 2, ["cull-b"], ["cull-a"]),
 				).toBe(true);
-				const laneOut = await nextLane(laneIter);
-				expect(laneOut.partonId).toBe("cull-b");
-				expect((await decodeLane(laneOut)).bodyText).toContain("b:skeleton:3");
+				refreshSelector("cull-a");
+				const laneA = await nextLane(laneIter);
+				expect(laneA.partonId).toBe("cull-a");
+				expect((await decodeLane(laneA)).bodyText).toContain("a:full:2");
+				expect(renders.b).toBe(1);
 
-				// …and back IN. The fp b cycles back to is byte-identical to the
-				// one its first flip-in emitted — and under cull-to-park that is
-				// the ZERO-BYTE flip: the in-view state is its own cache variant
-				// (the client's content slot still holds this exact body), so
-				// the lane answers with the confirmation placeholder instead of
-				// re-running the body. The confirm marker is what re-arms the
-				// restored fiber as a live instance client-side.
+				// …and back IN. The content fp b cycles back to is byte-identical
+				// to the one its flip-in emitted, so the lane answers with the
+				// confirmation placeholder instead of re-running the body. The
+				// confirm marker is what re-arms the restored fiber as a live
+				// instance client-side.
 				expect(
 					reportConnectionVisibility(conn, 3, ["cull-b"], ["cull-a", "cull-b"]),
 				).toBe(true);
@@ -225,8 +223,8 @@ describe("connection-session visibility", () => {
 				expect(backBody).not.toContain("b:full");
 				expect(backBody).toContain('"data-partial-id":"cull-b"');
 				expect(backBody).toContain('"data-partial-confirm":true');
-				expect(renders.b).toBe(3);
-				expect(renders.a).toBe(1);
+				expect(renders.b).toBe(1);
+				expect(renders.a).toBe(2);
 
 				await h.shutdown("cull-b");
 			},
@@ -247,19 +245,21 @@ describe("connection-session visibility", () => {
 				if (first.done || first.value.kind !== "payload")
 					throw new Error("expected payload segment 0");
 				const seg0 = await drainPayloadSegment(first.value);
-				// An EMPTY seed is a measurement too — everything out, nothing
-				// "cold".
-				expect(seg0).toContain("a:skeleton:1");
-				expect(seg0).toContain("b:skeleton:1");
+				// An EMPTY seed is a measurement too — everything out, no body
+				// runs anywhere.
+				expect(seg0).not.toContain("a:full");
+				expect(seg0).not.toContain("b:full");
+				expect(renders.a).toBe(0);
+				expect(renders.b).toBe(0);
 
 				// A report naming an unknown id must not open a lane (it stays
 				// deferred); the next real flip still lanes normally on the same
 				// connection.
 				expect(
-					reportConnectionVisibility(conn, 1, ["not-on-this-route"], []),
+					reportConnectionVisibility(conn, 1, ["not-on-this-route"], ["not-on-this-route"]),
 				).toBe(true);
 				expect(
-					reportConnectionVisibility(conn, 2, ["cull-a"], ["cull-a"]),
+					reportConnectionVisibility(conn, 2, ["cull-a"], ["cull-a", "not-on-this-route"]),
 				).toBe(true);
 				const second = await h.segments.next();
 				if (second.done || second.value.kind !== "lanes")
@@ -267,7 +267,7 @@ describe("connection-session visibility", () => {
 				const laneIter = second.value.lanes[Symbol.asyncIterator]();
 				const lane = await nextLane(laneIter);
 				expect(lane.partonId).toBe("cull-a");
-				expect((await decodeLane(lane)).bodyText).toContain("a:full:2");
+				expect((await decodeLane(lane)).bodyText).toContain("a:full:1");
 
 				await h.shutdown("cull-a");
 			},
@@ -287,7 +287,7 @@ describe("connection-session visibility", () => {
 				const seg0 = await drainPayloadSegment(first.value);
 				// Parent culled out → the child never rendered: no snapshot for
 				// it exists anywhere yet.
-				expect(seg0).toContain("parent-skeleton");
+				expect(seg0).not.toContain("parent-full");
 				expect(seg0).not.toContain("child:");
 
 				// One report flips parent AND child in — the child's flip races
@@ -306,7 +306,8 @@ describe("connection-session visibility", () => {
 				const laneIter = second.value.lanes[Symbol.asyncIterator]();
 
 				// The parent lanes immediately (it has a snapshot); its body
-				// materializes the child, which reads the session set → full.
+				// materializes the child, whose gate reads the session set → in
+				// view → the child renders too.
 				const parentLane = await nextLane(laneIter);
 				expect(parentLane.partonId).toBe("cull-parent");
 				const parentBody = (await decodeLane(parentLane)).bodyText;
@@ -348,8 +349,8 @@ describe("connection-session visibility", () => {
 				true,
 			);
 			expect(session.visible).toEqual(new Set(["x"]));
-			// …but the flip merged — y still gets its lane render, which reads
-			// the (newer) current set.
+			// …but the flip merged — y still gets drained, and its lane render
+			// (or out-skip) reads the (newer) current set.
 			expect(new Set(takeConnectionFlips(session))).toEqual(
 				new Set(["x", "y"]),
 			);
@@ -418,29 +419,23 @@ describe("connection-session visibility", () => {
 				expect(seg0).toContain("a:full:1");
 				expect(seg0).toContain("b:full:1");
 
-				// Park b (flip it out). The flip's own lane renders the skeleton
-				// — that lane IS the state transition, never skipped.
+				// Park b (flip it out) — no lane; the client's swap is local.
 				expect(
 					reportConnectionVisibility(conn, 1, ["cull-b"], ["cull-a"]),
 				).toBe(true);
-				const second = await h.segments.next();
-				if (second.done || second.value.kind !== "lanes")
-					throw new Error("expected lanes segment");
-				const laneIter = second.value.lanes[Symbol.asyncIterator]();
-				const laneOut = await nextLane(laneIter);
-				expect(laneOut.partonId).toBe("cull-b");
-				expect((await decodeLane(laneOut)).bodyText).toContain(
-					"b:skeleton:2",
-				);
 
 				// Bump parked b, then visible a. b must NOT lane — the next lane
 				// on the wire is a's.
 				refreshSelector("cull-b");
 				refreshSelector("cull-a");
+				const second = await h.segments.next();
+				if (second.done || second.value.kind !== "lanes")
+					throw new Error("expected lanes segment");
+				const laneIter = second.value.lanes[Symbol.asyncIterator]();
 				const laneA = await nextLane(laneIter);
 				expect(laneA.partonId).toBe("cull-a");
 				expect((await decodeLane(laneA)).bodyText).toContain("a:full:2");
-				expect(renders.b).toBe(2);
+				expect(renders.b).toBe(1);
 
 				// Flip b back in: the returning state's fp folds the bump that
 				// landed while parked, so the lane re-renders fresh — the
@@ -450,14 +445,14 @@ describe("connection-session visibility", () => {
 				).toBe(true);
 				const laneIn = await nextLane(laneIter);
 				expect(laneIn.partonId).toBe("cull-b");
-				expect((await decodeLane(laneIn)).bodyText).toContain("b:full:3");
+				expect((await decodeLane(laneIn)).bodyText).toContain("b:full:2");
 
 				await h.shutdown("cull-b");
 			},
 		);
 	});
 
-	it("a parked parton's due expiresAt neither lanes nor hot-spins the wake loop", async () => {
+	it("a parked parton has no wake surface: its expires() deadline neither lanes nor hot-spins", async () => {
 		const conn = "conn-vis-parked-exp";
 		await withLiveDrive(
 			`http://localhost/pulse?live=1&__conn=${conn}&visible=cull-pulse`,
@@ -484,26 +479,22 @@ describe("connection-session visibility", () => {
 				expect(tick.partonId).toBe("cull-pulse");
 				expect((await decodeLane(tick)).bodyText).toContain("pulse:full:2");
 
-				// Park it. The culled snapshot still carries a ~120ms deadline;
-				// while parked, that deadline must neither lane (nothing to
-				// show) nor arm the expiry timer (a past-due deadline that
-				// never lanes would wake→skip→re-arm in a hot loop).
+				// Park it: no out-lane, and the culled snapshot carries NO
+				// deadline (the gate records only its own reads) — so while
+				// parked, nothing lanes and nothing hot-spins the wake loop.
 				expect(
 					reportConnectionVisibility(conn, 1, ["cull-pulse"], []),
 				).toBe(true);
-				const laneOut = await nextLane(laneIter);
-				expect((await decodeLane(laneOut)).bodyText).toContain(
-					"pulse:skeleton:3",
-				);
 				await new Promise((r) => setTimeout(r, 350));
-				expect(renders3.pulse).toBe(3);
+				expect(renders3.pulse).toBe(2);
 
-				// Flip-in catches up and re-arms the boundary.
+				// Flip-in catches up (the content snapshot's deadline elapsed
+				// while parked → fp-skip declines) and re-arms the boundary.
 				expect(
 					reportConnectionVisibility(conn, 2, ["cull-pulse"], ["cull-pulse"]),
 				).toBe(true);
 				const laneIn = await nextLane(laneIter);
-				expect((await decodeLane(laneIn)).bodyText).toContain("pulse:full:4");
+				expect((await decodeLane(laneIn)).bodyText).toContain("pulse:full:3");
 
 				await h.shutdown("cull-pulse");
 			},

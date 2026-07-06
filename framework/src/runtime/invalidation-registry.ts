@@ -393,4 +393,26 @@ export function _registryStats(): { entries: number; nextTs: number; byName: num
 export function _clearInvalidationRegistry(): void {
   byName.clear()
   nextTs = 1
+  mintEpoch()
+}
+
+// ─── Epoch ────────────────────────────────────────────────────────────
+
+/** The registry timeline's identity. `_currentTs()` is a logical
+ *  counter, so a timestamp is only comparable WITHIN one registry
+ *  lifetime — a restart (or a registry clear) starts a new timeline at
+ *  1. The epoch names the lifetime: a client-held catch-up anchor
+ *  (`?since=<epoch>:<ts>`, see segmented-response's live catch-up)
+ *  is honored only when its epoch matches, otherwise the server falls
+ *  back to the full initial render. Re-minted on every clear. */
+let epoch = ""
+function mintEpoch(): void {
+  epoch = Math.floor(Math.random() * 0xffffffffffff)
+    .toString(16)
+    .padStart(12, "0")
+}
+mintEpoch()
+
+export function _registryEpoch(): string {
+  return epoch
 }

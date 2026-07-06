@@ -36,12 +36,14 @@ import {
 	_clearRequestEphemeralStorage,
 	_getCachedOverride,
 	_isConnectionLive,
+	_setCachedOverride,
 	_setConnectionSession,
 	getRequest,
 	getScope,
 } from "../runtime/context.ts";
 import {
 	_currentTs,
+	_registryEpoch,
 	_waitForNextBump,
 } from "../runtime/invalidation-registry.ts";
 import {
@@ -59,7 +61,7 @@ import {
 	TAG_NEXT_SEGMENT,
 	TAG_SEGMENT_SETTLED,
 } from "./fp-trailer-marker.ts";
-import { computeRouteKey, partialFromSnapshot } from "./partial.tsx";
+import { computeRouteKey, parseCachedTokens, partialFromSnapshot } from "./partial.tsx";
 import type { PartialSnapshot } from "./partial-registry.ts";
 import {
 	_readSnapshotsForRoute,
@@ -127,6 +129,25 @@ export async function driveSegmentedResponse(
 	async function driveSegments(): Promise<void> {
 		let segmentIndex = 0;
 		let lastTs = _currentTs();
+
+		// Live catch-up: the heartbeat's first fire presents the document's
+		// registry anchor (`?since=<epoch>:<ts>`, minted into the SSR
+		// trailing comment). The document IS the page state as of that
+		// point, so re-rendering the whole route here would only re-ship
+		// bytes the client already holds — skip the initial segment
+		// entirely and open straight into lanes anchored at the document's
+		// timestamp: the first wake lanes exactly what bumped or expired
+		// after the document rendered. Honored only when the anchor's
+		// epoch names THIS registry timeline (a restart or clear starts a
+		// new one) and the route still has snapshots (an HMR dispose wipes
+		// them); otherwise fall through to the full initial render.
+		const catchUpTs = liveCatchupTs();
+		if (catchUpTs !== null && session !== null) {
+			installCatchupCachedOverride();
+			controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
+			await driveLaneStream(controller, catchUpTs, settledMarker, session);
+			return;
+		}
 
 		while (true) {
 			_clearConnectionLive();
@@ -212,6 +233,62 @@ export async function driveSegmentedResponse(
 			segmentIndex++;
 		}
 	}
+}
+
+/**
+ * Resolve the request's live catch-up anchor — the `?since=<epoch>:<ts>`
+ * the heartbeat's first fire carries (the document's registry anchor).
+ * Returns the anchor timestamp when it is honorable: a live
+ * subscription, the epoch names the CURRENT registry timeline, and the
+ * route still has snapshots to lane from. `null` otherwise — the caller
+ * falls through to the full initial render (over-fetch, never stale).
+ */
+function liveCatchupTs(): number | null {
+	let request: Request;
+	let scope: string;
+	try {
+		request = getRequest();
+		scope = getScope();
+	} catch {
+		return null;
+	}
+	const url = new URL(request.url);
+	if (url.searchParams.get("live") !== "1") return null;
+	const since = url.searchParams.get("since");
+	if (!since) return null;
+	const sep = since.indexOf(":");
+	if (sep <= 0) return null;
+	const epoch = since.slice(0, sep);
+	const ts = Number(since.slice(sep + 1));
+	if (!Number.isFinite(ts) || ts < 0) return null;
+	if (epoch !== _registryEpoch()) return null;
+	const routeKey = computeRouteKey(request.url);
+	if (_readSnapshotsForRoute(scope, routeKey).size === 0) return null;
+	return ts;
+}
+
+/**
+ * Install the connection's cached override from the request's
+ * `?cached=` manifest. On the full-render path PartialRoot does this
+ * during the initial segment; the catch-up path skips that render, and
+ * without an override the flip machinery would treat the client as
+ * holding nothing — every flip-in would re-render and DROP the parked
+ * fiber (drop-on-drift) instead of confirming it. The manifest is the
+ * client's own attestation, so skips against it are truthful.
+ */
+function installCatchupCachedOverride(): void {
+	let request: Request;
+	try {
+		request = getRequest();
+	} catch {
+		return;
+	}
+	const raw = new URL(request.url).searchParams.get("cached");
+	const parsed = parseCachedTokens(raw);
+	_setCachedOverride({
+		fingerprints: parsed.fingerprints,
+		matchKeys: parsed.matchKeys,
+	});
 }
 
 /**
@@ -502,19 +579,21 @@ async function driveLaneStream(
 		// Resolve flips — the wake's fresh ids after any deferred ones (a
 		// deferred flip has waited at least one wake already; reports are
 		// ordered viewport-first, and this keeps that order within each
-		// group). A flip's lane may fp-skip: the culled state is its own
-		// cache variant (`~cull` — see render-pipeline.md §Cull-to-park),
-		// so each state's fps only ever match that state's own body — a
-		// skip is the zero-byte confirmation that the client's parked
-		// copy for the state being entered is current, and a moved fp
-		// re-renders the body as usual. The verdict must be against the
-		// client's ACTUAL holdings, so a DIRECT flip swaps its report's
-		// cached tokens into the override first (the additive override
-		// alone drifts from the client — prunes, evictions, slot
-		// overwrites — and confirming a phantom copy blanks the parton).
-		// A DEFERRED flip keeps the override as-is: its tokens are stale
-		// by lane time, while the materializing render's just-promoted
-		// fps are exactly what the client's slot received.
+		// group). Only flips INTO the session's current visible set lane:
+		// a cull-out is complete on the client the moment it happens (the
+		// pair swaps to its inline skeleton — no server bytes exist for a
+		// culled state), so an out-flip's entire server-side effect is the
+		// session-set update the report already applied. An in-flip's lane
+		// may fp-skip: a skip is the zero-byte confirmation that the
+		// client's parked copy is current, and a moved fp re-renders the
+		// body as usual. The verdict must be against the client's ACTUAL
+		// holdings, so a DIRECT flip swaps its report's cached tokens into
+		// the override first (the additive override alone drifts from the
+		// client — prunes, evictions, slot overwrites — and confirming a
+		// phantom copy blanks the parton). A DEFERRED flip keeps the
+		// override as-is: its tokens are stale by lane time, while the
+		// materializing render's just-promoted fps are exactly what the
+		// client's slot received.
 		const directFlips =
 			wake === "visibility" && session !== null
 				? takeConnectionFlips(session)
@@ -523,6 +602,12 @@ async function driveLaneStream(
 		for (const id of [...deferredFlips, ...directFlips]) {
 			const reported = session?.reportedCached.get(id);
 			session?.reportedCached.delete(id);
+			if (session?.visible != null && !session.visible.has(id)) {
+				// Flipped out (or out again by the time a deferred flip
+				// resolved) — nothing to lane, nothing to defer.
+				deferredFlips.delete(id);
+				continue;
+			}
 			if (!snapshots.has(id)) {
 				deferredFlips.add(id);
 				continue;
@@ -746,15 +831,27 @@ function computeNextExpiresAtDelay(
  * True iff `id`'s own snapshot, or a cullable ancestor's, sits outside
  * the connection's measured visible set — the parton is PARKED: its
  * client copy is a hidden Activity slot (cull-to-park), so lanes at it
- * ship bytes nobody sees. Reads the same two signals `visible()` reads:
- * the snapshot's recorded `visible:<id>` dep marks the parton cullable,
- * and the session's current set is its viewport state. `visible: null`
- * (no report yet) parks nothing — the seed state is authoritative until
- * the client measures. Skipping is staleness-free: every bump that
- * lands while parked moves the in-state fp, so the flip-in
- * revalidation's skip check can only miss (re-render fresh), never
- * false-match.
+ * ship bytes nobody sees. Reads the same two signals the cull gate
+ * reads: the snapshot's recorded `visible:<id>?seed=…` dep marks the
+ * parton cullable, and the session's current set is its viewport
+ * state. `visible: null` (no report yet) parks nothing — the seed
+ * state is authoritative until the client measures. Skipping is
+ * staleness-free: every bump that lands while parked moves the
+ * in-state fp, so the flip-in revalidation's skip check can only miss
+ * (re-render fresh), never false-match.
  */
+function hasCullGateDep(
+	deps: ReadonlySet<string> | undefined,
+	id: string,
+): boolean {
+	if (!deps) return false;
+	const prefix = `visible:${id}`;
+	for (const d of deps) {
+		if (d === prefix || d.startsWith(`${prefix}?`)) return true;
+	}
+	return false;
+}
+
 function isParkedOnConnection(
 	id: string,
 	snapshots: ReadonlyMap<string, PartialSnapshot>,
@@ -764,12 +861,12 @@ function isParkedOnConnection(
 	if (visible == null) return false;
 	const snap = snapshots.get(id);
 	if (!snap) return false;
-	if (snap.deps?.has(`visible:${id}`) && !visible.has(id)) return true;
+	if (hasCullGateDep(snap.deps, id) && !visible.has(id)) return true;
 	for (const ancestorId of snap.parentPath) {
 		if (ancestorId === id) continue;
 		const ancestor = snapshots.get(ancestorId);
 		if (!ancestor) continue;
-		if (ancestor.deps?.has(`visible:${ancestorId}`) && !visible.has(ancestorId))
+		if (hasCullGateDep(ancestor.deps, ancestorId) && !visible.has(ancestorId))
 			return true;
 	}
 	return false;

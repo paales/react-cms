@@ -1,43 +1,53 @@
 "use client"
 
 /**
- * Read-tracked view culling — the client half of `visible()`.
+ * View culling — the client half of the spec-level `cull` gate.
  *
- * A parton that reads `visible()` ([[server-hooks]]) is CULLABLE: its
- * fingerprint folds its viewport state, so it re-renders when it enters or
- * leaves the viewport. The server marks such a boundary `cullable`; on the
- * client the boundary wraps its rendered children in a `<Fragment ref>`
- * and observes them with an IntersectionObserver via React 19.3's
- * `FragmentInstance.observeUsing` — no wrapper element, no `data-*` id
- * stamping. The boundary already knows its own id, so it reports
- * `{ id, inView }` straight from its closure.
+ * A parton declared with `cull:` ([[partial]]) is CULLABLE: its
+ * fingerprint folds its resolved viewport state, and its emission is a
+ * two-slot `<CullPair>` whose slots each wrap their child in a
+ * `<Fragment ref>` observed by an IntersectionObserver via React
+ * 19.3's `FragmentInstance.observeUsing` — no wrapper element, no
+ * `data-*` id stamping. The pair already knows its parton's id, so
+ * reports arrive as `{ id, inView }` straight from its closure.
  *
  * Reports funnel into a module-level controller (mirroring the refetch
  * batch / partial cache — client state lives at module scope, not in
- * context). Every flip is mirrored into the cull-park display state
- * (`cull-park.ts`) first — the parton's Activity slots swap the moment
- * the observer reports (see `cull-slot.tsx`); the dispatch below is the
- * REVALIDATION, not the swap. The controller coalesces a frame's worth
- * of reports and delivers the flips over one of two transports:
+ * context). The controller's baseline for each id is what's actually
+ * DISPLAYED: `CullPair` primes it with the server-computed state on
+ * mount (`_primeVisible`), so a first measurement that agrees with the
+ * server's seed is a no-op — only a real DELTA dispatches. Every delta
+ * is mirrored into the cull-park display state (`cull-park.ts`) first —
+ * the parton's Activity slots swap the moment the observer reports
+ * (see `cull-pair.tsx`); the dispatch below is the REVALIDATION, not
+ * the swap. Because the skeleton ships inline with every pair, a
+ * cull-OUT is complete after the local swap — the server only needs to
+ * know about it to keep the connection session's lane parking honest.
+ * The controller coalesces a frame's worth of deltas and delivers them
+ * over one of two transports:
  *
  *   - **Live connection open** (`_getLiveConnectionId()` non-null): a
  *     fire-and-forget POST to the framework's visibility endpoint
  *     ([[visibility-protocol]]), addressed to the connection by its
  *     explicit id. No response body — the server updates the connection
- *     session's visible set and renders the flipped partons as lane
+ *     session's visible set and renders the flipped-IN partons as lane
  *     segments on the EXISTING stream, so flips never race the
  *     connection's own renders. A non-`204` answer (connection gone)
  *     falls the batch back to the reload path.
- *   - **No live connection**: SELF-REFETCH the flipped partons by id,
- *     carrying the full visible set as `?visible=` so each re-rendered
- *     parton's `visible()` reads its own bit, stamped `?__cullFlip=1`
- *     so the explicit targets may fp-skip (the culling revalidation).
+ *   - **No live connection**: SELF-REFETCH the flipped-IN partons by
+ *     id, carrying the full visible set as `?visible=` so each
+ *     re-rendered parton reads its own bit, stamped `?__cullFlip=1` so
+ *     the explicit targets may fp-skip (the culling revalidation).
+ *     Cull-OUTs are dropped here — they have no server-relevant effect
+ *     without a session, and the next live fire's `?visible=` seed
+ *     carries the full truth.
  *
- * Either way a flipped parton's bytes settle its parked state through
- * the commit walk: fresh bytes drop the parked fiber, a confirmation
- * placeholder re-arms it as a live instance (see `cull-park.ts`).
- * fp-skip prunes the rest. Both transports serialize: one dispatch in
- * flight, re-firing with the latest set when it changes.
+ * Either way a flipped-in parton's bytes settle its parked state
+ * through the commit walk: fresh bytes drop the parked fiber, a
+ * confirmation placeholder re-arms it as a live instance (see
+ * `cull-park.ts`). fp-skip prunes the rest. Both transports serialize:
+ * one dispatch in flight, re-firing with the latest set when it
+ * changes.
  *
  * A cullable parton's observer lives in whichever of its two slots is
  * currently visible (a hidden Activity unmounts its effects), so a
@@ -48,7 +58,6 @@
 
 import React, { useEffect, useRef } from "react"
 import { registerCullObserver, reportCullState } from "./cull-park.ts"
-import type { VisibleOptions } from "./current-parton.ts"
 import {
 	_getLiveConnectionId,
 	_setLiveConnectionId,
@@ -86,15 +95,32 @@ interface FragmentInstance {
 
 // ─── Controller (module-level client state) ───────────────────────────
 
-/** ids currently within the runway-expanded viewport. */
+/** ids currently within the runway-expanded viewport. Primed with each
+ *  pair's server-computed display state before any measurement, so the
+ *  set always mirrors what's on screen. */
 const inView = new Set<string>()
-/** ids whose in/out state changed since the last flush — the refetch set. */
+/** ids with at least one real IntersectionObserver report — past the
+ *  first report, priming is inert and the observer is the only writer. */
+const everReported = new Set<string>()
+/** ids whose in/out state changed since the last flush — the dispatch set. */
 let changed = new Set<string>()
+/** A first measurement landed for an id since the last flush. Even
+ *  when it AGREES with the primed display state (no flip, nothing to
+ *  revalidate), the connection session hasn't heard of the id — its
+ *  `?visible=` seed and any earlier sync predate the id's observer
+ *  (late-adopting subtrees measure after hydration). The flush sends
+ *  a full-set report (empty `changed`) so the session's parking stays
+ *  honest. */
+let newlyMeasured = false
 /** Whether ANY viewport report has landed yet. Gates the visible-set
  *  param/report: before the first report the correct wire state is
  *  "unmeasured" (no set at all — partons render their cold seed), never
  *  the empty set (which means "everything out"). */
 let measured = false
+/** Callbacks awaiting the first measurement (the heartbeat's live-fire
+ *  gate — see `_onFirstMeasurement`). */
+let measurementWaiters: (() => void)[] = []
+
 /** Monotonic report sequence — the server applies a report's `visible`
  *  set only when newer than the last applied one, so two in-flight
  *  POSTs can't commit an older set over a newer one. */
@@ -102,18 +128,62 @@ let reportSeq = 0
 let rafScheduled = false
 let inFlight = false
 
-/** Report a cullable parton's viewport state. Idempotent per state; only a
- *  real flip schedules a dispatch. Every flip also updates the cull-park
- *  display state, so the parton's Activity slots swap immediately —
- *  the scheduled dispatch is the revalidation, not the swap. */
+/**
+ * Prime an id's viewport state from its server-computed display state
+ * (`CullPair`'s mount effect). Inert once the id has a real report —
+ * from then on the observer is the only writer. Priming is what makes
+ * the first measurement a DELTA check against what's actually shown:
+ * without it, every seeded-visible parton's first "in view" report
+ * would read as a flip and dispatch a page-wide revalidation at boot.
+ * Doesn't touch `measured` — a primed set is still an unmeasured one.
+ */
+export function _primeVisible(id: string, isInView: boolean): void {
+	if (everReported.has(id)) return
+	if (isInView) inView.add(id)
+	else inView.delete(id)
+}
+
+/** Report a cullable parton's MEASURED viewport state. Idempotent per
+ *  state: only a delta against the current display state (primed or
+ *  previously reported) schedules a dispatch. Every delta also updates
+ *  the cull-park display state, so the parton's Activity slots swap
+ *  immediately — the scheduled dispatch is the revalidation, not the
+ *  swap. */
 export function reportVisible(id: string, isInView: boolean): void {
-	measured = true
+	if (!measured) {
+		measured = true
+		const waiters = measurementWaiters
+		measurementWaiters = []
+		for (const cb of waiters) cb()
+	}
+	if (!everReported.has(id)) {
+		everReported.add(id)
+		newlyMeasured = true
+		schedule()
+	}
 	if (inView.has(id) === isInView) return
 	if (isInView) inView.add(id)
 	else inView.delete(id)
 	changed.add(id)
 	reportCullState(id, isInView)
 	schedule()
+}
+
+/** Whether any viewport measurement has landed this page. */
+export function _visibilityMeasured(): boolean {
+	return measured
+}
+
+/** Run `cb` at the first viewport measurement — immediately when one
+ *  has already landed. The heartbeat gates its live fire on this so
+ *  the connection opens with a measured `?visible=` seed (see
+ *  `live-page-heartbeat.tsx`). */
+export function _onFirstMeasurement(cb: () => void): void {
+	if (measured) {
+		cb()
+		return
+	}
+	measurementWaiters.push(cb)
 }
 
 /** The current visible set as a `?visible=` param value, or `undefined`
@@ -154,6 +224,9 @@ export function _syncConnectionVisibility(connection: string): void {
  *  instead (see `cull-park.ts`). */
 function reportGone(id: string): void {
 	inView.delete(id)
+	// A returning instance re-primes from its fresh emission's display
+	// state before its observer's first report.
+	everReported.delete(id)
 }
 
 function schedule(): void {
@@ -168,7 +241,7 @@ function schedule(): void {
 async function flush(): Promise<void> {
 	// Serialize: one dispatch in flight. Newer flips accumulate in `changed`
 	// and fire when it lands (the `finally` re-checks).
-	if (inFlight || changed.size === 0) return
+	if (inFlight || (changed.size === 0 && !newlyMeasured)) return
 
 	// Live connection open: deliver the flips as a fire-and-forget report
 	// POST. The response carries no body — the flipped partons' bytes come
@@ -177,6 +250,7 @@ async function flush(): Promise<void> {
 	// supersede or tear a mid-flight route swap the way a reload can.
 	const connection = _getLiveConnectionId()
 	if (connection !== null) {
+		newlyMeasured = false
 		// Viewport first — the same rule as the reload path below: flips the
 		// user can SEE outrank stale cull-outs, both across batches (the cap
 		// slices in-view flips first) and within one report (the server
@@ -220,16 +294,17 @@ async function flush(): Promise<void> {
 		transition.finished.then(schedule, schedule)
 		return
 	}
-	// Viewport first: flips the user can SEE (currently in view — their
-	// content needs to paint) outrank flips for partons already scrolled
-	// past (their cull-to-shell can wait). A continuous scroll otherwise
-	// buries the live viewport at the tail of a FIFO of stale cull-outs
-	// and the visible world stops filling until the queue drains.
-	const all = [...changed]
-	const inViewFlips = all.filter((id) => inView.has(id))
-	const outFlips = all.filter((id) => !inView.has(id))
-	const targets = [...inViewFlips, ...outFlips].slice(0, FLUSH_BATCH)
-	changed = new Set([...inViewFlips, ...outFlips].slice(FLUSH_BATCH))
+	// Only flips the user can SEE ride the reload — their content needs
+	// materializing. Cull-OUTs are already complete (the pair swapped to
+	// its inline skeleton locally) and have no server-relevant effect
+	// without a connection session; consume them here — the next live
+	// fire's `?visible=` seed carries the full set. First-measurement
+	// syncs likewise: with no session to inform they're moot.
+	newlyMeasured = false
+	const inViewFlips = [...changed].filter((id) => inView.has(id))
+	const targets = inViewFlips.slice(0, FLUSH_BATCH)
+	changed = new Set(inViewFlips.slice(FLUSH_BATCH))
+	if (targets.length === 0) return
 	inFlight = true
 	try {
 		await enqueueRefetch({
@@ -327,15 +402,16 @@ export function _sweepEmptyVisibilityObservers(): void {
  */
 export function VisibilityObserver({
 	id,
-	options,
+	rootMargin: rootMarginProp,
 	children,
 }: {
 	id: string
-	options?: VisibleOptions
+	/** Observer runway (`cull.rootMargin`); omitted → the default RUNWAY. */
+	rootMargin?: string
 	children: React.ReactNode
 }): React.ReactNode {
 	const ref = useRef<FragmentInstance | null>(null)
-	const rootMargin = options?.rootMargin ?? RUNWAY
+	const rootMargin = rootMarginProp ?? RUNWAY
 	useEffect(() => {
 		const inst = ref.current
 		if (!inst || typeof inst.observeUsing !== "function") return

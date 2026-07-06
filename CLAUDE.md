@@ -27,12 +27,16 @@ pipeline:
    patterns and per-value predicates over `searchParams` / `cookies` /
    `headers`. A miss *parks* the client's cached variant (kept hidden,
    restored on re-match); named params from string patterns become the
-   variant's identity (matchKey). Framework transport params
-   (`TRANSPORT_PARAMS`: partials, cached, live, streaming, __frame,
-   __frameUrl) are stripped before evaluation — match never sees them.
+   variant's identity (matchKey). The `cull` option is the second
+   existence gate — viewport-driven: a culled instance's body never
+   runs; the wire carries its client-rendered `skeleton` + props, the
+   fp folds the RESOLVED visibility (`measurement ?? seed(props)`).
+   Framework transport params (`TRANSPORT_PARAMS`: partials, cached,
+   live, streaming, since, visible, __conn, __frame, __frameUrl,
+   __cullFlip) are stripped before evaluation — match never sees them.
 2. **The body reads; the read IS the dependency.** Tracked hooks —
    `searchParam()`, `cookie()`, `header()`, `pathname()`, `match()`,
-   `session()`, `visible()`, `tag()` — record what the body actually
+   `session()`, `tag()` — record what the body actually
    consumed. Cells resolve in place: `await cell.resolve(args?)` for
    module cells, inline `localCell(key, opts)` for parton-scoped ones,
    `.with(args)` to bind on a JSX prop — each records a
@@ -168,6 +172,11 @@ yarn test:browser       # real Chromium via Vitest browser mode
 yarn test:e2e           # Playwright, e2e-testing/e2e/ (auto-starts dev servers)
 yarn lint               # ESLint: React Compiler + rules-of-hooks (advisory; Biome formats)
 yarn bench:server       # warm-tick CPU benchmark — see bench/README.md
+node website/validate-world.mjs  # standing world gate (prod build): boot wire
+                        # budgets incl. the ?since catch-up, 4-direction
+                        # stream-in timing, refresh/stress/parked checks.
+                        # Run after any streaming/culling framework change:
+                        # `yarn build:website` first.
 ```
 
 `yarn test` and `yarn test:e2e` cover disjoint suites — **both must

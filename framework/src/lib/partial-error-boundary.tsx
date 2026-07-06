@@ -2,8 +2,6 @@
 
 import React from "react"
 import { _windowNav, PartialIdContext, registerClientPartial } from "./partial-client.tsx"
-import { VisibilityObserver } from "./visibility.tsx"
-import type { VisibleOptions } from "./current-parton.ts"
 
 interface Props {
   partialId: string
@@ -24,12 +22,6 @@ interface Props {
    * If omitted, the built-in red card with a retry button is used.
    */
   fallback?: React.ReactNode
-  /** Present when the parton read `visible()` — observe its viewport
-   *  intersection via a `<Fragment ref>` and report it to the culling
-   *  controller, so it self-refetches as it enters/leaves view. The value
-   *  is the parton's observer options (`{}` for defaults). Set by the
-   *  server wrapper from the parton's tracked deps. */
-  cullable?: VisibleOptions
 }
 
 interface State {
@@ -102,17 +94,14 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
     // `reload({ selector: "@self" })` regardless of how the instance
     // is externally addressable.
     //
-    // A cullable parton's children are wrapped in a `<Fragment ref>` that
-    // observes their viewport intersection (no wrapper DOM); a plain
-    // parton renders them bare.
-    const body = this.props.cullable ? (
-      <VisibilityObserver id={this.props.partialId} options={this.props.cullable}>
+    // Viewport observation for cullable partons lives in `CullPair`
+    // (both slots wrap their child in a `<VisibilityObserver>`), not
+    // here — the boundary is registration + error containment only.
+    return (
+      <PartialIdContext.Provider value={this.props.partialId}>
         {this.props.children}
-      </VisibilityObserver>
-    ) : (
-      this.props.children
+      </PartialIdContext.Provider>
     )
-    return <PartialIdContext.Provider value={this.props.partialId}>{body}</PartialIdContext.Provider>
   }
 }
 

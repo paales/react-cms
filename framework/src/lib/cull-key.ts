@@ -1,21 +1,17 @@
 /**
- * The culled-variant key grammar — shared by the server emission
- * (partial.tsx, partial-registry.ts) and the client cull machinery
- * (cull-park.ts, cull-slot.tsx, partial-client-state.ts).
+ * The culled-variant key grammar — REGISTRY-INTERNAL (partial-registry.ts).
  *
- * A cullable keepalive parton has TWO rendered states per match
- * variant: the in-view content and the out-of-view skeleton. The
- * culled state is a VARIANT — its wire matchKey (and its registry
- * variant key) is the base key plus this suffix, so both states ride
- * the existing `(id, matchKey)` machinery side by side: separate
- * client cache slots, separate advertised fingerprints, separate
- * placeholder identities, separate server snapshots (each state's
- * dep record folds its own fingerprint). Content identity WITHIN a
- * state stays the fingerprint's job.
+ * A cullable parton keeps TWO snapshot states per match variant in the
+ * server registry: the content state (body ran; deps are its reads)
+ * and the culled state (the gate short-circuited; deps are the gate's
+ * reads). The culled state's registry variant key is the base key
+ * plus this suffix, so both states store side by side and each folds
+ * its own fingerprint. The suffix never crosses the wire: the client
+ * has no culled cache variant — a culled parton's skeleton is a
+ * client-rendered element carried inline by its `<CullPair>`.
  *
  * Base matchKeys are 16-char hex hashes (or the constant root key) —
- * `~` cannot occur in one, so the suffix is unambiguous and the
- * `id:matchKey:fp` wire token split (colon-based) is untouched.
+ * `~` cannot occur in one, so the suffix is unambiguous.
  */
 export const CULLED_KEY_SUFFIX = "~cull"
 

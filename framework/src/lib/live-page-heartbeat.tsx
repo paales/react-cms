@@ -1,9 +1,19 @@
 "use client"
 
 import { useEffect } from "react"
+import { _anyCullObservers } from "./cull-park.ts"
 import { useNavigation } from "./partial-client.tsx"
-import { _getLiveConnectionId, _setLiveConnectionId } from "./partial-client-state.ts"
-import { _syncConnectionVisibility, _visibleSetParam } from "./visibility.tsx"
+import {
+  _getLiveConnectionId,
+  _setLiveConnectionId,
+  _takeLiveCatchupAnchor,
+} from "./partial-client-state.ts"
+import {
+  _onFirstMeasurement,
+  _syncConnectionVisibility,
+  _visibilityMeasured,
+  _visibleSetParam,
+} from "./visibility.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
 
 /** Default interval between periodic re-fires. While a streaming
@@ -86,6 +96,18 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
     const fire = () => {
       if (!alive) return
       if (inFlight) return
+      // A page with mounted viewport observers ALWAYS measures (the
+      // IntersectionObserver fires an initial callback per target), so
+      // wait for the first measurement rather than open an unmeasured
+      // connection: an unmeasured first segment renders the whole route
+      // against the cold seed — bytes the client already has — and the
+      // measurement lands milliseconds later anyway. The waiter fires
+      // exactly once, on the report that flips `measured`; pages with
+      // no cullable partons have nothing to wait for.
+      if (_anyCullObservers() && !_visibilityMeasured()) {
+        _onFirstMeasurement(fire)
+        return
+      }
       inFlight = new AbortController()
       // Each fire is one connection, identified by a fresh id the
       // server's segment driver keys its connection session on
@@ -98,6 +120,13 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
       const params: Record<string, string> = { __conn: connectionId }
       const visibleSeed = _visibleSetParam()
       if (visibleSeed !== undefined) params.visible = visibleSeed
+      // The document's registry anchor (take-once): present it so the
+      // server opens the connection straight into lanes — only what
+      // bumped after the document rendered — instead of replaying the
+      // whole route the document just delivered. Reopened connections
+      // (anchor consumed) fall back to the full initial segment.
+      const anchor = _takeLiveCatchupAnchor()
+      if (anchor) params.since = `${anchor.epoch}:${anchor.ts}`
       // `live: true` holds the connection open as a whole-route
       // subscription (the server parks it for the keepalive and pushes
       // a segment on every relevant bump / expiresAt boundary).
@@ -131,7 +160,18 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
           if (!alive) return
           document.documentElement.setAttribute("data-parton-live", connectionId)
           _setLiveConnectionId(connectionId)
-          _syncConnectionVisibility(connectionId)
+          // Sync the full visible set at the first measurement — which
+          // may be BEFORE this publish (sync now) or after it (a
+          // catch-up boot can establish the connection while hydration
+          // is still adopting the observers' subtrees). Without the
+          // deferred arm, a connection published pre-measurement never
+          // learns the set: agreements with the primed display state
+          // aren't flips, so no report would ever carry it.
+          _onFirstMeasurement(() => {
+            if (_getLiveConnectionId() === connectionId) {
+              _syncConnectionVisibility(connectionId)
+            }
+          })
         })
         .catch(() => {})
       finished

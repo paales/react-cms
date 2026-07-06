@@ -109,7 +109,8 @@ any selector-routing logic that could replace it.
    **Parked partons don't lane.** Bump and expiry wakes drop ids whose
    own snapshot, or a cullable ancestor's, is outside the session's
    measured visible set (`isParkedOnConnection` — the same
-   `visible:<id>` dep + session-set signal `visible()` reads). A
+   `visible:<id>?seed=…` gate dep + session-set signal the cull gate
+   reads). A
    parked parton's client copy is a hidden Activity slot
    (cull-to-park); lanes at it ship bytes nobody sees, and since
    route snapshots persist for everything ever rendered, a held
@@ -243,7 +244,7 @@ the write would never reach another connection's render.
 
 ## Visibility rides the connection
 
-View culling (`visible()`, [`partial.md`](../reference/partial.md)
+View culling (the `cull` gate, [`partial.md`](../reference/partial.md)
 §View culling) is the same up-cheap/down-stream asymmetry as deferred
 writes, applied to a request dimension that moves while a connection
 is open. A viewport flip is not a data write — it changes what the
@@ -284,15 +285,17 @@ The pieces:
   render-reload fallback.
 - **The visibility wake.** The lane driver races the session's flip
   promise alongside the bump/expiry/keepalive arms. On a flip wake
-  it drains the session's pending ids and starts a lane per id
-  through the same `partialFromSnapshot` path bump lanes use. Lane
+  it drains the session's pending ids; only flips INTO the current
+  visible set lane (through the same `partialFromSnapshot` path bump
+  lanes use) — a cull-OUT is complete on the client the moment it
+  happens (the pair swaps to its inline skeleton; no server bytes
+  exist for a culled state), so an out-flip's entire server effect
+  is the session-set update the report already applied. Flip-in lane
   renders carry a request state backed by the connection's cached
-  override, so a flip may FP-SKIP: the culled state is its own cache
-  variant (`~cull` — see
-  [render-pipeline.md](./render-pipeline.md#cull-to-park)), so each
-  state's fps only ever match that state's own body, and a skip is
-  the zero-byte confirmation that the client's parked copy for the
-  state being entered is current. The verdict is computed against
+  override, so a flip may FP-SKIP: a skip is the zero-byte
+  confirmation that the client's parked copy is current (see
+  [render-pipeline.md](./render-pipeline.md#cull-to-park)). The
+  verdict is computed against
   the client's ACTUAL holdings — a direct flip's report `cached`
   tokens replace the override's entries for the id first (the
   additive override alone drifts from the client: prunes, evictions,
@@ -312,7 +315,7 @@ The pieces:
   on every subsequent wake (the materializing lane's drain is itself
   a wake) and never arm one, so an id that never materializes can't
   busy-loop the driver.
-- **The read stays request-reproducible.** `visible()` and the fp
+- **The read stays request-reproducible.** The cull gate and the fp
   fold's store-and-reread both resolve through one function
   (`readVisible` in `server-hooks.ts`): the connection session's set
   first, the request's `?visible=` URL param as the no-session
@@ -325,19 +328,24 @@ The pieces:
   flush recompute reads the same set, so hook read and fold agree.
 
 Client-side transport selection lives in the controller
-(`lib/visibility.tsx`): flips coalesce per animation frame, ordered
+(`lib/visibility.tsx`): the baseline per id is the DISPLAYED state
+(each `CullPair` primes it from its emission's `culled` prop on
+mount, so a first measurement that agrees with what the server
+rendered dispatches nothing — priming is inert once an id has a real
+report), real deltas coalesce per animation frame, ordered
 viewport-first on both transports (in-view flips outrank stale
 cull-outs — across batches, since the cap slices in-view first, and
 within one dispatch), and each flush checks `_getLiveConnectionId()`
 (`partial-client-state.ts`) — non-null routes the batch (cap 256;
 ids ride the JSON body, so no request-line limit) to the POST,
 `null` falls back to the one-shot
-`reload({selector, params: {visible}})` path unchanged (cap 48, the
-`?partials=` request-line bound). The heartbeat owns the id: it
-publishes it when a fire's first segment commits (the server
-provably has the session open by then) and clears it when the
-connection settles. Two seams keep the set in sync across the
-connection's lifecycle:
+`reload({selector, params: {visible}})` path for the flipped-IN ids
+only (cap 48, the `?partials=` request-line bound; cull-outs are
+local — the inline skeleton — and have no server effect without a
+session). The heartbeat owns the id: it publishes it when a fire's
+first segment commits (the server provably has the session open by
+then) and clears it when the connection settles. Three seams keep
+the set in sync across the connection's lifecycle:
 
 - **The seed.** Each heartbeat fire carries the controller's current
   set as `?visible=` (absent while unmeasured), so a REOPENED
@@ -345,13 +353,20 @@ connection's lifecycle:
   viewport instead of the cold anchor seed — without it, every
   reopen would clobber flip-committed content back to the anchor
   state.
-- **The publish-time sync.** Flips that fire between a connection's
-  seed and its id publication ride the reload fallback; when the id
-  publishes, the controller pushes one full-set report
-  (`changed: []`) so the session catches up.
-- **Only measured nodes testify.** Two rules keep the observer's
+- **The first-measurement sync.** The heartbeat arms a full-set
+  report (`changed: []`) at the first viewport measurement —
+  whichever side of the connection's publish it lands on — so a
+  connection established before hydration finished measuring still
+  learns the set.
+- **The newly-measured sync.** A first measurement for an id the
+  session has never heard of (late-adopting subtrees measure after
+  the seed and any earlier sync) schedules a full-set report even
+  when it AGREES with the primed display state — without it the
+  session would park every late-measuring parton forever.
+- **Only measured nodes testify.** Three rules keep the observer's
   evidence honest across content transitions
-  (`VisibilityObserver` in `lib/visibility.tsx`):
+  (`VisibilityObserver` in `lib/visibility.tsx`, `CullPair` in
+  `lib/cull-pair.tsx`):
   - An IO callback whose pruned node set is EMPTY reports nothing —
     zero connected nodes means the parton is mid-swap (a flip lane's
     commit disconnects the old body before the new one reports), not
@@ -359,6 +374,13 @@ connection's lifecycle:
     cull lane → placeholder commits → intersects → "in" → content
     lane → swap → transient empty → "out" → … at rAF rate,
     remounting the subtree and re-shipping its body every cycle.
+  - The content slot's observer mounts only over REAL content. An
+    unbacked slot renders the bare `<i data-partial>` hole — a
+    CONNECTED zero-size node, so the empty-set rule can't catch it —
+    and an observer over it testifies "out" for a parton squarely in
+    view, flipping it right back out: the same loop at lane rate.
+    While content is missing, the skeleton slot is showing and its
+    observer is the parton's testimony.
   - An observer attached while its fragment had NO host children
     (dehydrated nested boundaries on a fast prod hydration,
     unresolved Flight lazies) re-attaches when content arrives —
@@ -399,21 +421,49 @@ import { LivePageHeartbeat } from "@parton/framework/lib/live-page-heartbeat.tsx
 
 Behaviour:
 
-- **Initial fire** waits for two events: React's first commit (the
+- **Initial fire** waits for three events: React's first commit (the
   effect runs post-commit, once `PartialErrorBoundary` renders have
-  populated the cold fps) AND the browser `load` event (which is
-  when the SSR HTML's `<!--fp-trailer:…-->` comment has been parsed
-  and its warm-fp corrections applied — firing earlier would send
+  populated the cold fps), the browser `load` event (which is when
+  the SSR HTML's `<!--fp-trailer:…-->` comment has been parsed and
+  its warm-fp corrections applied — firing earlier would send
   cold-only fps and re-render every drifted parton, a visible flash
-  for time-dependent content). Then
+  for time-dependent content), AND — when cullable observers are
+  mounted — the first viewport measurement (an
+  IntersectionObserver always fires an initial callback per target,
+  so a page with observers WILL measure; waiting means the fire's
+  `?visible=` seed is the measured set, not the cold seed; a page
+  with no cullables has nothing to wait for). Then
   `nav.reload({streaming: true, live: true})` opens the long-poll
   connection — `live` holds it open, `streaming` commits each pushed
   segment progressively. Each fire mints a fresh connection id
   (`?__conn=`) and seeds the request with the client's current
-  visible set; when the first segment commits, the id is published
-  to the visibility controller (and stamped as the
-  `data-parton-live` attribute value) so flips can address the open
-  connection — see §Visibility rides the connection.
+  visible set; the FIRST fire after a document load also presents
+  the document's catch-up anchor (below). When the first segment
+  commits, the id is published to the visibility controller (and
+  stamped as the `data-parton-live` attribute value) so flips can
+  address the open connection — and the controller's full visible
+  set syncs at the first measurement, whichever side of the publish
+  it lands on — see §Visibility rides the connection.
+- **Live catch-up (`?since=`).** The SSR document's trailing
+  comments include `<!--live-anchor:{"epoch","ts"}-->` — the
+  invalidation registry's timeline point the document represents
+  (`epoch` names the registry lifetime; `ts` is its logical
+  counter). The client stores it take-once; the heartbeat's first
+  fire sends `?since=<epoch>:<ts>`, and the segment driver — when
+  the epoch matches the current registry lifetime and the route
+  still has snapshots — SKIPS the initial whole-route segment
+  entirely: the response opens directly with the `lanes` marker,
+  anchored at the document's timestamp, so the first wake lanes
+  exactly what bumped or expired after the document rendered. The
+  world's live boot is ~18 bytes instead of a route replay. The
+  driver installs the connection's cached override from the
+  request's `?cached=` manifest (normally PartialRoot's job during
+  the skipped segment) so flip confirms stay truthful. Anchor
+  invalid (restart, registry clear, HMR-wiped snapshots) or absent
+  (reopens, post-navigation fires) → the full initial render, over-
+  fetch never stale. Client-side, a lanes-first stream resolves the
+  reload's `streaming` milestone at the lanes marker (there is no
+  payload to commit — the current tree IS the state).
 - **Interval re-fires** every 5s by default — but each tick is a
   no-op if a stream is already open. So in steady state there's
   exactly one streaming connection.
@@ -543,17 +593,25 @@ hard-scroll-edge chunks never materializing was exactly this).
 
 Two guards keep transforms off the wire:
 
-- The segment-driver response declares `Cache-Control: no-transform`
-  — the spec-level instruction that the payload must not be
-  modified in transit. Real deployments' proxies honor it.
+- Every segmented `.rsc` response declares `Cache-Control:
+  no-transform` — the spec-level instruction that the payload must
+  not be modified in transit. Real deployments' proxies honor it.
+  ALL segmented GETs get the stamp, not just `?live=1`: a plain GET
+  can go live mid-render (`markConnectionLive()` — the chat), which
+  is unknowable at header time, and even the framework's own
+  per-write-flush compressor measurably delays mid-stream pushes
+  (the chat's progressive rows flake under it).
 - The framework's dev/preview compressor
   (`framework/src/vite/compression.ts`, the `rscCompression()` vite
   plugin) honors `no-transform` at its compress decision AND strips
   the request's `Accept-Encoding` after capturing it, so every
   downstream compressor (vite preview ships its own, non-flushing
-  one) stands down. Compressible one-shot responses (documents,
-  refetches) still compress — with a flush per write, so
-  progressive rows keep their timing.
+  one) stands down. Documents and action responses still compress —
+  with a flush per write, so progressive rows keep their timing.
+  (One-shot `.rsc` refetches are the casualty: compressing them
+  needs a header-time "will never hold open" signal that doesn't
+  exist yet. Their decoded size is small post-catch-up — the live
+  boot no longer replays the route — so the loss is bounded.)
 
 ## `expires()` vs `cache`
 

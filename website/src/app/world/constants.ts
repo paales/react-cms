@@ -25,5 +25,10 @@ export const BIG_MIN = -WORLD_BIGS / 2
 
 export const bigLeft = (b: number): number => (b - BIG_MIN) * BIG_PX
 
+/** Position within the OWNING bigChunk (chunk coords are world-signed).
+ *  Shared by the chunk's full body (server) and its skeleton (client). */
+export const inBig = (c: number): number =>
+  (((c % BIG_CHUNKS) + BIG_CHUNKS) % BIG_CHUNKS) * CHUNK_PX
+
 /** Plane coordinate of the world center — chunk 0,0's top-left. */
 export const CENTER_PX = WORLD_PX / 2

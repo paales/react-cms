@@ -104,6 +104,7 @@ export const TRANSPORT_PARAMS = [
   "cached",
   "live",
   "streaming",
+  "since",
   "visible",
   "__conn",
   "__frame",

@@ -294,17 +294,19 @@ export function createRscHandler(config: RscHandlerConfig): {
 					status: actionStatus,
 					headers: {
 						"content-type": "text/x-component;charset=utf-8",
-						// The segment driver's byte timing IS the protocol: a live
-						// connection parks between wakes and each lane must reach
-						// the client the moment it drains. A compressing
-						// intermediary that buffers whole blocks (an nginx gzip
-						// default, a CDN transform) would hold framed lanes until
-						// its block fills — on a stream whose traffic has gone
-						// quiet, indefinitely. `no-transform` is the spec-level
-						// instruction that these bytes must pass through
-						// unmodified. (The framework's own dev/preview compressor —
-						// `vite/compression.ts` — flushes per write and owns the
-						// encoding decision, so it stays compatible.)
+						// The segment driver's byte timing IS the protocol: a
+						// connection that holds open (an explicit `?live=1`
+						// subscription, or a plain GET whose render calls
+						// `markConnectionLive()` — unknowable at header time)
+						// parks between wakes, and each framed lane must reach
+						// the client the moment it drains. A compressor between
+						// the driver and the browser holds frames in its buffer
+						// — a block-buffering intermediary indefinitely, and
+						// even the framework's own per-write-flush compressor
+						// measurably delays mid-stream pushes (the chat's
+						// progressive rows flake under it). `no-transform` on
+						// every segmented response keeps all of them off;
+						// documents and action responses still compress.
 						"cache-control": "no-transform",
 					},
 				},

@@ -77,7 +77,7 @@ distinguish two registrations of the same id:
 |---|---|
 | `parentPath` | Same id mounted under different ancestors (e.g. `Header` under `PageRoot` vs under `EditorShell`) |
 | `parentFrameChain` | Same id rendered inside vs outside a frame |
-| `culled` | A cullable spec's culled (skeleton) render vs its in-view one — the `~cull` suffix (`lib/cull-key.ts`). Per-state snapshots keep each state's dep record intact, so a culling flip's fingerprint folds the record of the state it is ENTERING (`lookupPartial(id, culled)`), not whichever state rendered last. See [render-pipeline.md](./render-pipeline.md#cull-to-park). |
+| `culled` | A cullable spec's culled render (the gate skipped the body; deps are the gate's reads) vs its in-view one — the REGISTRY-INTERNAL `~cull` suffix (`lib/cull-key.ts`; it never crosses the wire — the client has no culled cache variant, the skeleton rides inline on the pair). Per-state snapshots keep each state's dep record intact, so a culling flip's fingerprint folds the record of the state it is ENTERING (`lookupPartial(id, culled)`), not whichever state rendered last. See [render-pipeline.md](./render-pipeline.md#cull-to-park). |
 
 Per-instance content divergence (slot blocks bound to different CMS
 rows, partials called with different JSX props) folds into the

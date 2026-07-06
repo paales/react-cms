@@ -175,10 +175,10 @@ Rules that make the gate sound:
 - **Transport params are invisible.** The framework mints search
   params for its own transport — refetch targeting (`partials`), the
   client cache manifest (`cached`), live holds (`live`) and their
-  connection id (`__conn`), commit mode (`streaming`), the
-  viewport-visibility report set (`visible` — read by the `visible()`
-  HOOK, a tracked dependency, never a match dimension), frame routing
-  (`__frame`, `__frameUrl`) — so the SAME
+  connection id (`__conn`) and catch-up anchor (`since`), commit mode
+  (`streaming`), the viewport-visibility report set (`visible` — read
+  by the `cull` gate, a tracked dependency, never a match dimension),
+  frame routing (`__frame`, `__frameUrl`) — so the SAME
   page arrives with and without them (SSR, targeted refetch, live
   heartbeat). Match evaluation and param extraction strip them first;
   a wildcard search capture like `"*q=:query"` never swallows them
@@ -228,8 +228,11 @@ dependency, exactly like a cell.
 | `match(pattern)` | Runs `pattern` — a pathname string (typed via `ParseRoute`) or a `URLPatternInit` — against the request URL; returns the named captures or `null`. URL-pattern matching only, no predicate gates (those live on the `match` option). Folds only the MATCHED PARAMS — the spec varies when its captured segment changes, never on every navigation. | `match:<pattern>` |
 | `param(name)` | A resolved match param (`/pokemon/:id` → `param("id")`). Pure read, records NOTHING — match params already fold into the fp via `matchKey`. | — |
 | `session()` | `{ id }` — the session identity; `""` for an anon request with no session yet. | `session:` |
-| `visible(options?)` | The parton's viewport visibility (tri-state; `undefined` pre-measurement). Calling it makes the parton cullable — entering/leaving the viewport moves its fp. | `visible:<id>` |
 | `tag(name)` | Registers an invalidation tag computed per render (`` tag(`product:${id}`) ``), so a matching `refreshSelector(name)` shifts the fp and the name becomes a refetch target. Records a `tag:<name>` dep riding store-and-reread — the natural slot for tags a loader's response yields. | `tag:<name>` |
+
+(Viewport visibility is not a body read — it gates existence via the
+spec-level `cull` option, which records `visible:<id>?seed=<0|1>`
+itself. See [View culling](#view-culling--the-cull-gate).)
 
 All hooks read from the parton's frame-resolved request, so a framed
 spec tracks its frame's URL and cookies. Outside a parton body
@@ -245,76 +248,101 @@ empty value reads as the empty string. (Match `cookies` gates
 deliberately bypass this overlay — see
 [The match gate](#the-match-gate--gating-the-request).)
 
-### View culling — `visible()`
+### View culling — the `cull` gate
 
-`visible(options?)` is the viewport analogue of `cookie()`: one read
-makes the parton **cullable**. Its fingerprint folds its viewport
-state, so entering or leaving the viewport moves the fp and the
-parton self-refetches — full content in view, whatever the body
-renders for out-of-view (typically a space-reserving skeleton)
-otherwise. A parton that never calls it is invariant to scrolling.
-
-The value is tri-state: `true` (client reported in view, expanded by
-the observer's runway margin), `false` (reported, outside the
-margin), `undefined` (no client report yet — the cold/SSR
-pre-measurement state, global to the connection, not per-parton).
-Seed the cold decision off an anchor:
+Culling gates EXISTENCE, like `match`: the `cull` spec option makes
+the parton **cullable**, and a culled instance's body never runs.
 
 ```tsx
-const vis = visible({ rootMargin: "900px 0px" })   // runway config
-const show = vis ?? Math.abs(page - anchorPage) <= 2  // cold seed
-return show ? <PageProducts page={page} /> : <GridSkeleton />
+export const BrowsePage = parton(
+  ({ page }) => <PageProducts page={page} products={productsCell.with({ page })} />,
+  {
+    cull: {
+      rootMargin: "900px 0px",                                 // observer runway
+      seed: ({ page }) => Math.abs(page - (Number(searchParam("page")) || 1)) <= 2,
+      skeleton: GridSkeleton,                                  // "use client"
+    },
+  },
+)
 ```
 
-On the client the framework observes the parton's rendered children
-through a `<Fragment ref>` + IntersectionObserver (no wrapper
-element) and coalesces a frame's worth of in/out flips. Delivery
-depends on whether the page holds a live connection:
+- **`skeleton`** (required) — the culled body: a CLIENT component
+  rendered from the placement's serializable props (match params +
+  call-site props, cell props excluded). On the wire a culled
+  instance costs one module reference + props — a couple hundred
+  bytes instead of a rendered body — and needs no cache variant, no
+  fingerprint, no `?cached=` manifest slot. It must render real DOM:
+  it reserves the parton's space (a culled parton that collapses
+  shifts the document) and hosts its viewport observer.
+- **`seed`** (optional, default "in view") — the cold-state
+  resolution: is this placement in view BEFORE any client
+  measurement (SSR, first paint, no-JS)? Runs in the parton's
+  tracking context, so an anchor-driven seed's `searchParam()` read
+  records as a dep and the gate re-resolves when the anchor moves.
+- **`rootMargin`** (optional) — how far beyond the viewport still
+  counts as in view. Default `"600px 0px"`.
+
+The fingerprint folds the RESOLVED state — `measurement ?? seed` —
+via the dep key `visible:<id>?seed=<0|1>`. Unmeasured and measured
+renders that resolve the same way fold the SAME fp: the client's
+first viewport report moves only the partons it actually flips, so a
+boot whose seed matched the viewport revalidates nothing.
+
+On the client the pair's slots observe their children through a
+`<Fragment ref>` + IntersectionObserver (no wrapper element); the
+controller compares each measurement against the DISPLAYED state
+(primed from the emission) and coalesces a frame's worth of real
+flips. Delivery depends on whether the page holds a live connection:
 
 - **Live connection open** (the heartbeat's `?live=1` stream): the
   flips travel as a fire-and-forget POST to the framework's
   visibility endpoint (`204`, no body), addressed to the connection
   by its explicit id. The server stores the set as connection-session
-  state, treats the flipped ids like an invalidation wake, and
-  renders them as lane segments on the EXISTING stream — `visible()`
-  reads the connection's current set, so flips never race the live
-  connection with a second render channel.
-- **No live connection**: the controller refetches the changed
+  state and renders the flipped-IN partons as lane segments on the
+  EXISTING stream — the gate reads the connection's current set, so
+  flips never race the live connection with a second render channel.
+  A cull-OUT lanes nothing: the pair swaps to its inline skeleton
+  locally, and the report's only server effect is the session-set
+  update that keeps lane parking honest.
+- **No live connection**: the controller refetches the flipped-IN
   partons by id, carrying the full visible set as `?visible=` so each
-  re-render's `visible()` reads its own bit.
+  re-rendered gate reads its own bit. Cull-outs need no server at all.
 
 Either way the visible set is part of the connection's request state
 — the heartbeat seeds each `?live=1` fire with the current set, and
-`visible()`/the fp fold read session-first with the `?visible=` URL
-param as the one-shot fallback. Reservation is the parton's contract:
-a culled parton must hold its space or the document collapses. Worked
-demo: `e2e-testing/src/app/pages/magento/product-browse.tsx`; design
+the gate/fp fold read session-first with the `?visible=` URL param as
+the one-shot fallback. Worked demo:
+`e2e-testing/src/app/pages/magento/product-browse.tsx`; design
 rationale in [`../notes/view-culling.md`](../notes/view-culling.md);
 wire mechanics in
 [`../internals/streaming.md`](../internals/streaming.md).
 
 **Cull-to-park.** For a keepalive spec (the default), the culled
-state is a parked VARIANT, not a replacement. The parton renders as
-a stable two-slot pair — a content slot (cache variant `matchKey`)
-and a skeleton slot (variant `matchKey~cull`) — and a culling flip
-is an `<Activity>` mode change on the pair: the out-of-view content
-PARKS (fiber alive, DOM kept, `useState` / `useRef` / DOM state
-preserved, effects unmounted) behind the visible skeleton, and the
-slots swap the moment the observer reports, before any network.
+state doesn't replace the content — it parks it. The parton renders
+as one `<CullPair>` holding two `<Activity>` slots: the content slot
+(this render's body, or the placeholder hole its next bytes will
+substitute into) and the skeleton slot (the inline skeleton element —
+always present, always renderable). A culling flip is a MODE change
+on the pair: the out-of-view content PARKS (fiber alive, DOM kept,
+`useState` / `useRef` / DOM state preserved, effects unmounted)
+behind the skeleton, the moment the observer reports, before any
+network. The content slot's observer mounts only over REAL content —
+an unbacked hole is a zero-size node whose testimony would flip the
+parton right back out.
 
-The flip's refetch is a REVALIDATION (`?__cullFlip=1` — the one case
-where an explicit `?partials=` target may fp-skip). The response
-settles the restored copy: an fp match returns the confirmation
-placeholder — zero content bytes, the parked subtree is current —
-while a moved fp (data changed while parked) returns fresh bytes that
-REPLACE the slot and drop the parked fiber (a real remount). Repeat
-flips whose states are unchanged are near-zero-byte round trips: each
-state advertises its own fingerprints.
+A flip-IN is a REVALIDATION (`?__cullFlip=1` on the reload path — the
+one case where an explicit `?partials=` target may fp-skip). The
+response settles the restored copy: an fp match returns the
+confirmation placeholder — zero content bytes, the parked subtree is
+current — while a moved fp (data changed while parked) returns fresh
+bytes that REPLACE the slot and drop the parked fiber (a real
+remount). Repeat flips whose content is unchanged are near-zero-byte
+round trips.
 
 Parked-by-culling subtrees are budgeted: an LRU of the 64
-most-recently-culled ids keeps its content slots alive; past the
-budget the oldest parked content is destroyed (the skeleton keeps
-holding the space) and a return visit renders cold — the behavior a
+most-recently-culled ids keeps its content alive; past the budget the
+oldest parked content is destroyed (the inline skeleton keeps holding
+the space) and a return visit renders cold — the behavior a
 non-keepalive cullable spec (`keepalive: false`) has on every flip.
 
 ### Timing — store-and-reread

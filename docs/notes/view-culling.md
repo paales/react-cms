@@ -1,19 +1,28 @@
-# View culling — read-tracked, per-parton
+# View culling — per-parton, an existence gate
 
-**Status:** shipped, including cull-to-park. Live at `/magento/browse`
+**Status:** shipped, including cull-to-park and the spec-level `cull`
+gate. The read-tracked `visible()` hook this note originally designed
+evolved into the gate: culling now gates EXISTENCE like `match` — a
+culled body never runs, the culled state is a client-rendered
+`skeleton` (one module ref + props on the wire, no cache variant, no
+fingerprint), and the fp folds the RESOLVED state
+(`measurement ?? seed(props)`) so the first client measurement moves
+only real flips. Live at `/magento/browse`
 (`e2e-testing/src/app/pages/magento/product-browse.tsx`) and the
 website's chunk world (`website/src/app/world/`); framework in
-`framework/src/lib/visibility.tsx` + `server-hooks.ts` `visible()` +
-the cull-park layer (`cull-key.ts`, `cull-park.ts`, `cull-slot.tsx`);
-specs in `e2e/product-browse-culling.spec.ts`,
+`framework/src/lib/visibility.tsx` + the `cull` option in
+`partial.tsx` + the cull-park layer (`cull-key.ts`, `cull-park.ts`,
+`cull-pair.tsx`); specs in `e2e/product-browse-culling.spec.ts`,
 `__tests__/visible-fp.rsc.test.tsx`, `__tests__/cull-park.rsc.test.tsx`,
 `__tests__/cull-park.test.ts`. The shipped contract lives in
-[`docs/reference/partial.md`](../reference/partial.md#view-culling--visible)
+[`docs/reference/partial.md`](../reference/partial.md#view-culling--the-cull-gate)
 (behavior) and
 [`docs/internals/render-pipeline.md`](../internals/render-pipeline.md#cull-to-park)
 (mechanics) — those supersede this note for how culling works today.
 This note remains the design rationale and framework-level findings —
-the substrate for a future framework `<Scroller>`.
+the substrate for a future framework `<Scroller>`. The "tracked read"
+model below is the ORIGINAL design; its read-value tri-state fold is
+what the gate's resolved fold replaced.
 
 The refetch dispatch described below is now the NO-LIVE-CONNECTION
 fallback: with the heartbeat's stream open, flips travel as

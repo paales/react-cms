@@ -153,6 +153,7 @@ async function main() {
 			"cached",
 			"streaming",
 			"live",
+			"since",
 			"__conn",
 			"visible",
 			"page",
@@ -298,6 +299,16 @@ async function main() {
 				try {
 					for await (const segment of splitSegments(response.body, signal)) {
 						if (segment.kind === "lanes") {
+							// The subscription is established the moment the lanes
+							// region opens. On a catch-up boot (`?since=` honored)
+							// this is the FIRST segment — there is no whole-route
+							// payload to commit, the client's current tree IS the
+							// state — so `streaming` must resolve here or the
+							// heartbeat would never publish the connection id.
+							if (!streamingResolved) {
+								streamingResolved = true;
+								resolveStreaming();
+							}
 							// Per-parton live updates. Lanes for DIFFERENT partons
 							// commit concurrently (a slow lane's decode must not
 							// gate a fast one — that's the point of the wire

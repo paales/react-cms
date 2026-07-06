@@ -20,7 +20,7 @@
  * fp-accurate. See `docs/reference/partial.md`.
  */
 
-import { getCurrentParton, type VisibleOptions } from "./current-parton.ts"
+import { getCurrentParton } from "./current-parton.ts"
 import { _getConnectionVisibleSet, parseCookies } from "../runtime/context.ts"
 import { getSessionId } from "../runtime/session.ts"
 import { parseSelector, queryMatchingTs } from "../runtime/invalidation-registry.ts"
@@ -153,40 +153,6 @@ export function session(): { readonly id: string } {
   if (!cp) return { id: "" }
   cp.deps.add("session:")
   return { id: getSessionId() ?? "" }
-}
-
-/**
- * Read this parton's view-visibility and record it as an fp dependency —
- * the read-tracked culling signal, the viewport analogue of `cookie()` /
- * `searchParam()`. A parton that calls `visible()` becomes cullable
- * (entering/leaving the viewport moves its fp, so it self-refetches);
- * one that never calls it is invariant to scrolling. The read IS the
- * dependency, exactly like a cell. Tri-state:
- *
- *   - `true`      — the client reported this parton within the viewport
- *     (expanded by the observer's runway margin).
- *   - `false`     — the client reported and it's outside that margin.
- *   - `undefined` — no client report yet: the PRE-MEASUREMENT state
- *     (cold render / SSR / no-JS). Seed the cull decision off the anchor
- *     here, e.g. `const show = visible() ?? nearAnchor(searchParam("page"))`,
- *     so the first paint reserves the right neighborhood.
- *
- * `undefined` is GLOBAL — it means the connection carries no visible set
- * at all, not that this one parton is unmeasured. Once the client
- * reports one, every parton is in (`true`) or out (`false`); the
- * observer's `rootMargin` is the runway, so "out" is the correct skeleton
- * state for everything past it.
- *
- * `options` configures THIS parton's observation — e.g. `visible({
- * rootMargin: "1000px 0px" })` for an eager runway. It rides to the client
- * boundary's IntersectionObserver; it doesn't affect the fp.
- */
-export function visible(options?: VisibleOptions): boolean | undefined {
-  const cp = getCurrentParton()
-  if (!cp) return undefined
-  cp.deps.add(`visible:${cp.id}`)
-  if (options) cp.visibleOptions = options
-  return readVisible(new URL(cp.request.url).searchParams, cp.id)
 }
 
 /** Resolve a parton's visibility from the connection's current visible
@@ -354,12 +320,21 @@ export function evalDepKeys(
       const sel = parseSelector(key)
       value = String(queryMatchingTs([sel.name], sel.constraints))
     } else if (kind === "visible") {
-      // `name` is the parton's own id. Re-read the connection's current
-      // visible set (store-and-reread; session-first, `?visible=` URL
-      // fallback): in → "1", out → "0", absent (cold) → "u". Three
-      // distinct strings so entering view, leaving view, and the first
-      // client report each move the fp.
-      const v = readVisible(url.searchParams, name)
+      // `name` is `<id>?seed=<0|1>` — the parton's own id plus the
+      // cull gate's cold-state seed, recorded at render time (the seed
+      // is a function of the placement's props, so its VALUE rides the
+      // key; its tracked-read inputs ride the dep set alongside).
+      // Re-read the connection's current visible set (store-and-
+      // reread; session-first, `?visible=` URL fallback) and fold the
+      // RESOLVED state — measurement when present, the seed before
+      // one. Unmeasured and measured renders that resolve the same
+      // way fold the same fp: the first client report moves only the
+      // partons it actually changes. A bare `<id>` key (no gate seed)
+      // keeps the raw tri-state fold.
+      const q = name.indexOf("?seed=")
+      const pid = q === -1 ? name : name.slice(0, q)
+      const seed = q === -1 ? undefined : name.slice(q + 6) === "1"
+      const v = readVisible(url.searchParams, pid) ?? seed
       value = v === undefined ? "u" : v ? "1" : "0"
     } else {
       const custom = depKindEvaluators.get(kind)

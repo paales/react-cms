@@ -19,7 +19,6 @@
  */
 
 import type { ReactNode } from "react";
-import { isCulledKey } from "./cull-key.ts";
 import type { FpUpdatesPayload } from "./fp-trailer-marker.ts";
 
 // ─── Partial cache + fingerprints ─────────────────────────────────
@@ -408,22 +407,17 @@ export function pruneToLive(live: Map<string, Set<string>>): void {
 
 /**
  * Destroy a parton's parked CONTENT — the cull-park LRU's eviction
- * (see `cull-park.ts`). Deletes the id's base-variant cache slots and
- * advertised fingerprints; the culled-variant (`~cull`) skeleton
- * entries stay, so the visible skeleton keeps holding its space. The
- * mounted parked fiber unmounts on the next commit's template render
- * (its placeholder no longer resolves), and with no advertised fp the
- * next cull-in renders cold — the pre-parking behavior.
+ * (see `cull-park.ts`). Deletes the id's cache slots and advertised
+ * fingerprints (the skeleton isn't among them — it renders from the
+ * pair's inline element, never the cache, so it keeps holding the
+ * parton's space). The mounted parked fiber unmounts on the next
+ * commit's template render (its placeholder no longer resolves), and
+ * with no advertised fp the next cull-in renders cold — the
+ * pre-parking behavior.
  */
 export function evictCulledContent(id: string): void {
-	for (const map of [_currentPagePartials, _currentPageFingerprints]) {
-		const byMatchKey = map.get(id);
-		if (!byMatchKey) continue;
-		for (const mk of [...byMatchKey.keys()]) {
-			if (!isCulledKey(mk)) byMatchKey.delete(mk);
-		}
-		if (byMatchKey.size === 0) map.delete(id);
-	}
+	_currentPagePartials.delete(id);
+	_currentPageFingerprints.delete(id);
 }
 
 // ─── Lane commits ─────────────────────────────────────────────────
@@ -448,6 +442,31 @@ export function subscribeLaneCommits(cb: () => void): () => void {
 
 export function notifyLaneCommit(): void {
 	for (const cb of [..._laneCommitSubscribers]) cb();
+}
+
+// ─── Live catch-up anchor ─────────────────────────────────────────
+
+/**
+ * The document's registry anchor (`<!--live-anchor:{epoch,ts}-->`,
+ * parsed by `_applyFpTrailerFromDocument`'s scan): the point on the
+ * server's invalidation timeline this page's bytes represent. The
+ * heartbeat TAKES it (once) for its first `?live=1` fire — the server
+ * then skips the whole-route initial segment and opens straight into
+ * lanes for everything that bumped after the document rendered.
+ * Take-once: a reopened connection (keepalive elapsed) has consumed
+ * lanes past the anchor with no client-side timeline to re-anchor on,
+ * so it falls back to the full initial segment.
+ */
+let _liveCatchupAnchor: { epoch: string; ts: number } | null = null;
+
+export function _setLiveCatchupAnchor(anchor: { epoch: string; ts: number }): void {
+	_liveCatchupAnchor = anchor;
+}
+
+export function _takeLiveCatchupAnchor(): { epoch: string; ts: number } | null {
+	const anchor = _liveCatchupAnchor;
+	_liveCatchupAnchor = null;
+	return anchor;
 }
 
 // ─── Live connection id ───────────────────────────────────────────

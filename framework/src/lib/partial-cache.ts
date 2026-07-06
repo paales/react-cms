@@ -16,11 +16,11 @@ import {
 	type ReactNode,
 	Suspense,
 } from "react";
-import { isCulledKey } from "./cull-key.ts";
 import { contentSlotConfirmed, contentSlotStored } from "./cull-park.ts";
 import type { FpUpdatesPayload } from "./fp-trailer-marker.ts";
 import {
 	_applyFpUpdates,
+	_setLiveCatchupAnchor,
 	cacheLookup,
 	cacheStore,
 	getCurrentPagePartials,
@@ -487,14 +487,14 @@ export function cacheFromStreamingChildren(
 			if (seen) addSeen(seen, id, mk);
 			touchClientPartial(id);
 			cacheStore(cache, id, mk, node);
-			// A base-variant (content-slot) store for a parton whose
-			// mounted content has been parked since its bytes were minted
-			// is a RETURNING render — the fp moved while parked, so the
-			// parked fiber must be dropped, not reconciled into. The
-			// cull-park generation bump does that (see `cull-slot.tsx`);
-			// skeleton-variant stores and ordinary live updates are
-			// untouched.
-			if (!isCulledKey(mk)) contentSlotStored(id);
+			// A content store for a parton whose mounted content has been
+			// parked since its bytes were minted is a RETURNING render —
+			// the fp moved while parked, so the parked fiber must be
+			// dropped, not reconciled into. The cull-park generation bump
+			// does that (see `cull-pair.tsx`); ordinary live updates are
+			// untouched. (Skeletons never store — they're client-rendered
+			// from the pair, not cached wrappers.)
+			contentSlotStored(id);
 			// Populate the fingerprint map synchronously from the tree walk
 			// rather than waiting for each `<PartialErrorBoundary>` to
 			// commit on the client. The commit order is non-deterministic
@@ -536,10 +536,7 @@ export function cacheFromStreamingChildren(
 			// parked copy is provably current, so it counts as a live
 			// instance again — later stores reconcile in place instead of
 			// dropping the fiber.
-			if (
-				!isCulledKey(mk) &&
-				(node.props as Record<string, unknown>)["data-partial-confirm"] === true
-			) {
+			if ((node.props as Record<string, unknown>)["data-partial-confirm"] === true) {
 				contentSlotConfirmed(id);
 			}
 		}
@@ -642,25 +639,43 @@ export function _commitPartonLane(
  */
 function tryApplyTrailerNow(): boolean {
 	const tag = "fp-trailer:";
+	const anchorTag = "live-anchor:";
 	const candidates: Node[] = [];
 	for (const c of document.childNodes) candidates.push(c);
 	if (document.documentElement) {
 		for (const c of document.documentElement.childNodes) candidates.push(c);
 	}
+	let applied = false;
 	for (const node of candidates) {
 		if (node.nodeType !== 8 /* COMMENT_NODE */) continue;
 		const text = (node as Comment).data;
+		if (text.startsWith(anchorTag)) {
+			// The document's registry anchor — the heartbeat's first live
+			// fire presents it so the connection opens straight into lanes.
+			try {
+				const anchor = JSON.parse(text.slice(anchorTag.length)) as {
+					epoch: string;
+					ts: number;
+				};
+				if (typeof anchor.epoch === "string" && typeof anchor.ts === "number") {
+					_setLiveCatchupAnchor(anchor);
+				}
+			} catch {
+				// Malformed anchor — the live boot falls back to a full render.
+			}
+			continue;
+		}
 		if (!text.startsWith(tag)) continue;
 		try {
 			const json = text.slice(tag.length).replace(/-\\-/g, "--");
 			const updates = JSON.parse(json) as FpUpdatesPayload;
 			_applyFpUpdates(updates);
-			return true;
+			applied = true;
 		} catch {
-			return false;
+			// Malformed trailer — cold fps stay; the next render heals.
 		}
 	}
-	return false;
+	return applied;
 }
 
 export function _applyFpTrailerFromDocument(): void {

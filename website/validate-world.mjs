@@ -93,8 +93,12 @@ try {
   await cdp.send("Network.enable")
   const liveRequestIds = new Set()
   const liveChunks = []
+  const liveUrls = []
   cdp.on("Network.requestWillBeSent", (e) => {
-    if (e.request.url.includes("live=1")) liveRequestIds.add(e.requestId)
+    if (e.request.url.includes("live=1")) {
+      liveRequestIds.add(e.requestId)
+      liveUrls.push(e.request.url)
+    }
   })
   cdp.on("Network.dataReceived", (e) => {
     if (liveRequestIds.has(e.requestId)) liveChunks.push({ t: Date.now(), n: e.dataLength })
@@ -153,6 +157,16 @@ try {
   check(true, "origin content at first paint", `${bootMs}ms`)
 
   await page.waitForTimeout(4000)
+  // The live boot must be a CATCH-UP, not a route replay: the document
+  // carries a registry anchor (`<!--live-anchor:…-->`), the heartbeat's
+  // first fire presents it as `?since=`, and the server opens the
+  // connection straight into lanes. A replay here re-ships hundreds of
+  // KB the document just delivered (the 370KB-boot regression).
+  check(
+    liveUrls.length > 0 && /[?&]since=/.test(liveUrls[0]),
+    "live boot presents the document's catch-up anchor",
+    liveUrls[0]?.replace(/cached=[^&]*/, "cached=…").slice(0, 140) ?? "no live fire",
+  )
   const errCards = await page.$$eval("[data-partial-error], .partial-error", (els) => els.length).catch(() => 0)
   check(errCards === 0, "no error cards after pulse soak", `${errCards} cards`)
   const soak = await pulsesAdvance(6000)

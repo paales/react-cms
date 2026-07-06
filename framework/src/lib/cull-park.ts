@@ -204,6 +204,17 @@ export function _isParkedSince(id: string): boolean {
 
 const _observerCount = new Map<string, number>()
 
+/** Whether ANY cullable parton currently mounts a viewport observer.
+ *  The heartbeat's live-fire gate: a page with observers will produce
+ *  a first measurement (IntersectionObserver always fires an initial
+ *  callback per observed target), so the live connection waits for it
+ *  and opens with a measured `?visible=` seed; a page without
+ *  observers has nothing to measure and fires immediately. */
+export function _anyCullObservers(): boolean {
+	for (const n of _observerCount.values()) if (n > 0) return true
+	return false
+}
+
 export function registerCullObserver(id: string, onGone: (id: string) => void): () => void {
 	_observerCount.set(id, (_observerCount.get(id) ?? 0) + 1)
 	let released = false
