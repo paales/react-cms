@@ -56,7 +56,7 @@ any selector-routing logic that could replace it.
    §Visibility rides the connection).
 3. **Server-side segment driver runs.** For each rendered segment,
    it races the wake arms:
-   - `_waitForNextBump` — a `refreshSelector` lands (CRUD writes,
+   - `_onNextBump` — a `refreshSelector` lands (CRUD writes,
      `cell.set`, server-action invalidations) **that is relevant to
      this route**: it matches a rendered partial's labels +
      constraint args (match params ∪ bound cell args)
@@ -64,8 +64,19 @@ any selector-routing logic that could replace it.
      a different partition (another viewer's `cartId`, another
      session's cell) re-arms the wait WITHOUT re-rendering — so one
      viewer's write doesn't wake every open stream into a fp-skip
-     pass. The wake itself is global (`_waitForNextBump` resolves on
-     any bump); the relevance check is what gates the re-render.
+     pass. The wake itself is global (`_onNextBump` fires on any
+     bump); the relevance check is what gates the re-render.
+
+     Every park's arms observe per-park state and release on wake —
+     the **wake-arm release invariant**: a promise reaction only
+     frees when its promise settles, so arming a park on long-lived
+     shared state (the registry's waiter set, the session's
+     `flipWakes`, a connection-lifetime promise) without releasing
+     the losers grows the heap by one full wake race per idle wake
+     for as long as the connection holds. `waitForSegmentWake` builds
+     one deferred per park and disposes every registration when it
+     settles; the lane driver's drain signal and the session's flip
+     signal are latch + per-park registrations for the same reason.
    - Expiry arm — the earliest `expires()` boundary among the
      route's snapshots (read through `effectiveExpiresAt`) elapses.
    - Visibility arm (lane driver only) — a visibility report lands on

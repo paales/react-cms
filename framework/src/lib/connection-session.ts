@@ -54,10 +54,14 @@ export interface ConnectionSession {
 	 *  flip; a flip that defers past its report drops its tokens (they
 	 *  would be stale by the time the deferred lane runs). */
 	readonly reportedCached: Map<string, string[]>;
-	/** Resolves when a report lands — the segment driver's visibility
-	 *  wake arm. Re-armed by `takeConnectionFlips`. */
-	flipped: Promise<void>;
-	_signalFlip: () => void;
+	/** The segment driver's visibility wake arm: a report notifies every
+	 *  registered listener. The driver registers one per park and
+	 *  removes it when the park ends (the wake-arm release invariant —
+	 *  a long-idle connection holds at most one entry here). A report
+	 *  landing while the driver is busy has no listener to fire; its
+	 *  ids sit in `pendingFlips`, which the driver's wait-entry check
+	 *  consumes before the next park — no report vanishes. */
+	readonly flipWakes: Set<() => void>;
 }
 
 // Survives dev-server module re-evaluation: a held live connection's
@@ -69,12 +73,6 @@ export interface ConnectionSession {
 // keying is inert in production: one evaluation per process.
 const sessions = ((globalThis as Record<string, unknown>).__partonConnectionSessions ??=
 	new Map<string, ConnectionSession>()) as Map<string, ConnectionSession>;
-
-function armFlipWake(session: ConnectionSession): void {
-	session.flipped = new Promise<void>((resolve) => {
-		session._signalFlip = resolve;
-	});
-}
 
 /** Open (register) a session for a live connection. Called by the
  *  segment driver before its first segment renders, so a report can
@@ -89,10 +87,8 @@ export function _openConnectionSession(
 		lastSeq: 0,
 		pendingFlips: new Set(),
 		reportedCached: new Map(),
-		flipped: Promise.resolve(),
-		_signalFlip: () => {},
+		flipWakes: new Set(),
 	};
-	armFlipWake(session);
 	sessions.set(id, session);
 	return session;
 }
@@ -112,7 +108,7 @@ export function _closeConnectionSession(id: string): void {
  * the last applied one (`seq` gate); `changed` ids merge into
  * `pendingFlips` unconditionally — a superseded report's flips still
  * need their lane render, and the render reads the CURRENT set either
- * way. Always signals the flip wake so the parked driver re-evaluates.
+ * way. Always notifies the flip wakes so a parked driver re-evaluates.
  */
 export function reportConnectionVisibility(
 	id: string,
@@ -140,17 +136,17 @@ export function reportConnectionVisibility(
 		session.lastSeq = seq;
 		session.visible = new Set(visible);
 	}
-	session._signalFlip();
+	for (const wake of [...session.flipWakes]) wake();
 	return true;
 }
 
-/** Drain the session's pending flips and re-arm the flip wake. The
- *  drain and re-arm are one step so a report landing right after the
- *  drain arms a fresh wake instead of vanishing into a consumed one. */
+/** Drain the session's pending flips. A report landing right after
+ *  the drain re-queues into `pendingFlips`, which the driver's
+ *  wait-entry check consumes before its next park — no report
+ *  vanishes into a consumed wake. */
 export function takeConnectionFlips(session: ConnectionSession): string[] {
 	const flips = [...session.pendingFlips];
 	session.pendingFlips.clear();
-	armFlipWake(session);
 	return flips;
 }
 

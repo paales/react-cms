@@ -247,6 +247,15 @@ function notifyWaiters(): void {
 }
 
 /**
+ * Registered bump waiters. The wake-arm release invariant's probe: a
+ * parked connection holds at most one registration here; a wait that
+ * exited through another arm must have released its own.
+ */
+export function _bumpWaiterCount(): number {
+  return waiters.size
+}
+
+/**
  * Returns the current registry timestamp. Pair with `_waitForNextBump`
  * to wait for any future `refreshSelector` activity past this point.
  */
@@ -255,22 +264,32 @@ export function _currentTs(): number {
 }
 
 /**
- * Resolve when the next `refreshSelector` lands (any name, any
+ * Register `cb` for the next `refreshSelector` landing (any name, any
  * constraints) with a `ts > sinceTs`. If a newer bump has already
- * happened at call time, resolves on the next microtask.
+ * happened at call time, `cb` fires on the next microtask.
  *
- * One-shot. Each call adds a fresh waiter; once notified, the waiter
- * is removed. The segment driver re-arms by calling again with the
- * latest seen `ts` after each segment.
+ * One-shot, and DISPOSABLE: the returned function removes the waiter.
+ * The segment driver's wake race arms several signals per park and
+ * releases the losers when one fires — an undisposed waiter would sit
+ * in this process-wide set until the next bump anywhere, accumulating
+ * one closure (retaining its whole wake race) per idle wake on every
+ * parked connection.
  */
-export function _waitForNextBump(sinceTs: number): Promise<number> {
+export function _onNextBump(sinceTs: number, cb: (ts: number) => void): () => void {
   if (nextTs - 1 > sinceTs) {
-    // Already past — return immediately on next microtask.
-    return Promise.resolve(nextTs - 1)
+    // Already past — fire on the next microtask unless disposed first.
+    let disposed = false
+    queueMicrotask(() => {
+      if (!disposed) cb(nextTs - 1)
+    })
+    return () => {
+      disposed = true
+    }
   }
-  return new Promise<number>((resolve) => {
-    waiters.add(resolve)
-  })
+  waiters.add(cb)
+  return () => {
+    waiters.delete(cb)
+  }
 }
 
 // ─── Transactions ─────────────────────────────────────────────────────
