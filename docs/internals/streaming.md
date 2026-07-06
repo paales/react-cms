@@ -123,6 +123,23 @@ any selector-routing logic that could replace it.
    — it can only miss, never false-match. Visibility flips bypass
    the skip: they ARE the state transition. An unmeasured session
    (`visible: null`) parks nothing.
+
+   **Output is pull-gated.** `createSegmentedResponse` (the entry's
+   wrapper around `driveSegmentedResponse`) wires the response
+   stream's own `pull` / `cancel` callbacks as the driver's demand
+   signal (`SegmentedResponseDemand`): while the consumer's queue is
+   full (`desiredSize <= 0`) every renderer-output enqueue — segment
+   bytes and lane frames alike — parks until the next pull, and not
+   reading the next chunk propagates the wait into the Flight
+   stream itself, so a stalled reader holds at most one frame per
+   open lane server-side instead of every wake's payload for the
+   connection's lifetime. Wakes still fire while gated; they
+   coalesce on the open lane's dirty flag. A cancel (the consumer
+   tearing the stream — the explicit no-pull-is-coming signal)
+   releases parked pumps and marks the connection closed; the wake
+   loop's exit likewise releases them, tearing only lanes whose
+   consumer stopped pulling (client-safe: a torn lane rejects only
+   its own un-committed decode).
 5. **The client demuxes and commits per lane.** The splitter
    (`splitSegments`) classifies the region off the server's `lanes`
    marker and yields each lane's body — itself shaped like a

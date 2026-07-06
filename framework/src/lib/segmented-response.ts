@@ -83,6 +83,76 @@ import {
 const KEEPALIVE_MS = 20_000;
 
 /**
+ * The response stream's demand signal — the real backpressure wake.
+ * The driver stops pumping renderer output while the controller's
+ * `desiredSize` sits at or below zero (the queue is at its high-water
+ * mark: bytes enqueued now buffer server-side for as long as the
+ * reader stalls) and resumes on the consumer's next `pull`. `cancel`
+ * flips `cancelled`, releasing parked pumps — a torn consumer is the
+ * explicit signal that no pull is ever coming.
+ */
+export interface SegmentedResponseDemand {
+	cancelled: boolean;
+	/** Resolves on the response stream's next `pull` or on cancel. */
+	pulled: () => Promise<void>;
+}
+
+/**
+ * Build the segmented response stream around the drive loop, wiring
+ * the stream's own `pull` / `cancel` callbacks as the driver's demand
+ * signal. The drive starts synchronously (inside the caller's request
+ * ALS scope) but is not awaited from `start` — the streams machinery
+ * only fires `pull` once `start` settles, and the pull callback IS
+ * the demand wake.
+ */
+export function createSegmentedResponse(
+	renderSegment: () => ReadableStream<Uint8Array>,
+	onSegmentEnd?: () => void,
+): ReadableStream<Uint8Array> {
+	let pullWaiters: Array<() => void> = [];
+	const releasePulls = (): void => {
+		const waiters = pullWaiters;
+		pullWaiters = [];
+		for (const resolve of waiters) resolve();
+	};
+	const demand: SegmentedResponseDemand = {
+		cancelled: false,
+		pulled: () =>
+			new Promise<void>((resolve) => {
+				pullWaiters.push(resolve);
+			}),
+	};
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			void driveSegmentedResponse(
+				controller,
+				renderSegment,
+				onSegmentEnd,
+				demand,
+			).then(
+				() => {
+					try {
+						controller.close();
+					} catch {}
+				},
+				(err) => {
+					try {
+						controller.error(err);
+					} catch {}
+				},
+			);
+		},
+		pull() {
+			releasePulls();
+		},
+		cancel() {
+			demand.cancelled = true;
+			releasePulls();
+		},
+	});
+}
+
+/**
  * Run a render-emit loop on the provided response controller. Calls
  * `renderSegment()` once, pipes its bytes through to the controller,
  * checks `connectionLive`, and either closes or waits for the next
@@ -97,11 +167,17 @@ const KEEPALIVE_MS = 20_000;
  * The driver always emits at least one segment. Subsequent segments
  * are gated on `markConnectionLive` having been called during the
  * just-rendered segment.
+ *
+ * `demand` (when provided — `createSegmentedResponse` always does)
+ * pull-gates every renderer-output enqueue; without it the driver
+ * pumps at render pace, which is only safe for an in-process consumer
+ * that reads as fast as the driver writes.
  */
 export async function driveSegmentedResponse(
 	controller: ReadableStreamDefaultController<Uint8Array>,
 	renderSegment: () => ReadableStream<Uint8Array>,
 	onSegmentEnd?: () => void,
+	demand?: SegmentedResponseDemand,
 ): Promise<void> {
 	// Pre-encode the `next` delimiter and the `settled` milestone — same
 	// bytes every time, so build each once.
@@ -145,7 +221,7 @@ export async function driveSegmentedResponse(
 		if (catchUpTs !== null && session !== null) {
 			installCatchupCachedOverride();
 			controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
-			await driveLaneStream(controller, catchUpTs, settledMarker, session);
+			await driveLaneStream(controller, catchUpTs, settledMarker, session, demand);
 			return;
 		}
 
@@ -162,7 +238,14 @@ export async function driveSegmentedResponse(
 				while (true) {
 					const { done, value } = await reader.read();
 					if (done) break;
-					if (value) controller.enqueue(value);
+					if (value) {
+						// Pull-gated: a chunk is only enqueued once the consumer
+						// has room for it. Not reading the NEXT chunk until then
+						// propagates the wait into the Flight stream itself
+						// (whose renderer paces on its own desiredSize).
+						await waitForDemand(controller, demand);
+						controller.enqueue(value);
+					}
 				}
 			} finally {
 				reader.releaseLock();
@@ -195,7 +278,7 @@ export async function driveSegmentedResponse(
 				promoteSnapshotsToCachedOverride();
 				controller.enqueue(nextMarker);
 				controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
-				await driveLaneStream(controller, lastTs, settledMarker, session);
+				await driveLaneStream(controller, lastTs, settledMarker, session, demand);
 				return;
 			}
 
@@ -232,6 +315,28 @@ export async function driveSegmentedResponse(
 			lastTs = _currentTs();
 			segmentIndex++;
 		}
+	}
+}
+
+/**
+ * Park until the consumer can take another chunk. `desiredSize <= 0`
+ * means the stream's queue is at or past its high-water mark; the
+ * stream's `pull` callback resolves the wait — the real demand
+ * signal, no timers. A cancelled demand or an errored stream
+ * (`desiredSize === null`) falls through so the caller's enqueue
+ * surfaces the teardown.
+ */
+async function waitForDemand(
+	controller: ReadableStreamDefaultController<Uint8Array>,
+	demand: SegmentedResponseDemand | undefined,
+): Promise<void> {
+	if (!demand) return;
+	while (
+		!demand.cancelled &&
+		controller.desiredSize !== null &&
+		controller.desiredSize <= 0
+	) {
+		await demand.pulled();
 	}
 }
 
@@ -384,6 +489,7 @@ async function driveLaneStream(
 	sinceTs: number,
 	settledMarker: Uint8Array,
 	session: ConnectionSession | null,
+	demand: SegmentedResponseDemand | undefined,
 ): Promise<void> {
 	let request: Request;
 	let scope: string;
@@ -397,6 +503,47 @@ async function driveLaneStream(
 	const lanes = new Map<string, LaneRuntime>();
 	const openLaneIds = new Set<string>();
 	let closed = false;
+
+	// Stop release for pumps parked at the demand gate when the wake
+	// loop exits: resolving lets each parked pump re-check `stopping`
+	// and wind down instead of holding the drive open for a pull that
+	// may never come. Mid-lane winding down is client-safe — a torn
+	// lane rejects only its own un-committed decode.
+	let stopping = false;
+	let signalStop: () => void = () => {};
+	const stopped = new Promise<void>((resolve) => {
+		signalStop = resolve;
+	});
+
+	// Lane-output demand gate. Parks while the consumer's queue is
+	// full; the stream's pull releases it. Returns false when the lane
+	// must wind down instead of enqueue: the consumer cancelled (the
+	// explicit no-pull-is-coming signal — also marks the connection
+	// closed so the wake loop exits at its next wake), or the wake
+	// loop exited while this pump was parked with the queue still
+	// full. A pump caught by `stopping` with room in the queue still
+	// delivers — only a consumer that stopped pulling gets its lane
+	// tail torn.
+	const awaitDemand = async (): Promise<boolean> => {
+		if (!demand) return true;
+		while (
+			!stopping &&
+			!demand.cancelled &&
+			controller.desiredSize !== null &&
+			controller.desiredSize <= 0
+		) {
+			await Promise.race([demand.pulled(), stopped]);
+		}
+		if (demand.cancelled) {
+			closed = true;
+			return false;
+		}
+		return !(
+			stopping &&
+			controller.desiredSize !== null &&
+			controller.desiredSize <= 0
+		);
+	};
 
 	// Lane-drained wake arm. A drained lane's fresh snapshot carries its
 	// next `expiresAt`; resolving this re-arms the wait so the deadline
@@ -494,18 +641,26 @@ async function driveLaneStream(
 					while (true) {
 						const { done, value } = await reader.read();
 						if (done) break;
-						if (
-							value &&
-							value.byteLength > 0 &&
-							!enqueue(muxFrame(id, value))
-						) {
-							await reader.cancel().catch(() => {});
-							return;
+						if (value && value.byteLength > 0) {
+							// Pull-gated: park before the enqueue while the consumer's
+							// queue is full. Not reading the NEXT chunk until then
+							// propagates the wait into the lane's Flight stream, so a
+							// stalled reader holds at most one frame per lane
+							// server-side instead of every wake's full payload.
+							if (!(await awaitDemand())) {
+								await reader.cancel().catch(() => {});
+								return;
+							}
+							if (!enqueue(muxFrame(id, value))) {
+								await reader.cancel().catch(() => {});
+								return;
+							}
 						}
 					}
 				} finally {
 					reader.releaseLock();
 				}
+				if (!(await awaitDemand())) return;
 				if (!enqueue(muxEndFrame(id))) return;
 				// The lane's snapshots just committed (the per-lane fp-trailer
 				// wrap commits at flush). Promote the fresh emittedFps into the
@@ -649,6 +804,11 @@ async function driveLaneStream(
 		enterRequestRegistry(routeKey, "cache");
 		for (const id of touched) startLane(id);
 	}
+	// Release demand-parked pumps before waiting the lanes out — the
+	// loop's exit is the signal that no further demand is worth
+	// waiting for.
+	stopping = true;
+	signalStop();
 	await Promise.allSettled([...lanes.values()].map((l) => l.done));
 }
 
