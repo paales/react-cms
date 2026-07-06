@@ -76,14 +76,14 @@ body {
   pointer-events: none;
 }
 
-/* ── BigChunk section — a fixed cell; content comes and goes ── */
+/* ── Quad tile — a fixed cell; content comes and goes ── */
 
-.big {
+.quad {
   position: absolute;
   contain: strict;
 }
 
-.big__placeholder {
+.quad__placeholder {
   width: 100%;
   height: 100%;
 }

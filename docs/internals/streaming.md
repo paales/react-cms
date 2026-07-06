@@ -391,7 +391,7 @@ the set in sync across the connection's lifecycle:
     hydration ADOPTIONS — without the sweep, such a parton never
     reports, the session's set never contains it, and everything the
     server parks behind it stays parked (the world's
-    frozen-after-refresh bug: the seed bigChunks hydrate exactly
+    frozen-after-refresh bug: the seed quad tiles hydrate exactly
     like this). Covered by
     `visibility-late-content.browser.test.tsx` (real Chromium,
     red without the sweep).

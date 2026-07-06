@@ -1,32 +1,38 @@
 import { parton, type RenderArgs } from "@parton/framework"
-import { BigChunk } from "./big-chunk.tsx"
+import { QUAD_ROOT_PX } from "./constants.ts"
+import { QuadTile } from "./quad.tsx"
 import { WorldScroller } from "./scroller.tsx"
-import { BIG_MIN, WORLD_BIGS, bigLeft, BIG_PX } from "./constants.ts"
 
 /**
- * The world page — a real scroller over 8×8 bigChunk sections. Every
- * section is a fixed-size cell (the plane never shifts); each hosts a
- * cullable BigChunk parton that fills with its 64 chunks only near
- * the viewport.
+ * The world page — a real scroller over a quadtree of quad tiles.
+ * Four 16384px roots quarter the plane (the scroller starts at their
+ * meeting point, chunk 0,0's corner); each root is a cullable
+ * `QuadTile` that subdivides toward the viewport, so the document
+ * carries the root-to-viewport spine and nothing else.
  */
 export const WorldPage = parton(
   function WorldPageRender(_: RenderArgs) {
-    const bigs: React.ReactNode[] = []
-    for (let by = BIG_MIN; by < BIG_MIN + WORLD_BIGS; by++) {
-      for (let bx = BIG_MIN; bx < BIG_MIN + WORLD_BIGS; bx++) {
-        bigs.push(
-          <section
-            key={`${bx},${by}`}
-            className="big"
-            data-testid={`big-${bx},${by}`}
-            style={{ left: bigLeft(bx), top: bigLeft(by), width: BIG_PX, height: BIG_PX }}
+    const roots: React.ReactNode[] = []
+    for (let qy = 0; qy < 2; qy++) {
+      for (let qx = 0; qx < 2; qx++) {
+        roots.push(
+          <div
+            key={`${qx},${qy}`}
+            className="quad"
+            data-testid={`quad-root-${qx},${qy}`}
+            style={{
+              left: qx * QUAD_ROOT_PX,
+              top: qy * QUAD_ROOT_PX,
+              width: QUAD_ROOT_PX,
+              height: QUAD_ROOT_PX,
+            }}
           >
-            <BigChunk bx={bx} by={by} />
-          </section>,
+            <QuadTile x={qx * QUAD_ROOT_PX} y={qy * QUAD_ROOT_PX} size={QUAD_ROOT_PX} />
+          </div>,
         )
       }
     }
-    return <WorldScroller>{bigs}</WorldScroller>
+    return <WorldScroller>{roots}</WorldScroller>
   },
   { match: "{/*}?", selector: "#world" },
 )
