@@ -25,30 +25,32 @@
  * the swap. Because the skeleton ships inline with every pair, a
  * cull-OUT is complete after the local swap — the server only needs to
  * know about it to keep the connection session's lane parking honest.
- * The controller coalesces a frame's worth of deltas and delivers them
- * over one of two transports:
+ * The controller is the channel's first PRODUCER ([[channel-client]]):
+ * each delta schedules a transport flush (rAF-coalesced, one envelope
+ * in flight), and at flush time the controller contributes its
+ * statement over one of two paths:
  *
- *   - **Live connection open** (`_getLiveConnectionId()` non-null): a
- *     fire-and-forget channel envelope carrying a `visible` frame
- *     ([[channel-protocol]]), addressed to the connection by its
- *     explicit id. No response body — the server updates the connection
- *     session's visible set and renders the flipped-IN partons as lane
- *     segments on the EXISTING stream, so flips never race the
- *     connection's own renders. A non-`204` answer (connection gone)
- *     falls the batch back to the reload path.
- *   - **No live connection**: SELF-REFETCH the flipped-IN partons by
- *     id, carrying the full visible set as `?visible=` so each
- *     re-rendered parton reads its own bit, stamped `?__cullFlip=1` so
- *     the explicit targets may fp-skip (the culling revalidation).
- *     Cull-OUTs are dropped here — they have no server-relevant effect
- *     without a session, and the next live fire's `?visible=` seed
- *     carries the full truth.
+ *   - **Live connection open** (`collect` receives the id): a
+ *     `visible` frame ([[channel-protocol]]) on the envelope,
+ *     addressed to the connection. No response body — the server
+ *     updates the connection session's visible set and renders the
+ *     flipped-IN partons as lane segments on the EXISTING stream, so
+ *     flips never race the connection's own renders. A failed
+ *     delivery (connection gone) hands the frame back
+ *     (`deliveryFailed`) and the batch falls back to the reload path.
+ *   - **No live connection** (`collect` receives `null`): SELF-REFETCH
+ *     the flipped-IN partons by id, carrying the full visible set as
+ *     `?visible=` so each re-rendered parton reads its own bit,
+ *     stamped `?__cullFlip=1` so the explicit targets may fp-skip (the
+ *     culling revalidation). Cull-OUTs are dropped here — they have no
+ *     server-relevant effect without a session, and the next live
+ *     fire's `?visible=` seed carries the full truth.
  *
  * Either way a flipped-in parton's bytes settle its parked state
  * through the commit walk: fresh bytes drop the parked fiber, a
  * confirmation placeholder re-arms it as a live instance (see
- * `cull-park.ts`). fp-skip prunes the rest. Both transports serialize:
- * one dispatch in flight, re-firing with the latest set when it
+ * `cull-park.ts`). fp-skip prunes the rest. Dispatch serializes across
+ * both paths: one in flight, re-firing with the latest set when it
  * changes.
  *
  * A cullable parton's observer lives in whichever of its two slots is
@@ -59,14 +61,16 @@
  */
 
 import React, { useEffect, useRef } from "react"
-import { registerCullObserver, reportCullState, reportedVisibility } from "./cull-park.ts"
 import {
-	_getLiveConnectionId,
-	_setLiveConnectionId,
-	cachedTokensFor,
-} from "./partial-client-state.ts"
+	type ChannelProducer,
+	onChannelEstablished,
+	registerChannelProducer,
+	scheduleChannelFlush,
+} from "./channel-client.ts"
+import type { ChannelFrame, VisibleFrame } from "./channel-protocol.ts"
+import { registerCullObserver, reportCullState, reportedVisibility } from "./cull-park.ts"
+import { _getLiveConnectionId, cachedTokensFor } from "./partial-client-state.ts"
 import { enqueueRefetch } from "./refetch.ts"
-import { CHANNEL_ENDPOINT, type ChannelEnvelope } from "./channel-protocol.ts"
 
 /** How far beyond the viewport a parton counts as "in view" — the runway,
  *  so a parton fills before it's literally on screen. Expressed as an
@@ -123,12 +127,19 @@ let measured = false
  *  gate — see `_onFirstMeasurement`). */
 let measurementWaiters: (() => void)[] = []
 
-/** Monotonic report sequence — the server applies a report's `visible`
- *  set only when newer than the last applied one, so two in-flight
- *  POSTs can't commit an older set over a newer one. */
-let reportSeq = 0
-let rafScheduled = false
-let inFlight = false
+/** A full-set sync is due on the next flush (`changed` may be empty —
+ *  nothing to lane-render, just state sync). Armed at each
+ *  connection's first measurement (see the establishment listener
+ *  below): flips that fired between the connection's `?visible=` seed
+ *  and its establishment rode the reload fallback, so the session's
+ *  set may lag the client's — the sync closes that gap. */
+let fullSyncPending = false
+/** A reload-fallback dispatch is in flight. Serializes the fallback
+ *  path AND blocks the frame path while it runs — one dispatch in
+ *  flight across both, same as the transport's own envelope
+ *  serialization; newer flips accumulate in `changed` and re-fire
+ *  when it lands. */
+let fallbackInFlight = false
 
 /**
  * Prime an id's viewport state from its DISPLAY state (`CullPair`'s
@@ -210,18 +221,22 @@ export function _visibleSetParam(): string | undefined {
 	return [...inView].join(",")
 }
 
-/** Push the full current visible set to a just-established live
- *  connection (`changed` empty — nothing to lane-render, just state
- *  sync). The heartbeat calls this when it publishes the connection id:
- *  flips that fired between the connection's `?visible=` seed and the
- *  id's publication rode the reload fallback, so the session's set may
- *  lag the client's — this closes that gap. Failure needs no handling:
- *  a failed sync means the connection is gone, which the heartbeat's
- *  own settle path already handles by clearing the id. */
-export function _syncConnectionVisibility(connection: string): void {
-	if (!measured) return
-	void postVisibilityReport(connection, [])
-}
+// Arm the full-set sync per established connection, at the first
+// measurement — whichever side of the establishment it lands on (a
+// catch-up boot can establish the connection while hydration is still
+// adopting the observers' subtrees). Without the deferred arm, a
+// connection established pre-measurement never learns the set:
+// agreements with the primed display state aren't flips, so no
+// statement would ever carry it. Failure needs no handling: a failed
+// sync means the connection is gone, and the transport already fell
+// back.
+onChannelEstablished((connection) => {
+	_onFirstMeasurement(() => {
+		if (_getLiveConnectionId() !== connection) return
+		fullSyncPending = true
+		schedule()
+	})
+})
 
 /** Every observer of a cullable parton released past a commit flush.
  *  Drop it from the live set so the visible set doesn't carry a stale
@@ -244,30 +259,38 @@ function reportGone(id: string): void {
 }
 
 function schedule(): void {
-	if (rafScheduled || typeof requestAnimationFrame === "undefined") return
-	rafScheduled = true
-	requestAnimationFrame(() => {
-		rafScheduled = false
-		void flush()
-	})
+	scheduleChannelFlush()
 }
 
-async function flush(): Promise<void> {
-	// Serialize: one dispatch in flight. Newer flips accumulate in `changed`
-	// and fire when it lands (the `finally` re-checks).
-	if (inFlight || (changed.size === 0 && !newlyMeasured)) return
-
-	// Live connection open: deliver the flips as a fire-and-forget report
-	// POST. The response carries no body — the flipped partons' bytes come
-	// down the live stream as lane segments. No navigation-transition
-	// deferral here: a report commits nothing client-side, so it cannot
-	// supersede or tear a mid-flight route swap the way a reload can.
-	const connection = _getLiveConnectionId()
-	if (connection !== null) {
+/**
+ * The controller as a channel producer. `collect` runs at the
+ * transport's flush: with a connection open it consumes the pending
+ * deltas into ONE `visible` frame; with none it delivers via the
+ * reload fallback below and contributes nothing. `deliveryFailed`
+ * re-owns a frame's flips when its envelope didn't land — the
+ * transport has already cleared the published id, so the re-queued
+ * batch (and everything after it, until the heartbeat re-establishes)
+ * rides the reload fallback.
+ */
+const visibilityProducer: ChannelProducer = {
+	collect(connection: string | null): VisibleFrame | null {
+		// One dispatch in flight across both paths: while a fallback
+		// reload runs, the frame path waits too — its completion
+		// re-schedules, and the flips ride whichever path is current then.
+		if (fallbackInFlight) return null
+		if (connection === null) {
+			void flushFallback()
+			return null
+		}
+		if (changed.size === 0 && !newlyMeasured && !fullSyncPending) return null
+		// A statement commits nothing client-side, so it cannot supersede
+		// or tear a mid-flight route swap the way a reload can — no
+		// navigation-transition deferral on this path.
 		newlyMeasured = false
+		fullSyncPending = false
 		// Viewport first — the same rule as the reload path below: flips the
 		// user can SEE outrank stale cull-outs, both across batches (the cap
-		// slices in-view flips first) and within one report (the server
+		// slices in-view flips first) and within one frame (the server
 		// starts lanes in `changed` order, so in-view renders lead).
 		const all = [...changed]
 		const inViewFlips = all.filter((id) => inView.has(id))
@@ -275,32 +298,36 @@ async function flush(): Promise<void> {
 		const ordered = [...inViewFlips, ...outFlips]
 		const targets = ordered.slice(0, POST_FLUSH_BATCH)
 		changed = new Set(ordered.slice(POST_FLUSH_BATCH))
-		inFlight = true
-		try {
-			const delivered = await postVisibilityReport(connection, targets)
-			if (!delivered) {
-				// The server's explicit "connection not open" signal (or the
-				// POST never reached it). Clear the published id so the batch —
-				// and everything after it, until the heartbeat re-establishes —
-				// rides the render-reload fallback.
-				if (_getLiveConnectionId() === connection) _setLiveConnectionId(null)
-				for (const id of targets) changed.add(id)
-			}
-		} finally {
-			inFlight = false
-			if (changed.size > 0) schedule()
+		if (changed.size > 0) schedule()
+		return {
+			kind: "visible",
+			changed: targets,
+			visible: [...inView],
+			// The client's actual holdings for the flipped ids — what the
+			// server may confirm with a placeholder instead of re-rendering.
+			cached: cachedTokensFor(targets),
 		}
-		return
-	}
+	},
+	deliveryFailed(frame: ChannelFrame): void {
+		if (frame.kind !== "visible") return
+		for (const id of frame.changed) changed.add(id)
+		schedule()
+	},
+}
+registerChannelProducer(visibilityProducer)
 
-	// Reload fallback (no live connection): culling is a POST-SETTLE
-	// operation. A refetch fired while a page navigation is still
-	// committing supersedes it and tears the route swap — the old route
-	// stays visible and the new one never lands (the IO fires as the new
-	// route's cold partons mount, i.e. mid-navigation). Defer until the
-	// in-flight navigation finishes, then re-flush. `navigation.transition`
-	// is the real signal (non-null only while a navigation is committing),
-	// so this doesn't guess.
+/**
+ * Reload fallback (no live connection): culling is a POST-SETTLE
+ * operation. A refetch fired while a page navigation is still
+ * committing supersedes it and tears the route swap — the old route
+ * stays visible and the new one never lands (the IO fires as the new
+ * route's cold partons mount, i.e. mid-navigation). Defer until the
+ * in-flight navigation finishes, then re-flush. `navigation.transition`
+ * is the real signal (non-null only while a navigation is committing),
+ * so this doesn't guess.
+ */
+async function flushFallback(): Promise<void> {
+	if (fallbackInFlight || (changed.size === 0 && !newlyMeasured)) return
 	const transition = (
 		window as unknown as { navigation?: { transition?: { finished: Promise<unknown> } | null } }
 	).navigation?.transition
@@ -319,7 +346,7 @@ async function flush(): Promise<void> {
 	const targets = inViewFlips.slice(0, FLUSH_BATCH)
 	changed = new Set(inViewFlips.slice(FLUSH_BATCH))
 	if (targets.length === 0) return
-	inFlight = true
+	fallbackInFlight = true
 	try {
 		await enqueueRefetch({
 			labels: targets,
@@ -332,44 +359,8 @@ async function flush(): Promise<void> {
 		// AbortError on supersede / NavigationError on a racing nav — both
 		// benign here; the next flush re-fires with the current set.
 	} finally {
-		inFlight = false
+		fallbackInFlight = false
 		if (changed.size > 0) schedule()
-	}
-}
-
-/** POST one visibility statement to the channel endpoint as an
- *  envelope carrying a single `visible` frame. `true` iff the server
- *  applied it (`204`); `false` on any other answer or a network
- *  failure — the caller's fall-back-to-reload signal. */
-async function postVisibilityReport(
-	connection: string,
-	changedIds: string[],
-): Promise<boolean> {
-	const envelope: ChannelEnvelope = {
-		connection,
-		seq: ++reportSeq,
-		frames: [
-			{
-				kind: "visible",
-				changed: changedIds,
-				visible: [...inView],
-				// The client's actual holdings for the flipped ids — what the
-				// server may confirm with a placeholder instead of re-rendering.
-				cached: cachedTokensFor(changedIds),
-			},
-		],
-	}
-	try {
-		const res = await fetch(CHANNEL_ENDPOINT, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify(envelope),
-			// Fire-and-forget: let an in-flight envelope survive a page unload.
-			keepalive: true,
-		})
-		return res.status === 204
-	} catch {
-		return false
 	}
 }
 
