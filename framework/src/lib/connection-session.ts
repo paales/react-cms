@@ -60,7 +60,15 @@ export interface ConnectionSession {
 	_signalFlip: () => void;
 }
 
-const sessions = new Map<string, ConnectionSession>();
+// Survives dev-server module re-evaluation: a held live connection's
+// driver keeps the store instance it opened its session in, while the
+// visibility beacon endpoint resolves this module fresh per edit —
+// both must address the SAME map, or every report answers `404`
+// (forcing the reload fallback) until the heartbeat's next reopen and
+// the driver's sessions leak in the abandoned instance. globalThis
+// keying is inert in production: one evaluation per process.
+const sessions = ((globalThis as Record<string, unknown>).__partonConnectionSessions ??=
+	new Map<string, ConnectionSession>()) as Map<string, ConnectionSession>;
 
 function armFlipWake(session: ConnectionSession): void {
 	session.flipped = new Promise<void>((resolve) => {

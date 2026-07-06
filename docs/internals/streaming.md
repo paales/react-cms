@@ -263,7 +263,11 @@ The pieces:
   holds the connection's current **visible set**, seeded from the
   request's `?visible=` param (`null` when absent — the
   pre-measurement state) and stamped onto the request ALS store for
-  the connection's lifetime.
+  the connection's lifetime. The store is `globalThis`-backed so it
+  survives dev-server module re-evaluation: the held driver keeps the
+  store it opened its session in while the beacon endpoint resolves
+  the module fresh per edit — both must address the same map, or
+  every report 404s until the heartbeat's next reopen.
 - **The report POST** (`lib/visibility-protocol.ts`,
   `POST /__parton/visible`, handled by `createRscHandler` before app
   routing). The client's visibility controller sends flips as a
