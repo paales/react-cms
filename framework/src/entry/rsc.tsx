@@ -37,7 +37,7 @@ import {
 	wrapStreamWithCommitOnly,
 	wrapStreamWithFpTrailer,
 } from "../lib/fp-trailer.ts";
-import { driveSegmentedResponse } from "../lib/segmented-response.ts";
+import { createSegmentedResponse } from "../lib/segmented-response.ts";
 import { VISIBILITY_ENDPOINT } from "../lib/visibility-protocol.ts";
 import { warmCmsCache } from "../runtime/cms-runtime.ts";
 import {
@@ -279,17 +279,11 @@ export function createRscHandler(config: RscHandlerConfig): {
 				});
 			}
 			return new Response(
-				new ReadableStream<Uint8Array>({
-					async start(controller) {
-						try {
-							await driveSegmentedResponse(controller, renderOnce);
-						} catch (err) {
-							controller.error(err);
-							return;
-						}
-						controller.close();
-					},
-				}),
+				// The response stream's pull is the driver's demand signal:
+				// lane output parks while the consumer's queue is full, so a
+				// slow reader on a held connection never buffers unboundedly
+				// server-side.
+				createSegmentedResponse(renderOnce),
 				{
 					status: actionStatus,
 					headers: {

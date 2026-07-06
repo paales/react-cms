@@ -56,7 +56,7 @@ any selector-routing logic that could replace it.
    §Visibility rides the connection).
 3. **Server-side segment driver runs.** For each rendered segment,
    it races the wake arms:
-   - `_waitForNextBump` — a `refreshSelector` lands (CRUD writes,
+   - `_onNextBump` — a `refreshSelector` lands (CRUD writes,
      `cell.set`, server-action invalidations) **that is relevant to
      this route**: it matches a rendered partial's labels +
      constraint args (match params ∪ bound cell args)
@@ -64,8 +64,19 @@ any selector-routing logic that could replace it.
      a different partition (another viewer's `cartId`, another
      session's cell) re-arms the wait WITHOUT re-rendering — so one
      viewer's write doesn't wake every open stream into a fp-skip
-     pass. The wake itself is global (`_waitForNextBump` resolves on
-     any bump); the relevance check is what gates the re-render.
+     pass. The wake itself is global (`_onNextBump` fires on any
+     bump); the relevance check is what gates the re-render.
+
+     Every park's arms observe per-park state and release on wake —
+     the **wake-arm release invariant**: a promise reaction only
+     frees when its promise settles, so arming a park on long-lived
+     shared state (the registry's waiter set, the session's
+     `flipWakes`, a connection-lifetime promise) without releasing
+     the losers grows the heap by one full wake race per idle wake
+     for as long as the connection holds. `waitForSegmentWake` builds
+     one deferred per park and disposes every registration when it
+     settles; the lane driver's drain signal and the session's flip
+     signal are latch + per-park registrations for the same reason.
    - Expiry arm — the earliest `expires()` boundary among the
      route's snapshots (read through `effectiveExpiresAt`) elapses.
    - Visibility arm (lane driver only) — a visibility report lands on
@@ -123,6 +134,23 @@ any selector-routing logic that could replace it.
    — it can only miss, never false-match. Visibility flips bypass
    the skip: they ARE the state transition. An unmeasured session
    (`visible: null`) parks nothing.
+
+   **Output is pull-gated.** `createSegmentedResponse` (the entry's
+   wrapper around `driveSegmentedResponse`) wires the response
+   stream's own `pull` / `cancel` callbacks as the driver's demand
+   signal (`SegmentedResponseDemand`): while the consumer's queue is
+   full (`desiredSize <= 0`) every renderer-output enqueue — segment
+   bytes and lane frames alike — parks until the next pull, and not
+   reading the next chunk propagates the wait into the Flight
+   stream itself, so a stalled reader holds at most one frame per
+   open lane server-side instead of every wake's payload for the
+   connection's lifetime. Wakes still fire while gated; they
+   coalesce on the open lane's dirty flag. A cancel (the consumer
+   tearing the stream — the explicit no-pull-is-coming signal)
+   releases parked pumps and marks the connection closed; the wake
+   loop's exit likewise releases them, tearing only lanes whose
+   consumer stopped pulling (client-safe: a torn lane rejects only
+   its own un-committed decode).
 5. **The client demuxes and commits per lane.** The splitter
    (`splitSegments`) classifies the region off the server's `lanes`
    marker and yields each lane's body — itself shaped like a
@@ -263,7 +291,11 @@ The pieces:
   holds the connection's current **visible set**, seeded from the
   request's `?visible=` param (`null` when absent — the
   pre-measurement state) and stamped onto the request ALS store for
-  the connection's lifetime.
+  the connection's lifetime. The store is `globalThis`-backed so it
+  survives dev-server module re-evaluation: the held driver keeps the
+  store it opened its session in while the beacon endpoint resolves
+  the module fresh per edit — both must address the same map, or
+  every report 404s until the heartbeat's next reopen.
 - **The report POST** (`lib/visibility-protocol.ts`,
   `POST /__parton/visible`, handled by `createRscHandler` before app
   routing). The client's visibility controller sends flips as a
@@ -304,7 +336,12 @@ The pieces:
   materializing render's just-promoted fps are exactly what the
   client's slot received. Per-lane fp-trailers also fold their warm
   fps back into the override (`onUpdates`), so a drift between a
-  lane's render and its flush stays tracked. Lanes start in report order — the
+  lane's render and its flush stays tracked. Every promotion path
+  bounds the override's per-id fp/matchKey sets at `OVERRIDE_SET_CAP`
+  (8), oldest-first — the server-side mirror of the client's
+  `FP_CAP_PER_VARIANT`: a parton drifting every lane would otherwise
+  grow its sets for the connection's whole lifetime, and an evicted
+  entry only costs an over-fetch, never staleness. Lanes start in report order — the
   controller sends in-view flips before cull-outs, so the visible
   world's renders lead. A flip whose id has NO route snapshot yet
   (the report raced the render that first materializes its parton —
@@ -577,6 +614,10 @@ own `fp` trailer), so the client decodes it with the same
 connection. Lanes regions are always safe to abort immediately: a
 torn lane rejects only its own un-committed decode, never a committed
 tree, so the deferred-abort gate applies only to payload segments.
+Every exit from a lanes region tears its still-open lanes the same
+way — source close, invalid frame, and a `next` delimiter arriving
+mid-payload all error the open bodies, so a lane's decode always
+settles (rejects) rather than hanging on a stream nothing closes.
 
 ## The stream must pass through untransformed
 

@@ -225,6 +225,49 @@ describe("splitSegments — lanes segments", () => {
 		expect(sourceCancelled).toBe(true);
 	});
 
+	it("a next delimiter with a lane still open errors that lane's body", async () => {
+		// The delimiter ends the lanes region mid-payload (no muxend for
+		// `solo`) — the open lane's body must reject like a torn source,
+		// not hang on a stream nothing will ever close, and the following
+		// payload segment must still parse.
+		const wire = bytes(
+			"seg-0",
+			SETTLED,
+			NEXT,
+			LANES,
+			muxFrame("solo", encoder.encode("partial-content")),
+			NEXT,
+			"seg-2-flight",
+			SETTLED,
+		);
+		const iter = splitSegments(streamOf(wire))[Symbol.asyncIterator]();
+		const first = await iter.next();
+		if (first.done || first.value.kind !== "payload")
+			throw new Error("expected payload");
+		await collect(first.value.body);
+		await first.value.trailers;
+
+		const second = await iter.next();
+		if (second.done || second.value.kind !== "lanes")
+			throw new Error("expected lanes");
+		const lanes: DemuxedLane[] = [];
+		for await (const lane of second.value.lanes) lanes.push(lane);
+		expect(lanes.map((l) => l.partonId)).toEqual(["solo"]);
+		const reader = lanes[0].body.getReader();
+		await expect(
+			(async () => {
+				await reader.read();
+				await reader.read();
+			})(),
+		).rejects.toThrow(/open|incomplete|closed/);
+
+		const third = await iter.next();
+		if (third.done || third.value.kind !== "payload")
+			throw new Error("expected payload after lanes");
+		expect(await collect(third.value.body)).toBe("seg-2-flight");
+		await third.value.trailers;
+	});
+
 	it("payload segments still parse untouched around a lanes region", async () => {
 		// A `next` after lanes returns to payload parsing (grammar
 		// completeness — the current server stays in lanes until close).

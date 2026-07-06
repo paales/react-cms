@@ -217,7 +217,7 @@ Content changes and record removal are separate mechanisms:
   `world.pulse` (up to 512 partitions under one selector name,
   bumping every 0.1–5s) is the motivating shape; the bench's
   `pulse/*` scenarios gate it. The bump counter (`_currentTs` /
-  `_waitForNextBump`) advances monotonically per bump, independent
+  `_onNextBump`) advances monotonically per bump, independent
   of what's stored.
 - **Snapshot invalidation.** `invalidateSnapshot(id)` removes the
   id's registry records entirely (inside a request: buffered into

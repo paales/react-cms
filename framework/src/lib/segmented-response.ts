@@ -43,8 +43,8 @@ import {
 } from "../runtime/context.ts";
 import {
 	_currentTs,
+	_onNextBump,
 	_registryEpoch,
-	_waitForNextBump,
 } from "../runtime/invalidation-registry.ts";
 import {
 	_closeConnectionSession,
@@ -83,6 +83,76 @@ import {
 const KEEPALIVE_MS = 20_000;
 
 /**
+ * The response stream's demand signal — the real backpressure wake.
+ * The driver stops pumping renderer output while the controller's
+ * `desiredSize` sits at or below zero (the queue is at its high-water
+ * mark: bytes enqueued now buffer server-side for as long as the
+ * reader stalls) and resumes on the consumer's next `pull`. `cancel`
+ * flips `cancelled`, releasing parked pumps — a torn consumer is the
+ * explicit signal that no pull is ever coming.
+ */
+export interface SegmentedResponseDemand {
+	cancelled: boolean;
+	/** Resolves on the response stream's next `pull` or on cancel. */
+	pulled: () => Promise<void>;
+}
+
+/**
+ * Build the segmented response stream around the drive loop, wiring
+ * the stream's own `pull` / `cancel` callbacks as the driver's demand
+ * signal. The drive starts synchronously (inside the caller's request
+ * ALS scope) but is not awaited from `start` — the streams machinery
+ * only fires `pull` once `start` settles, and the pull callback IS
+ * the demand wake.
+ */
+export function createSegmentedResponse(
+	renderSegment: () => ReadableStream<Uint8Array>,
+	onSegmentEnd?: () => void,
+): ReadableStream<Uint8Array> {
+	let pullWaiters: Array<() => void> = [];
+	const releasePulls = (): void => {
+		const waiters = pullWaiters;
+		pullWaiters = [];
+		for (const resolve of waiters) resolve();
+	};
+	const demand: SegmentedResponseDemand = {
+		cancelled: false,
+		pulled: () =>
+			new Promise<void>((resolve) => {
+				pullWaiters.push(resolve);
+			}),
+	};
+	return new ReadableStream<Uint8Array>({
+		start(controller) {
+			void driveSegmentedResponse(
+				controller,
+				renderSegment,
+				onSegmentEnd,
+				demand,
+			).then(
+				() => {
+					try {
+						controller.close();
+					} catch {}
+				},
+				(err) => {
+					try {
+						controller.error(err);
+					} catch {}
+				},
+			);
+		},
+		pull() {
+			releasePulls();
+		},
+		cancel() {
+			demand.cancelled = true;
+			releasePulls();
+		},
+	});
+}
+
+/**
  * Run a render-emit loop on the provided response controller. Calls
  * `renderSegment()` once, pipes its bytes through to the controller,
  * checks `connectionLive`, and either closes or waits for the next
@@ -97,11 +167,17 @@ const KEEPALIVE_MS = 20_000;
  * The driver always emits at least one segment. Subsequent segments
  * are gated on `markConnectionLive` having been called during the
  * just-rendered segment.
+ *
+ * `demand` (when provided — `createSegmentedResponse` always does)
+ * pull-gates every renderer-output enqueue; without it the driver
+ * pumps at render pace, which is only safe for an in-process consumer
+ * that reads as fast as the driver writes.
  */
 export async function driveSegmentedResponse(
 	controller: ReadableStreamDefaultController<Uint8Array>,
 	renderSegment: () => ReadableStream<Uint8Array>,
 	onSegmentEnd?: () => void,
+	demand?: SegmentedResponseDemand,
 ): Promise<void> {
 	// Pre-encode the `next` delimiter and the `settled` milestone — same
 	// bytes every time, so build each once.
@@ -145,7 +221,7 @@ export async function driveSegmentedResponse(
 		if (catchUpTs !== null && session !== null) {
 			installCatchupCachedOverride();
 			controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
-			await driveLaneStream(controller, catchUpTs, settledMarker, session);
+			await driveLaneStream(controller, catchUpTs, settledMarker, session, demand);
 			return;
 		}
 
@@ -162,7 +238,14 @@ export async function driveSegmentedResponse(
 				while (true) {
 					const { done, value } = await reader.read();
 					if (done) break;
-					if (value) controller.enqueue(value);
+					if (value) {
+						// Pull-gated: a chunk is only enqueued once the consumer
+						// has room for it. Not reading the NEXT chunk until then
+						// propagates the wait into the Flight stream itself
+						// (whose renderer paces on its own desiredSize).
+						await waitForDemand(controller, demand);
+						controller.enqueue(value);
+					}
 				}
 			} finally {
 				reader.releaseLock();
@@ -195,7 +278,7 @@ export async function driveSegmentedResponse(
 				promoteSnapshotsToCachedOverride();
 				controller.enqueue(nextMarker);
 				controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
-				await driveLaneStream(controller, lastTs, settledMarker, session);
+				await driveLaneStream(controller, lastTs, settledMarker, session, demand);
 				return;
 			}
 
@@ -232,6 +315,28 @@ export async function driveSegmentedResponse(
 			lastTs = _currentTs();
 			segmentIndex++;
 		}
+	}
+}
+
+/**
+ * Park until the consumer can take another chunk. `desiredSize <= 0`
+ * means the stream's queue is at or past its high-water mark; the
+ * stream's `pull` callback resolves the wait — the real demand
+ * signal, no timers. A cancelled demand or an errored stream
+ * (`desiredSize === null`) falls through so the caller's enqueue
+ * surfaces the teardown.
+ */
+async function waitForDemand(
+	controller: ReadableStreamDefaultController<Uint8Array>,
+	demand: SegmentedResponseDemand | undefined,
+): Promise<void> {
+	if (!demand) return;
+	while (
+		!demand.cancelled &&
+		controller.desiredSize !== null &&
+		controller.desiredSize <= 0
+	) {
+		await demand.pulled();
 	}
 }
 
@@ -384,6 +489,7 @@ async function driveLaneStream(
 	sinceTs: number,
 	settledMarker: Uint8Array,
 	session: ConnectionSession | null,
+	demand: SegmentedResponseDemand | undefined,
 ): Promise<void> {
 	let request: Request;
 	let scope: string;
@@ -398,14 +504,70 @@ async function driveLaneStream(
 	const openLaneIds = new Set<string>();
 	let closed = false;
 
+	// Stop release for pumps parked at the demand gate when the wake
+	// loop exits: flushing the waiters lets each parked pump re-check
+	// `stopping` and wind down instead of holding the drive open for a
+	// pull that may never come. Mid-lane winding down is client-safe —
+	// a torn lane rejects only its own un-committed decode. A waiter
+	// SET rather than one long-lived promise: each park's entry is
+	// removed when it releases (the wake-arm release invariant — a
+	// reaction on a promise that only settles at connection teardown
+	// would accumulate per park for the connection's lifetime).
+	let stopping = false;
+	const gateWaiters = new Set<() => void>();
+
+	// Lane-output demand gate. Parks while the consumer's queue is
+	// full; the stream's pull releases it. Returns false when the lane
+	// must wind down instead of enqueue: the consumer cancelled (the
+	// explicit no-pull-is-coming signal — also marks the connection
+	// closed so the wake loop exits at its next wake), or the wake
+	// loop exited while this pump was parked with the queue still
+	// full. A pump caught by `stopping` with room in the queue still
+	// delivers — only a consumer that stopped pulling gets its lane
+	// tail torn.
+	const awaitDemand = async (): Promise<boolean> => {
+		if (!demand) return true;
+		while (
+			!stopping &&
+			!demand.cancelled &&
+			controller.desiredSize !== null &&
+			controller.desiredSize <= 0
+		) {
+			await new Promise<void>((resolve) => {
+				const release = (): void => {
+					gateWaiters.delete(release);
+					resolve();
+				};
+				gateWaiters.add(release);
+				void demand.pulled().then(release);
+			});
+		}
+		if (demand.cancelled) {
+			closed = true;
+			return false;
+		}
+		return !(
+			stopping &&
+			controller.desiredSize !== null &&
+			controller.desiredSize <= 0
+		);
+	};
+
 	// Lane-drained wake arm. A drained lane's fresh snapshot carries its
-	// next `expiresAt`; resolving this re-arms the wait so the deadline
-	// is re-read from the committed snapshot instead of starving behind
-	// the open-lane expiry exclusion.
+	// next `expiresAt`; the wake re-arms the wait so the deadline is
+	// re-read from the committed snapshot instead of starving behind
+	// the open-lane expiry exclusion. A latch plus a per-park promise
+	// rather than one long-lived promise: the wait races a FRESH
+	// promise each park (discarded with the park, so exited waits
+	// retain nothing — the wake-arm release invariant), and a drain
+	// landing while the driver is busy sets the latch, which the next
+	// wait entry consumes without parking.
+	let laneDrainedPending = false;
 	let signalLaneDrained: () => void = () => {};
-	let laneDrained = new Promise<void>((resolve) => {
-		signalLaneDrained = resolve;
-	});
+	const noteLaneDrained = (): void => {
+		laneDrainedPending = true;
+		signalLaneDrained();
+	};
 
 	const enqueue = (bytes: Uint8Array): boolean => {
 		if (closed) return false;
@@ -494,18 +656,26 @@ async function driveLaneStream(
 					while (true) {
 						const { done, value } = await reader.read();
 						if (done) break;
-						if (
-							value &&
-							value.byteLength > 0 &&
-							!enqueue(muxFrame(id, value))
-						) {
-							await reader.cancel().catch(() => {});
-							return;
+						if (value && value.byteLength > 0) {
+							// Pull-gated: park before the enqueue while the consumer's
+							// queue is full. Not reading the NEXT chunk until then
+							// propagates the wait into the lane's Flight stream, so a
+							// stalled reader holds at most one frame per lane
+							// server-side instead of every wake's full payload.
+							if (!(await awaitDemand())) {
+								await reader.cancel().catch(() => {});
+								return;
+							}
+							if (!enqueue(muxFrame(id, value))) {
+								await reader.cancel().catch(() => {});
+								return;
+							}
 						}
 					}
 				} finally {
 					reader.releaseLock();
 				}
+				if (!(await awaitDemand())) return;
 				if (!enqueue(muxEndFrame(id))) return;
 				// The lane's snapshots just committed (the per-lane fp-trailer
 				// wrap commits at flush). Promote the fresh emittedFps into the
@@ -521,7 +691,7 @@ async function driveLaneStream(
 			lanes.delete(id);
 			openLaneIds.delete(id);
 			if (!closed && lanes.size === 0) enqueue(settledMarker);
-			signalLaneDrained();
+			noteLaneDrained();
 		}
 	};
 
@@ -553,26 +723,26 @@ async function driveLaneStream(
 	while (!closed) {
 		// A report that landed while the driver was busy (rendering lanes,
 		// or between the lanes hand-off and this loop) is already queued on
-		// the session — consume it without parking on the wake arms first.
-		// Deferred flips deliberately do NOT short-circuit the wait: they
-		// only re-resolve on a real wake, so an unknown id can't busy-loop
-		// the driver.
+		// the session — consume it without parking on the wake arms first;
+		// a drain that landed while busy is likewise latched. Deferred
+		// flips deliberately do NOT short-circuit the wait: they only
+		// re-resolve on a real wake, so an unknown id can't busy-loop the
+		// driver.
 		const wake: SegmentWake =
 			session !== null && session.pendingFlips.size > 0
 				? "visibility"
-				: await waitForSegmentWake(since, {
-						excludeExpiryIds: openLaneIds,
-						laneDrained,
-						visibilityFlip: session?.flipped,
-						session,
-						deadline: idleDeadline,
-					});
+				: laneDrainedPending
+					? "lane-drained"
+					: await waitForSegmentWake(since, {
+							excludeExpiryIds: openLaneIds,
+							laneDrained: new Promise<void>((resolve) => {
+								signalLaneDrained = resolve;
+							}),
+							session,
+							deadline: idleDeadline,
+						});
 		if (wake === false) break;
-		if (wake === "lane-drained") {
-			laneDrained = new Promise<void>((resolve) => {
-				signalLaneDrained = resolve;
-			});
-		}
+		if (wake === "lane-drained") laneDrainedPending = false;
 		const snapshots = _readSnapshotsForRoute(scope, routeKey);
 		if (snapshots.size === 0) break;
 		const touched: string[] = [];
@@ -649,6 +819,11 @@ async function driveLaneStream(
 		enterRequestRegistry(routeKey, "cache");
 		for (const id of touched) startLane(id);
 	}
+	// Release demand-parked pumps before waiting the lanes out — the
+	// loop's exit is the signal that no further demand is worth
+	// waiting for.
+	stopping = true;
+	for (const release of [...gateWaiters]) release();
 	await Promise.allSettled([...lanes.values()].map((l) => l.done));
 }
 
@@ -671,19 +846,19 @@ interface SegmentWakeOptions {
 	 *  (which carries its next deadline). Without it, a wait armed
 	 *  while the only expiring parton had an open lane would park on
 	 *  bump+keepalive alone and the parton's next tick would starve
-	 *  until the keepalive closed the connection. */
+	 *  until the keepalive closed the connection. Minted fresh per
+	 *  park by the lane driver (drains between parks ride its latch),
+	 *  so the wait's reaction is discarded with the park. */
 	laneDrained?: Promise<void>;
-	/** Extra wake arm: resolves when a visibility report lands on the
-	 *  connection session (per-parton driver only). The caller drains
-	 *  the flipped ids via `takeConnectionFlips`, which re-arms. */
-	visibilityFlip?: Promise<void>;
-	/** The live connection's session (per-parton driver only). Parked
-	 *  partons' `expiresAt` deadlines must not arm the expiry timer —
-	 *  the driver skips their lanes, so arming on a parked parton's
-	 *  past-due deadline would hot-spin the wake loop (immediate expiry
-	 *  wake → nothing laned → re-arm on the same deadline). Read live
-	 *  at arm time so a report landing between wakes moves the very
-	 *  next arm. */
+	/** The live connection's session (per-parton driver only). Two
+	 *  roles. Parked partons' `expiresAt` deadlines must not arm the
+	 *  expiry timer — the driver skips their lanes, so arming on a
+	 *  parked parton's past-due deadline would hot-spin the wake loop
+	 *  (immediate expiry wake → nothing laned → re-arm on the same
+	 *  deadline); read live at arm time so a report landing between
+	 *  wakes moves the very next arm. And the visibility wake arm
+	 *  registers on the session's `flipWakes` for the park's duration
+	 *  — the caller drains the flipped ids via `takeConnectionFlips`. */
 	session?: ConnectionSession | null;
 	/** Absolute idle deadline (ms epoch) overriding the default
 	 *  now+KEEPALIVE_MS anchor. The lane driver passes its
@@ -728,31 +903,45 @@ async function waitForSegmentWake(
 	while (true) {
 		const keepaliveRemaining = keepaliveDeadline - Date.now();
 		if (keepaliveRemaining <= 0) return false;
-		let kaTimer: ReturnType<typeof setTimeout> | null = null;
-		let expTimer: ReturnType<typeof setTimeout> | null = null;
-		const arms: Array<Promise<symbol | number>> = [
-			_waitForNextBump(since),
-			new Promise<symbol>((resolve) => {
-				kaTimer = setTimeout(() => resolve(IDLE_TIMEOUT), keepaliveRemaining);
-			}),
-		];
+		// One deferred per park, every arm registered against it with an
+		// explicit release — the wake-arm release invariant: a reaction
+		// only frees when its promise settles, so arming a park on
+		// long-lived shared state (the registry's waiter set, the
+		// session's flip wakes) without releasing the losers would grow
+		// the heap by one full wake race per idle wake, for as long as
+		// the connection holds.
+		let settle!: (value: symbol | number) => void;
+		const woke = new Promise<symbol | number>((resolve) => {
+			settle = resolve;
+		});
+		const disposers: Array<() => void> = [];
+		disposers.push(_onNextBump(since, settle));
+		const kaTimer = setTimeout(() => settle(IDLE_TIMEOUT), keepaliveRemaining);
+		disposers.push(() => clearTimeout(kaTimer));
 		if (expiresAtDeadline !== null) {
-			const expRemaining = Math.max(0, expiresAtDeadline - Date.now());
-			arms.push(
-				new Promise<symbol>((resolve) => {
-					expTimer = setTimeout(() => resolve(EXPIRES_AT_WAKE), expRemaining);
-				}),
+			const expTimer = setTimeout(
+				() => settle(EXPIRES_AT_WAKE),
+				Math.max(0, expiresAtDeadline - Date.now()),
 			);
+			disposers.push(() => clearTimeout(expTimer));
 		}
 		if (options?.laneDrained) {
-			arms.push(options.laneDrained.then(() => LANE_DRAINED_WAKE));
+			// A reaction on a per-park promise (see the lane driver's
+			// latch) — dropped with the park, nothing to release.
+			void options.laneDrained.then(() => settle(LANE_DRAINED_WAKE));
 		}
-		if (options?.visibilityFlip) {
-			arms.push(options.visibilityFlip.then(() => VISIBILITY_WAKE));
+		const flipWakes = options?.session?.flipWakes;
+		if (flipWakes) {
+			const onFlip = (): void => settle(VISIBILITY_WAKE);
+			flipWakes.add(onFlip);
+			disposers.push(() => flipWakes.delete(onFlip));
 		}
-		const result = await Promise.race(arms);
-		if (kaTimer) clearTimeout(kaTimer);
-		if (expTimer) clearTimeout(expTimer);
+		let result: symbol | number;
+		try {
+			result = await woke;
+		} finally {
+			for (const dispose of disposers) dispose();
+		}
 		if (result === IDLE_TIMEOUT) return false;
 		if (result === EXPIRES_AT_WAKE) return "expiry";
 		if (result === LANE_DRAINED_WAKE) return "lane-drained";
@@ -931,12 +1120,28 @@ function applyReportedCached(
 	override.matchKeys.set(id, mks);
 }
 
+/** Per-id bound on the override's fp / matchKey sets — same shape as
+ *  the client's `FP_CAP_PER_VARIANT`: a live parton drifting every
+ *  lane (each bump folds a fresh invalidation ts) would grow its set
+ *  unboundedly over a long-held connection. Oldest-first eviction
+ *  keeps the newest few — enough for the next render's skip check;
+ *  an evicted entry only costs an over-fetch, never staleness. */
+const OVERRIDE_SET_CAP = 8;
+
+function capOverrideSet(set: Set<string>): void {
+	while (set.size > OVERRIDE_SET_CAP) {
+		const oldest = set.values().next().value;
+		if (oldest === undefined) break;
+		set.delete(oldest);
+	}
+}
+
 /** Fold a trailer's `{from, to}` warm-fp entries into the live
  *  connection's cached override — the server-side mirror of the
  *  client's `_applyFpUpdates`. The override's fp sets are per id;
  *  additions are safe (a candidate fp is computed fresh each render,
  *  so matching any accumulated fp means the fold values genuinely
- *  coincide) and bounded per set below. */
+ *  coincide) and bounded per set by `capOverrideSet`. */
 function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 	const override = _getCachedOverride();
 	if (!override) return;
@@ -947,15 +1152,7 @@ function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 			override.fingerprints.set(id, fpSet);
 		}
 		fpSet.add(entry.to);
-		// Same shape as the client's FP_CAP_PER_VARIANT: a live parton
-		// drifting every lane would grow the set unboundedly over a
-		// long-held connection. Oldest-first eviction keeps the newest
-		// few — enough for the next render's skip check.
-		while (fpSet.size > 8) {
-			const oldest = fpSet.values().next().value;
-			if (oldest === undefined) break;
-			fpSet.delete(oldest);
-		}
+		capOverrideSet(fpSet);
 	}
 }
 
@@ -990,12 +1187,14 @@ export function promoteSnapshotsToCachedOverride(withinId?: string): void {
 			override.fingerprints.set(id, fpSet);
 		}
 		fpSet.add(snap.emittedFp);
+		capOverrideSet(fpSet);
 		let mkSet = override.matchKeys.get(id);
 		if (!mkSet) {
 			mkSet = new Set();
 			override.matchKeys.set(id, mkSet);
 		}
 		mkSet.add(snap.matchKey);
+		capOverrideSet(mkSet);
 	}
 }
 

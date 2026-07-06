@@ -463,6 +463,11 @@ class SegmentIterator implements AsyncIterator<Segment> {
 				if (parsed.tag === "next") {
 					// Next segment follows (unused by the current server, which
 					// stays in lanes until close — but the grammar allows it).
+					// A lane still open here ended mid-payload — error its body
+					// so its decode rejects like any other torn lane, instead
+					// of hanging on a stream nothing will ever close.
+					if (open.size > 0)
+						torn("lanes segment ended with parton lanes open");
 					return;
 				}
 				// Unknown framed entry (future taxonomy) — skip its body.
