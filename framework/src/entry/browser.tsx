@@ -446,6 +446,17 @@ async function main() {
 						}
 						const fp = (await trailer) as FpUpdatesPayload | null;
 						delivery = _lanePendingDelivery(lane.partonId);
+						if (delivery === null && connEstablished) {
+							// Unannounced body on a delivery-seq'd stream: a `cancel`
+							// statement closed it mid-render (the server writes the
+							// muxend so this decode settles and the id can reopen,
+							// but no delivery — the content belongs to a superseded
+							// statement). Committing it would swap torn content —
+							// pending-forever rows — over the page. Nothing to
+							// consume: no seq was ever queued.
+							consumed = true;
+							return;
+						}
 						if (delivery !== null) {
 							// Channel-governed lane. As-of first: a lane rendered
 							// before the client's navigation point is content of a
@@ -511,7 +522,14 @@ async function main() {
 				// consume it — a concurrent discrete fetch's commit must never
 				// record the live stream's seq.
 				let pendingSegmentDelivery: WireDelivery | null = null;
+				// This fetch carries a connection handshake — a session stream,
+				// where EVERY legitimate lane body announces its delivery (the
+				// seq entry before its muxend; a producer's muxlive). A lane
+				// body that closes unannounced on such a stream is a
+				// cancelled/torn render and must never commit.
+				let connEstablished = false;
 				const onWireEntry = (tag: string, body: Uint8Array): void => {
+					if (tag === "conn") connEstablished = true;
 					// The transport's entries — `conn` handshake, lane-form
 					// delivery seqs, the upstream-applied watermark.
 					_channelWireEntry(tag, body);
