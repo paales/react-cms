@@ -45,6 +45,7 @@ import {
 	TAG_LANES_OPEN,
 	TAG_MUX_END,
 	TAG_MUX_FRAME,
+	TAG_MUX_LIVE,
 	TAG_NEXT_SEGMENT,
 	TAG_SEGMENT_SETTLED,
 	tryReadMarker,
@@ -381,14 +382,27 @@ class SegmentIterator implements AsyncIterator<Segment> {
 	 */
 	private async driveLanes(queue: LaneQueue): Promise<void> {
 		const open = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
-		const torn = (message: string): void => {
+		// Parton ids whose OPEN body a `muxlive` frame declared a PRODUCER
+		// stream (see fp-trailer-marker.ts). A producer body's earlier
+		// bytes may already be COMMITTED progressively, so a CLEAN region
+		// exit (a `next` delimiter, the source closing between frames)
+		// CLOSES it instead of erroring: its committed tree keeps its
+		// Suspense fallback until the covering render replaces it, rather
+		// than rejecting pending rows into an error boundary. A genuinely
+		// torn stream (mid-frame end, invalid marker) still errors every
+		// open body — a torn decode must settle by rejecting, and it
+		// rejects only its own lane.
+		const producers = new Set<string>();
+		const torn = (message: string, cleanExit = false): void => {
 			const err = new Error(message);
-			for (const controller of open.values()) {
+			for (const [id, controller] of open) {
 				try {
-					controller.error(err);
+					if (cleanExit && producers.has(id)) controller.close();
+					else controller.error(err);
 				} catch {}
 			}
 			open.clear();
+			producers.clear();
 		};
 		try {
 			while (true) {
@@ -401,11 +415,13 @@ class SegmentIterator implements AsyncIterator<Segment> {
 				}
 				if (parsed === "need-more") {
 					// Source closed. Clean end iff nothing is mid-frame and no
-					// lane is open.
+					// lane is open. A between-frames close is a CLEAN exit for
+					// producer bodies (the server winds producer lanes down when
+					// it stops holding — see `torn`'s cleanExit).
 					if (this.leftover.length > 0)
 						torn("lanes segment ended mid-frame header");
 					else if (open.size > 0)
-						torn("connection closed with parton lanes open");
+						torn("connection closed with parton lanes open", true);
 					this.exhausted = true;
 					return;
 				}
@@ -468,6 +484,19 @@ class SegmentIterator implements AsyncIterator<Segment> {
 						} catch {}
 						open.delete(partonId);
 					}
+					producers.delete(partonId);
+					continue;
+				}
+				if (parsed.tag === TAG_MUX_LIVE) {
+					// Producer announcement — mark the open body (region-exit
+					// semantics above) and surface the entry: its id-first body
+					// carries the lane's early delivery seq, which the channel
+					// transport queues so the consumer can commit progressively.
+					const nl = body.indexOf(0x0a);
+					if (nl > 0) {
+						producers.add(new TextDecoder().decode(body.subarray(0, nl)));
+					}
+					this.onEntry?.(parsed.tag, body);
 					continue;
 				}
 				if (parsed.tag === TAG_SEGMENT_SETTLED) {
@@ -479,15 +508,15 @@ class SegmentIterator implements AsyncIterator<Segment> {
 				}
 				if (parsed.tag === "next") {
 					// Next segment follows — the driver's scheduled whole-tree
-					// reconcile ends the lanes region this way (a payload
-					// segment flows, then `next` + `lanes` reopens the region).
-					// A lane still open here ended mid-payload — error its body
-					// so its decode rejects like any other torn lane, instead
-					// of hanging on a stream nothing will ever close. (The
-					// server only reconciles at quiesce, so a well-formed
-					// stream never hits that arm.)
+					// reconcile and a consumed window url statement end the
+					// lanes region this way (a payload segment flows, then
+					// `next` + `lanes` reopens the region). A NORMAL lane still
+					// open here ended mid-payload — error its body so its
+					// decode rejects like any other torn lane, instead of
+					// hanging on a stream nothing will ever close; a PRODUCER
+					// body closes cleanly (a clean region exit — see `torn`).
 					if (open.size > 0)
-						torn("lanes segment ended with parton lanes open");
+						torn("lanes segment ended with parton lanes open", true);
 					return;
 				}
 				// Framed ENTRY (the connection-id handshake on a catch-up

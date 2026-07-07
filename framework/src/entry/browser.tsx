@@ -24,6 +24,8 @@ import {
 	_channelAbortLiveStream,
 	_channelClaimWindowNav,
 	_channelDeliveryCommittable,
+	_channelFrameLaneCommitted,
+	_channelFrameLaneSettled,
 	_channelNavAvailable,
 	_channelNavigate,
 	_channelNavPoint,
@@ -37,6 +39,8 @@ import {
 	_laneDeliveryDropped,
 	_laneDeliveryDroppedStale,
 	_lanePendingDelivery,
+	_onLaneProducerAnnounce,
+	_registerActionConsequences,
 	_segmentDelivery,
 	_segmentDeliveryCommitted,
 	_segmentDeliveryDroppedStale,
@@ -53,14 +57,17 @@ import { LivePageHeartbeat } from "../lib/live-page-heartbeat.tsx";
 import { markPageInteractive } from "../lib/page-interactive.ts";
 import {
 	_applyFpTrailerFromDocument,
+	_applyFpUpdates,
 	_collectFramePaths,
 	_commitPartonLane,
+	_commitPartonLaneProgressive,
 	_dispatchFrameRefetch,
 	_readFramesSnapshot,
 	_warmCacheFromPayload,
 	getCachedPartialIds,
 	isFrameworkSilentInfo,
 } from "../lib/partial-client.tsx";
+import { _getLiveConnectionId } from "../lib/partial-client-state.ts";
 import { applyStandardTrailers } from "../lib/segment-trailers-client.ts";
 import {
 	GlobalErrorBoundary,
@@ -373,11 +380,85 @@ async function main() {
 				// it in place via a template re-render, no whole-payload
 				// setPayload involved.
 				const handleLane = async (lane: DemuxedLane): Promise<void> => {
+					// Whether this handler has consumed its body's queue head
+					// (committed or dropped) — the catch must consume exactly
+					// once to keep per-parton seq attribution aligned.
+					let consumed = false;
 					try {
 						const { mainStream, trailer } = splitAtFpTrailer(lane.body);
 						const node =
 							await createFromReadableStream<React.ReactNode>(mainStream);
-						const delivery = _lanePendingDelivery(lane.partonId);
+						// Learn the body's shape before deciding the commit moment:
+						// a NORMAL lane's delivery entry precedes its muxend (the
+						// trailer resolves right after the root here), while a
+						// PRODUCER lane announces mid-body (`muxlive`) and its
+						// trailer only resolves at producer resolve — waiting on it
+						// would gate the initial content on an unbounded await. Race
+						// the trailer against the producer announcement.
+						let delivery = _lanePendingDelivery(lane.partonId);
+						if (delivery === null || delivery.live !== true) {
+							await new Promise<void>((resolve) => {
+								const dispose = _onLaneProducerAnnounce(lane.partonId, () =>
+									resolve(),
+								);
+								trailer.then(
+									() => {
+										dispose();
+										resolve();
+									},
+									() => {
+										dispose();
+										resolve();
+									},
+								);
+							});
+							delivery = _lanePendingDelivery(lane.partonId);
+						}
+						if (delivery !== null && delivery.live === true) {
+							// PRODUCER lane: commit progressively at root-ready — the
+							// body keeps streaming until the producer resolves, and
+							// the committed tree's Suspense fallback holds the
+							// producer's place. Guards run NOW (seq + as-of arrived
+							// with the announcement).
+							if (!_channelDeliveryCommittable(delivery.asOf)) {
+								consumed = true;
+								_laneDeliveryDroppedStale(lane.partonId);
+								return;
+							}
+							if (pageUrlKey() !== expectedStreamPageKey()) {
+								consumed = true;
+								_laneDeliveryDropped(lane.partonId);
+								return;
+							}
+							const nav = delivery.nav;
+							// The body is STILL STREAMING — a one-shot walk would stop
+							// at the first pending Flight row and cache nothing. The
+							// progressive commit walks what has resolved and re-walks
+							// as the remaining rows land.
+							_commitPartonLaneProgressive(lane.partonId, node);
+							consumed = true;
+							_laneDeliveryCommitted(lane.partonId);
+							if (nav !== undefined) _channelFrameLaneCommitted(nav);
+							// The fp trailer lands at the body's close — producer
+							// resolve, or a clean cancel/region close (null then).
+							const fp = (await trailer) as FpUpdatesPayload | null;
+							if (fp) _applyFpUpdates(fp);
+							if (nav !== undefined) _channelFrameLaneSettled(nav);
+							return;
+						}
+						const fp = (await trailer) as FpUpdatesPayload | null;
+						delivery = _lanePendingDelivery(lane.partonId);
+						if (delivery === null && connEstablished) {
+							// Unannounced body on a delivery-seq'd stream: a `cancel`
+							// statement closed it mid-render (the server writes the
+							// muxend so this decode settles and the id can reopen,
+							// but no delivery — the content belongs to a superseded
+							// statement). Committing it would swap torn content —
+							// pending-forever rows — over the page. Nothing to
+							// consume: no seq was ever queued.
+							consumed = true;
+							return;
+						}
 						if (delivery !== null) {
 							// Channel-governed lane. As-of first: a lane rendered
 							// before the client's navigation point is content of a
@@ -385,6 +466,7 @@ async function main() {
 							// watermark advances; the server's fold gate keeps it
 							// out of the acked mirror) and the stream lives on.
 							if (!_channelDeliveryCommittable(delivery.asOf)) {
+								consumed = true;
 								_laneDeliveryDroppedStale(lane.partonId);
 								return;
 							}
@@ -393,28 +475,46 @@ async function main() {
 							// — a dying stream; the stall drop keeps the server
 							// from counting the drop as held.
 							if (pageUrlKey() !== expectedStreamPageKey()) {
+								consumed = true;
 								_laneDeliveryDropped(lane.partonId);
 								return;
 							}
 						} else if (pageUrlKey() !== issuedForPageUrl) {
 							// Un-seq'd lane (no session): the discrete twin guard.
+							consumed = true;
 							_laneDeliveryDropped(lane.partonId);
 							return;
 						}
-						const fp = (await trailer) as FpUpdatesPayload | null;
-						_commitPartonLane(node, fp);
+						const nav = delivery?.nav;
+						_commitPartonLane(node, fp, lane.partonId);
 						// COMMIT is the recording moment — the cache walk above is
 						// synchronous, so the subtree is the page's state now. The
 						// transport advances its contiguous watermark and acks.
+						consumed = true;
 						_laneDeliveryCommitted(lane.partonId);
+						if (nav !== undefined) {
+							_channelFrameLaneCommitted(nav);
+							_channelFrameLaneSettled(nav);
+						}
 					} catch (err) {
-						// Torn decode (connection died mid-lane, or a navigation
-						// tear ended the region over this body) — keep the
-						// per-parton seq queue aligned for any lane that still
-						// lands, without recording a commit that never happened.
-						// A nav-torn lane queued no seq at all (the tear precedes
-						// the seq entry), so the consume is a no-op there.
-						_laneDeliveryDropped(lane.partonId);
+						// Torn decode (connection died mid-lane, a navigation tear
+						// ended the region over this body, or a cancelled producer
+						// body closed before its root row) — keep the per-parton
+						// seq queue aligned without recording a commit that never
+						// happened. A cancelled/torn PRODUCER body's delivery was
+						// ANNOUNCED (its seq is on the wire), so it consumes
+						// PROCESSED — the stream lives on and a permanent gap
+						// would wedge the watermark; an un-announced normal body
+						// stall-drops as before (a nav-torn lane queued no seq at
+						// all, so that consume is a no-op).
+						if (!consumed) {
+							const head = _lanePendingDelivery(lane.partonId);
+							if (head !== null && head.live === true) {
+								_laneDeliveryDroppedStale(lane.partonId);
+							} else {
+								_laneDeliveryDropped(lane.partonId);
+							}
+						}
 						throw err;
 					}
 				};
@@ -424,7 +524,14 @@ async function main() {
 				// consume it — a concurrent discrete fetch's commit must never
 				// record the live stream's seq.
 				let pendingSegmentDelivery: WireDelivery | null = null;
+				// This fetch carries a connection handshake — a session stream,
+				// where EVERY legitimate lane body announces its delivery (the
+				// seq entry before its muxend; a producer's muxlive). A lane
+				// body that closes unannounced on such a stream is a
+				// cancelled/torn render and must never commit.
+				let connEstablished = false;
 				const onWireEntry = (tag: string, body: Uint8Array): void => {
+					if (tag === "conn") connEstablished = true;
 					// The transport's entries — `conn` handshake, lane-form
 					// delivery seqs, the upstream-applied watermark.
 					_channelWireEntry(tag, body);
@@ -685,10 +792,27 @@ async function main() {
 		if (cachedIds.length > 0) {
 			actionUrl.searchParams.set("cached", cachedIds.join(","));
 		}
-		const renderRequest = createRscRenderRequest(actionUrl.toString(), {
-			id,
-			body: await encodeReply(args, { temporaryReferences }),
-		});
+		// An attached, healthy page names its live connection on the
+		// action POST (`x-parton-conn`) — an explicit client statement,
+		// never inferred — so the server can reserve the delivery seqs
+		// the action's invalidation consequences will ride on that
+		// connection. The response's `x-parton-consequences` header
+		// carries them back; the optimistic overlay holds until the
+		// committed watermark covers them.
+		const consequenceConn = _channelNavAvailable()
+			? _getLiveConnectionId()
+			: null;
+		const renderRequest = createRscRenderRequest(
+			actionUrl.toString(),
+			{
+				id,
+				body: await encodeReply(args, { temporaryReferences }),
+			},
+			undefined,
+			consequenceConn !== null
+				? { "x-parton-conn": consequenceConn }
+				: undefined,
+		);
 		const response = await fetch(renderRequest);
 		if (!response.ok || !response.body) {
 			throw new NavigationError({
@@ -696,6 +820,17 @@ async function main() {
 				url: renderRequest.url,
 				status: response.status,
 			});
+		}
+		// Register the consequence gate BEFORE the payload decode — the
+		// action's returned promise must never resolve ahead of its own
+		// gate's registration, or the overlay's clear point could miss it.
+		const consequences = response.headers.get("x-parton-consequences");
+		if (consequences) {
+			const seqs = consequences
+				.split(",")
+				.map((s) => Number(s))
+				.filter((n) => Number.isFinite(n) && n > 0);
+			_registerActionConsequences(seqs);
 		}
 		// Same segmented-Flight decode as the GET path. Actions today
 		// produce a single segment (no `markConnectionLive` from action
@@ -850,6 +985,16 @@ function listenNavigation(
 					});
 				}
 			}
+			// A FRAME nav with explicit history (push/replace) stamps a
+			// browser entry for an UNCHANGED window URL; its refetch is a
+			// frame url statement on the held stream (dispatched by the
+			// initiator right after this event) — keep the stream. Frame
+			// URLs are session state, so even a claim whose fire falls
+			// back to the discrete GET leaves the kept stream honest: its
+			// next render reads the session the discrete request wrote.
+			if (event.info.mode === "frame" && _channelNavAvailable()) {
+				_channelClaimWindowNav();
+			}
 			event.intercept({ focusReset: "manual", scroll: "manual" });
 			return;
 		}
@@ -921,6 +1066,9 @@ function listenNavigation(
 				return;
 			}
 			if (diffs.length > 0) {
+				// A pure frame traverse (window URL unchanged): the per-frame
+				// refetches ride the channel when attached — keep the stream.
+				if (_channelNavAvailable()) _channelClaimWindowNav();
 				event.intercept({
 					handler: () =>
 						swallowNavigationAbort(() =>

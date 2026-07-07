@@ -191,6 +191,29 @@ export const TAG_MUX_FRAME = "mux";
  *  same id may open again later (a subsequent re-render of the same
  *  parton on the same connection). */
 export const TAG_MUX_END = "muxend";
+/** Marks an OPEN lane as a PRODUCER stream and announces its delivery
+ *  early: body is `<parton-id>\n<seq> <asof>[ nav=<n>]` — the mux
+ *  frames' id-first shape carrying the lane's delivery-seq body. The
+ *  pump writes it the moment the lane's render declares itself a
+ *  producer (`markConnectionLive()` inside the lane — a body that
+ *  streams until a producer await resolves, e.g. the chat's
+ *  ChunkSlot), INSTEAD of the drain-time `seq` entry a normal lane
+ *  gets: the client must hold seq + as-of BEFORE the body closes to
+ *  commit progressively (root-ready, not drain), and the lane's
+ *  `muxend` comes only at producer resolve. A producer lane's open
+ *  body is also CLOSED (not errored) at a clean region exit — its
+ *  progressively-committed tree keeps its Suspense fallback until the
+ *  covering render replaces it, instead of rejecting into an error
+ *  boundary. */
+export const TAG_MUX_LIVE = "muxlive";
+/** Voided delivery seqs: body is space-separated decimals. A delivery
+ *  seq assigned ahead of its render (an action's consequence
+ *  reservation) whose lane was skipped — parked flip, snapshot gone,
+ *  navigation tear — never reaches the wire; the void tells the
+ *  client to count it PROCESSED so the contiguous ack watermark can
+ *  pass it (a silent gap would wedge the unacked window and hold
+ *  every consequence gate forever). */
+export const TAG_SEQ_VOID = "seqvoid";
 
 /**
  * Body shape of an `fp` trailer entry (JSON). Maps each spec id whose

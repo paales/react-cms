@@ -50,6 +50,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ChangeEvent } from "react"
 import { __cellWriteBatch } from "../runtime/cell-actions.ts"
+import { _awaitActionConsequences } from "./channel-client.ts"
 import type { ResolvedCell } from "./cell.ts"
 
 interface QueuedWrite {
@@ -352,10 +353,22 @@ async function flushQueue(): Promise<void> {
             ...(w.partition ? { partition: w.partition } : {}),
           })),
         )
-        for (const w of batch) {
-          decrementPending(w.id)
-          w.resolve()
-        }
+        // The `.set` promise resolves at batch commit (the POST landed),
+        // and the queue keeps flowing — but the OPTIMISTIC OVERLAY holds
+        // until the write's server-side consequences have committed on
+        // the live connection: with a channel attached, the action
+        // response carried the delivery seqs its invalidation
+        // consequences ride (`x-parton-consequences`), and clearing at
+        // the returnValue alone would flash the stale server value for
+        // exactly as long as the consequence lane is delayed (window
+        // coalescing makes that the WHOLE backpressure window). Without
+        // a channel the gate resolves immediately — unchanged behavior.
+        // Order-insensitive: `pendingByCell` counts, so gates resolving
+        // across batches out of order still clear correctly.
+        for (const w of batch) w.resolve()
+        void _awaitActionConsequences().then(() => {
+          for (const w of batch) decrementPending(w.id)
+        })
       } catch (err) {
         for (const w of batch) {
           decrementPending(w.id)

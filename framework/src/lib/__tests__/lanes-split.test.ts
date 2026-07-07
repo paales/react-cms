@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
 	buildMarker,
 	TAG_LANES_OPEN,
+	TAG_MUX_LIVE,
 	TAG_NEXT_SEGMENT,
 	TAG_SEGMENT_SETTLED,
 } from "../fp-trailer-marker.ts";
@@ -266,6 +267,106 @@ describe("splitSegments — lanes segments", () => {
 			throw new Error("expected payload after lanes");
 		expect(await collect(third.value.body)).toBe("seg-2-flight");
 		await third.value.trailers;
+	});
+
+	it("a next delimiter CLOSES a producer body cleanly while a normal sibling still errors", async () => {
+		// A `muxlive`-flagged body may already be COMMITTED progressively
+		// client-side — a clean region exit closes it (its committed tree
+		// keeps its fallback until the covering render replaces it)
+		// instead of rejecting pending rows into an error boundary. A
+		// normal open body keeps torn-lane semantics: it errors, and only
+		// itself.
+		const liveBody = encoder.encode("prod\n7 0");
+		const wire = bytes(
+			"seg-0",
+			SETTLED,
+			NEXT,
+			LANES,
+			muxFrame("prod", encoder.encode("producer-head")),
+			buildMarker(TAG_MUX_LIVE, liveBody.byteLength),
+			liveBody,
+			muxFrame("plain", encoder.encode("normal-head")),
+			NEXT,
+			"seg-2-flight",
+			SETTLED,
+		);
+		const entries: Array<{ tag: string; body: string }> = [];
+		const iter = splitSegments(streamOf(wire), undefined, (tag, body) =>
+			entries.push({ tag, body: decoder.decode(body) }),
+		)[Symbol.asyncIterator]();
+		const first = await iter.next();
+		if (first.done || first.value.kind !== "payload")
+			throw new Error("expected payload");
+		await collect(first.value.body);
+		await first.value.trailers;
+
+		const second = await iter.next();
+		if (second.done || second.value.kind !== "lanes")
+			throw new Error("expected lanes");
+		const lanes: DemuxedLane[] = [];
+		for await (const lane of second.value.lanes) lanes.push(lane);
+		expect(lanes.map((l) => l.partonId)).toEqual(["prod", "plain"]);
+
+		// The producer body CLOSES: its bytes drain and the stream ends
+		// cleanly (no rejection).
+		expect(await collect(lanes[0].body)).toBe("producer-head");
+		// The normal body rejects — only itself.
+		const reader = lanes[1].body.getReader();
+		await expect(
+			(async () => {
+				await reader.read();
+				await reader.read();
+			})(),
+		).rejects.toThrow(/open|incomplete|closed/);
+
+		// The announcement surfaced as a wire entry (the channel
+		// transport's early-delivery queue reads it there).
+		expect(entries).toContainEqual({ tag: "muxlive", body: "prod\n7 0" });
+
+		const third = await iter.next();
+		if (third.done || third.value.kind !== "payload")
+			throw new Error("expected payload after lanes");
+		expect(await collect(third.value.body)).toBe("seg-2-flight");
+		await third.value.trailers;
+	});
+
+	it("a genuinely torn source still rejects a producer body — and only itself", async () => {
+		const liveBody = encoder.encode("prod\n3 0");
+		const wire = bytes(
+			"seg-0",
+			SETTLED,
+			NEXT,
+			LANES,
+			muxFrame("done", encoder.encode("done-body")),
+			muxEndFrame("done"),
+			muxFrame("prod", encoder.encode("producer-head")),
+			buildMarker(TAG_MUX_LIVE, liveBody.byteLength),
+			liveBody,
+			// Source ends MID-FRAME — a real tear, not a clean exit.
+			bytes(muxFrame("prod", encoder.encode("tail")).slice(0, 8)),
+		);
+		const iter = splitSegments(streamOf(wire))[Symbol.asyncIterator]();
+		const first = await iter.next();
+		if (first.done || first.value.kind !== "payload")
+			throw new Error("expected payload");
+		await collect(first.value.body);
+		await first.value.trailers;
+		const second = await iter.next();
+		if (second.done || second.value.kind !== "lanes")
+			throw new Error("expected lanes");
+		const lanes: DemuxedLane[] = [];
+		for await (const lane of second.value.lanes) lanes.push(lane);
+		expect(lanes.map((l) => l.partonId)).toEqual(["done", "prod"]);
+		// The completed sibling is untouched — the tear rejects only the
+		// open producer body.
+		expect(await collect(lanes[0].body)).toBe("done-body");
+		const reader = lanes[1].body.getReader();
+		await expect(
+			(async () => {
+				await reader.read();
+				await reader.read();
+			})(),
+		).rejects.toThrow();
 	});
 
 	it("payload segments still parse untouched around a lanes region", async () => {

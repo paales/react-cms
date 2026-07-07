@@ -12,7 +12,11 @@
  * graph (`partial.tsx` et al.) that the driver imports.
  */
 
-import { queryMatchingTs } from "../runtime/invalidation-registry.ts";
+import {
+	_selectorMatchesSurface,
+	type ParsedSelector,
+	queryMatchingTs,
+} from "../runtime/invalidation-registry.ts";
 import type { PartialSnapshot } from "./partial-registry.ts";
 
 /**
@@ -51,10 +55,32 @@ export function _routeMatchingBumpIds(
 	return ids;
 }
 
-function snapshotHasMatchingBump(
-	snap: PartialSnapshot,
-	sinceTs: number,
-): boolean {
+/**
+ * The ids whose snapshots any of `selectors` would touch — the same
+ * label + constraint-subset predicate as `_routeMatchingBumpIds`, but
+ * against PENDING (un-flushed) selectors instead of registry entries.
+ * The action-consequence reservation runs this inside the action's
+ * invalidation transaction, before the commit wakes any driver.
+ */
+export function _routeMatchingSelectorIds(
+	snapshots: ReadonlyMap<string, PartialSnapshot>,
+	selectors: readonly ParsedSelector[],
+): string[] {
+	if (selectors.length === 0) return [];
+	const ids: string[] = [];
+	for (const [id, snap] of snapshots) {
+		const surface = constraintSurface(snap);
+		const hit = selectors.some(
+			(s) =>
+				snap.labels.includes(s.name) &&
+				_selectorMatchesSurface(s.constraints, surface),
+		);
+		if (hit) ids.push(id);
+	}
+	return ids;
+}
+
+function constraintSurface(snap: PartialSnapshot): Record<string, unknown> {
 	let varyInputs: Record<string, unknown> | null = null;
 	if (snap.varyKey) {
 		try {
@@ -63,9 +89,15 @@ function snapshotHasMatchingBump(
 			varyInputs = null;
 		}
 	}
-	const constraintSurface = {
+	return {
 		...(varyInputs ?? {}),
 		...(snap.constraintArgs ?? {}),
 	};
-	return queryMatchingTs(snap.labels, constraintSurface) > sinceTs;
+}
+
+function snapshotHasMatchingBump(
+	snap: PartialSnapshot,
+	sinceTs: number,
+): boolean {
+	return queryMatchingTs(snap.labels, constraintSurface(snap)) > sinceTs;
 }

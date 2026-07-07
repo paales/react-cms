@@ -330,6 +330,31 @@ export async function runInvalidationTransaction<T>(fn: () => Promise<T>): Promi
 }
 
 /**
+ * The active transaction's queued (un-flushed) bumps, or `[]` outside
+ * a transaction. The action-consequence reservation reads this INSIDE
+ * the action's transaction — after the body queued its bumps, before
+ * the commit flushes them and wakes the segment drivers — so a
+ * consequence lane's delivery seq is assigned strictly BEFORE any
+ * driver could race a mint for the same render (see
+ * `_reserveActionConsequences` in `../lib/segmented-response.ts`).
+ */
+export function _pendingInvalidationSelectors(): readonly ParsedSelector[] {
+  return transactionContext.getStore()?.pending ?? []
+}
+
+/**
+ * True iff `constraints` are a subset of `surface` — the same
+ * predicate `queryMatchingTs` applies per entry, exposed for callers
+ * that match PENDING selectors (no registry entry, no ts, yet).
+ */
+export function _selectorMatchesSurface(
+  constraints: Record<string, unknown>,
+  surface: Record<string, unknown> | null | undefined,
+): boolean {
+  return matchesConstraints(surface, constraints)
+}
+
+/**
  * Manually flush any pending bumps from the active transaction (if
  * any) into the registry. Used by the segment-loop driver to advance
  * one tick within a long-running connection without ending the

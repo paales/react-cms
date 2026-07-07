@@ -64,7 +64,13 @@ function pathKey(path: readonly string[]): string {
   return path.join(".")
 }
 
-const SESSION_COOKIE = "__frame_sid"
+/** The session-id cookie. Exported for the segment driver's held-
+ *  request identity refresh: a live connection whose session identity
+ *  was minted mid-connection (a channel frame statement's
+ *  `ensureSessionId` on an anonymous page) re-presents the bound id on
+ *  its own request state, or the held renders could never read the
+ *  frame URLs the endpoint wrote under it. */
+export const SESSION_COOKIE = "__frame_sid"
 
 /** A stored session plus its inactivity clock. `touchedAt` refreshes
  *  on every read or write of the session, so expiry keys on idleness

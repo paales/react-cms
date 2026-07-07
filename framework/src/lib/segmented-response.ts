@@ -34,6 +34,7 @@ import {
 	_captureCommitHandle,
 	_clearConnectionLive,
 	_clearRequestEphemeralStorage,
+	_createConnectionLiveProbe,
 	_getAttachStatement,
 	_getCachedOverride,
 	_isConnectionLive,
@@ -47,18 +48,21 @@ import {
 import {
 	_currentTs,
 	_onNextBump,
+	_pendingInvalidationSelectors,
 	_registryEpoch,
 } from "../runtime/invalidation-registry.ts";
-import { getSessionId } from "../runtime/session.ts";
+import { getSessionId, SESSION_COOKIE } from "../runtime/session.ts";
 import { UNACKED_DELIVERY_WINDOW as PROTOCOL_UNACKED_DELIVERY_WINDOW } from "./channel-protocol.ts";
 import {
 	_closeConnectionSession,
 	_openConnectionSession,
+	_peekConnectionSession,
 	_recordDelivery,
 	type ConnectionSession,
 	capOverrideSet,
 	type PendingFlip,
 	takeConnectionFlips,
+	takeConnectionFrameNavs,
 	takeConnectionNavigation,
 } from "./connection-session.ts";
 import { renderToReadableStream } from "./flight-runtime.ts";
@@ -69,8 +73,10 @@ import {
 	TAG_CONNECTION_ID,
 	TAG_DELIVERY_SEQ,
 	TAG_LANES_OPEN,
+	TAG_MUX_LIVE,
 	TAG_NEXT_SEGMENT,
 	TAG_SEGMENT_SETTLED,
+	TAG_SEQ_VOID,
 	TAG_UPSTREAM_APPLIED,
 } from "./fp-trailer-marker.ts";
 import {
@@ -93,6 +99,7 @@ import { muxEndFrame, muxFrame } from "./parton-mux.ts";
 import {
 	_routeHasMatchingBump,
 	_routeMatchingBumpIds,
+	_routeMatchingSelectorIds,
 } from "./segment-relevance.ts";
 import { _getWarmProjector, type WarmCandidate } from "./warm-projection.ts";
 
@@ -644,6 +651,11 @@ function openLiveConnectionSession(): ConnectionSession | null {
 		// page-lifetime envelope timeline (see [[channel-protocol]]).
 		applied: statement?.applied ?? 0,
 	});
+	// The route this connection renders — what an action's consequence
+	// reservation resolves the route snapshots through (the driver isn't
+	// on the stack there). Moved by the driver at a window-navigation
+	// consume.
+	session.routeKey = computeRouteKey(request.url);
 	_setConnectionSession(session);
 	return session;
 }
@@ -675,21 +687,65 @@ function segmentDeliverySeqEntry(seq: number, asOf: number): Uint8Array {
 	return out;
 }
 
-/** A lane delivery's `seq` entry bytes — `<parton-id>\n<seq> <asof>`,
- *  the mux frames' id-first shape, framed for the lanes region (one
- *  buffer: the lane driver's `enqueue` is all-or-nothing per chunk).
- *  Written immediately BEFORE the lane's `muxend`, so the client's
- *  per-parton seq queue holds the value before the lane body closes
- *  and its decode — then commit — can complete. As-of at drain equals
- *  as-of at render: a navigation tears open lanes before it applies,
- *  so no lane ever drains across a consume. */
+/** A lane delivery's `seq` entry bytes —
+ *  `<parton-id>\n<seq> <asof>[ nav=<n>]`, the mux frames' id-first
+ *  shape, framed for the lanes region (one buffer: the lane driver's
+ *  `enqueue` is all-or-nothing per chunk). Written immediately BEFORE
+ *  the lane's `muxend`, so the client's per-parton seq queue holds the
+ *  value before the lane body closes and its decode — then commit —
+ *  can complete. As-of at drain equals as-of at render: a navigation
+ *  tears open lanes before it applies, so no lane ever drains across a
+ *  consume. `nav=<n>` flags a lane spawned by a FRAME url statement
+ *  with that statement's seq — the client's correlation for the frame
+ *  fire's milestones. */
 function laneDeliverySeqEntry(
 	partonId: string,
 	seq: number,
 	asOf: number,
+	navSeq?: number,
 ): Uint8Array {
-	const body = new TextEncoder().encode(`${partonId}\n${seq} ${asOf}`);
-	const marker = buildMarker(TAG_DELIVERY_SEQ, body.byteLength);
+	return idFirstEntry(TAG_DELIVERY_SEQ, partonId, seq, asOf, navSeq);
+}
+
+/** A producer lane's early delivery announcement — the `muxlive`
+ *  frame: same id-first body as the lane `seq` entry, written the
+ *  moment the lane's render declares itself a producer
+ *  (`markConnectionLive()`), so the client holds seq + as-of while the
+ *  body is still streaming and can commit progressively. A producer
+ *  lane writes NO drain-time `seq` entry — this announcement IS its
+ *  delivery; `muxend` at producer resolve closes the body. */
+function muxLiveEntry(
+	partonId: string,
+	seq: number,
+	asOf: number,
+	navSeq?: number,
+): Uint8Array {
+	return idFirstEntry(TAG_MUX_LIVE, partonId, seq, asOf, navSeq);
+}
+
+function idFirstEntry(
+	tag: string,
+	partonId: string,
+	seq: number,
+	asOf: number,
+	navSeq?: number,
+): Uint8Array {
+	const flags = navSeq !== undefined ? ` nav=${navSeq}` : "";
+	const body = new TextEncoder().encode(`${partonId}\n${seq} ${asOf}${flags}`);
+	const marker = buildMarker(tag, body.byteLength);
+	const out = new Uint8Array(marker.byteLength + body.byteLength);
+	out.set(marker, 0);
+	out.set(body, marker.byteLength);
+	return out;
+}
+
+/** A `seqvoid` entry — space-separated delivery seqs that were
+ *  assigned ahead of a render (an action's consequence reservation)
+ *  but whose lane was skipped. The client counts each PROCESSED so
+ *  the contiguous ack watermark passes them. */
+function seqVoidEntry(seqs: readonly number[]): Uint8Array {
+	const body = new TextEncoder().encode(seqs.join(" "));
+	const marker = buildMarker(TAG_SEQ_VOID, body.byteLength);
 	const out = new Uint8Array(marker.byteLength + body.byteLength);
 	out.set(marker, 0);
 	out.set(body, marker.byteLength);
@@ -721,6 +777,18 @@ interface LaneRuntime {
 	 *  loader-blocked Flight stream has no other check point). Set per
 	 *  render iteration while its reader is held; `null` between. */
 	abortRead: (() => void) | null;
+	/** A `cancel` statement named this lane's scope: the pump winds the
+	 *  CURRENT iteration down (closing the open body with a `muxend` so
+	 *  the client's decode settles and the same id can reopen) and
+	 *  exits — the superseding frame statement's covering lane renders
+	 *  fresh. */
+	cancelled: boolean;
+	/** The current iteration's render declared itself a PRODUCER
+	 *  (`markConnectionLive()` inside the lane — see `muxLiveEntry`).
+	 *  Its body streams until the producer resolves; the drive-loop
+	 *  exit aborts producer reads (an unbounded await must not hold the
+	 *  wind-down). */
+	producer: boolean;
 }
 
 /**
@@ -812,7 +880,45 @@ async function driveLaneStream(
 	// target. Consumed at lane start (one-shot — the render satisfies
 	// the force).
 	const forcedLaneIds = new Set<string>();
+	// Frame-nav correlation flags: id → the FRAME url statement's seq
+	// whose consume spawned that id's next lane. One-shot — consumed at
+	// the covering iteration; ships as the ` nav=<n>` token on its
+	// delivery announcement (the client resolves the frame fire's
+	// milestones off it).
+	const laneNavSeqs = new Map<string, number>();
 	let closed = false;
+
+	// ── Consequence-seq bookkeeping ──
+	// An action's reservation (`_reserveActionConsequences`) assigns a
+	// delivery seq to a consequence lane BEFORE the bump wakes this
+	// driver; the pump takes an id's assignment at iteration start. A
+	// skip path that drops the id must VOID the assignment instead —
+	// an assigned seq that never reaches the wire would wedge the
+	// client's contiguous ack watermark (and hold its overlay gates)
+	// forever.
+	const takeAssignedSeq = (id: string): number | null => {
+		if (session === null) return null;
+		const seq = session.assignedLaneSeqs.get(id);
+		if (seq === undefined) return null;
+		session.assignedLaneSeqs.delete(id);
+		return seq;
+	};
+	const voidAssigned = (id: string): void => {
+		if (session === null) return;
+		const seq = session.assignedLaneSeqs.get(id);
+		if (seq === undefined) return;
+		session.assignedLaneSeqs.delete(id);
+		session.voidSeqs.add(seq);
+	};
+	// Flush pending voids as one `seqvoid` entry. Entries interleave
+	// anywhere on the wire (payload segments and lanes region alike),
+	// so any emission point serves.
+	const announceVoidSeqs = (): void => {
+		if (session === null || session.voidSeqs.size === 0) return;
+		const seqs = [...session.voidSeqs];
+		session.voidSeqs.clear();
+		enqueue(seqVoidEntry(seqs));
+	};
 
 	// Stop release for pumps parked at the demand gate when the wake
 	// loop exits: flushing the waiters lets each parked pump re-check
@@ -831,10 +937,11 @@ async function driveLaneStream(
 	// open lane winds down FIRST: the flag turns each pump's next check
 	// point into an exit (no muxend, no seq entry — the client's region
 	// exit errors the torn body, rejecting only that lane's un-committed
-	// decode), `abortRead` breaks pumps parked on a suspended render,
-	// and the gate release frees pumps parked on demand. The torn lanes'
-	// content is obsolete by definition — it renders the route the
-	// client just left.
+	// decode; a PRODUCER body, whose earlier bytes may have committed
+	// progressively, is closed cleanly there instead), `abortRead`
+	// breaks pumps parked on a suspended render, and the gate release
+	// frees pumps parked on demand. The torn lanes' content is obsolete
+	// by definition — it renders the route the client just left.
 	let tearingLanesForNav = false;
 	const tearLanesForNavigation = async (): Promise<void> => {
 		if (lanes.size === 0) return;
@@ -843,6 +950,32 @@ async function driveLaneStream(
 		for (const release of [...gateWaiters]) release();
 		await Promise.allSettled([...lanes.values()].map((l) => l.done));
 		tearingLanesForNav = false;
+	};
+
+	// The cancel arm — a `cancel` statement's reach into the scope's
+	// open lane renders, fired synchronously at envelope apply
+	// (`cancelListeners`). Scope membership is the frame's narrowing:
+	// the lane's parton belongs to the scope when its id or a label
+	// matches the scope name, or its snapshot's frame path opens with
+	// it (nested frames cancel with their root). The cancelled pump
+	// winds its CURRENT iteration down — closing the open body with a
+	// `muxend` so the client's decode settles and the same id can
+	// reopen — and exits; the superseding statement's covering lane
+	// renders fresh.
+	const cancelScopeLanes = (cancelScope: string): void => {
+		if (lanes.size === 0) return;
+		const snapshots = _readSnapshotsForRoute(scope, routeKey);
+		for (const [id, runtime] of lanes) {
+			const snap = snapshots.get(id);
+			const inScope =
+				id === cancelScope ||
+				(snap?.labels.includes(cancelScope) ?? false) ||
+				snap?.framePath[0] === cancelScope;
+			if (!inScope) continue;
+			runtime.cancelled = true;
+			runtime.abortRead?.();
+		}
+		for (const release of [...gateWaiters]) release();
 	};
 
 	// Lane-output demand gate. Parks while the consumer's queue is
@@ -854,11 +987,12 @@ async function driveLaneStream(
 	// full. A pump caught by `stopping` with room in the queue still
 	// delivers — only a consumer that stopped pulling gets its lane
 	// tail torn.
-	const awaitDemand = async (): Promise<boolean> => {
-		if (!demand) return true;
+	const awaitDemand = async (runtime?: LaneRuntime): Promise<boolean> => {
+		if (!demand) return runtime?.cancelled !== true;
 		while (
 			!stopping &&
 			!tearingLanesForNav &&
+			runtime?.cancelled !== true &&
 			!demand.cancelled &&
 			controller.desiredSize !== null &&
 			controller.desiredSize <= 0
@@ -876,6 +1010,7 @@ async function driveLaneStream(
 			closed = true;
 			return false;
 		}
+		if (runtime?.cancelled === true) return false;
 		return !(
 			stopping &&
 			controller.desiredSize !== null &&
@@ -926,6 +1061,8 @@ async function driveLaneStream(
 			dirty: false,
 			done: Promise.resolve(),
 			abortRead: null,
+			cancelled: false,
+			producer: false,
 		};
 		lanes.set(id, runtime);
 		openLaneIds.add(id);
@@ -969,90 +1106,187 @@ async function driveLaneStream(
 			});
 		}
 		try {
-			while (!closed && !tearingLanesForNav) {
+			while (!closed && !tearingLanesForNav && !runtime.cancelled) {
 				runtime.dirty = false;
+				runtime.producer = false;
 				const snap = lookupPartial(id);
-				if (!snap) break;
-				const flight = renderToReadableStream(partialFromSnapshot(id, snap));
+				if (!snap) {
+					// An assigned consequence seq for a parton that no longer
+					// snapshots can never emit — void it.
+					voidAssigned(id);
+					break;
+				}
+				// A consequence seq assigned ahead of this render (an action's
+				// reservation) — the iteration's delivery seq. Taken at
+				// ITERATION START so a write landing mid-render assigns a
+				// FRESH seq for the next iteration (this render's content
+				// predates it).
+				const assignedSeq = takeAssignedSeq(id);
+				// The frame-nav correlation flag for a lane this iteration
+				// covers — one-shot, rides the delivery announcement.
+				const navSeq = laneNavSeqs.get(id);
+				laneNavSeqs.delete(id);
 				// This render is one DELIVERY: the fps it establishes on the
 				// client — subtree promotions at drain plus any trailer heals
 				// during the flush — become acked holdings when the client
-				// commits it. Captured per iteration; the seq is minted at
-				// drain so wire order stays mint order.
+				// commits it. Captured per iteration.
 				const carried: Array<readonly [string, string]> = [];
-				// A lane is a single parton's render — its flush already fires at
-				// that parton's completion, and lanes run concurrently (the
-				// one-sink-per-request settle slot doesn't model that), so
-				// settle-time emission is off here.
-				const wrapped = wrapStreamWithFpTrailer(
-					flight,
-					_captureCommitHandle(),
-					{
-						incremental: false,
-						// A lane's trailer heals only its own subtree — see
-						// `flushScopeId`. Without the scope, every lane frame on a
-						// many-parton route re-computes and re-ships the standing
-						// drift of every route snapshot: O(route) hashing per
-						// frame, and the same multi-KB fp payload duplicated onto
-						// every frame of the stream.
-						flushScopeId: id,
-						// Fold this lane's warm fps into the connection's cached
-						// override alongside the client-bound trailer, so the
-						// server-side skip check tracks the same drift the client
-						// heals (a bump landing between this lane's render and
-						// its flush moves the recomputed fp past the emitted one).
-						// The healed fps ride this delivery's holdings record too —
-						// the client applies the trailer at the same commit.
-						onUpdates: (updates) => {
-							promoteFpUpdatesToCachedOverride(updates);
-							for (const [uid, entry] of Object.entries(updates)) {
-								carried.push([uid, entry.to]);
-							}
+				// Per-iteration producer attribution: the render runs inside a
+				// nested probe scope so `markConnectionLive()` marks THIS lane
+				// (lane renders share one request store — the store-level flag
+				// can't attribute across concurrent pumps).
+				const probe = _createConnectionLiveProbe();
+				// The seq announced on the wire this iteration — a producer
+				// lane announces EARLY (`muxlive`, the moment the render marks
+				// live) so the client commits progressively; a normal lane
+				// announces at drain, just before its `muxend`.
+				let announcedSeq: number | null = null;
+				let wroteBytes = false;
+				const maybeAnnounceProducer = (): boolean => {
+					if (announcedSeq !== null || session === null) return true;
+					if (!wroteBytes || !probe.live()) return true;
+					runtime.producer = true;
+					announcedSeq = assignedSeq ?? ++session.deliverySeq;
+					return enqueue(
+						muxLiveEntry(id, announcedSeq, session.consumedNavSeq, navSeq),
+					);
+				};
+				const runIteration = async (): Promise<"drained" | "torn" | "closed"> => {
+					const flight = renderToReadableStream(partialFromSnapshot(id, snap));
+					// A lane is a single parton's render — its flush already fires
+					// at that parton's completion, and lanes run concurrently (the
+					// one-sink-per-request settle slot doesn't model that), so
+					// settle-time emission is off here.
+					const wrapped = wrapStreamWithFpTrailer(
+						flight,
+						_captureCommitHandle(),
+						{
+							incremental: false,
+							// A lane's trailer heals only its own subtree — see
+							// `flushScopeId`. Without the scope, every lane frame on a
+							// many-parton route re-computes and re-ships the standing
+							// drift of every route snapshot: O(route) hashing per
+							// frame, and the same multi-KB fp payload duplicated onto
+							// every frame of the stream.
+							flushScopeId: id,
+							// Fold this lane's warm fps into the connection's cached
+							// override alongside the client-bound trailer, so the
+							// server-side skip check tracks the same drift the client
+							// heals (a bump landing between this lane's render and
+							// its flush moves the recomputed fp past the emitted one).
+							// The healed fps ride this delivery's holdings record too —
+							// the client applies the trailer at the same commit.
+							onUpdates: (updates) => {
+								promoteFpUpdatesToCachedOverride(updates);
+								for (const [uid, entry] of Object.entries(updates)) {
+									carried.push([uid, entry.to]);
+								}
+							},
 						},
-					},
-				);
-				const reader = wrapped.getReader();
-				// The navigation tear's reach into a read parked on a suspended
-				// render — cancelling settles the pending read so the pump can
-				// observe the tear and wind down without a muxend.
-				runtime.abortRead = () => void reader.cancel().catch(() => {});
-				try {
-					while (true) {
-						const { done, value } = await reader.read();
-						if (done || tearingLanesForNav) break;
-						if (value && value.byteLength > 0) {
-							// Pull-gated: park before the enqueue while the consumer's
-							// queue is full. Not reading the NEXT chunk until then
-							// propagates the wait into the lane's Flight stream, so a
-							// stalled reader holds at most one frame per lane
-							// server-side instead of every wake's full payload.
-							if (!(await awaitDemand()) || tearingLanesForNav) {
+					);
+					const reader = wrapped.getReader();
+					// The navigation tear's / cancel's reach into a read parked on
+					// a suspended render — cancelling settles the pending read so
+					// the pump can observe the tear and wind down.
+					runtime.abortRead = () => void reader.cancel().catch(() => {});
+					try {
+						while (true) {
+							const { done, value } = await reader.read();
+							if (done) break;
+							if (tearingLanesForNav || runtime.cancelled) {
 								await reader.cancel().catch(() => {});
-								return;
+								return "torn";
 							}
-							if (!enqueue(muxFrame(id, value))) {
+							if (value && value.byteLength > 0) {
+								// Pull-gated: park before the enqueue while the consumer's
+								// queue is full. Not reading the NEXT chunk until then
+								// propagates the wait into the lane's Flight stream, so a
+								// stalled reader holds at most one frame per lane
+								// server-side instead of every wake's full payload.
+								if (
+									!(await awaitDemand(runtime)) ||
+									tearingLanesForNav ||
+									runtime.cancelled
+								) {
+									await reader.cancel().catch(() => {});
+									return runtime.cancelled || tearingLanesForNav
+										? "torn"
+										: "closed";
+								}
+								if (!enqueue(muxFrame(id, value))) {
+									await reader.cancel().catch(() => {});
+									return "closed";
+								}
+								wroteBytes = true;
+							}
+							// Producer announcement — checked at every pump step so
+							// the mark lands on the wire before the render's producer
+							// await stalls the body.
+							if (!maybeAnnounceProducer()) {
 								await reader.cancel().catch(() => {});
-								return;
+								return "closed";
 							}
 						}
+					} finally {
+						runtime.abortRead = null;
+						reader.releaseLock();
 					}
-				} finally {
-					runtime.abortRead = null;
-					reader.releaseLock();
+					if (tearingLanesForNav || runtime.cancelled) return "torn";
+					return "drained";
+				};
+				let outcome: "drained" | "torn" | "closed";
+				try {
+					outcome = await probe.run(runIteration);
+				} catch {
+					// A cancelled suspended render can reject its reader instead
+					// of resolving it done — same wind-down as an observed tear
+					// (the assigned-seq void below must still run).
+					outcome = "torn";
 				}
-				// A torn pump exits before its muxend/seq: the client's region
-				// exit errors the open body — a rejection of this lane's own
-				// un-committed decode, nothing more.
-				if (tearingLanesForNav) return;
-				if (!(await awaitDemand())) return;
-				// The delivery seq entry precedes the `muxend` on the wire, so
-				// the client's per-parton seq queue holds it before the lane
-				// body closes — its decode, then commit, then ack all follow.
-				let deliverySeq: number | null = null;
-				if (session !== null) {
-					deliverySeq = ++session.deliverySeq;
+				if (outcome !== "drained") {
+					// Torn. A CANCELLED iteration on a CONTINUING region closes
+					// its open client body with a `muxend` — the decode settles
+					// (a producer body's progressive commit keeps its fallback
+					// until the covering render replaces it) and the same id can
+					// reopen for the superseding statement's lane. A navigation
+					// tear writes nothing: the region exit is what rejects (or,
+					// for producer bodies, cleanly closes) those bodies. Either
+					// way an assigned-but-unannounced consequence seq is voided —
+					// the client's watermark must be able to pass it.
 					if (
-						!enqueue(laneDeliverySeqEntry(id, deliverySeq, session.consumedNavSeq))
+						runtime.cancelled &&
+						!tearingLanesForNav &&
+						wroteBytes &&
+						!closed
+					) {
+						enqueue(muxEndFrame(id));
+					}
+					if (assignedSeq !== null && announcedSeq === null) {
+						session?.voidSeqs.add(assignedSeq);
+					}
+					return;
+				}
+				if (!(await awaitDemand(runtime))) {
+					if (runtime.cancelled && wroteBytes && !closed) {
+						enqueue(muxEndFrame(id));
+					}
+					if (assignedSeq !== null && announcedSeq === null) {
+						session?.voidSeqs.add(assignedSeq);
+					}
+					return;
+				}
+				// The delivery announcement precedes the `muxend` on the wire,
+				// so the client's per-parton seq queue holds it before the lane
+				// body closes — its decode, then commit, then ack all follow. A
+				// producer lane announced at flag time (`muxlive`); its muxend
+				// at producer resolve is the body's only remaining frame.
+				let deliverySeq: number | null = announcedSeq;
+				if (session !== null && deliverySeq === null) {
+					deliverySeq = assignedSeq ?? ++session.deliverySeq;
+					if (
+						!enqueue(
+							laneDeliverySeqEntry(id, deliverySeq, session.consumedNavSeq, navSeq),
+						)
 					)
 						return;
 				}
@@ -1432,6 +1666,14 @@ async function driveLaneStream(
 	const handleNavigation = async (): Promise<boolean> => {
 		if (session === null) return true;
 		await tearLanesForNavigation();
+		// The route is left behind: consequence seqs assigned for its
+		// lanes can never emit (their client commits would be
+		// as-of-dropped anyway) — void them so the watermark passes; the
+		// same for frame-nav correlation flags whose covering lanes died
+		// with the tear.
+		for (const [, seq] of session.assignedLaneSeqs) session.voidSeqs.add(seq);
+		session.assignedLaneSeqs.clear();
+		laneNavSeqs.clear();
 		// The final consumed statement's `__force` selector — the targets
 		// that lane after the region reopens. Superseded statements' force
 		// sets are moot (the covering statement's stands).
@@ -1464,6 +1706,7 @@ async function driveLaneStream(
 			setRequest(new Request(target, { headers: request.headers }));
 			request = getRequest();
 			routeKey = computeRouteKey(request.url);
+			session.routeKey = routeKey;
 			session.consumedNavSeq = nav.seq;
 			pruneDeliveriesBeforeNav(session, nav.seq);
 			const outcome = await emitNavSegment();
@@ -1505,6 +1748,105 @@ async function driveLaneStream(
 		return true;
 	};
 
+	// ── Frame navigation ──
+	// Consume every latched FRAME url statement. The session frame URL
+	// was written at the endpoint (the same store `?__frame=` writes
+	// through); the driver's half is the RENDER: resolve the frame's
+	// targets by its top-level name (id first, then label fan-out — the
+	// same narrowing the discrete twin's `?partials=<frame[0]>` takes)
+	// and lane them EXPLICIT on the OPEN region, each stamped with the
+	// statement's seq (`nav=<n>` on its delivery announcement — the
+	// client's milestone correlation). Frame content is a subtree, never
+	// the whole route, so no region tear: window partons' lanes are
+	// untouched — this is exactly the scoping the frame long-poll had.
+	// A statement whose targets resolve to NOTHING (the frame never
+	// rendered on this route) falls back to one whole-tree segment via
+	// the reconcile machinery — its as-of covers the statement, so the
+	// client's milestones resolve off the segment instead of a lane.
+	const handleFrameNavs = async (): Promise<boolean> => {
+		if (session === null) return true;
+		const navs = takeConnectionFrameNavs(session);
+		if (navs.size === 0) return true;
+		// Identity refresh: a frame statement on an ANONYMOUS page mints
+		// the session id at the endpoint (and rebinds the connection to
+		// it), but this held request predates the mint — its renders
+		// would read no session and miss the frame URL the endpoint just
+		// wrote. Re-present the BOUND identity (the endpoint's checks
+		// proved this client holds it) on the connection's request state.
+		if (
+			session.boundSessionId !== "" &&
+			getSessionId() !== session.boundSessionId
+		) {
+			const headers = new Headers(request.headers);
+			const cookie = headers.get("cookie");
+			const sid = `${SESSION_COOKIE}=${session.boundSessionId}`;
+			headers.set("cookie", cookie ? `${cookie}; ${sid}` : sid);
+			setRequest(new Request(request.url, { headers }));
+			request = getRequest();
+		}
+		const spawn: Array<{ id: string; navSeq: number }> = [];
+		let uncovered = false;
+		const snapshots = _readSnapshotsForRoute(scope, routeKey);
+		for (const [key, nav] of navs) {
+			session.consumedFrameNavSeqs.set(
+				key,
+				Math.max(session.consumedFrameNavSeqs.get(key) ?? 0, nav.seq),
+			);
+			// The as-of every subsequent emission carries — "the last url
+			// statement the request state reflects" spans both scopes; a
+			// frame consume advances it so covering renders are provably
+			// post-consume. Window drop semantics are unaffected: the
+			// client's navigation point only ever moves on WINDOW
+			// statements, and the guard is `asOf >= navPoint`.
+			session.consumedNavSeq = Math.max(session.consumedNavSeq, nav.seq);
+			const top = key.split(".")[0];
+			const ids = new Set<string>();
+			if (snapshots.has(top)) ids.add(top);
+			for (const [id, snap] of snapshots) {
+				if (ids.has(id)) continue;
+				if (snap.labels.includes(top)) ids.add(id);
+			}
+			if (ids.size === 0) {
+				uncovered = true;
+				continue;
+			}
+			for (const id of ids) spawn.push({ id, navSeq: nav.seq });
+		}
+		// The uncovered fallback needs region delimiters (a whole-tree
+		// segment cannot interleave with open lanes), so it runs FIRST —
+		// before this statement's own lanes open.
+		if (uncovered) {
+			await tearLanesForNavigation();
+			if (!(await emitReconcileSegment())) return false;
+			lastFullSegmentAt = Date.now();
+			since = _currentTs();
+		}
+		if (spawn.length > 0) {
+			enterRequestRegistry(routeKey, "cache");
+			for (const { id, navSeq } of spawn) {
+				const open = lanes.get(id);
+				// A cancelled predecessor (the superseding statement's own
+				// cancel, applied in the same envelope) is winding down — wait
+				// it out so the covering lane opens a fresh body instead of
+				// piggybacking a dirty flag on a pump that is exiting.
+				if (open?.cancelled) {
+					await open.done;
+				}
+				forcedLaneIds.add(id);
+				laneNavSeqs.set(id, navSeq);
+				startLane(id);
+			}
+		}
+		return true;
+	};
+
+	// The cancel arm — registered for the drive's lifetime, disposed at
+	// exit: a `cancel` statement's apply aborts its scope's open lane
+	// renders synchronously (the same immediacy the window supersede
+	// has through the nav-latch arm).
+	const onCancelScope = (s: string): void => cancelScopeLanes(s);
+	session?.cancelListeners.add(onCancelScope);
+
 	// `session.detached` exits alongside `closed`: an explicit detach
 	// frame fires the flip wakes, the parked wait returns, and the
 	// condition winds the drive down — the stream closes now instead of
@@ -1541,13 +1883,15 @@ async function driveLaneStream(
 		const latchedWake = (): SegmentWake | null =>
 			session !== null && session.pendingNav !== null
 				? "navigation"
-				: session !== null && session.pendingFlips.size > 0
-					? "visibility"
-					: laneDrainedPending
-						? "lane-drained"
-						: windowDirty.size > 0 && !deliveryWindowExceeded()
-							? "window"
-							: null;
+				: session !== null && session.pendingFrameNavs.size > 0
+					? "frame-navigation"
+					: session !== null && session.pendingFlips.size > 0
+						? "visibility"
+						: laneDrainedPending
+							? "lane-drained"
+							: windowDirty.size > 0 && !deliveryWindowExceeded()
+								? "window"
+								: null;
 		let wake: SegmentWake | null = latchedWake();
 		while (wake === null && pendingWarmStatement()) {
 			// About to park with an unconsumed telemetry statement — the
@@ -1595,6 +1939,7 @@ async function driveLaneStream(
 		}
 		if (wake === "lane-drained") laneDrainedPending = false;
 		announceUpstreamApplied();
+		announceVoidSeqs();
 		// A latched navigation preempts everything below regardless of
 		// which arm won the race (a url frame's wake fires the same flip
 		// arms). Other latches survive the continue — the next wait entry
@@ -1602,6 +1947,16 @@ async function driveLaneStream(
 		if (session !== null && session.pendingNav !== null) {
 			if (!(await handleNavigation())) break;
 			idleDeadline = Date.now() + KEEPALIVE_MS;
+			announceVoidSeqs();
+			continue;
+		}
+		// Latched FRAME navigations — after the window (a window move
+		// outranks frame work: the frame targets resolve against the new
+		// route), before flips.
+		if (session !== null && session.pendingFrameNavs.size > 0) {
+			if (!(await handleFrameNavs())) break;
+			idleDeadline = Date.now() + KEEPALIVE_MS;
+			announceVoidSeqs();
 			continue;
 		}
 		const snapshots = _readSnapshotsForRoute(scope, routeKey);
@@ -1700,12 +2055,29 @@ async function driveLaneStream(
 		}
 		if (wake === "bump") {
 			// Parked partons don't lane (see the parked-skip note above);
-			// their catch-up is the flip-in revalidation.
+			// their catch-up is the flip-in revalidation. A parked skip
+			// voids the id's assigned consequence seq — the lane it was
+			// reserved for is not coming.
 			for (const id of _routeMatchingBumpIds(snapshots, since)) {
-				if (isParkedOnConnection(id, snapshots, session)) continue;
+				if (isParkedOnConnection(id, snapshots, session)) {
+					voidAssigned(id);
+					continue;
+				}
 				touched.push(id);
 			}
 			since = _currentTs();
+			// Backstop for assignments this bump pass didn't touch (the
+			// snapshot's constraint surface changed between the action's
+			// reservation and this wake): an assignment neither laned nor
+			// coalesced would pend — and hold the client's gate — forever.
+			if (session !== null && session.assignedLaneSeqs.size > 0) {
+				for (const id of [...session.assignedLaneSeqs.keys()]) {
+					if (touched.includes(id)) continue;
+					if (openLaneIds.has(id)) continue;
+					if (windowDirty.has(id)) continue;
+					voidAssigned(id);
+				}
+			}
 		} else if (wake === "expiry" || wake === "lane-drained") {
 			// Expiry wake, or a drained lane whose fresh snapshot may carry
 			// a due deadline: render every parton past its `expiresAt`.
@@ -1745,10 +2117,14 @@ async function driveLaneStream(
 			windowDirty.clear();
 			for (let i = freed.length - 1; i >= 0; i--) {
 				const id = freed[i];
-				if (isParkedOnConnection(id, snapshots, session)) continue;
+				if (isParkedOnConnection(id, snapshots, session)) {
+					voidAssigned(id);
+					continue;
+				}
 				if (!touched.includes(id)) touched.unshift(id);
 			}
 		}
+		announceVoidSeqs();
 		if (touched.length === 0) continue;
 		idleDeadline = Date.now() + KEEPALIVE_MS;
 		// Fresh registry pass per wake: descendant folds and lookups read
@@ -1759,8 +2135,18 @@ async function driveLaneStream(
 	}
 	// Release demand-parked pumps before waiting the lanes out — the
 	// loop's exit is the signal that no further demand is worth
-	// waiting for.
+	// waiting for. Producer lanes get their reads aborted too: their
+	// bodies stream until a producer resolves — an unbounded await that
+	// must not hold the wind-down (normal renders are loader-bounded
+	// and drain out).
+	session?.cancelListeners.delete(onCancelScope);
 	stopping = true;
+	for (const runtime of lanes.values()) {
+		if (runtime.producer) {
+			runtime.cancelled = true;
+			runtime.abortRead?.();
+		}
+	}
 	for (const release of [...gateWaiters]) release();
 	await Promise.allSettled([...lanes.values()].map((l) => l.done));
 }
@@ -1772,12 +2158,12 @@ const VISIBILITY_WAKE = Symbol("visibility-wake");
 const DEGRADE_WAKE = Symbol("degrade-wake");
 
 /** Which arm woke a segment/lane wait. `false` closes the stream.
- *  `"window"` and `"navigation"` are minted only by the lane driver's
- *  wait-entry latch (an ack freed the delivery window / a url frame
- *  latched while the driver was busy); the wait itself never returns
- *  them — a url frame's wake fires the flip arms, and the loop's
- *  pendingNav check preempts regardless of the winning arm.
- *  `"degrade"` is the never-acked deadline. */
+ *  `"window"`, `"navigation"` and `"frame-navigation"` are minted only
+ *  by the lane driver's wait-entry latch (an ack freed the delivery
+ *  window / a url frame latched while the driver was busy); the wait
+ *  itself never returns them — a url frame's wake fires the flip arms,
+ *  and the loop's pending-nav checks preempt regardless of the winning
+ *  arm. `"degrade"` is the never-acked deadline. */
 type SegmentWake =
 	| false
 	| "bump"
@@ -1786,6 +2172,7 @@ type SegmentWake =
 	| "visibility"
 	| "window"
 	| "navigation"
+	| "frame-navigation"
 	| "degrade";
 
 interface SegmentWakeOptions {
@@ -2205,6 +2592,61 @@ export function promoteSnapshotsToCachedOverride(
 		mkSet.add(snap.matchKey);
 		capOverrideSet(mkSet);
 	}
+}
+
+/**
+ * Reserve the delivery seqs an action's invalidation consequences will
+ * ride on the connection the action request NAMED (`x-parton-conn` —
+ * an explicit client statement, never inferred). Returns the reserved
+ * seqs for the response's consequence header, or `null` when there is
+ * nothing to reserve (no such connection, a binding mismatch, no
+ * relevant pending bump).
+ *
+ * MUST run inside the action's invalidation transaction, AFTER the
+ * body queued its bumps and BEFORE the commit flushes them: the flush
+ * is what wakes the segment drivers, so assigning here is strictly
+ * ordered before any driver could mint the same lanes' seqs — the
+ * pump takes an id's assignment at iteration start
+ * (`assignedLaneSeqs`), and every skip path voids it (`voidSeqs` → the
+ * `seqvoid` entry) so the client's contiguous watermark can always
+ * pass a reservation. The client's optimistic overlay holds until its
+ * committed watermark covers the returned seqs — never cleared at the
+ * POST's return value alone (under window coalescing the consequence
+ * lane can trail the response by the whole backpressure window, which
+ * is exactly when a returnValue-cleared overlay would flash stale).
+ *
+ * Binding checks mirror the channel endpoint's: the request's scope
+ * and session identity must match the attach's — a mismatched header
+ * reserves nothing (the action itself is unaffected).
+ */
+export function _reserveActionConsequences(
+	connectionId: string,
+): number[] | null {
+	const session = _peekConnectionSession(connectionId);
+	if (!session) return null;
+	if (getScope() !== session.scope) return null;
+	if ((getSessionId() ?? "") !== session.boundSessionId) return null;
+	if (session.routeKey === null) return null;
+	const selectors = _pendingInvalidationSelectors();
+	if (selectors.length === 0) return null;
+	const snapshots = _readSnapshotsForRoute(session.scope, session.routeKey);
+	if (snapshots.size === 0) return null;
+	const seqs: number[] = [];
+	for (const id of _routeMatchingSelectorIds(snapshots, selectors)) {
+		// Parked partons never lane (the flip-in revalidation is their
+		// catch-up) — reserving for one would wedge the watermark.
+		if (isParkedOnConnection(id, snapshots, session)) continue;
+		// An unconsumed prior reservation is reused: one render of the
+		// latest state covers both writes (cells carry state, not
+		// events), and the earlier action's gate holds on the same seq.
+		let seq = session.assignedLaneSeqs.get(id);
+		if (seq === undefined) {
+			seq = ++session.deliverySeq;
+			session.assignedLaneSeqs.set(id, seq);
+		}
+		seqs.push(seq);
+	}
+	return seqs.length > 0 ? seqs : null;
 }
 
 /**

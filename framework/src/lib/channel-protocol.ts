@@ -25,16 +25,17 @@
  *     one pending frame, a failed delivery is simply dropped, and no
  *     discrete fallback exists. The class is in the grammar NOW so a
  *     datagram transport can map onto it later without a redesign.
- *   - **reliable** (`url`; the cancel kind a later package adds) —
- *     buffered by the client transport (per its producer's `reliable`
- *     declaration, see [[channel-client]]) until the downstream
- *     `applied` marker covers their envelope seq, and retransmitted at
- *     the next establishment with their ORIGINAL seqs. Application
- *     idempotence is per kind, by seq-ordered statement semantics (the
- *     shipped `visible` per-id seq gate is the model; a `url` frame at
- *     or below the session's consumed navigation seq is a stale
- *     restatement and applies as a no-op) — never a whole-envelope
- *     replay gate, which would break out-of-order statement queueing.
+ *   - **reliable** (`url`, `cancel`) — buffered by the client
+ *     transport (per its producer's `reliable` declaration, see
+ *     [[channel-client]]) until the downstream `applied` marker covers
+ *     their envelope seq, and retransmitted at the next establishment
+ *     with their ORIGINAL seqs. Application idempotence is per kind,
+ *     by seq-ordered statement semantics (the shipped `visible` per-id
+ *     seq gate is the model; a `url` frame at or below the session's
+ *     consumed navigation seq for its scope is a stale restatement and
+ *     applies as a no-op; a `cancel` at or below its scope's applied
+ *     seq likewise) — never a whole-envelope replay gate, which would
+ *     break out-of-order statement queueing.
  */
 
 /** POST target for channel envelopes. Framework-owned, handled by
@@ -212,53 +213,77 @@ export interface TelemetryFrame {
 }
 
 /**
- * Window URL statement — the client's page URL moved (a navigation, a
- * targeted refetch restating the URL it targets, or a silent URL-only
- * sync). WINDOW scope only; frame-scoped URL moves stay on their
- * dedicated long-polls until the cancel/frame package lands. The
- * RELIABLE class: the frame rides the transport's retransmit buffer
- * until the downstream `applied` marker covers its envelope seq.
+ * URL statement — a URL scope the client owns moved. Two scopes, one
+ * kind: absent `frame`, the WINDOW URL (a navigation, a targeted
+ * refetch restating the URL it targets, or a silent URL-only sync);
+ * present, the named FRAME's URL (the ambient frame chain's segments —
+ * a frame navigate/reload/traverse). The RELIABLE class: the frame
+ * rides the transport's retransmit buffer until the downstream
+ * `applied` marker covers its envelope seq.
  *
  *   - `url` — the target as path + search (an absolute same-origin URL
  *     is accepted and reduced). The server VALIDATES same-origin
  *     against the envelope's own request and answers `400` on a
  *     cross-origin target — a protocol violation, not extensibility.
- *     One-shot transport params (`partials`) may ride the query for a
- *     targeted refetch; the session strips them from the PERSISTED
- *     request state after the response segment renders.
+ *     One-shot transport params (`partials`, a window statement's
+ *     `__force` overlay) may ride the query for a targeted refetch;
+ *     they never persist into request state.
  *   - `intent` — the client's history semantic for the move
  *     (`push`/`replace`; `silent` = URL-only sync or a same-URL
  *     targeted refetch). The client's history work is already done by
  *     the time the frame is sent (the statement describes, never
  *     requests), so the server's render behavior is intent-independent
  *     today; the field exists so the statement stays complete.
+ *   - `frame` — the frame path (outer-most first, e.g.
+ *     `["cart","tab"]`). Absent = window scope.
  *
- * The frame LATCHES on the connection session (newest seq wins) and is
- * consumed by the segment driver at wait entry — navigation-first,
- * ahead of pending flips — which applies the URL to the connection's
- * request state and answers with a full payload segment in stream
- * order. Every emission carries the consumed url-frame seq it was
- * rendered AS-OF, which is what lets the client drop deliveries that
- * predate its own navigation point (see [[fp-trailer-marker]]'s `seq`
- * entry).
+ * A WINDOW statement latches on the connection session (newest seq
+ * wins) and is consumed by the segment driver at wait entry —
+ * navigation-first, ahead of pending flips — which applies the URL to
+ * the connection's request state and answers with a full payload
+ * segment in stream order. A FRAME statement writes the session frame
+ * URL at the endpoint (the same store `?__frame=` writes through) and
+ * latches per frame key; the driver consumes it by laning the frame's
+ * targets EXPLICIT on the open region — frame content is a subtree,
+ * never the whole route, so no region tear. Every emission carries the
+ * consumed url-statement seq it was rendered AS-OF (see
+ * [[fp-trailer-marker]]'s `seq` entry).
  */
 export interface UrlFrame {
 	kind: "url";
 	url: string;
 	intent: "push" | "replace" | "silent";
+	frame?: string[];
+}
+
+/**
+ * Explicit supersede of a scope's in-flight renders — the frame
+ * long-poll's deferred-abort supersede expressed as a statement
+ * instead of a connection abort. `scope` names a frame's top-level
+ * name (the same narrowing the discrete twin's `?partials=<frame[0]>`
+ * uses); the server aborts the open lanes whose parton belongs to that
+ * scope — a superseding frame navigation sends `cancel` + `url` in ONE
+ * envelope, and the in-order pass applies cancel-then-url. RELIABLE
+ * class; idempotence is the per-scope seq gate (a retransmitted cancel
+ * at or below the last applied seq for its scope is a no-op, so it can
+ * never abort a newer statement's render).
+ */
+export interface CancelFrame {
+	kind: "cancel";
+	scope: string;
 }
 
 /** The frame kinds shipped today. The grammar is open: an envelope may
- *  carry kinds this build doesn't know (cancel lands in a later
- *  package — `docs/notes/channel-design.md` § Wire shape), and the
- *  decoder SKIPS those rather than erroring, the same extensibility
- *  rule the downstream marker grammar follows. */
+ *  carry kinds this build doesn't know, and the decoder SKIPS those
+ *  rather than erroring, the same extensibility rule the downstream
+ *  marker grammar follows. */
 export type ChannelFrame =
 	| VisibleFrame
 	| DetachFrame
 	| AckFrame
 	| TelemetryFrame
-	| UrlFrame;
+	| UrlFrame
+	| CancelFrame;
 
 export interface ChannelEnvelope {
 	/** The live connection this envelope addresses. An explicit token,
@@ -352,7 +377,25 @@ export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
 				f.intent !== "silent"
 			)
 				return null;
-			frames.push({ kind: "url", url: f.url, intent: f.intent });
+			// Frame scope: a non-empty path of non-empty segment names.
+			let framePath: string[] | undefined;
+			if (f.frame !== undefined && f.frame !== null) {
+				if (!isStringArray(f.frame) || f.frame.length === 0) return null;
+				if (f.frame.some((s) => s.length === 0)) return null;
+				framePath = f.frame;
+			}
+			frames.push({
+				kind: "url",
+				url: f.url,
+				intent: f.intent,
+				...(framePath ? { frame: framePath } : {}),
+			});
+			continue;
+		}
+		if (f.kind === "cancel") {
+			// Strict-known: a malformed cancel frame is a protocol violation.
+			if (typeof f.scope !== "string" || f.scope.length === 0) return null;
+			frames.push({ kind: "cancel", scope: f.scope });
 			continue;
 		}
 		// Unknown kind — skipped, never an error.
