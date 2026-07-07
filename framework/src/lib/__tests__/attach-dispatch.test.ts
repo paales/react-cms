@@ -28,6 +28,7 @@ const statement: AttachStatement = {
   cached: ["a:mk:f1", "b:mk:f2"],
   since: { epoch: "e1", ts: 42 },
   visible: ["a"],
+  applied: 7,
 }
 
 describe("decodeAttachStatement", () => {
@@ -37,11 +38,12 @@ describe("decodeAttachStatement", () => {
     )
   })
 
-  it("normalizes absent since/visible to null", () => {
+  it("normalizes absent since/visible to null and absent applied to 0", () => {
     expect(decodeAttachStatement({ cached: [] })).toEqual({
       cached: [],
       since: null,
       visible: null,
+      applied: 0,
     })
   })
 
@@ -54,7 +56,7 @@ describe("decodeAttachStatement", () => {
   it("ignores unknown fields — the statement grows by adding them", () => {
     expect(
       decodeAttachStatement({ cached: [], ack: 7, telemetry: { w: 1 } }),
-    ).toEqual({ cached: [], since: null, visible: null })
+    ).toEqual({ cached: [], since: null, visible: null, applied: 0 })
   })
 
   it("rejects malformed known fields", () => {
@@ -72,6 +74,13 @@ describe("decodeAttachStatement", () => {
       decodeAttachStatement({ cached: [], since: { epoch: "e", ts: -1 } }),
     ).toBeNull()
     expect(decodeAttachStatement({ cached: [], visible: "a,b" })).toBeNull()
+    // `applied` is a KNOWN field — malformed values are protocol
+    // violations, not extensibility.
+    expect(decodeAttachStatement({ cached: [], applied: "3" })).toBeNull()
+    expect(decodeAttachStatement({ cached: [], applied: -1 })).toBeNull()
+    expect(
+      decodeAttachStatement({ cached: [], applied: Number.NaN }),
+    ).toBeNull()
   })
 })
 

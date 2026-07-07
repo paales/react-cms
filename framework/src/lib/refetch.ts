@@ -272,7 +272,14 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
     url.toString(),
     signal,
     claimCommit,
-    attach ? { cached, since: attach.since, visible: attach.visible } : undefined,
+    attach
+      ? {
+          cached,
+          since: attach.since,
+          visible: attach.visible,
+          applied: attach.applied,
+        }
+      : undefined,
   )
   milestones.streaming.then(
     () => {

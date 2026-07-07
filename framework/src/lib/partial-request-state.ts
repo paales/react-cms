@@ -33,6 +33,15 @@ export interface PartialRequestState {
    *  unmounting it. matchKey is `stableStringify(matchParams)`, stable
    *  across vary refreshes of the same route. */
   cachedMatchKeys: Map<string, Set<string>>
+  /** The live connection's ACKED mirror layer — fps whose delivering
+   *  emission the client COMMITTED (cumulative delivery acks; see
+   *  `ConnectionSession.ackedFps`). The fp-skip verdict consults the
+   *  OPTIMISTIC layer (`cachedFingerprints`) first — a same-parton
+   *  re-lane within one RTT must still skip off the emit-time
+   *  promotion — and falls back here on a miss: a client-proven fp the
+   *  optimistic per-id cap evicted still skips. Absent on requests
+   *  without a connection session. */
+  ackedFingerprints?: ReadonlyMap<string, ReadonlySet<string>> | null
   /** Effective ids explicitly targeted this request (resolved from `?partials=`). Never skipped —
    *  except on a culling flip (see `cullFlip`). */
   explicitIds: Set<string>

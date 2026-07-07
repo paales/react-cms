@@ -66,7 +66,9 @@ import {
 } from "@parton/framework/lib/fp-trailer-marker.ts"
 import { wrapStreamWithFpTrailer } from "@parton/framework/lib/fp-trailer.ts"
 import {
+  _setFirstAckDeadlineMs,
   _setKeepaliveMs,
+  _setUnackedDeliveryWindow,
   driveSegmentedResponse,
 } from "@parton/framework/lib/segmented-response.ts"
 import { _resetCellStorage } from "@parton/framework/runtime/cell-storage.ts"
@@ -360,6 +362,15 @@ export async function runSoakScenario(
   const m = Math.min(params.active, n)
   resetWorld()
   _setKeepaliveMs(SOAK_KEEPALIVE_MS)
+  // The in-process discarding reader never acks deliveries. Without
+  // these overrides the never-acked degrade would close every active
+  // connection FIRST_ACK_DEADLINE after its first tick lane, and the
+  // unacked delivery window would coalesce lanes past its cap —
+  // shrinking the held set / the per-tick render count under the
+  // measurement. The soak prices held connections, not the degrade
+  // policy; both restore in the finally.
+  _setFirstAckDeadlineMs(SOAK_KEEPALIVE_MS)
+  _setUnackedDeliveryWindow(Number.MAX_SAFE_INTEGER)
 
   const counters: WireCounters = { bytes: 0, settles: 0, barrier: null }
   const conns: SoakConnection[] = []
@@ -586,6 +597,8 @@ export async function runSoakScenario(
     for (const c of conns) refreshSelector(c.liveSelector)
     await Promise.allSettled(conns.map((c) => c.done))
     _setKeepaliveMs()
+    _setFirstAckDeadlineMs()
+    _setUnackedDeliveryWindow()
     _resetCellStorage()
   }
 }

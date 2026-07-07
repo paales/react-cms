@@ -113,6 +113,12 @@ interface RequestStore {
  *  (`../lib/connection-session.ts` owns the full session shape). */
 export interface ConnectionSessionHandle {
   visible: ReadonlySet<string> | null
+  /** The mirror's ACKED layer — fps whose delivering emission the
+   *  client has COMMITTED (cumulative delivery acks). A live map
+   *  reference: entries appear as acks land, for the connection's
+   *  whole lifetime. The fp-skip verdict consults it on an
+   *  optimistic-layer miss (see `PartialRequestState.ackedFingerprints`). */
+  ackedFps: ReadonlyMap<string, ReadonlySet<string>>
 }
 
 /** The attach statement as the request context carries it — structural
@@ -122,6 +128,7 @@ export interface AttachStatementHandle {
   readonly cached: readonly string[]
   readonly since: { readonly epoch: string; readonly ts: number } | null
   readonly visible: readonly string[] | null
+  readonly applied?: number
 }
 
 /** In-memory mirror of `?cached=…`. Same identity Maps shared across
@@ -392,6 +399,18 @@ export function _getAttachStatement(): AttachStatementHandle | null {
  *  `../lib/server-hooks.ts`. */
 export function _getConnectionVisibleSet(): ReadonlySet<string> | null {
   return requestContext.getStore()?.connectionSession?.visible ?? null
+}
+
+/** The live connection's ACKED mirror layer, or `null` when this
+ *  request has no connection session. A live reference — the session
+ *  folds acked holdings in as `ack` frames land, and every render on
+ *  the connection (whole-tree segments and lanes alike) consults the
+ *  same map. */
+export function _getConnectionAckedFps(): ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> | null {
+  return requestContext.getStore()?.connectionSession?.ackedFps ?? null
 }
 
 /** Consume and clear the pending URL update. Called at trailer-flush

@@ -1,7 +1,11 @@
 "use client"
 
 import { useEffect } from "react"
-import { _channelConnectionClosed } from "./channel-client.ts"
+import {
+  _channelAppliedWatermark,
+  _channelConnectionClosed,
+  _channelIsDegraded,
+} from "./channel-client.ts"
 import { _anyCullObservers } from "./cull-park.ts"
 import { useNavigation } from "./partial-client.tsx"
 import { _takeLiveCatchupAnchor } from "./partial-client-state.ts"
@@ -9,6 +13,7 @@ import {
   _onFirstMeasurement,
   _visibilityMeasured,
   _visibleSetIds,
+  _visibleSetParam,
 } from "./visibility.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
 
@@ -108,6 +113,33 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         return
       }
       inFlight = new AbortController()
+      // DEGRADED channel (the transport proved the duplex broken — a
+      // connection committed deliveries but its first ack never got
+      // through, e.g. an ad-blocked `/__parton/*` POST path): stop
+      // holding lanes-first live attaches — with no upstream, the
+      // held stream's unacked window can never free and the server
+      // degrade-closes it anyway. Each interval tick instead fires a
+      // one-shot DISCRETE reload: GET-shaped (capped `?cached=`, per
+      // the degraded-mode pin), carrying the measured viewport as the
+      // `?visible=` param so cull state stays honest. Liveness becomes
+      // periodic polling at the heartbeat's own cadence — degraded,
+      // never frozen. Sticky for the page lifetime.
+      if (_channelIsDegraded()) {
+        const visible = _visibleSetParam()
+        const { finished } = reload({
+          streaming: true,
+          signal: inFlight.signal,
+          params: visible === undefined ? undefined : { visible },
+        })
+        finished
+          .catch(() => {
+            // Network error / abort — the next interval tick refires.
+          })
+          .finally(() => {
+            inFlight = null
+          })
+        return
+      }
       // Each fire is one connection — an ATTACH: a POST whose body
       // carries the full client statement (see `channel-protocol.ts`):
       // the manifest states WHAT the client holds (filled by the
@@ -155,6 +187,10 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         attach: {
           since: anchor,
           visible: _visibleSetIds() ?? null,
+          // The upstream watermark the client last heard applied — the
+          // new session's `applied` gate seeds from it, keeping the
+          // downstream marker on the page-lifetime envelope timeline.
+          applied: _channelAppliedWatermark(),
         },
       })
       finished

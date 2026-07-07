@@ -51,6 +51,8 @@ import { getSessionId } from "../runtime/session.ts";
 import {
 	_closeConnectionSession,
 	_openConnectionSession,
+	_recordDelivery,
+	capOverrideSet,
 	type ConnectionSession,
 	type PendingFlip,
 	takeConnectionFlips,
@@ -61,9 +63,11 @@ import {
 	buildMarker,
 	type FpUpdatesPayload,
 	TAG_CONNECTION_ID,
+	TAG_DELIVERY_SEQ,
 	TAG_LANES_OPEN,
 	TAG_NEXT_SEGMENT,
 	TAG_SEGMENT_SETTLED,
+	TAG_UPSTREAM_APPLIED,
 } from "./fp-trailer-marker.ts";
 import { computeRouteKey, parseCachedTokens, partialFromSnapshot } from "./partial.tsx";
 import type { PartialSnapshot } from "./partial-registry.ts";
@@ -97,6 +101,99 @@ let KEEPALIVE_MS = DEFAULT_KEEPALIVE_MS;
  *  restore the default. */
 export function _setKeepaliveMs(ms?: number): void {
 	KEEPALIVE_MS = ms ?? DEFAULT_KEEPALIVE_MS;
+}
+
+/**
+ * Max delivery seqs in flight past the client's cumulative ack before
+ * the driver stops OPENING lanes (dirty ids coalesce; the latest state
+ * renders when an ack frees the window). One of the two lane-opening
+ * gates — the other is the response stream's own `desiredSize`
+ * pull-gate, which parks enqueues byte-wise; the window bounds what
+ * the byte gate can't see: deliveries the kernel already swallowed but
+ * the client never committed (a torn downstream, a frozen proxy
+ * buffer).
+ *
+ * 64 because both quantities it bounds stay inside the soak budget
+ * (bench/README § soak — ~20KB/connection is the mirror's planning
+ * number): the per-seq `pendingDeliveries` records are a few `(id,fp)`
+ * pairs each (~100–200B), so a full window pends ~10KB, and a healthy
+ * client acks cumulatively once per RTT (rAF-coalesced, one envelope
+ * in flight), so at ~100 lanes/s and a 300ms RTT steady state sits an
+ * order of magnitude below the cap — a healthy connection never grazes
+ * it.
+ */
+const DEFAULT_UNACKED_DELIVERY_WINDOW = 64;
+
+let UNACKED_DELIVERY_WINDOW = DEFAULT_UNACKED_DELIVERY_WINDOW;
+
+/** Test/bench-visible window override (the soak bench's in-process
+ *  reader never acks; measuring held connections needs the window out
+ *  of the way). Call with no argument to restore the default. */
+export function _setUnackedDeliveryWindow(count?: number): void {
+	UNACKED_DELIVERY_WINDOW = count ?? DEFAULT_UNACKED_DELIVERY_WINDOW;
+}
+
+/**
+ * How long after the connection's FIRST delivery-seq'd emission settles
+ * the driver waits for the client's first `ack` before marking the
+ * connection degraded (never-acked) and closing instead of holding.
+ *
+ * Why a deadline at all (the no-heuristics bar): the failure this
+ * kills is a blocked `/__parton/*` POST path (ad-blocker, corporate
+ * proxy) — an upstream that emits NO signal whatsoever, whose absence
+ * only time can bound. And an ack-less envelope is not evidence of a
+ * non-acking client: the ack piggybacks on the rAF-coalesced flush, so
+ * any single envelope can legitimately predate the commit it would
+ * have acked — counting them is a coincidence proxy. The deadline is
+ * anchored at delivered-settle — the protocol milestone that STARTS
+ * the client's ack obligation — so it measures exactly that obligation
+ * window, never connection age.
+ *
+ * 5s is an order of magnitude above the worst legitimate first-ack
+ * path (RTT + decode + one rAF), and equals the heartbeat cadence, so
+ * a degraded connection closes before the client's next fire would
+ * stack a second held stream.
+ */
+const DEFAULT_FIRST_ACK_DEADLINE_MS = 5_000;
+
+let FIRST_ACK_DEADLINE_MS = DEFAULT_FIRST_ACK_DEADLINE_MS;
+
+/** Test/bench-visible deadline override (the soak bench and the
+ *  in-process rsc harness never ack — their held connections must not
+ *  degrade under measurement). Call with no argument to restore. */
+export function _setFirstAckDeadlineMs(ms?: number): void {
+	FIRST_ACK_DEADLINE_MS = ms ?? DEFAULT_FIRST_ACK_DEADLINE_MS;
+}
+
+/**
+ * Cadence of the whole-tree reconcile a long-lived lanes connection
+ * emits on its own stream — the scheduled backstop for lane-relevance
+ * false-negatives (a dependency the label/constraint surface doesn't
+ * capture misses its lane; the next full segment heals it). An IDLE
+ * connection needs none: the keepalive closes it within 20s and the
+ * reopened connection's first segment is always whole-tree — this
+ * cadence exists for connections that steady wake traffic keeps alive
+ * indefinitely, which the reopen cycle can no longer reconcile.
+ *
+ * Anchored at the last full segment (connection open, an honored
+ * catch-up anchor, or the previous reconcile) and evaluated at wakes —
+ * no standing timer: a connection quiet long enough to drift past the
+ * cadence without a wake is closed by the keepalive first.
+ *
+ * 30s: the reconcile costs one whole-route fp-skip pass (~a warm tick)
+ * and ~zero wire bytes when nothing was missed, so the bound is CPU
+ * cadence, not bytes — 1/30Hz per held connection is negligible next
+ * to the soak's wake-filter tax — while healing latency stays in the
+ * class the retired reopen cycle provided (20s keepalive + 5s tick).
+ */
+const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
+
+let RECONCILE_INTERVAL_MS = DEFAULT_RECONCILE_INTERVAL_MS;
+
+/** Test-visible reconcile-cadence override. Call with no argument to
+ *  restore the default. */
+export function _setReconcileIntervalMs(ms?: number): void {
+	RECONCILE_INTERVAL_MS = ms ?? DEFAULT_RECONCILE_INTERVAL_MS;
 }
 
 /**
@@ -239,7 +336,14 @@ export async function driveSegmentedResponse(
 			installCatchupCachedOverride();
 			controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
 			enqueueConnectionId(controller, session.id);
-			await driveLaneStream(controller, catchUpTs, settledMarker, session, demand);
+			await driveLaneStream(
+				controller,
+				catchUpTs,
+				settledMarker,
+				session,
+				demand,
+				renderSegment,
+			);
 			return;
 		}
 
@@ -258,6 +362,17 @@ export async function driveSegmentedResponse(
 			// minted at session open, above).
 			if (segmentIndex === 0 && session !== null) {
 				enqueueConnectionId(controller, session.id);
+			}
+
+			// A live connection's payload segment is a DELIVERY: mint its
+			// per-connection seq and ship it as an entry ahead of the Flight
+			// rows, so the client holds the seq before the segment can
+			// commit (commit time is when it records — and acks — it).
+			// One-shot responses have no session and carry no seqs.
+			let deliverySeq: number | null = null;
+			if (session !== null) {
+				deliverySeq = ++session.deliverySeq;
+				controller.enqueue(segmentDeliverySeqEntry(deliverySeq));
 			}
 
 			const flightStream = renderSegment();
@@ -289,6 +404,13 @@ export async function driveSegmentedResponse(
 			// `fp-trailer-split.ts`.
 			controller.enqueue(settledMarker);
 
+			// The delivery is fully on the wire — the client's ack
+			// obligation starts here (the never-acked degrade deadline's
+			// anchor).
+			if (session !== null && deliverySeq !== null) {
+				session.firstDeliverySettledAt ??= Date.now();
+			}
+
 			if (onSegmentEnd) onSegmentEnd();
 
 			// Live subscription (`?live=1`, the heartbeat's long-poll): after
@@ -303,10 +425,26 @@ export async function driveSegmentedResponse(
 			// reopen, and the reopened connection's first segment is always
 			// whole-tree.
 			if (isLiveSubscription()) {
-				promoteSnapshotsToCachedOverride();
+				// Promote into the optimistic layer AND capture the same walk
+				// as the delivery's holdings record — what this segment carried
+				// becomes acked evidence when the client commits it.
+				const tokens: Array<readonly [string, string]> = [];
+				promoteSnapshotsToCachedOverride(undefined, (id, fp) =>
+					tokens.push([id, fp]),
+				);
+				if (session !== null && deliverySeq !== null) {
+					_recordDelivery(session, deliverySeq, tokens);
+				}
 				controller.enqueue(nextMarker);
 				controller.enqueue(buildMarker(TAG_LANES_OPEN, 0));
-				await driveLaneStream(controller, lastTs, settledMarker, session, demand);
+				await driveLaneStream(
+					controller,
+					lastTs,
+					settledMarker,
+					session,
+					demand,
+					renderSegment,
+				);
 				return;
 			}
 
@@ -458,6 +596,10 @@ function openLiveConnectionSession(): ConnectionSession | null {
 	const session = _openConnectionSession(crypto.randomUUID(), seed, {
 		scope: getScope(),
 		sessionId: getSessionId() ?? "",
+		// The statement's upstream watermark — what the client last heard
+		// applied — anchors the new session's `applied` marker on the
+		// page-lifetime envelope timeline (see [[channel-protocol]]).
+		applied: statement?.applied ?? 0,
 	});
 	_setConnectionSession(session);
 	return session;
@@ -473,6 +615,46 @@ function enqueueConnectionId(
 	const body = new TextEncoder().encode(id);
 	controller.enqueue(buildMarker(TAG_CONNECTION_ID, body.byteLength));
 	controller.enqueue(body);
+}
+
+/** A payload segment's delivery-seq `seq` entry bytes — body is the
+ *  decimal seq alone (the lane form prefixes the parton id; the client
+ *  tells them apart by the newline). Emitted ahead of the segment's
+ *  Flight rows so the client holds the seq before the commit that
+ *  records it. */
+function segmentDeliverySeqEntry(seq: number): Uint8Array {
+	const body = new TextEncoder().encode(String(seq));
+	const marker = buildMarker(TAG_DELIVERY_SEQ, body.byteLength);
+	const out = new Uint8Array(marker.byteLength + body.byteLength);
+	out.set(marker, 0);
+	out.set(body, marker.byteLength);
+	return out;
+}
+
+/** A lane delivery's `seq` entry bytes — `<parton-id>\n<seq>`, the mux
+ *  frames' id-first shape, framed for the lanes region (one buffer:
+ *  the lane driver's `enqueue` is all-or-nothing per chunk). Written
+ *  immediately BEFORE the lane's `muxend`, so the client's per-parton
+ *  seq queue holds the value before the lane body closes and its
+ *  decode — then commit — can complete. */
+function laneDeliverySeqEntry(partonId: string, seq: number): Uint8Array {
+	const body = new TextEncoder().encode(`${partonId}\n${seq}`);
+	const marker = buildMarker(TAG_DELIVERY_SEQ, body.byteLength);
+	const out = new Uint8Array(marker.byteLength + body.byteLength);
+	out.set(marker, 0);
+	out.set(body, marker.byteLength);
+	return out;
+}
+
+/** The `applied` marker bytes — the cumulative upstream-seq-applied
+ *  announcement (body: decimal watermark). */
+function upstreamAppliedEntry(applied: number): Uint8Array {
+	const body = new TextEncoder().encode(String(applied));
+	const marker = buildMarker(TAG_UPSTREAM_APPLIED, body.byteLength);
+	const out = new Uint8Array(marker.byteLength + body.byteLength);
+	out.set(marker, 0);
+	out.set(body, marker.byteLength);
+	return out;
 }
 
 /** One open lane: a parton whose payload is currently rendering and
@@ -543,6 +725,7 @@ async function driveLaneStream(
 	settledMarker: Uint8Array,
 	session: ConnectionSession | null,
 	demand: SegmentedResponseDemand | undefined,
+	renderFullSegment: () => ReadableStream<Uint8Array>,
 ): Promise<void> {
 	let request: Request;
 	let scope: string;
@@ -669,6 +852,11 @@ async function driveLaneStream(
 				populateCache: false,
 				cachedFingerprints: laneOverride.fingerprints,
 				cachedMatchKeys: laneOverride.matchKeys,
+				// The mirror's ACKED layer — client-proven holdings the
+				// verdict falls back to on an optimistic miss (an fp the
+				// per-id cap evicted from the override but the client
+				// verifiably committed).
+				ackedFingerprints: session?.ackedFps ?? null,
 				explicitIds: new Set(),
 				cullFlip: false,
 				seenIds: new Set(),
@@ -680,6 +868,12 @@ async function driveLaneStream(
 				const snap = lookupPartial(id);
 				if (!snap) break;
 				const flight = renderToReadableStream(partialFromSnapshot(id, snap));
+				// This render is one DELIVERY: the fps it establishes on the
+				// client — subtree promotions at drain plus any trailer heals
+				// during the flush — become acked holdings when the client
+				// commits it. Captured per iteration; the seq is minted at
+				// drain so wire order stays mint order.
+				const carried: Array<readonly [string, string]> = [];
 				// A lane is a single parton's render — its flush already fires at
 				// that parton's completion, and lanes run concurrently (the
 				// one-sink-per-request settle slot doesn't model that), so
@@ -701,7 +895,14 @@ async function driveLaneStream(
 						// server-side skip check tracks the same drift the client
 						// heals (a bump landing between this lane's render and
 						// its flush moves the recomputed fp past the emitted one).
-						onUpdates: promoteFpUpdatesToCachedOverride,
+						// The healed fps ride this delivery's holdings record too —
+						// the client applies the trailer at the same commit.
+						onUpdates: (updates) => {
+							promoteFpUpdatesToCachedOverride(updates);
+							for (const [uid, entry] of Object.entries(updates)) {
+								carried.push([uid, entry.to]);
+							}
+						},
 					},
 				);
 				const reader = wrapped.getReader();
@@ -729,15 +930,33 @@ async function driveLaneStream(
 					reader.releaseLock();
 				}
 				if (!(await awaitDemand())) return;
+				// The delivery seq entry precedes the `muxend` on the wire, so
+				// the client's per-parton seq queue holds it before the lane
+				// body closes — its decode, then commit, then ack all follow.
+				let deliverySeq: number | null = null;
+				if (session !== null) {
+					deliverySeq = ++session.deliverySeq;
+					if (!enqueue(laneDeliverySeqEntry(id, deliverySeq))) return;
+				}
 				if (!enqueue(muxEndFrame(id))) return;
+				// The delivery is fully on the wire — the connection's first
+				// settled delivery anchors the never-acked degrade deadline.
+				if (session !== null) session.firstDeliverySettledAt ??= Date.now();
 				// The lane's snapshots just committed (the per-lane fp-trailer
 				// wrap commits at flush). Promote the fresh emittedFps into the
 				// request's cached override so this parton's next lane render —
 				// and every other lane's descendants — fp-skip against them.
 				// Scoped to the lane's subtree: only those snapshots are fresh
 				// from this render; walking the whole route map per drain is
-				// O(route) churn for entries the drain didn't touch.
-				promoteSnapshotsToCachedOverride(id);
+				// O(route) churn for entries the drain didn't touch. The same
+				// walk records the delivery's holdings — one pass, no second
+				// walk per drain.
+				promoteSnapshotsToCachedOverride(id, (tid, fp) =>
+					carried.push([tid, fp]),
+				);
+				if (session !== null && deliverySeq !== null) {
+					_recordDelivery(session, deliverySeq, carried);
+				}
 				if (!runtime.dirty) return;
 			}
 		} finally {
@@ -776,35 +995,172 @@ async function driveLaneStream(
 	let idleDeadline = Date.now() + KEEPALIVE_MS;
 
 	let since = sinceTs;
+
+	// Region delimiters for the whole-tree reconcile below — the lanes
+	// region ends with `next`, the payload segment flows, and `next` +
+	// `lanes` reopens the region. Same bytes every time.
+	const nextMarker = buildMarker(TAG_NEXT_SEGMENT, 0);
+	const lanesMarker = buildMarker(TAG_LANES_OPEN, 0);
+
+	// Ids whose lane opening the unacked delivery window deferred. The
+	// dirty-on-drain shape generalized: while the window is exceeded,
+	// touched ids coalesce here instead of opening lanes, and when an
+	// ack frees the window they render their LATEST state. An ack
+	// landing while the driver is busy needs no arm of its own — the
+	// wait-entry check below re-reads the session's watermark against
+	// this set (the latch), and an ack landing while parked fires the
+	// session's flip wakes (a disposer-registered listener set, never a
+	// long-lived promise reaction).
+	const windowDirty = new Set<string>();
+	const deliveryWindowExceeded = (): boolean =>
+		session !== null &&
+		session.deliverySeq - session.ackedDeliverySeq >=
+			UNACKED_DELIVERY_WINDOW;
+
+	// Whole-tree reconcile anchor — the last full segment this
+	// connection saw (its initial segment, an honored catch-up anchor's
+	// document, or the previous reconcile). Evaluated at wakes; an idle
+	// connection never reaches the cadence (the keepalive closes it
+	// first) and its reopen's first segment is whole-tree anyway.
+	let lastFullSegmentAt = Date.now();
+
+	// Ship the cumulative upstream-applied watermark when it has moved —
+	// the marker that prunes the client transport's retransmit buffer.
+	// Every envelope apply fires the flip wakes, so the announcement
+	// rides the very next wake's bytes.
+	const announceUpstreamApplied = (): void => {
+		if (session === null) return;
+		if (session.appliedSeq <= session.announcedAppliedSeq) return;
+		session.announcedAppliedSeq = session.appliedSeq;
+		enqueue(upstreamAppliedEntry(session.appliedSeq));
+	};
+
+	// The scheduled whole-tree reconcile: end the lanes region, flow one
+	// full payload segment (rendered by the same renderer the segment
+	// loop uses — fp-skip prunes it to placeholders when nothing was
+	// missed), and reopen the lanes region. Only at quiesce (no open
+	// lanes: a `next` delimiter would tear them client-side) and only
+	// with room in the delivery window (the segment IS a delivery).
+	const emitReconcileSegment = async (): Promise<boolean> => {
+		if (!enqueue(nextMarker)) return false;
+		let deliverySeq: number | null = null;
+		if (session !== null) {
+			deliverySeq = ++session.deliverySeq;
+			if (!enqueue(segmentDeliverySeqEntry(deliverySeq))) return false;
+		}
+		const reader = renderFullSegment().getReader();
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				if (value && value.byteLength > 0) {
+					if (!(await awaitDemand())) {
+						await reader.cancel().catch(() => {});
+						return false;
+					}
+					if (!enqueue(value)) {
+						await reader.cancel().catch(() => {});
+						return false;
+					}
+				}
+			}
+		} finally {
+			reader.releaseLock();
+		}
+		if (!(await awaitDemand())) return false;
+		if (!enqueue(settledMarker)) return false;
+		if (session !== null) session.firstDeliverySettledAt ??= Date.now();
+		const tokens: Array<readonly [string, string]> = [];
+		promoteSnapshotsToCachedOverride(undefined, (id, fp) =>
+			tokens.push([id, fp]),
+		);
+		if (session !== null && deliverySeq !== null) {
+			_recordDelivery(session, deliverySeq, tokens);
+		}
+		if (!enqueue(nextMarker)) return false;
+		return enqueue(lanesMarker);
+	};
+
 	// `session.detached` exits alongside `closed`: an explicit detach
 	// frame fires the flip wakes, the parked wait returns, and the
 	// condition winds the drive down — the stream closes now instead of
-	// holding a goner for the keepalive window.
-	while (!closed && session?.detached !== true) {
+	// holding a goner for the keepalive window. A degraded session
+	// (never-acked) exits the same way: the driver stops holding.
+	while (
+		!closed &&
+		session?.detached !== true &&
+		session?.degradedReason == null
+	) {
+		// The never-acked degrade deadline: armed only while the FIRST
+		// ack is outstanding after the first delivery-seq'd emission
+		// settled — the moment the client's ack obligation began (see
+		// FIRST_ACK_DEADLINE_MS for why absence needs a deadline at all).
+		const degradeAt =
+			session !== null &&
+			!session.firstAckReceived &&
+			session.firstDeliverySettledAt !== null
+				? session.firstDeliverySettledAt + FIRST_ACK_DEADLINE_MS
+				: null;
 		// A statement that landed while the driver was busy (rendering
 		// lanes, or between the lanes hand-off and this loop) is already
 		// queued on the session — consume it without parking on the wake
-		// arms first; a drain that landed while busy is likewise latched.
-		// Deferred flips deliberately do NOT short-circuit the wait: they
-		// only re-resolve on a real wake, so an unknown id can't busy-loop
-		// the driver.
+		// arms first; a drain that landed while busy is likewise latched,
+		// and so is an ack that freed the delivery window (the windowDirty
+		// entry check). Deferred flips deliberately do NOT short-circuit
+		// the wait: they only re-resolve on a real wake, so an unknown id
+		// can't busy-loop the driver.
 		const wake: SegmentWake =
 			session !== null && session.pendingFlips.size > 0
 				? "visibility"
 				: laneDrainedPending
 					? "lane-drained"
-					: await waitForSegmentWake(since, {
-							excludeExpiryIds: openLaneIds,
-							laneDrained: new Promise<void>((resolve) => {
-								signalLaneDrained = resolve;
-							}),
-							session,
-							deadline: idleDeadline,
-						});
+					: windowDirty.size > 0 && !deliveryWindowExceeded()
+						? "window"
+						: await waitForSegmentWake(since, {
+								// Window-deferred ids must not arm the expiry timer
+								// either — their due deadlines would otherwise wake
+								// immediately, defer again, and hot-spin the loop
+								// until the window frees.
+								excludeExpiryIds:
+									windowDirty.size === 0
+										? openLaneIds
+										: new Set([...openLaneIds, ...windowDirty]),
+								laneDrained: new Promise<void>((resolve) => {
+									signalLaneDrained = resolve;
+								}),
+								session,
+								deadline: idleDeadline,
+								degradeAt,
+							});
 		if (wake === false) break;
+		if (wake === "degrade") {
+			// The first delivery settled a full deadline ago and no ack —
+			// no ack FRAME at all — ever arrived: the duplex is unproven
+			// (a blocked `/__parton/*` POST path, a frozen downstream). A
+			// half-working channel must degrade, never freeze liveness
+			// behind an unacked window: note the reason on the session and
+			// stop holding — the heartbeat's discrete reopens take over.
+			if (session !== null) session.degradedReason = "never-acked";
+			break;
+		}
 		if (wake === "lane-drained") laneDrainedPending = false;
+		announceUpstreamApplied();
 		const snapshots = _readSnapshotsForRoute(scope, routeKey);
 		if (snapshots.size === 0) break;
+		// The reconcile backstop — heals lane-relevance false-negatives
+		// the label/constraint surface didn't capture, the correctness
+		// role the keepalive reopen cycle plays for connections that
+		// close idle. Deliberately does NOT extend the keepalive: it is
+		// server-scheduled, not client-evidenced activity.
+		if (
+			Date.now() - lastFullSegmentAt >= RECONCILE_INTERVAL_MS &&
+			lanes.size === 0 &&
+			!deliveryWindowExceeded()
+		) {
+			if (!(await emitReconcileSegment())) break;
+			lastFullSegmentAt = Date.now();
+			since = _currentTs();
+		}
 		const touched: string[] = [];
 		// Resolve flips. Each flip resolves against its OWN report's
 		// statement (`PendingFlip.inView` — the id's presence in that
@@ -875,7 +1231,7 @@ async function driveLaneStream(
 			}
 			deferredFlips.delete(id);
 			if (flip.cached !== undefined && override) {
-				applyReportedCached(id, flip.cached, override);
+				applyReportedCached(id, flip.cached, override, session?.ackedFps);
 			}
 			if (!touched.includes(id)) touched.push(id);
 		}
@@ -887,7 +1243,7 @@ async function driveLaneStream(
 				touched.push(id);
 			}
 			since = _currentTs();
-		} else if (wake !== "visibility") {
+		} else if (wake === "expiry" || wake === "lane-drained") {
 			// Expiry wake, or a drained lane whose fresh snapshot may carry
 			// a due deadline: render every parton past its `expiresAt`.
 			// Open lanes are skipped — their stale snapshots still show the
@@ -900,6 +1256,34 @@ async function driveLaneStream(
 				if (exp === undefined || !Number.isFinite(exp)) continue;
 				if (exp <= now && !isParkedOnConnection(id, snapshots, session))
 					touched.push(id);
+			}
+		}
+		// The unacked delivery window — the second lane-opening gate (the
+		// first is the response stream's own desiredSize pull-gate, which
+		// parks enqueues byte-wise). Exceeded: touched ids coalesce into
+		// the dirty set instead of opening lanes. Coalescing intermediate
+		// states is CORRECT here — cells carry state, not events, so when
+		// the window frees, ONE render of the latest state supersedes
+		// every intermediate the gate skipped; nothing is dropped, the
+		// ids stay dirty until they lane. A gated wake is not useful
+		// activity: the keepalive keeps counting down, so a client that
+		// never frees the window can't hold the connection open.
+		if (deliveryWindowExceeded()) {
+			for (const id of touched) windowDirty.add(id);
+			continue;
+		}
+		if (windowDirty.size > 0) {
+			// The window freed — the coalesced ids render their LATEST
+			// state, ahead of this wake's fresh touches (they have waited
+			// longest). Ids that parked while gated stay skipped like on
+			// any wake; a flip-in in the dirty set is never parked (the
+			// set learned it at consume time above).
+			const freed = [...windowDirty];
+			windowDirty.clear();
+			for (let i = freed.length - 1; i >= 0; i--) {
+				const id = freed[i];
+				if (isParkedOnConnection(id, snapshots, session)) continue;
+				if (!touched.includes(id)) touched.unshift(id);
 			}
 		}
 		if (touched.length === 0) continue;
@@ -922,9 +1306,20 @@ const IDLE_TIMEOUT = Symbol("idle-timeout");
 const EXPIRES_AT_WAKE = Symbol("expires-at-wake");
 const LANE_DRAINED_WAKE = Symbol("lane-drained-wake");
 const VISIBILITY_WAKE = Symbol("visibility-wake");
+const DEGRADE_WAKE = Symbol("degrade-wake");
 
-/** Which arm woke a segment/lane wait. `false` closes the stream. */
-type SegmentWake = false | "bump" | "expiry" | "lane-drained" | "visibility";
+/** Which arm woke a segment/lane wait. `false` closes the stream.
+ *  `"window"` is minted only by the lane driver's wait-entry latch (an
+ *  ack freed the delivery window while the driver was busy); the wait
+ *  itself never returns it. `"degrade"` is the never-acked deadline. */
+type SegmentWake =
+	| false
+	| "bump"
+	| "expiry"
+	| "lane-drained"
+	| "visibility"
+	| "window"
+	| "degrade";
 
 interface SegmentWakeOptions {
 	/** Parton ids whose `expiresAt` must NOT arm the expiry timer —
@@ -957,6 +1352,12 @@ interface SegmentWakeOptions {
 	 *  can't extend the connection's life — see the zombie-connection
 	 *  note in `driveLaneStream`. */
 	deadline?: number;
+	/** Absolute never-acked degrade deadline (ms epoch), or null when
+	 *  the obligation isn't running (no delivery settled yet, or the
+	 *  first ack already arrived). A timer arm with a disposer, like
+	 *  the keepalive — anchored at delivered-settle by the caller, see
+	 *  `FIRST_ACK_DEADLINE_MS`. */
+	degradeAt?: number | null;
 }
 
 /**
@@ -1021,6 +1422,13 @@ async function waitForSegmentWake(
 			// latch) — dropped with the park, nothing to release.
 			void options.laneDrained.then(() => settle(LANE_DRAINED_WAKE));
 		}
+		if (options?.degradeAt != null) {
+			const dgTimer = setTimeout(
+				() => settle(DEGRADE_WAKE),
+				Math.max(0, options.degradeAt - Date.now()),
+			);
+			disposers.push(() => clearTimeout(dgTimer));
+		}
 		const flipWakes = options?.session?.flipWakes;
 		if (flipWakes) {
 			const onFlip = (): void => settle(VISIBILITY_WAKE);
@@ -1037,6 +1445,7 @@ async function waitForSegmentWake(
 		if (result === EXPIRES_AT_WAKE) return "expiry";
 		if (result === LANE_DRAINED_WAKE) return "lane-drained";
 		if (result === VISIBILITY_WAKE) return "visibility";
+		if (result === DEGRADE_WAKE) return "degrade";
 		// A bump won the race. Emit only if it touched something this route
 		// actually renders; otherwise advance the cursor and re-arm.
 		if (routeHasRelevantBump(since)) return "bump";
@@ -1187,13 +1596,20 @@ function isLiveSubscription(): boolean {
  * profile (~7% total + URL parse cost). The carrier collapses it to
  * one map mutation per snapshot.
  */
-/** Replace the override's entries for `id` with the client's reported
+/** Replace the mirror's entries for `id` with the client's reported
  *  holdings — `id:matchKey:fp` tokens, parsed right-to-left like
- *  `parseCachedTokens` (ids may contain colons; matchKeys never do). */
+ *  `parseCachedTokens` (ids may contain colons; matchKeys never do).
+ *  Replaces EVERY layer for the id: the flip statement is the client's
+ *  own attestation of what it holds, so it supersedes both the
+ *  optimistic skip-set and the acked layer — an acked fp the client
+ *  has since evicted must not confirm a phantom copy (acks report what
+ *  the client gained, never what it evicted; this statement is the
+ *  eviction evidence). */
 function applyReportedCached(
 	id: string,
 	tokens: readonly string[],
 	override: { fingerprints: Map<string, Set<string>>; matchKeys: Map<string, Set<string>> },
+	ackedFps?: Map<string, Set<string>>,
 ): void {
 	const fps = new Set<string>();
 	const mks = new Set<string>();
@@ -1209,22 +1625,9 @@ function applyReportedCached(
 	}
 	override.fingerprints.set(id, fps);
 	override.matchKeys.set(id, mks);
-}
-
-/** Per-id bound on the override's fp / matchKey sets — same shape as
- *  the client's `FP_CAP_PER_VARIANT`: a live parton drifting every
- *  lane (each bump folds a fresh invalidation ts) would grow its set
- *  unboundedly over a long-held connection. Oldest-first eviction
- *  keeps the newest few — enough for the next render's skip check;
- *  an evicted entry only costs an over-fetch, never staleness. */
-const OVERRIDE_SET_CAP = 8;
-
-function capOverrideSet(set: Set<string>): void {
-	while (set.size > OVERRIDE_SET_CAP) {
-		const oldest = set.values().next().value;
-		if (oldest === undefined) break;
-		set.delete(oldest);
-	}
+	// The stated tokens are client-attested holdings — the acked layer's
+	// truth class — so they REPLACE its entry rather than clearing it.
+	ackedFps?.set(id, new Set(fps));
 }
 
 /** Fold a trailer's `{from, to}` warm-fp entries into the live
@@ -1247,7 +1650,13 @@ function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 	}
 }
 
-export function promoteSnapshotsToCachedOverride(withinId?: string): void {
+export function promoteSnapshotsToCachedOverride(
+	withinId?: string,
+	// The delivery-record sink: the lane/segment drivers capture the
+	// promoted `(id, fp)` pairs as the emission's holdings in the SAME
+	// walk (no second pass per drain) — see `_recordDelivery`.
+	onToken?: (id: string, fp: string) => void,
+): void {
 	let request: Request;
 	let scope: string;
 	try {
@@ -1279,6 +1688,7 @@ export function promoteSnapshotsToCachedOverride(withinId?: string): void {
 		}
 		fpSet.add(snap.emittedFp);
 		capOverrideSet(fpSet);
+		onToken?.(id, snap.emittedFp);
 		let mkSet = override.matchKeys.get(id);
 		if (!mkSet) {
 			mkSet = new Set();

@@ -5,8 +5,8 @@
  *
  *   1. one flush collects at most one frame per producer into ONE
  *      envelope — a burst of flush requests within a frame coalesces;
- *   2. the envelope seq is per-connection monotonic and restarts at
- *      establishment;
+ *   2. the envelope seq is PAGE-LIFETIME monotonic — establishment
+ *      never restarts it (retransmits keep their original seqs);
  *   3. with no connection open, `collect(null)` is the producers' cue
  *      (their own fallback) and nothing POSTs;
  *   4. a non-204 answer or a network failure clears the published id
@@ -111,7 +111,7 @@ describe("ChannelClient", () => {
 		expect(fetchCalls[0].init.keepalive).toBe(true)
 	})
 
-	it("mints a per-connection monotonic seq, restarting at establishment", async () => {
+	it("mints a PAGE-LIFETIME monotonic seq — establishment does not restart it", async () => {
 		let pending: string[] | null = ["x"]
 		registerChannelProducer({
 			collect: (conn) => {
@@ -132,8 +132,10 @@ describe("ChannelClient", () => {
 		await settle()
 		expect(sentEnvelopes().map((e) => e.seq)).toEqual([1, 2])
 
-		// A new connection starts a new session server-side — its seq gate
-		// starts fresh, and so does the transport's counter.
+		// A new connection continues the page's one seq timeline —
+		// retransmitted reliable envelopes keep their original seqs, so
+		// the counter never restarts (the server session's applied gate
+		// seeds from the attach statement's watermark instead).
 		_channelEstablished("conn-2")
 		pending = ["z"]
 		scheduleChannelFlush()
@@ -141,7 +143,7 @@ describe("ChannelClient", () => {
 		await settle()
 		const envelopes = sentEnvelopes()
 		expect(envelopes[2].connection).toBe("conn-2")
-		expect(envelopes[2].seq).toBe(1)
+		expect(envelopes[2].seq).toBe(3)
 	})
 
 	it("with no connection, collect(null) cues the producers' fallback and nothing POSTs", async () => {

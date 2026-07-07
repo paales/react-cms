@@ -54,6 +54,7 @@
 import { _setAttachStatement, getScope } from "../runtime/context.ts";
 import { getSessionId } from "../runtime/session.ts";
 import {
+	type AckFrame,
 	type AttachStatement,
 	type ChannelEnvelope,
 	decodeAttachStatement,
@@ -141,6 +142,75 @@ export interface ConnectionSession {
 	 *  drive loop exits at its next wake (the frame fires the wake
 	 *  arms) instead of holding the stream for the keepalive. */
 	detached: boolean;
+	/** Last minted DELIVERY seq — the per-connection monotonic counter
+	 *  every payload segment and lane emission carries as its `seq`
+	 *  entry (the ack currency). Minted by the driver at emission. */
+	deliverySeq: number;
+	/** Highest cumulative delivery seq the client has COMMITTED (`ack`
+	 *  frames). `deliverySeq - ackedDeliverySeq` is the unacked window
+	 *  the driver gates lane opening on. */
+	ackedDeliverySeq: number;
+	/** An `ack` frame — ANY ack frame — has arrived on this connection.
+	 *  The duplex proof: a connection whose first delivery settled
+	 *  without this ever flipping is degraded (never-acked) instead of
+	 *  held behind a window that can never free. */
+	firstAckReceived: boolean;
+	/** Unacked emissions' holdings: delivery seq → the `(id, fp)` pairs
+	 *  that emission carried. Folded into `ackedFps` (and dropped) when
+	 *  the client's cumulative ack covers the seq; dies with the
+	 *  connection otherwise. Bounded by the unacked delivery window —
+	 *  the same signal that stops new lanes stops new records. */
+	readonly pendingDeliveries: Map<number, ReadonlyArray<readonly [string, string]>>;
+	/** The mirror's ACKED layer: fps whose delivering emission the
+	 *  client COMMITTED — client-proven holdings, consulted by the
+	 *  fp-skip verdict on an optimistic-layer miss. Per-id sets capped
+	 *  at `OVERRIDE_SET_CAP` like the optimistic layer's; resets with
+	 *  the connection (reattach seeds the mirror from the attach
+	 *  manifest and nothing else — the manifest IS the durable
+	 *  evidence). A flip statement's `cached` tokens replace an id's
+	 *  entry here too: the client's own attestation supersedes every
+	 *  layer (acks report what the client GAINED, never what it
+	 *  evicted — the flip statement is the eviction evidence). */
+	readonly ackedFps: Map<string, Set<string>>;
+	/** Highest upstream envelope seq applied on this connection. Seeded
+	 *  from the attach statement's `applied` watermark (the client's
+	 *  page-lifetime seq timeline — see [[channel-protocol]]); advanced
+	 *  by every applied envelope. Arrival order is seq order because the
+	 *  client transport serializes envelopes, so the max IS the
+	 *  contiguous watermark. */
+	appliedSeq: number;
+	/** The `appliedSeq` value last shipped downstream as an `applied`
+	 *  marker. The driver announces at its next wake whenever
+	 *  `appliedSeq` has moved past this. */
+	announcedAppliedSeq: number;
+	/** When the connection's FIRST delivery-seq'd emission fully drained
+	 *  onto the wire (`null` until one has). The anchor of the client's
+	 *  ack obligation: from this moment a committing client's first ack
+	 *  is at most one RTT + decode + rAF away, so the never-acked
+	 *  degrade deadline measures from here — never from connection age. */
+	firstDeliverySettledAt: number | null;
+	/** The connection is DEGRADED — the driver stops holding (the drive
+	 *  loop exits after settle) and the stream closes. Set with the
+	 *  reason (`"never-acked"` today) when the first-ack deadline
+	 *  elapses with `firstAckReceived` still false. */
+	degradedReason: string | null;
+}
+
+/** Per-id bound on every mirror layer's fp / matchKey sets — the
+ *  server-side twin of the client's `FP_CAP_PER_VARIANT`: a live
+ *  parton drifting every lane (each bump folds a fresh invalidation
+ *  ts) would grow its set unboundedly over a long-held connection.
+ *  Oldest-first eviction keeps the newest few — enough for the next
+ *  render's skip check; an evicted entry only costs an over-fetch,
+ *  never staleness. */
+export const OVERRIDE_SET_CAP = 8;
+
+export function capOverrideSet(set: Set<string>): void {
+	while (set.size > OVERRIDE_SET_CAP) {
+		const oldest = set.values().next().value;
+		if (oldest === undefined) break;
+		set.delete(oldest);
+	}
 }
 
 // Survives dev-server module re-evaluation: a held live connection's
@@ -162,7 +232,7 @@ const sessions = ((globalThis as Record<string, unknown>).__partonConnectionSess
 export function _openConnectionSession(
 	id: string,
 	initialVisible: ReadonlySet<string> | null,
-	binding?: { scope?: string; sessionId?: string },
+	binding?: { scope?: string; sessionId?: string; applied?: number },
 ): ConnectionSession {
 	const session: ConnectionSession = {
 		id,
@@ -173,15 +243,97 @@ export function _openConnectionSession(
 		pendingFlips: new Map(),
 		flipWakes: new Set(),
 		detached: false,
+		deliverySeq: 0,
+		ackedDeliverySeq: 0,
+		firstAckReceived: false,
+		pendingDeliveries: new Map(),
+		ackedFps: new Map(),
+		// The attach statement's upstream watermark seeds both sides of
+		// the applied gate: the client's envelope seqs are page-lifetime,
+		// so the new session continues the one timeline instead of
+		// restarting an ambiguous one, and the marker never announces
+		// below what the client already heard.
+		appliedSeq: binding?.applied ?? 0,
+		announcedAppliedSeq: binding?.applied ?? 0,
+		firstDeliverySettledAt: null,
+		degradedReason: null,
 	};
 	sessions.set(id, session);
 	return session;
+}
+
+/**
+ * Record an emission's holdings against its delivery seq — the `(id,
+ * fp)` pairs a payload segment or lane carried, captured by the driver
+ * at the same walk that promotes them into the optimistic layer. When
+ * the client's cumulative ack covers the seq, the pairs fold into the
+ * ACKED layer and the record dies. A record whose seq the client
+ * already acked (the ack raced the driver's post-drain bookkeeping)
+ * folds immediately instead of pending forever.
+ */
+export function _recordDelivery(
+	session: ConnectionSession,
+	seq: number,
+	tokens: ReadonlyArray<readonly [string, string]>,
+): void {
+	if (seq <= session.ackedDeliverySeq) {
+		foldAckedTokens(session, tokens);
+		return;
+	}
+	session.pendingDeliveries.set(seq, tokens);
+}
+
+function foldAckedTokens(
+	session: ConnectionSession,
+	tokens: ReadonlyArray<readonly [string, string]>,
+): void {
+	for (const [id, fp] of tokens) {
+		let set = session.ackedFps.get(id);
+		if (!set) {
+			set = new Set();
+			session.ackedFps.set(id, set);
+		}
+		set.add(fp);
+		capOverrideSet(set);
+	}
+}
+
+/**
+ * Apply an `ack` frame: the client states its highest contiguously
+ * COMMITTED delivery seq. Any ack frame — advancing or not — is the
+ * duplex proof (`firstAckReceived`). An advancing ack folds the covered
+ * pending deliveries into the ACKED layer and frees the unacked window;
+ * the caller fires the wake arms so a driver parked behind the window
+ * re-evaluates. Cumulative: a stale or duplicate ack is a no-op — the
+ * watermark only moves forward.
+ */
+function applyAckFrame(session: ConnectionSession, frame: AckFrame): boolean {
+	session.firstAckReceived = true;
+	if (frame.delivered <= session.ackedDeliverySeq) return false;
+	session.ackedDeliverySeq = frame.delivered;
+	for (const [seq, tokens] of session.pendingDeliveries) {
+		if (seq <= frame.delivered) {
+			foldAckedTokens(session, tokens);
+			session.pendingDeliveries.delete(seq);
+		}
+	}
+	return true;
 }
 
 /** Unregister a session — the drive loop exited; the stream is closed
  *  or closing. Envelopes for the id now answer `404`. */
 export function _closeConnectionSession(id: string): void {
 	sessions.delete(id);
+}
+
+/** Look up an OPEN session by its minted id — the rsc harness's window
+ *  into per-connection state (ack watermarks, the acked mirror layer,
+ *  the degrade reason). `undefined` once the drive loop has closed
+ *  it. */
+export function _peekConnectionSession(
+	id: string,
+): ConnectionSession | undefined {
+	return sessions.get(id);
 }
 
 /**
@@ -330,6 +482,7 @@ export async function handleChannelPost(request: Request): Promise<Response> {
 	if (getScope() !== session.scope) return new Response(null, { status: 404 });
 	if ((getSessionId() ?? "") !== session.boundSessionId)
 		return new Response(null, { status: 404 });
+	let wakeNeeded = false;
 	for (const frame of envelope.frames) {
 		switch (frame.kind) {
 			case "visible":
@@ -338,8 +491,25 @@ export async function handleChannelPost(request: Request): Promise<Response> {
 			case "detach":
 				detachConnectionSession(session);
 				break;
+			case "ack":
+				// An advancing ack frees the unacked delivery window — the
+				// parked driver must re-evaluate its coalesced dirty set.
+				if (applyAckFrame(session, frame)) wakeNeeded = true;
+				break;
 		}
 	}
+	// The envelope applied — advance the upstream watermark. Arrival
+	// order is seq order (the client transport serializes envelopes), so
+	// the max is the contiguous watermark; per-frame-kind seq gates own
+	// idempotence, never a whole-envelope replay gate (a stale
+	// envelope's flips must still queue).
+	if (envelope.seq > session.appliedSeq) {
+		session.appliedSeq = envelope.seq;
+		// The driver announces the advance downstream (the `applied`
+		// marker) at its next wake — give it one.
+		if (session.appliedSeq > session.announcedAppliedSeq) wakeNeeded = true;
+	}
+	if (wakeNeeded) for (const wake of [...session.flipWakes]) wake();
 	return new Response(null, { status: 204 });
 }
 

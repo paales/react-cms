@@ -153,6 +153,27 @@ export const TAG_LANES_OPEN = "lanes";
  *  driver only mints ids for sessions it has opened. Never appears on
  *  one-shot responses. */
 export const TAG_CONNECTION_ID = "conn";
+/** Per-connection monotonic DELIVERY seq — the ack currency. Every
+ *  emission a live connection makes carries one: a payload segment's
+ *  entry precedes its Flight rows (body: decimal seq), a lane's is a
+ *  framed entry written right before the lane's `muxend` (body:
+ *  `<parton-id>\n<seq>`, the mux frames' id-first shape). The client
+ *  records the seq at COMMIT time — the lane-chain commit / payload
+ *  setPayload, never at decode — and acks the highest contiguously
+ *  committed value upstream (`ack` frames). Never appears on one-shot
+ *  responses: a delivery seq without a session to ack to is
+ *  meaningless. */
+export const TAG_DELIVERY_SEQ = "seq";
+/** Cumulative "upstream seq applied" — the mirror image of the
+ *  client's `ack` frame: body is the decimal highest upstream envelope
+ *  seq the connection session has applied (arrival order IS seq order:
+ *  the client transport serializes envelopes — one in flight,
+ *  retransmits-first on reattach). Emitted whenever the watermark has
+ *  advanced past the last announced value, at the driver's next wake.
+ *  What prunes the client transport's reliable-envelope retransmit
+ *  buffer — a beacon's 204 is acceptance, not proof a future transport
+ *  surfaces, so the stream marker is the one pruning signal. */
+export const TAG_UPSTREAM_APPLIED = "applied";
 /** One chunk of one parton's Flight payload: body is
  *  `<parton-id>\n<bytes>`. Frames from different partons interleave
  *  freely; a parton's own frames arrive in render order. */

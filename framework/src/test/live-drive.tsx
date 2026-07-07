@@ -26,6 +26,10 @@ export interface DriveHandle {
    *  drains; on the catch-up path it is the lanes region's first
    *  frame, read on the way to the first lane. */
   connectionId: () => string | null
+  /** Every wire ENTRY read so far, in arrival order (tag + decoded
+   *  body) — how tests observe the `seq` delivery entries and the
+   *  `applied` upstream watermark alongside the `conn` handshake. */
+  entries: Array<{ tag: string; body: string }>
   /** Ends the connection: cancels the client reader and wakes the
    *  parked driver with a bump so its enqueue fails and the loop
    *  exits without waiting out the 20s keepalive. */
@@ -80,12 +84,16 @@ export async function withLiveDrive(
       } catch {}
     })
     let connectionId: string | null = null
+    const entries: Array<{ tag: string; body: string }> = []
     const iter = splitSegments(response, undefined, (tag, body) => {
-      if (tag === TAG_CONNECTION_ID) connectionId = new TextDecoder().decode(body)
+      const text = new TextDecoder().decode(body)
+      entries.push({ tag, body: text })
+      if (tag === TAG_CONNECTION_ID) connectionId = text
     })[Symbol.asyncIterator]()
     await run({
       segments: iter,
       connectionId: () => connectionId,
+      entries,
       shutdown: async (wakeSelector: string) => {
         await iter.return?.()
         // The parked driver only observes the torn controller on its

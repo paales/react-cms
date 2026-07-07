@@ -20,7 +20,13 @@ import {
 import React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
-import { _channelWireEntry } from "../lib/channel-client.ts";
+import {
+	_channelWireEntry,
+	_laneDeliveryCommitted,
+	_laneDeliveryDropped,
+	_segmentDeliveryCommitted,
+	_segmentDeliverySeq,
+} from "../lib/channel-client.ts";
 import type { AttachStatement } from "../lib/channel-protocol.ts";
 import type { FpUpdatesPayload } from "../lib/fp-trailer-marker.ts";
 import {
@@ -302,22 +308,55 @@ async function main() {
 				// it in place via a template re-render, no whole-payload
 				// setPayload involved.
 				const handleLane = async (lane: DemuxedLane): Promise<void> => {
-					const { mainStream, trailer } = splitAtFpTrailer(lane.body);
-					const node =
-						await createFromReadableStream<React.ReactNode>(mainStream);
-					if (pageUrlKey() !== issuedForPageUrl) return;
-					const fp = (await trailer) as FpUpdatesPayload | null;
-					_commitPartonLane(node, fp);
+					try {
+						const { mainStream, trailer } = splitAtFpTrailer(lane.body);
+						const node =
+							await createFromReadableStream<React.ReactNode>(mainStream);
+						if (pageUrlKey() !== issuedForPageUrl) {
+							// Decoded but never committed: consume the lane's queued
+							// delivery seq WITHOUT recording it — the ack watermark
+							// stalls there, so the server never counts the dropped
+							// payload as held. (The page moved, so this stream is
+							// about to be torn anyway.)
+							_laneDeliveryDropped(lane.partonId);
+							return;
+						}
+						const fp = (await trailer) as FpUpdatesPayload | null;
+						_commitPartonLane(node, fp);
+						// COMMIT is the recording moment — the cache walk above is
+						// synchronous, so the subtree is the page's state now. The
+						// transport advances its contiguous watermark and acks.
+						_laneDeliveryCommitted(lane.partonId);
+					} catch (err) {
+						// Torn decode (connection died mid-lane) — keep the
+						// per-parton seq queue aligned for any lane that still
+						// lands, without recording a commit that never happened.
+						_laneDeliveryDropped(lane.partonId);
+						throw err;
+					}
+				};
+				// A live stream's payload segments carry delivery seqs (`seq`
+				// entries ahead of their Flight rows). FETCH-LOCAL pending
+				// slot: only this stream's own commits may consume it — a
+				// concurrent discrete fetch's commit must never record the
+				// live stream's seq.
+				let pendingSegmentSeq: number | null = null;
+				const onWireEntry = (tag: string, body: Uint8Array): void => {
+					// The transport's entries — `conn` handshake, lane-form
+					// delivery seqs, the upstream-applied watermark.
+					_channelWireEntry(tag, body);
+					const seq = _segmentDeliverySeq(tag, body);
+					if (seq !== null) pendingSegmentSeq = seq;
 				};
 				try {
-					// `_channelWireEntry` watches the entries for the `conn`
+					// `onWireEntry` watches the entries for the `conn`
 					// handshake — a live fire's server-minted connection id,
 					// established with the channel transport the moment it is
 					// read (one-shot responses never carry one).
 					for await (const segment of splitSegments(
 						response.body,
 						signal,
-						_channelWireEntry,
+						onWireEntry,
 					)) {
 						if (segment.kind === "lanes") {
 							// The subscription is established the moment the lanes
@@ -356,7 +395,13 @@ async function main() {
 						// a superseded query). Skip the commit AND its trailers
 						// (which would otherwise register fingerprints for the
 						// stale tree). Keep draining so the stream closes cleanly.
-						if (pageUrlKey() !== issuedForPageUrl) continue;
+						// A dropped commit consumes its pending delivery seq
+						// WITHOUT recording it — the ack watermark stalls, and the
+						// server never counts the dropped payload as held.
+						if (pageUrlKey() !== issuedForPageUrl) {
+							pendingSegmentSeq = null;
+							continue;
+						}
 						// Monotonic commit ordering: drop this segment if a newer
 						// fire for the same selector has already committed (a
 						// superseded refetch whose response arrived out of order —
@@ -364,12 +409,22 @@ async function main() {
 						// closes cleanly; just skip the commit and its trailers. The
 						// gate is provided by the framework's refetch dispatcher
 						// (`refetch-ordering.ts`); full-page navs pass none.
-						if (claimCommit && !claimCommit()) continue;
+						if (claimCommit && !claimCommit()) {
+							pendingSegmentSeq = null;
+							continue;
+						}
 						segment.trailers.then(applyStandardTrailers).catch(() => {});
 						if (streamingMode) {
 							setPayloadRaw(payload);
 						} else {
 							setPayload(payload);
+						}
+						// COMMIT is the recording moment for the segment's delivery
+						// seq — React has been handed the payload; the transport
+						// advances its watermark and acks.
+						if (pendingSegmentSeq !== null) {
+							_segmentDeliveryCommitted(pendingSegmentSeq);
+							pendingSegmentSeq = null;
 						}
 						// First segment landed and React has been told to render it.
 						// Resolve `streaming` so per-selector abort queues can fire

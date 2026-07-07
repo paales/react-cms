@@ -62,6 +62,7 @@ import {
 import {
   _getAttachStatement,
   _getCachedOverride,
+  _getConnectionAckedFps,
   _setCachedOverride,
   getRequest,
   parseCookies,
@@ -1763,8 +1764,17 @@ function createSpecComponent<V>(
     const state = requestState ?? null
 
     const isExplicit = state?.explicitIds.has(id) ?? false
+    // Layered mirror, optimistic-first: the emit-time skip-set is the
+    // hot layer (a same-parton re-lane within one RTT matches here);
+    // the ACKED layer — fps whose delivering emission the client
+    // COMMITTED — is the client-proven floor consulted only on an
+    // optimistic miss (e.g. an fp the per-id cap evicted). Both are
+    // truthful holdings evidence, so a hit in either restores content
+    // the client verifiably has.
     const cachedFps = state?.cachedFingerprints.get(id)
-    const fingerprintMatches = cachedFps != null && cachedFps.has(fp)
+    const fingerprintMatches =
+      (cachedFps != null && cachedFps.has(fp)) ||
+      (state?.ackedFingerprints?.get(id)?.has(fp) ?? false)
     // Cold-record gate: a spec's tracked reads only reach the fp via
     // the snapshot's dep record (store-and-reread). With no prior
     // snapshot for this route's variant, the fp above folded NO deps —
@@ -2428,6 +2438,11 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
     populateCache,
     cachedFingerprints: cachedFps,
     cachedMatchKeys: cachedMks,
+    // Live connections only: the session's acked layer (client-proven
+    // holdings), consulted by the fp-skip verdict on an optimistic
+    // miss. A live reference — acks fold in for the connection's whole
+    // lifetime, so segment-loop renders and the reconcile see them.
+    ackedFingerprints: _getConnectionAckedFps(),
     explicitIds,
     cullFlip: requestUrl.searchParams.get("__cullFlip") === "1",
     seenIds: new Set(),

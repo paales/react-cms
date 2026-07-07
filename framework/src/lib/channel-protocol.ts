@@ -8,14 +8,26 @@
  * the grammar, and its decoders.
  *
  * An envelope is one coalesced, fire-and-forget POST: the client
- * states facts about itself — viewport flips today; URL moves, commit
- * acks, and telemetry are reserved kinds (see
+ * states facts about itself — viewport flips and delivery acks today;
+ * URL moves and telemetry are reserved kinds (see
  * `docs/notes/channel-design.md`) — addressed to the OPEN live
  * connection by its explicit id. The server answers `204` with no body — every rendered consequence of a
  * frame travels down the live stream as lane segments, never on this
- * response. Frames are loss-tolerant for now: no retransmit buffer, no
- * delivery acks; a lost envelope's statements are re-established by
- * the next heartbeat fire's seed.
+ * response. Frame kinds split into two classes:
+ *
+ *   - **loss-tolerant** (`visible`, `detach`, `ack`) — statements the
+ *     protocol re-establishes on its own (the next attach's seed, the
+ *     keepalive backstop, the cumulative ack watermark), so a lost
+ *     envelope costs nothing durable. These never enter the transport's
+ *     retransmit buffer.
+ *   - **reliable** (the url / cancel kinds later packages add) —
+ *     buffered by the client transport (per its producer's `reliable`
+ *     declaration, see [[channel-client]]) until the downstream
+ *     `applied` marker covers their envelope seq, and retransmitted at
+ *     the next attach with their ORIGINAL seqs. Application idempotence
+ *     is per kind, by seq-ordered statement semantics (the shipped
+ *     `visible` per-id seq gate is the model) — never a whole-envelope
+ *     replay gate, which would break out-of-order statement queueing.
  */
 
 /** POST target for channel envelopes. Framework-owned, handled by
@@ -45,11 +57,25 @@ export const ATTACH_HEADER = "x-parton-attach";
  *   - `visible` — the viewport seed, stating what the client SEES.
  *     `null` is the unmeasured state (no statement); an empty array is
  *     a measurement ("nothing in view").
+ *   - `applied` — the upstream watermark, stating what the client last
+ *     HEARD the server apply: the highest upstream envelope seq from a
+ *     downstream `applied` marker (0 before any). The upstream seq is
+ *     page-lifetime monotonic, so the new session seeds its applied
+ *     watermark here and the marker stays monotonic across reattaches.
+ *     Composition with the other timeline fields: `since` bounds the
+ *     DOWNSTREAM resync window (what the initial segment must cover),
+ *     `applied` anchors the UPSTREAM timeline (what the marker may
+ *     assume already announced), and delivery acks bound the mirror —
+ *     three statements about three different clocks, never competing
+ *     resync mechanisms.
  */
 export interface AttachStatement {
 	cached: readonly string[];
 	since: { epoch: string; ts: number } | null;
 	visible: readonly string[] | null;
+	/** Optional on the wire (absent = 0 — a client stating no upstream
+	 *  watermark); the decoder always normalizes it in. */
+	applied?: number;
 }
 
 /**
@@ -77,7 +103,19 @@ export function decodeAttachStatement(value: unknown): AttachStatement | null {
 		if (!isStringArray(v.visible)) return null;
 		visible = v.visible;
 	}
-	return { cached: v.cached, since, visible };
+	// Absent `applied` normalizes to 0 — a client from before the ack
+	// package states no upstream watermark, and 0 is exactly that.
+	let applied = 0;
+	if (v.applied !== null && v.applied !== undefined) {
+		if (
+			typeof v.applied !== "number" ||
+			!Number.isFinite(v.applied) ||
+			v.applied < 0
+		)
+			return null;
+		applied = v.applied;
+	}
+	return { cached: v.cached, since, visible, applied };
 }
 
 /**
@@ -115,12 +153,29 @@ export interface DetachFrame {
 	kind: "detach";
 }
 
+/**
+ * Cumulative delivery ack — the client states the highest CONTIGUOUSLY
+ * COMMITTED delivery seq (the `seq` entries payload segments and lanes
+ * carry, recorded at commit time, never at decode). Cumulative, so a
+ * lost or reordered ack costs nothing: any later ack subsumes it, and
+ * applying one twice is a no-op (the session's watermark only moves
+ * forward). Connection-scoped — delivery seqs restart per connection —
+ * so acks never enter the retransmit buffer. On the server the ack is
+ * what advances the mirror's ACKED layer (the fps the acked emissions
+ * carried become client-proven holdings) and what frees the unacked
+ * delivery window the driver gates lane opening on.
+ */
+export interface AckFrame {
+	kind: "ack";
+	delivered: number;
+}
+
 /** The frame kinds shipped today. The grammar is open: an envelope may
- *  carry kinds this build doesn't know (url / ack / telemetry land in
- *  later packages — `docs/notes/channel-design.md` § Wire shape), and
- *  the decoder SKIPS those rather than erroring, the same
+ *  carry kinds this build doesn't know (url / cancel / telemetry land
+ *  in later packages — `docs/notes/channel-design.md` § Wire shape),
+ *  and the decoder SKIPS those rather than erroring, the same
  *  extensibility rule the downstream marker grammar follows. */
-export type ChannelFrame = VisibleFrame | DetachFrame;
+export type ChannelFrame = VisibleFrame | DetachFrame | AckFrame;
 
 export interface ChannelEnvelope {
 	/** The live connection this envelope addresses. An explicit token,
@@ -128,12 +183,15 @@ export interface ChannelEnvelope {
 	 *  hold gets a `404`, the transport's fall-back-to-discrete
 	 *  signal. */
 	connection: string;
-	/** Per-connection monotonic envelope sequence. The server applies a
-	 *  `visible` frame's snapshot only from envelopes at or past the
-	 *  last applied seq, so two in-flight POSTs can't commit an older
-	 *  set over a newer one; per-id flip statements order by seq
-	 *  independently (a stale envelope's flips still queue — see
-	 *  [[connection-session]]). */
+	/** PAGE-LIFETIME monotonic envelope sequence — minted by the client
+	 *  transport and never restarted at establishment, so retransmitted
+	 *  reliable envelopes keep their original seqs across reattaches and
+	 *  the downstream `applied` marker names one unambiguous timeline.
+	 *  The server applies a `visible` frame's snapshot only from
+	 *  envelopes at or past the last applied seq, so two in-flight POSTs
+	 *  can't commit an older set over a newer one; per-id flip
+	 *  statements order by seq independently (a stale envelope's flips
+	 *  still queue — see [[connection-session]]). */
 	seq: number;
 	/** Frames, ordered within the envelope. */
 	frames: ChannelFrame[];
@@ -171,6 +229,16 @@ export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
 		}
 		if (f.kind === "detach") {
 			frames.push({ kind: "detach" });
+			continue;
+		}
+		if (f.kind === "ack") {
+			if (
+				typeof f.delivered !== "number" ||
+				!Number.isFinite(f.delivered) ||
+				f.delivered < 0
+			)
+				return null;
+			frames.push({ kind: "ack", delivered: f.delivered });
 			continue;
 		}
 		// Unknown kind — skipped, never an error.
