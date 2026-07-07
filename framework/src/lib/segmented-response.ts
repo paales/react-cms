@@ -472,9 +472,9 @@ export async function driveSegmentedResponse(
 		// Promote into the optimistic layer AND capture the same walk
 		// as the delivery's holdings record — what this segment carried
 		// becomes acked evidence when the client commits it.
-		const tokens: Array<readonly [string, string]> = [];
-		promoteSnapshotsToCachedOverride(undefined, (id, fp) =>
-			tokens.push([id, fp]),
+		const tokens: Array<readonly [string, string, string]> = [];
+		promoteSnapshotsToCachedOverride(undefined, (id, mk, fp) =>
+			tokens.push([id, mk, fp]),
 		);
 		if (deliverySeq !== null) {
 			_recordDelivery(session, deliverySeq, tokens, session.consumedNavSeq);
@@ -579,6 +579,7 @@ function installCatchupCachedOverride(): void {
 	_setCachedOverride({
 		fingerprints: parsed.fingerprints,
 		matchKeys: parsed.matchKeys,
+		slots: parsed.slots,
 	});
 }
 
@@ -1107,7 +1108,7 @@ async function driveLaneStream(
 				// client — subtree promotions at drain plus any trailer heals
 				// during the flush — become acked holdings when the client
 				// commits it. Captured per iteration.
-				const carried: Array<readonly [string, string]> = [];
+				const carried: Array<readonly [string, string, string]> = [];
 				// Per-iteration producer attribution: the render runs inside a
 				// nested probe scope so `markConnectionLive()` marks THIS lane
 				// (lane renders share one request store — the store-level flag
@@ -1156,7 +1157,10 @@ async function driveLaneStream(
 							onUpdates: (updates) => {
 								promoteFpUpdatesToCachedOverride(updates);
 								for (const [uid, entry] of Object.entries(updates)) {
-									carried.push([uid, entry.to]);
+									// A heal joins its slot (the same content, warmed) —
+									// the empty matchKey marks a join-only token: the
+									// acked fold must not evict a slot for it.
+									carried.push([uid, "", entry.to]);
 								}
 							},
 						},
@@ -1280,8 +1284,8 @@ async function driveLaneStream(
 				// O(route) churn for entries the drain didn't touch. The same
 				// walk records the delivery's holdings — one pass, no second
 				// walk per drain.
-				promoteSnapshotsToCachedOverride(id, (tid, fp) =>
-					carried.push([tid, fp]),
+				promoteSnapshotsToCachedOverride(id, (tid, mk, fp) =>
+					carried.push([tid, mk, fp]),
 				);
 				if (session !== null && deliverySeq !== null) {
 					_recordDelivery(session, deliverySeq, carried, session.consumedNavSeq);
@@ -1561,9 +1565,9 @@ async function driveLaneStream(
 		if (!(await awaitDemand())) return false;
 		if (!enqueue(settledMarker)) return false;
 		if (session !== null) session.firstDeliverySettledAt ??= Date.now();
-		const tokens: Array<readonly [string, string]> = [];
-		promoteSnapshotsToCachedOverride(undefined, (id, fp) =>
-			tokens.push([id, fp]),
+		const tokens: Array<readonly [string, string, string]> = [];
+		promoteSnapshotsToCachedOverride(undefined, (id, mk, fp) =>
+			tokens.push([id, mk, fp]),
 		);
 		if (session !== null && deliverySeq !== null) {
 			_recordDelivery(session, deliverySeq, tokens, session.consumedNavSeq);
@@ -1661,9 +1665,9 @@ async function driveLaneStream(
 		if (!(await awaitDemand())) return "closed";
 		if (!enqueue(settledMarker)) return "closed";
 		if (session !== null) session.firstDeliverySettledAt ??= Date.now();
-		const tokens: Array<readonly [string, string]> = [];
-		promoteSnapshotsToCachedOverride(undefined, (id, fp) =>
-			tokens.push([id, fp]),
+		const tokens: Array<readonly [string, string, string]> = [];
+		promoteSnapshotsToCachedOverride(undefined, (id, mk, fp) =>
+			tokens.push([id, mk, fp]),
 		);
 		if (session !== null && deliverySeq !== null) {
 			_recordDelivery(session, deliverySeq, tokens, consumedSeq);
@@ -2461,8 +2465,9 @@ function pruneDeliveriesBeforeNav(
 	for (const [seq, record] of session.pendingDeliveries) {
 		if (record.asOf >= navSeq) continue;
 		if (override) {
-			for (const [id, fp] of record.tokens) {
+			for (const [id, mk, fp] of record.tokens) {
 				override.fingerprints.get(id)?.delete(fp);
+				if (mk !== "") override.slots.get(id)?.get(mk)?.delete(fp);
 			}
 		}
 		session.pendingDeliveries.delete(seq);
@@ -2550,11 +2555,13 @@ function applyReportedCached(
 	override: {
 		fingerprints: Map<string, Set<string>>;
 		matchKeys: Map<string, Set<string>>;
+		slots: Map<string, Map<string, Set<string>>>;
 	},
 	ackedFps?: Map<string, Set<string>>,
 ): void {
 	const fps = new Set<string>();
 	const mks = new Set<string>();
+	const idSlots = new Map<string, Set<string>>();
 	for (const token of tokens) {
 		const fpIdx = token.lastIndexOf(":");
 		if (fpIdx <= 0) continue;
@@ -2562,22 +2569,87 @@ function applyReportedCached(
 		const rest = token.slice(0, fpIdx);
 		const mkIdx = rest.lastIndexOf(":");
 		if (mkIdx <= 0) continue;
+		const mk = rest.slice(mkIdx + 1);
 		fps.add(fp);
-		mks.add(rest.slice(mkIdx + 1));
+		mks.add(mk);
+		let slot = idSlots.get(mk);
+		if (!slot) {
+			slot = new Set();
+			idSlots.set(mk, slot);
+		}
+		slot.add(fp);
 	}
 	override.fingerprints.set(id, fps);
 	override.matchKeys.set(id, mks);
+	override.slots.set(id, idSlots);
 	// The stated tokens are client-attested holdings — the acked layer's
 	// truth class — so they REPLACE its entry rather than clearing it.
 	ackedFps?.set(id, new Set(fps));
 }
 
+/**
+ * Promote one `(id, matchKey, fp)` into the override with the
+ * client's SLOT semantics: the client keeps one content per
+ * `(id, matchKey)` (`cacheStore` overwrites evict the slot's prior
+ * fps), so a fresh fp for a slot EVICTS that slot's other fps from
+ * the verdict set — an A→B→A content cycle must re-render at each
+ * step, never fp-skip against a slot the client overwrote. An fp
+ * folds its matchKey, so it belongs to exactly one slot and the
+ * flat-set surgery is exact. A re-promotion of an fp the slot already
+ * holds is a no-op (the same content re-rendered).
+ */
+function promoteSlotFpToOverride(
+	override: {
+		fingerprints: Map<string, Set<string>>;
+		matchKeys: Map<string, Set<string>>;
+		slots: Map<string, Map<string, Set<string>>>;
+	},
+	id: string,
+	matchKey: string,
+	fp: string,
+): void {
+	let idSlots = override.slots.get(id);
+	if (!idSlots) {
+		idSlots = new Map();
+		override.slots.set(id, idSlots);
+	}
+	let slot = idSlots.get(matchKey);
+	if (!slot) {
+		slot = new Set();
+		idSlots.set(matchKey, slot);
+	}
+	let fpSet = override.fingerprints.get(id);
+	if (!fpSet) {
+		fpSet = new Set();
+		override.fingerprints.set(id, fpSet);
+	}
+	if (!slot.has(fp)) {
+		// Fresh content for the slot: the client's commit evicted every
+		// prior fp the slot advertised — mirror the eviction.
+		for (const old of slot) fpSet.delete(old);
+		slot.clear();
+		slot.add(fp);
+	}
+	fpSet.add(fp);
+	capOverrideSet(fpSet);
+	let mkSet = override.matchKeys.get(id);
+	if (!mkSet) {
+		mkSet = new Set();
+		override.matchKeys.set(id, mkSet);
+	}
+	mkSet.add(matchKey);
+	capOverrideSet(mkSet);
+}
+
 /** Fold a trailer's `{from, to}` warm-fp entries into the live
  *  connection's cached override — the server-side mirror of the
- *  client's `_applyFpUpdates`. The override's fp sets are per id;
- *  additions are safe (a candidate fp is computed fresh each render,
- *  so matching any accumulated fp means the fold values genuinely
- *  coincide) and bounded per set by `capOverrideSet`. */
+ *  client's `_applyFpUpdates`: `to` joins the SLOT holding `from`
+ *  (the same content, warmed — the client keeps both), never a slot
+ *  of its own. With no slot holding `from` (the heal outran the
+ *  promote, or the id never promoted here), the pair lands as a
+ *  fresh slot promotion under the snapshot's matchKey when one is
+ *  known; a bare add otherwise (over-claim bounded by the next
+ *  slot promotion's eviction). */
 function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 	const override = _getCachedOverride();
 	if (!override) return;
@@ -2587,6 +2659,19 @@ function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 			fpSet = new Set();
 			override.fingerprints.set(id, fpSet);
 		}
+		const idSlots = override.slots.get(id);
+		let joined = false;
+		if (idSlots) {
+			for (const slot of idSlots.values()) {
+				if (slot.has(entry.from)) {
+					slot.add(entry.to);
+					capOverrideSet(slot);
+					joined = true;
+					break;
+				}
+			}
+		}
+		void joined;
 		fpSet.add(entry.to);
 		capOverrideSet(fpSet);
 	}
@@ -2595,9 +2680,10 @@ function promoteFpUpdatesToCachedOverride(updates: FpUpdatesPayload): void {
 export function promoteSnapshotsToCachedOverride(
 	withinId?: string,
 	// The delivery-record sink: the lane/segment drivers capture the
-	// promoted `(id, fp)` pairs as the emission's holdings in the SAME
-	// walk (no second pass per drain) — see `_recordDelivery`.
-	onToken?: (id: string, fp: string) => void,
+	// promoted `(id, matchKey, fp)` triples as the emission's holdings
+	// in the SAME walk (no second pass per drain) — see
+	// `_recordDelivery`.
+	onToken?: (id: string, matchKey: string, fp: string) => void,
 ): void {
 	let request: Request;
 	let scope: string;
@@ -2623,21 +2709,8 @@ export function promoteSnapshotsToCachedOverride(
 		)
 			continue;
 		if (!snap.emittedFp || !snap.matchKey) continue;
-		let fpSet = override.fingerprints.get(id);
-		if (!fpSet) {
-			fpSet = new Set();
-			override.fingerprints.set(id, fpSet);
-		}
-		fpSet.add(snap.emittedFp);
-		capOverrideSet(fpSet);
-		onToken?.(id, snap.emittedFp);
-		let mkSet = override.matchKeys.get(id);
-		if (!mkSet) {
-			mkSet = new Set();
-			override.matchKeys.set(id, mkSet);
-		}
-		mkSet.add(snap.matchKey);
-		capOverrideSet(mkSet);
+		promoteSlotFpToOverride(override, id, snap.matchKey, snap.emittedFp);
+		onToken?.(id, snap.matchKey, snap.emittedFp);
 	}
 }
 

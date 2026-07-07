@@ -2227,10 +2227,12 @@ interface PartialRootProps {
 export function parseCachedTokens(raw: string | readonly string[] | null): {
   fingerprints: Map<string, Set<string>>
   matchKeys: Map<string, Set<string>>
+  slots: Map<string, Map<string, Set<string>>>
 } {
   const fingerprints = new Map<string, Set<string>>()
   const matchKeys = new Map<string, Set<string>>()
-  if (!raw) return { fingerprints, matchKeys }
+  const slots = new Map<string, Map<string, Set<string>>>()
+  if (!raw) return { fingerprints, matchKeys, slots }
   const tokens = Array.isArray(raw) ? raw : (raw as string).split(",")
   for (const token of tokens.map((s) => s.trim())) {
     if (!token) continue
@@ -2257,8 +2259,19 @@ export function parseCachedTokens(raw: string | readonly string[] | null): {
       matchKeys.set(id, mkSet)
     }
     mkSet.add(matchKey)
+    let idSlots = slots.get(id)
+    if (!idSlots) {
+      idSlots = new Map()
+      slots.set(id, idSlots)
+    }
+    let slot = idSlots.get(matchKey)
+    if (!slot) {
+      slot = new Set()
+      idSlots.set(matchKey, slot)
+    }
+    slot.add(fp)
   }
-  return { fingerprints, matchKeys }
+  return { fingerprints, matchKeys, slots }
 }
 
 export function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNode {
@@ -2373,7 +2386,11 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
     const parsed = parseCachedTokens(cachedParam)
     cachedFps = parsed.fingerprints
     cachedMks = parsed.matchKeys
-    _setCachedOverride({ fingerprints: cachedFps, matchKeys: cachedMks })
+    _setCachedOverride({
+      fingerprints: cachedFps,
+      matchKeys: cachedMks,
+      slots: parsed.slots,
+    })
   }
   const state: PartialRequestState = {
     requestedIds: null,

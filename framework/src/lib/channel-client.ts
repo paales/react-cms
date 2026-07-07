@@ -483,6 +483,20 @@ export function _channelAbortLiveStream(): void {
 	liveStreamAbort?.();
 }
 
+/**
+ * A client-side cookie WRITE changed the request identity
+ * (`navigate(url, {cookies})`): the held stream renders against its
+ * open-time cookie jar, so its renders are no longer truthful for
+ * this client. Pull the connection down NOW — the id clears so the
+ * very next statement latches pre-establishment and rides the
+ * re-attach it triggers, whose request binds the fresh cookies.
+ */
+export function _channelCookiesChanged(): void {
+	if (_getLiveConnectionId() === null) return;
+	_setLiveConnectionId(null);
+	_channelAbortLiveStream();
+}
+
 /** A server-initiated url push (a `url` trailer) applies only when the
  *  client hasn't navigated past the state the push was rendered as-of:
  *  client-wins-at-higher-envelope-seq. `asOf` is the delivery's wire

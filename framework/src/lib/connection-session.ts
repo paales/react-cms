@@ -229,16 +229,19 @@ export interface ConnectionSession {
 	 *  without this ever flipping is degraded (never-acked) instead of
 	 *  held behind a window that can never free. */
 	firstAckReceived: boolean;
-	/** Unacked emissions' holdings: delivery seq → the `(id, fp)` pairs
-	 *  that emission carried, plus the navigation point it was rendered
-	 *  as-of (the fold gate below). Folded into `ackedFps` (and dropped)
-	 *  when the client's cumulative ack covers the seq; dies with the
-	 *  connection otherwise. Bounded by the unacked delivery window —
-	 *  the same signal that stops new lanes stops new records. */
+	/** Unacked emissions' holdings: delivery seq → the
+	 *  `(id, matchKey, fp)` triples that emission carried, plus the
+	 *  navigation point it was rendered as-of (the fold gate below).
+	 *  Folded into `ackedFps` (and dropped) when the client's
+	 *  cumulative ack covers the seq; dies with the connection
+	 *  otherwise. Bounded by the unacked delivery window — the same
+	 *  signal that stops new lanes stops new records. An empty
+	 *  matchKey marks a JOIN-ONLY token (a trailer heal — the same
+	 *  content, warmed): it never evicts a slot. */
 	readonly pendingDeliveries: Map<
 		number,
 		{
-			readonly tokens: ReadonlyArray<readonly [string, string]>;
+			readonly tokens: ReadonlyArray<readonly [string, string, string]>;
 			readonly asOf: number;
 		}
 	>;
@@ -248,11 +251,16 @@ export interface ConnectionSession {
 	 *  at `OVERRIDE_SET_CAP` like the optimistic layer's; resets with
 	 *  the connection (reattach seeds the mirror from the attach
 	 *  manifest and nothing else — the manifest IS the durable
-	 *  evidence). A flip statement's `cached` tokens replace an id's
-	 *  entry here too: the client's own attestation supersedes every
-	 *  layer (acks report what the client GAINED, never what it
-	 *  evicted — the flip statement is the eviction evidence). */
+	 *  evidence). Folds follow the client's SLOT rule (`ackedSlots`):
+	 *  a committed lane's content REPLACES its `(id, matchKey)` slot,
+	 *  so an acked-then-overwritten fp never confirms a phantom copy.
+	 *  A flip statement's `cached` tokens replace an id's entry here
+	 *  too: the client's own attestation supersedes every layer. */
 	readonly ackedFps: Map<string, Set<string>>;
+	/** The acked layer's slot bookkeeping — fps per `(id, matchKey)`,
+	 *  the client's one-content-per-slot invariant mirrored (see
+	 *  `CachedOverride.slots`). */
+	readonly ackedSlots: Map<string, Map<string, Set<string>>>;
 	/** Highest upstream envelope seq applied on this connection. Seeded
 	 *  from the attach statement's `applied` watermark (the client's
 	 *  page-lifetime seq timeline — see [[channel-protocol]]); advanced
@@ -404,6 +412,7 @@ export function _openConnectionSession(
 		firstAckReceived: false,
 		pendingDeliveries: new Map(),
 		ackedFps: new Map(),
+		ackedSlots: new Map(),
 		// The attach statement's upstream watermark seeds both sides of
 		// the applied gate: the client's envelope seqs are page-lifetime,
 		// so the new session continues the one timeline instead of
@@ -445,7 +454,7 @@ export function _openConnectionSession(
 export function _recordDelivery(
 	session: ConnectionSession,
 	seq: number,
-	tokens: ReadonlyArray<readonly [string, string]>,
+	tokens: ReadonlyArray<readonly [string, string, string]>,
 	asOf = 0,
 ): void {
 	if (seq <= session.ackedDeliverySeq) {
@@ -457,13 +466,35 @@ export function _recordDelivery(
 
 function foldAckedTokens(
 	session: ConnectionSession,
-	tokens: ReadonlyArray<readonly [string, string]>,
+	tokens: ReadonlyArray<readonly [string, string, string]>,
 ): void {
-	for (const [id, fp] of tokens) {
+	for (const [id, mk, fp] of tokens) {
 		let set = session.ackedFps.get(id);
 		if (!set) {
 			set = new Set();
 			session.ackedFps.set(id, set);
+		}
+		// The client's slot rule: the committed content REPLACES its
+		// `(id, matchKey)` slot — prior fps for the slot are evicted
+		// client-side at the same commit, so they leave the acked layer
+		// too. A join-only token (empty matchKey — a trailer heal)
+		// adds without evicting: it names the same content, warmed.
+		if (mk !== "") {
+			let idSlots = session.ackedSlots.get(id);
+			if (!idSlots) {
+				idSlots = new Map();
+				session.ackedSlots.set(id, idSlots);
+			}
+			let slot = idSlots.get(mk);
+			if (!slot) {
+				slot = new Set();
+				idSlots.set(mk, slot);
+			}
+			if (!slot.has(fp)) {
+				for (const old of slot) set.delete(old);
+				slot.clear();
+				slot.add(fp);
+			}
 		}
 		set.add(fp);
 		capOverrideSet(set);

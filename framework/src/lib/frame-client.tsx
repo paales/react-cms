@@ -28,7 +28,7 @@ import {
   type NavigateTarget,
   type NavigationMilestones,
 } from "../runtime/navigation-api.ts"
-import { _channelFrameNavigate, _channelIsDegraded } from "./channel-client.ts"
+import { _channelCookiesChanged, _channelFrameNavigate, _channelIsDegraded } from "./channel-client.ts"
 import {
   getFrameUrl,
   hasFrameUrl,
@@ -658,6 +658,12 @@ function applyClientCookies(cookies: Record<string, string> | undefined): void {
       document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; path=/; max-age=31536000; samesite=lax`
     }
   }
+  // The write changed the request identity: the held connection's
+  // renders are pinned to its open-time cookie jar and can no longer
+  // speak for this client. Pull it down — the navigation that carried
+  // the cookies latches pre-establishment and rides the re-attach,
+  // whose request presents the fresh jar.
+  _channelCookiesChanged()
 }
 
 /**

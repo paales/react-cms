@@ -136,13 +136,25 @@ export interface AttachStatementHandle {
   }>
 }
 
-/** In-memory mirror of `?cached=…`. Same identity Maps shared across
- *  the cold-render parse and every subsequent segment's mutate-and-read
- *  cycle. The driver mutates these directly between segments; PartialRoot
- *  reads via identity so its `state.cachedFingerprints` IS the carrier. */
+/** In-memory mirror of the client manifest. Same identity Maps shared
+ *  across the first render's parse and every subsequent emission's
+ *  mutate-and-read cycle. The driver mutates these directly between
+ *  emissions; PartialRoot reads via identity so its
+ *  `state.cachedFingerprints` IS the carrier.
+ *
+ *  `slots` is the truthfulness bookkeeping behind `fingerprints`: the
+ *  client keeps ONE content per `(id, matchKey)` slot (`cacheStore`
+ *  overwrites evict the slot's prior fps), so the mirror keys its fps
+ *  the same way — a fresh fp promoted for a slot EVICTS that slot's
+ *  other fps from both maps. Without the slot rule, an A→B→A content
+ *  cycle would fp-skip against a slot the client overwrote at B,
+ *  confirming phantom content (a blank parton). An fp folds its
+ *  matchKey, so each fp belongs to exactly one slot and flat-set
+ *  surgery is exact. */
 export interface CachedOverride {
   fingerprints: Map<string, Set<string>>
   matchKeys: Map<string, Set<string>>
+  slots: Map<string, Map<string, Set<string>>>
 }
 
 /** Wire shape for the `url`-tagged trailer entry. Client applies

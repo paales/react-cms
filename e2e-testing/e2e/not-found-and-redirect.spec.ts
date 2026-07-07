@@ -1,4 +1,4 @@
-import { clearCaches, test, expect, request } from "./fixtures"
+import { clearCaches, test, expect, waitForPageInteractive } from "./fixtures"
 
 /**
  * /not-found-demo throws `notFound()` → HTTP 404 + <NotFoundPage/>.
@@ -48,25 +48,30 @@ test.describe("notFound + redirect", () => {
     expect(new URL(page.url()).pathname).toBe("/cache-demo")
   })
 
-  test("redirect(): RSC response carries the <Redirect> client component, not a native 302", async ({
-    request,
-    baseURL,
+  test("redirect(): a channel navigation lands at the destination same-document", async ({
+    page,
   }) => {
-    const url = `${baseURL ?? "http://localhost:5173"}/redirect-demo_.rsc`
-    const res = await request.fetch(url, {
-      headers: { accept: "text/x-component" },
-      maxRedirects: 0,
+    // The navigation segment for a redirecting route carries the
+    // <Redirect url=…> client component (never a native 302 — there
+    // is no discrete response to 302 on a held stream); the client
+    // applies it as a navigation. The realm marker proves the whole
+    // journey stayed same-document.
+    await page.goto("/cache-demo")
+    await waitForPageInteractive(page)
+    await page.evaluate(() => {
+      ;(window as unknown as { __realmMarker?: number }).__realmMarker = 42
     })
-    // Server must NOT emit a 302 on the RSC path — fetch() would
-    // transparently follow and decode the destination's payload,
-    // committing it to the wrong route. Instead: 200 with the
-    // <Redirect url=…> client reference inline.
-    expect(res.status()).toBe(200)
-    const body = await res.text()
-    // The serialized Flight stream references the Redirect client
-    // component by its module path + carries the destination URL as a
-    // prop. Both strings survive serialization intact.
-    expect(body).toContain("redirect-client")
-    expect(body).toContain("/cache-demo")
+    await page.evaluate(() => {
+      ;(
+        window as unknown as { navigation: { navigate: (u: string) => void } }
+      ).navigation.navigate("/redirect-demo")
+    })
+    await page.waitForURL("**/cache-demo", { timeout: 15000 })
+    expect(new URL(page.url()).pathname).toBe("/cache-demo")
+    expect(
+      await page.evaluate(
+        () => (window as unknown as { __realmMarker?: number }).__realmMarker,
+      ),
+    ).toBe(42)
   })
 })

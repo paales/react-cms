@@ -316,10 +316,10 @@ describe("the ack watermark + the acked mirror layer", () => {
 		const session = _openConnectionSession("ack-unit", null);
 		try {
 			_recordDelivery(session, 1, [
-				["a", "f1"],
-				["b", "f2"],
+				["a", "mk", "f1"],
+				["b", "mk", "f2"],
 			]);
-			_recordDelivery(session, 2, [["a", "f3"]]);
+			_recordDelivery(session, 2, [["a", "mk2", "f3"]]);
 			expect(session.pendingDeliveries.size).toBe(2);
 
 			expect(await post(undefined, ackEnvelope("ack-unit", 1, 1))).toBe(204);
@@ -344,7 +344,7 @@ describe("the ack watermark + the acked mirror layer", () => {
 			// A record for an already-acked seq (the ack raced the driver's
 			// post-drain bookkeeping) folds immediately instead of pending
 			// forever.
-			_recordDelivery(session, 2, [["c", "f4"]]);
+			_recordDelivery(session, 2, [["c", "mk", "f4"]]);
 			expect(session.pendingDeliveries.size).toBe(0);
 			expect([...(session.ackedFps.get("c") ?? [])]).toEqual(["f4"]);
 		} finally {

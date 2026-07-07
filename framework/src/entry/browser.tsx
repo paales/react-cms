@@ -117,6 +117,15 @@ async function main() {
 
 	const initialPayload = await createFromReadableStream<RscPayload>(rscStream);
 
+	// The CURRENT attach fire's generation. A superseded fire's stream
+	// keeps draining (the cooperative abort releases it only at a
+	// settled boundary), but nothing it carries may act anymore: its
+	// late `conn` entry must not hijack establishment away from the
+	// newer fire, its lane seqs must not pollute the per-parton queues,
+	// and its payloads must not commit — their content is the state the
+	// page superseded.
+	let liveFireGen = 0;
+
 	// The SSR HTML response carries the fp-trailer as an HTML comment
 	// appended after `</html>` (see `wrapSsrStreamWithFpTrailer` in
 	// the framework). Parse it now so the warm fps the server
@@ -227,6 +236,7 @@ async function main() {
 		// `finished` will reject too, where the caller is listening.
 		streaming.catch(() => {});
 
+		const gen = ++liveFireGen;
 		void (async () => {
 			let streamingResolved = false;
 			try {
@@ -393,6 +403,8 @@ async function main() {
 				// consume it.
 				let pendingSegmentDelivery: WireDelivery | null = null;
 				const onWireEntry = (tag: string, body: Uint8Array): void => {
+					// A superseded fire's entries are dead — see `liveFireGen`.
+					if (gen !== liveFireGen) return;
 					// The transport's entries — `conn` handshake, lane-form
 					// delivery seqs, the upstream-applied watermark.
 					_channelWireEntry(tag, body);
@@ -416,6 +428,18 @@ async function main() {
 						signal,
 						onWireEntry,
 					)) {
+						// A superseded fire only DRAINS from here — the cooperative
+						// abort needs the splitter moving, but nothing may commit.
+						if (gen !== liveFireGen) {
+							if (segment.kind === "lanes") {
+								for await (const lane of segment.lanes) {
+									await new Response(lane.body).arrayBuffer().catch(() => {});
+								}
+							} else {
+								await new Response(segment.body).arrayBuffer().catch(() => {});
+							}
+							continue;
+						}
 						if (segment.kind === "lanes") {
 							// The subscription is established the moment the lanes
 							// region opens. On a catch-up boot (attach anchor honored)

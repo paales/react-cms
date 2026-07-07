@@ -599,7 +599,7 @@ describe("the mirror stays honest across navigations", () => {
 	it("the fold gate: an ack covering a pre-latch delivery discards it instead of folding", async () => {
 		const session = _openConnectionSession("nav-gate", null);
 		try {
-			_recordDelivery(session, 1, [["x", "f1"]], 0);
+			_recordDelivery(session, 1, [["x", "mk", "f1"]], 0);
 			// The url statement latches (statedNavSeq advances at APPLY, ahead
 			// of the driver's consume) …
 			expect(
@@ -625,7 +625,7 @@ describe("the mirror stays honest across navigations", () => {
 			expect(session.pendingDeliveries.size).toBe(0);
 
 			// A post-navigation delivery folds as usual.
-			_recordDelivery(session, 2, [["y", "f2"]], 7);
+			_recordDelivery(session, 2, [["y", "mk", "f2"]], 7);
 			expect(
 				await post(undefined, {
 					connection: "nav-gate",
