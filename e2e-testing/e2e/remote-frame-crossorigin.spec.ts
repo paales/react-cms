@@ -1,4 +1,4 @@
-import { clearCaches, expect, request, test } from "./fixtures"
+import { clearCaches, expect, recordPartialDispatches, request, test } from "./fixtures"
 
 /**
  * /remote-frame-crossorigin-demo — true cross-origin `<RemoteFrame>`.
@@ -70,85 +70,52 @@ test("capability-scoped remote reads host-declared values", async ({ page }) => 
   await expect(page.getByTestId("magento-payment-total")).toContainText("127.45")
 })
 
-test("selector refetch routes back to the cross-origin remote (server wire)", async ({
-  request,
-}) => {
-  // Wire-level validation that doesn't depend on the host page
-  // rendering successfully (cross-origin dev rendering depends on
-  // vite-rsc module IDs happening to be `/@fs/` paths, which
-  // varies session-to-session). We:
-  //  1. Hit `/remote-frame-crossorigin-demo` once to register
-  //     magento:magento-stocks in the host's registry with source
-  //     stamped + namespaced.
-  //  2. Issue the cache-mode refetch URL targeting the namespaced id.
-  //  3. Assert the response is cache-mode (not streaming-mode
-  //     fallback) and carries a fresh data-tick (proving the
-  //     remote was re-fetched and re-rendered).
-  await request.get("/remote-frame-crossorigin-demo")
-  // Capture the initial tick.
-  const initial = await request.get(
-    "/remote-frame-crossorigin-demo_.rsc?partials=magento:magento-stocks",
-  )
-  const initialBody = await initial.text()
-  const initialTickMatch = initialBody.match(/"data-tick":"(\d+)"/)
-  expect(initialTickMatch).not.toBeNull()
-  const initialTick = initialTickMatch?.[1] ?? ""
+test("selector refetch routes back to the cross-origin remote", async ({ page }) => {
+  // The `_.rsc?partials=` GET is retired: a selector-targeted refetch is
+  // now a `url` frame with a `?__force=` overlay stating the page URL,
+  // on the held channel (or the attach it triggers). Drive the page's
+  // own refresh button (`nav.reload({selector})`) and prove the refetch
+  // ROUTES through the channel — the dispatch's `__force` overlay names
+  // the remote's addressable id — and the stock ticker stays rendered.
+  await page.goto("/remote-frame-crossorigin-demo", { timeout: 30000 })
+  const stocks = page.getByTestId("magento-stocks")
+  await expect(stocks).toBeVisible({ timeout: 15000 })
 
-  // Wait long enough that Date.now() differs.
-  await new Promise((r) => setTimeout(r, 30))
+  const dispatches = recordPartialDispatches(page)
+  await page
+    .getByTestId("rfd-refresh-magento-stocks")
+    .and(page.locator("[data-hydrated]"))
+    .click()
 
-  // Second refetch — fresh remote render → fresh tick.
-  const refetch = await request.get(
-    "/remote-frame-crossorigin-demo_.rsc?partials=magento:magento-stocks",
-  )
-  expect(refetch.status()).toBe(200)
-  const body = await refetch.text()
-
-  // The response must be cache-mode (not the streaming-mode
-  // fallback / full Root render).
-  expect(body, "expected cache-mode response (PartialsClient mode=cache)").toContain(
-    '"mode":"cache"',
-  )
-  // The data-tick must have advanced — proves the remote was
-  // re-fetched and the spec's `vary: () => ({ tick: Date.now() })`
-  // produced a new value.
-  const tickMatch = body.match(/"data-tick":"(\d+)"/)
-  expect(tickMatch, "response must contain data-tick from a fresh remote render").not.toBeNull()
-  const refetchTick = tickMatch?.[1] ?? ""
-  expect(Number(refetchTick)).toBeGreaterThan(Number(initialTick))
+  // The refetch routed as a selector-targeted dispatch on the channel
+  // (the `__force` overlay names the stocks selector), not a full-page
+  // nav — the wire signal that the refetch reached the host's refetch
+  // machinery for the remote's namespaced id.
+  await expect
+    .poll(
+      () => dispatches.filter((d) => d.partials?.includes("magento-stocks")).length,
+      { timeout: 10000 },
+    )
+    .toBeGreaterThan(0)
+  await expect(stocks).toBeVisible()
 })
 
-test("nested cross-origin partial is refetchable via namespaced selector", async ({ request }) => {
+test("nested cross-origin partial is registered via the commit-defer trailer", async ({ page }) => {
   // `MagentoStockTicker` (rendered on magento) embeds an addressable
-  // child `MagentoCartSummary` with selector "cart-summary". The
-  // child's snapshot only ever reaches the host's registry through
-  // the trailer that ships with its parent's render. This validates
-  // the commit-defer mechanism: the host's `<RemoteFrame>` holds
-  // commit open until every snapshot in the trailer has been
-  // registered, so refetching the nested id routes back to the
-  // remote (not fallback streaming-mode).
-  await request.get("/remote-frame-crossorigin-demo")
-
-  const initial = await request.get(
-    "/remote-frame-crossorigin-demo_.rsc?partials=magento:cart-summary",
-  )
-  expect(initial.status()).toBe(200)
-  const initialBody = await initial.text()
-  expect(initialBody, "expected cache-mode for nested refetch").toContain('"mode":"cache"')
-  const initialTickMatch = initialBody.match(/"data-tick":"(\d+)"/)
-  expect(initialTickMatch, "nested partial must render in the refetch").not.toBeNull()
-
-  // Wait long enough that Date.now() differs.
-  await new Promise((r) => setTimeout(r, 30))
-
-  // Second refetch — fresh tick.
-  const refetch = await request.get(
-    "/remote-frame-crossorigin-demo_.rsc?partials=magento:cart-summary",
-  )
-  const refetchBody = await refetch.text()
-  const refetchTickMatch = refetchBody.match(/"data-tick":"(\d+)"/)
-  expect(refetchTickMatch).not.toBeNull()
-  expect(Number(refetchTickMatch?.[1])).toBeGreaterThan(Number(initialTickMatch?.[1]))
+  // child `MagentoCartSummary` (`magento:cart-summary`). The child's
+  // snapshot only ever reaches the host's registry through the trailer
+  // that ships with its PARENT's render — the commit-defer mechanism
+  // holds the RemoteFrame's commit open until every nested snapshot is
+  // registered. Its presence, freshly rendered with a numeric
+  // `data-tick` from the remote, proves the nested snapshot landed
+  // (without commit-defer it would race and the nested id would never
+  // register).
+  await page.goto("/remote-frame-crossorigin-demo", { timeout: 30000 })
+  const nested = page.getByTestId("magento-cart-summary")
+  await expect(nested, "nested cart-summary must reach the host registry").toBeVisible({
+    timeout: 15000,
+  })
+  expect(await nested.getAttribute("data-tick")).toMatch(/^\d+$/)
 })
 
 test("namespacing prevents collisions: bare selector doesn't hit remote", async ({ request }) => {
