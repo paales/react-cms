@@ -41,7 +41,10 @@ import {
 	wrapStreamWithCommitOnly,
 	wrapStreamWithFpTrailer,
 } from "../lib/fp-trailer.ts";
-import { createSegmentedResponse } from "../lib/segmented-response.ts";
+import {
+	_reserveActionConsequences,
+	createSegmentedResponse,
+} from "../lib/segmented-response.ts";
 import { warmCmsCache } from "../runtime/cms-runtime.ts";
 import {
 	_actionSuppressesCommit,
@@ -201,6 +204,14 @@ export function createRscHandler(config: RscHandlerConfig): {
 		let formState: ReactFormState | undefined;
 		let temporaryReferences: unknown | undefined;
 		let actionStatus: number | undefined;
+		// The delivery seqs this action's invalidation consequences will
+		// ride on the client's live connection (`x-parton-conn` names it —
+		// an explicit statement the attached client stamps on its action
+		// POSTs). Reserved INSIDE the action's invalidation transaction —
+		// before the commit's flush wakes any segment driver — and shipped
+		// back on the response so the client's optimistic overlay holds
+		// until its committed watermark covers them.
+		const consequenceBox: { seqs: number[] | null } = { seqs: null };
 
 		// The attach — the heartbeat's live fire as a POST whose body is
 		// the client statement (manifest + catch-up anchor + viewport
@@ -226,6 +237,7 @@ export function createRscHandler(config: RscHandlerConfig): {
 				temporaryReferences = createTemporaryReferenceSet();
 				const args = await decodeReply(body, { temporaryReferences });
 				const action = await loadServerAction(renderRequest.actionId);
+				const consequenceConn = request.headers.get("x-parton-conn");
 				try {
 					// Run inside an invalidation transaction so server-side
 					// `getServerNavigation().reload({selector})` calls inside the
@@ -234,13 +246,22 @@ export function createRscHandler(config: RscHandlerConfig): {
 					// trigger downstream refetches. On success the bumps flush
 					// BEFORE the response render runs, so the action's own
 					// response sees the bumped fps and emits fresh content.
-					const data = await runInvalidationTransaction(() =>
-						action.apply(null, args),
-					);
+					const data = await runInvalidationTransaction(async () => {
+						const result = await action.apply(null, args);
+						// Still inside the transaction: the bumps are queued, not
+						// flushed, so no segment driver has woken yet — reserving
+						// here is strictly ordered before any driver could mint the
+						// consequence lanes' seqs itself.
+						if (consequenceConn) {
+							consequenceBox.seqs = _reserveActionConsequences(consequenceConn);
+						}
+						return result;
+					});
 					returnValue = { ok: true, data };
 				} catch (e) {
 					returnValue = { ok: false, data: e };
 					actionStatus = 500;
+					consequenceBox.seqs = null;
 				}
 			} else {
 				const formData = await request.formData();
@@ -302,9 +323,18 @@ export function createRscHandler(config: RscHandlerConfig): {
 			// live. Single-segment GETs (the common case) emit one segment and
 			// close immediately — byte-identical to the pre-loop behavior.
 			if (renderRequest.isAction) {
+				const headers: Record<string, string> = {
+					"content-type": "text/x-component;charset=utf-8",
+				};
+				// The consequence seqs the client's overlay gate holds on —
+				// see `_reserveActionConsequences`. Absent without a live
+				// connection (or with nothing reserved): unchanged behavior.
+				if (consequenceBox.seqs !== null && consequenceBox.seqs.length > 0) {
+					headers["x-parton-consequences"] = consequenceBox.seqs.join(",");
+				}
 				return new Response(renderOnce(), {
 					status: actionStatus,
-					headers: { "content-type": "text/x-component;charset=utf-8" },
+					headers,
 				});
 			}
 			return new Response(

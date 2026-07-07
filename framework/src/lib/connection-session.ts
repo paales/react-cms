@@ -52,10 +52,11 @@
  */
 
 import { _setAttachStatement, getScope } from "../runtime/context.ts";
-import { getSessionId } from "../runtime/session.ts";
+import { getSessionId, setSessionFrameUrl } from "../runtime/session.ts";
 import {
 	type AckFrame,
 	type AttachStatement,
+	type CancelFrame,
 	type ChannelEnvelope,
 	decodeAttachStatement,
 	decodeChannelEnvelope,
@@ -126,6 +127,28 @@ export interface PendingNavigation {
 	readonly seq: number;
 }
 
+/**
+ * A latched FRAME url statement — a `url` frame carrying a `frame`
+ * path, queued per frame key until the segment driver consumes it.
+ * The statement's session-frame-URL write already happened at the
+ * endpoint (the same `setSessionFrameUrl` store `?__frame=` writes
+ * through — the endpoint response is also where a fresh session
+ * cookie can mint); the driver's consume is the RENDER half: lane the
+ * frame's targets explicit on the open region. Newest seq per key
+ * wins; a seq at or below the key's consumed seq is a stale
+ * restatement (retransmit idempotence).
+ */
+export interface PendingFrameNavigation {
+	/** Dotted frame key (`"cart"`, `"products.list"`). */
+	readonly key: string;
+	/** Frame target as path + search. */
+	readonly url: string;
+	readonly intent: UrlFrame["intent"];
+	/** Envelope seq of the statement — the AS-OF its covering lanes
+	 *  carry, and the client's correlation for the fire's milestones. */
+	readonly seq: number;
+}
+
 export interface SessionTelemetry {
 	readonly viewport: { readonly w: number; readonly h: number };
 	readonly scroll: {
@@ -155,8 +178,12 @@ export interface ConnectionSession {
 	 *  request's identity fresh, so a session cookie minted
 	 *  mid-connection (an action's `ensureSessionId`) fails the check —
 	 *  the transport's 404 fallback covers the gap — until the next
-	 *  attach carries the new cookie and envelopes work again. */
-	readonly boundSessionId: string;
+	 *  attach carries the new cookie and envelopes work again. One
+	 *  exception rebinds in place: a session id the ENDPOINT itself
+	 *  mints while applying a frame url statement for an anonymous
+	 *  binding (see `applyFrameUrlFrame`) — the same principal, handed
+	 *  its identity on this very response. */
+	boundSessionId: string;
 	/** The connection's current visible set. `null` until the request's
 	 *  `?visible=` seed or the first statement — the pre-measurement
 	 *  state, in which reads fall back to the request URL (absent →
@@ -257,6 +284,47 @@ export interface ConnectionSession {
 	 *  [[PendingNavigation]]. `null` when the request state reflects
 	 *  every url frame heard so far. */
 	pendingNav: PendingNavigation | null;
+	/** Latched FRAME url statements awaiting the driver, keyed by frame
+	 *  key (newest seq per key wins) — see [[PendingFrameNavigation]].
+	 *  Drained via `takeConnectionFrameNavs`. */
+	readonly pendingFrameNavs: Map<string, PendingFrameNavigation>;
+	/** Highest consumed url-statement seq per frame key — the stale-
+	 *  restatement gate for frame urls (the per-key twin of
+	 *  `consumedNavSeq`). Advanced at consume. */
+	readonly consumedFrameNavSeqs: Map<string, number>;
+	/** Highest applied `cancel` seq per scope — the retransmit-
+	 *  idempotence gate: a cancel at or below its scope's recorded seq
+	 *  applies as a no-op, so a replayed cancel can never abort a newer
+	 *  statement's render. */
+	readonly cancelSeqByScope: Map<string, number>;
+	/** The driver's cancel arm: an applied `cancel` frame calls every
+	 *  registered listener with its scope, synchronously at apply — the
+	 *  driver aborts the scope's open lane renders there (the same
+	 *  reach the window supersede's nav-latch arm has into a suspended
+	 *  render). Disposer-registered for the drive's lifetime. */
+	readonly cancelListeners: Set<(scope: string) => void>;
+	/** Route key of the request state this connection currently renders
+	 *  — set at open, moved by the driver at a window-navigation
+	 *  consume. What an action's consequence reservation resolves the
+	 *  route snapshots through (the driver isn't on the stack there). */
+	routeKey: string | null;
+	/** Delivery seqs assigned AHEAD of their lane render — an action's
+	 *  consequence reservation (`_reserveActionConsequences` in
+	 *  [[segmented-response]]): minted inside the action's invalidation
+	 *  transaction, BEFORE the bump wakes the driver, so the covering
+	 *  lane's seq is known when the action response returns. The pump
+	 *  takes an id's assignment at iteration start; a skip path that
+	 *  drops the id voids it instead (`voidSeqs`). Re-reserving an id
+	 *  with an unconsumed assignment reuses it — one render of the
+	 *  latest state covers both writes. */
+	readonly assignedLaneSeqs: Map<string, number>;
+	/** Assigned-but-never-emitted delivery seqs — a reservation whose
+	 *  lane was skipped (parked flip, snapshot gone, navigation tear).
+	 *  The driver flushes them as a `seqvoid` entry at its next
+	 *  emission point; the client counts each PROCESSED so the
+	 *  contiguous ack watermark can pass them (a silent gap would wedge
+	 *  the unacked window and hold every consequence gate forever). */
+	readonly voidSeqs: Set<number>;
 	/** Highest url-frame seq LATCHED on this session (advanced at
 	 *  envelope apply, ahead of the driver's consume). The ack fold
 	 *  gate: a pending delivery whose `asOf` predates this was — or by
@@ -341,6 +409,13 @@ export function _openConnectionSession(
 		degradedReason: null,
 		telemetry: null,
 		pendingNav: null,
+		pendingFrameNavs: new Map(),
+		consumedFrameNavSeqs: new Map(),
+		cancelSeqByScope: new Map(),
+		cancelListeners: new Set(),
+		routeKey: null,
+		assignedLaneSeqs: new Map(),
+		voidSeqs: new Set(),
 		statedNavSeq: 0,
 		consumedNavSeq: 0,
 	};
@@ -544,6 +619,82 @@ export function takeConnectionNavigation(
 }
 
 /**
+ * Apply a FRAME-scoped url statement. Two halves, split by where the
+ * state lives:
+ *
+ *   - The session frame URL is COOKIE-BACKED shared state, written
+ *     HERE — inside the envelope's own request scope, where the
+ *     client's `__frame_sid` cookie resolves and a freshly-minted
+ *     session cookie can ride the endpoint's `204` (the one channel
+ *     response that can carry Set-Cookie). This is the same store the
+ *     discrete `?__frame=` param writes through in `PartialRoot`.
+ *   - The RENDER latches per frame key for the driver
+ *     (`pendingFrameNavs`), which lanes the frame's targets on the
+ *     open region at its next wake.
+ *
+ * Newest seq per key wins; a seq at or below the key's consumed seq
+ * is a stale restatement and applies as a no-op — including the
+ * session write, so a retransmit can never regress a newer frame URL.
+ */
+function applyFrameUrlFrame(
+	session: ConnectionSession,
+	seq: number,
+	frame: UrlFrame,
+	framePath: readonly string[],
+	requestUrl: string,
+): void {
+	const key = framePath.join(".");
+	if (seq <= (session.consumedFrameNavSeqs.get(key) ?? 0)) return;
+	const prior = session.pendingFrameNavs.get(key);
+	if (prior !== undefined && seq < prior.seq) return;
+	const target = new URL(frame.url, requestUrl);
+	const url = target.pathname + target.search;
+	setSessionFrameUrl(framePath, url);
+	// A cookie-less page's first frame statement mints the session id
+	// right here (`ensureSessionId` inside the endpoint's scope — the
+	// `204` carries the Set-Cookie). Rebind the connection to the
+	// identity it just handed this same client; without the rebind
+	// every subsequent envelope would 404 against the stale anonymous
+	// binding until the next attach.
+	if (session.boundSessionId === "") {
+		session.boundSessionId = getSessionId() ?? "";
+	}
+	session.pendingFrameNavs.set(key, { key, url, intent: frame.intent, seq });
+}
+
+/** Drain the session's latched frame navigations — key → newest
+ *  statement. A statement landing right after the drain re-queues;
+ *  the driver's wait-entry check consumes it before the next park. */
+export function takeConnectionFrameNavs(
+	session: ConnectionSession,
+): Map<string, PendingFrameNavigation> {
+	const navs = new Map(session.pendingFrameNavs);
+	session.pendingFrameNavs.clear();
+	return navs;
+}
+
+/**
+ * Apply a `cancel` frame: fire the driver's cancel listeners with the
+ * scope so the scope's open lane renders abort — synchronously at
+ * apply, the same immediacy the window supersede has through the
+ * nav-latch arm. Gated per scope by seq (`>` — a retransmitted cancel
+ * at or below the recorded seq is a no-op, so a replay can never
+ * abort a render a NEWER statement started). The frame-url statement
+ * that supersedes rides the SAME envelope after its cancel (frames
+ * are ordered within the envelope), so the in-order pass gives
+ * cancel-then-url.
+ */
+function applyCancelFrame(
+	session: ConnectionSession,
+	seq: number,
+	frame: CancelFrame,
+): void {
+	if (seq <= (session.cancelSeqByScope.get(frame.scope) ?? 0)) return;
+	session.cancelSeqByScope.set(frame.scope, seq);
+	for (const listener of [...session.cancelListeners]) listener(frame.scope);
+}
+
+/**
  * Apply a `telemetry` frame: replace the session's telemetry slot,
  * newest-wins by envelope seq (a stale envelope landing late cannot
  * regress a fresher statement; `>=` so a later frame in the SAME
@@ -666,14 +817,18 @@ export async function handleChannelPost(request: Request): Promise<Response> {
 			return new Response(null, { status: 400 });
 		}
 	}
-	// Latch url frames AHEAD of the in-order pass: an ack riding the
-	// same envelope was computed by a client whose navigation point was
-	// already set when the url statement was created (statement time
+	// Latch WINDOW url frames AHEAD of the in-order pass: an ack riding
+	// the same envelope was computed by a client whose navigation point
+	// was already set when the url statement was created (statement time
 	// precedes the coalesced flush), so the fold gate must see the url
 	// statement first regardless of producer order within the envelope.
+	// FRAME url frames stay in the in-order pass — they never move the
+	// fold gate (`statedNavSeq` is window-scoped), and a superseding
+	// frame navigation's `cancel` precedes its url within the envelope,
+	// which the in-order pass honors for free.
 	let wakeNeeded = false;
 	for (const frame of envelope.frames) {
-		if (frame.kind !== "url") continue;
+		if (frame.kind !== "url" || frame.frame !== undefined) continue;
 		applyUrlFrame(session, envelope.seq, frame, request.url);
 		wakeNeeded = true;
 	}
@@ -696,8 +851,21 @@ export async function handleChannelPost(request: Request): Promise<Response> {
 				// watermark below advances as for any envelope.
 				applyTelemetryFrame(session, envelope.seq, frame);
 				break;
+			case "cancel":
+				applyCancelFrame(session, envelope.seq, frame);
+				break;
 			case "url":
-				// Latched above, ahead of the in-order pass.
+				// Window statements latched above, ahead of the in-order pass.
+				if (frame.frame !== undefined) {
+					applyFrameUrlFrame(
+						session,
+						envelope.seq,
+						frame,
+						frame.frame,
+						request.url,
+					);
+					wakeNeeded = true;
+				}
 				break;
 		}
 	}

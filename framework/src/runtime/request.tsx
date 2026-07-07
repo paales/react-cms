@@ -79,6 +79,7 @@ export function createRscRenderRequest(
   urlString: string,
   action?: { id: string; body: BodyInit },
   attach?: AttachStatement,
+  extraHeaders?: Record<string, string>,
 ): Request {
   const url = new URL(urlString)
   url.pathname += URL_POSTFIX
@@ -89,6 +90,11 @@ export function createRscRenderRequest(
   if (attach) {
     headers.set(ATTACH_HEADER, "1")
     headers.set("content-type", "application/json")
+  }
+  if (extraHeaders) {
+    for (const [name, value] of Object.entries(extraHeaders)) {
+      headers.set(name, value)
+    }
   }
   return new Request(url.toString(), {
     method: action || attach ? "POST" : "GET",

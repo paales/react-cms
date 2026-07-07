@@ -223,6 +223,62 @@ export function recordPartialDispatches(page: Page): PartialDispatch[] {
 }
 
 /**
+ * One FRAME navigation dispatch, on whichever transport carried it:
+ * `"rsc"` — a discrete `_.rsc` request with `?__frame=&__frameUrl=`;
+ * `"channel"` — a frame-scoped `url` frame on a `/__parton/channel`
+ * envelope (an attached page states the frame URL and the response
+ * lanes on the held stream).
+ */
+export interface FrameDispatch {
+  transport: "rsc" | "channel"
+  /** Dotted frame key (`"search"`, `"chat-overlay"`). */
+  frame: string
+  /** The stated frame URL. */
+  frameUrl: string
+}
+
+/**
+ * Record every frame-navigation dispatch from `page`, across BOTH
+ * transports — the frame twin of `recordPartialDispatches`: whether a
+ * given frame nav rides the channel depends on whether the live
+ * connection was established by then, so specs assert
+ * transport-agnostically.
+ */
+export function recordFrameDispatches(page: Page): FrameDispatch[] {
+  const dispatches: FrameDispatch[] = []
+  page.on("request", (req) => {
+    const url = req.url()
+    if (url.includes("_.rsc")) {
+      try {
+        const u = new URL(url)
+        const frame = u.searchParams.get("__frame")
+        const frameUrl = u.searchParams.get("__frameUrl")
+        if (frame && frameUrl) {
+          dispatches.push({ transport: "rsc", frame, frameUrl })
+        }
+      } catch {}
+      return
+    }
+    if (url.includes("/__parton/channel")) {
+      try {
+        const envelope = JSON.parse(req.postData() ?? "") as {
+          frames?: Array<{ kind: string; url?: string; frame?: string[] }>
+        }
+        for (const frame of envelope.frames ?? []) {
+          if (frame.kind !== "url" || !frame.url || !frame.frame) continue
+          dispatches.push({
+            transport: "channel",
+            frame: frame.frame.join("."),
+            frameUrl: frame.url,
+          })
+        }
+      } catch {}
+    }
+  })
+  return dispatches
+}
+
+/**
  * Replacement for `page.waitForLoadState("networkidle")` that
  * ignores the framework's live-update heartbeat connection.
  *

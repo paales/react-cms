@@ -28,6 +28,7 @@ import {
   type NavigateTarget,
   type NavigationMilestones,
 } from "../runtime/navigation-api.ts"
+import { _channelFrameNavigate } from "./channel-client.ts"
 import {
   abortPredecessors,
   getFrameUrl,
@@ -369,6 +370,25 @@ export function _dispatchFrameRefetch(
 ): RefetchMilestones {
   const key = joinFramePath(path)
   setFrameUrl(key, url)
+  // Channel routing. An attached, non-degraded page states the frame
+  // navigation as a FRAME-scoped url frame on the held stream: the
+  // endpoint writes the session frame URL, the driver lanes the
+  // frame's targets, and the milestones resolve off the covering
+  // lane's correlation flag — no dedicated long-poll connection. A
+  // superseding statement for the same frame ships its `cancel`
+  // co-rider in the same envelope, which is what retires the
+  // deferred-abort machinery on this path (the discrete GET below
+  // keeps it). Intent is descriptive: the frame's history work is
+  // client-local in-state (or a silent-info browser entry), done by
+  // send time.
+  const routed = _channelFrameNavigate({
+    path,
+    url,
+    intent: "silent",
+    streaming: options?.streaming === true,
+    signal,
+  })
+  if (routed) return routed
   const handler = (
     window as Window & {
       __rsc_partial_refetch?: (

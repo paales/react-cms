@@ -1,4 +1,4 @@
-import { test, expect, waitForPageInteractive } from "./fixtures"
+import { test, expect, recordFrameDispatches, waitForPageInteractive } from "./fixtures"
 
 /**
  * "Search (Frame)" — frame-scoped version of the pokemon search demo.
@@ -109,7 +109,11 @@ test("search input keeps focus across live refetches", async ({ page }) => {
   await expect(page.locator("dialog input[type=text][data-hydrated]")).toHaveValue("pika")
 })
 
-test("frame search refetch uses ?__frame=search, not ?q= on the page", async ({ page }) => {
+test("frame search refetch is frame-scoped, not ?q= on the page", async ({ page }) => {
+  // Frame navs ride whichever transport is up: a discrete `__frame`
+  // GET pre-attach, a frame-scoped `url` frame on the channel once the
+  // live connection is established — observe both.
+  const frameDispatches = recordFrameDispatches(page)
   const refetches: string[] = []
   page.on("request", (req) => {
     const url = req.url()
@@ -121,6 +125,7 @@ test("frame search refetch uses ?__frame=search, not ?q= on the page", async ({ 
   await page.locator('[data-testid="search-frame-open"][data-hydrated]').click()
   await expect(page.locator("dialog")).toBeVisible()
 
+  frameDispatches.length = 0
   refetches.length = 0
 
   const input = page.locator("dialog input[type=text][data-hydrated]")
@@ -132,15 +137,17 @@ test("frame search refetch uses ?__frame=search, not ?q= on the page", async ({ 
     timeout: 8000,
   })
 
-  // At least one refetch used the `__frame` param for the search frame.
-  const frameRefetch = refetches.find((u) => {
-    const p = new URL(u).searchParams
-    const frameUrl = p.get("__frameUrl")
-    return p.get("__frame") === "search" && frameUrl?.includes("q=a")
-  })
-  expect(frameRefetch, `no frame refetch seen; got ${JSON.stringify(refetches)}`).toBeTruthy()
+  // At least one dispatch targeted the search FRAME with the query on
+  // the FRAME url — on either transport.
+  const frameDispatch = frameDispatches.find(
+    (d) => d.frame === "search" && d.frameUrl.includes("q=a"),
+  )
+  expect(
+    frameDispatch,
+    `no frame dispatch seen; got ${JSON.stringify(frameDispatches)}`,
+  ).toBeTruthy()
 
-  // None of the refetches should carry ?q= as a page-URL param.
+  // None of the discrete refetches should carry ?q= as a page-URL param.
   for (const u of refetches) {
     const p = new URL(u).searchParams
     expect(p.get("q"), `unexpected page-URL ?q= on ${u}`).toBeNull()

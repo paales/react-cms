@@ -308,6 +308,38 @@ export function _clearConnectionLive(): void {
   if (store) store.connectionLive = false
 }
 
+/**
+ * Per-lane probe for `markConnectionLive()` — the lane driver's
+ * producer attribution. Lane renders run CONCURRENTLY inside one
+ * request scope, so the store-level `connectionLive` flag can't say
+ * WHICH lane's render declared itself a producer. The probe runs one
+ * lane iteration inside a nested store whose prototype is the live
+ * request store — every read falls through (request, scope, cached
+ * override, connection session, ephemeral storage), while
+ * `markConnectionLive()`'s write lands on the probe's OWN
+ * `connectionLive` field. `live()` reads exactly that own field, so a
+ * stale flag on the parent store (the whole-tree segment that handed
+ * off to the lane loop may have marked live) never bleeds in.
+ */
+export interface ConnectionLiveProbe {
+  /** Run one lane render iteration inside the probe's scope. */
+  run<T>(fn: () => Promise<T>): Promise<T>
+  /** True once the iteration's render called `markConnectionLive()`. */
+  live(): boolean
+}
+
+export function _createConnectionLiveProbe(): ConnectionLiveProbe {
+  const parent = getStore()
+  const probe: RequestStore = Object.create(parent) as RequestStore
+  probe.connectionLive = false
+  return {
+    run: (fn) => requestContext.run(probe, fn),
+    live: () =>
+      Object.prototype.hasOwnProperty.call(probe, "connectionLive") &&
+      probe.connectionLive === true,
+  }
+}
+
 // ─── Deferred-commit accounting ─────────────────────────────────────
 
 /** Record one successful cell write for the active request's

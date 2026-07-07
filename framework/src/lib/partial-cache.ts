@@ -610,10 +610,59 @@ export function _warmCacheFromPayload(node: ReactNode): void {
 export function _commitPartonLane(
 	node: ReactNode,
 	fpUpdates: FpUpdatesPayload | null,
+	partonId?: string,
 ): void {
+	// A full-body commit supersedes any in-flight progressive re-walks
+	// for the same parton — a late re-walk of an older body must never
+	// overwrite this newer content.
+	if (partonId !== undefined) {
+		_laneCommitGeneration.set(
+			partonId,
+			(_laneCommitGeneration.get(partonId) ?? 0) + 1,
+		);
+	}
 	cacheFromStreamingChildren(node, getCurrentPagePartials());
 	if (fpUpdates) _applyFpUpdates(fpUpdates);
 	notifyLaneCommit();
+}
+
+/** Per-parton lane commit generation — the supersede guard for the
+ *  progressive commit's resolve-time re-walks. */
+const _laneCommitGeneration = new Map<string, number>();
+
+/**
+ * Commit a PRODUCER lane payload progressively: the body is still
+ * streaming (its `muxend` comes only at producer resolve), so the
+ * one-shot walk `_commitPartonLane` relies on would stop at the first
+ * pending Flight lazy and cache nothing. Instead: walk what has
+ * resolved, commit it (the template substitutes the wrapper; React
+ * suspends on the pending rows — the producer's Suspense fallback),
+ * and RE-WALK this same payload each time its captured pending chunks
+ * land, until the walk completes or a newer commit for the parton
+ * supersedes it (a later lane body's content must never be
+ * overwritten by an older body's late re-walk). Lane walks always run
+ * outside React's render lifecycle — the same class of walk
+ * `_commitPartonLane` already does at drain, repeated per resolve.
+ */
+export function _commitPartonLaneProgressive(
+	partonId: string,
+	node: ReactNode,
+): void {
+	const generation = (_laneCommitGeneration.get(partonId) ?? 0) + 1;
+	_laneCommitGeneration.set(partonId, generation);
+	const walk = (): void => {
+		if (_laneCommitGeneration.get(partonId) !== generation) return;
+		const stats: LazyWalkStats = { pending: 0, thenables: [] };
+		cacheFromStreamingChildren(node, getCurrentPagePartials(), undefined, stats);
+		notifyLaneCommit();
+		const thenables = stats.thenables ?? [];
+		if (stats.pending > 0 && thenables.length > 0) {
+			void Promise.allSettled(thenables.map((t) => Promise.resolve(t))).then(
+				walk,
+			);
+		}
+	};
+	walk();
 }
 
 /**

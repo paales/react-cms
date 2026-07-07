@@ -72,6 +72,7 @@ export {
 export {
 	_applyFpTrailerFromDocument,
 	_commitPartonLane,
+	_commitPartonLaneProgressive,
 	_warmCacheFromPayload,
 } from "./partial-cache.ts";
 export {
