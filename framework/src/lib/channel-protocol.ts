@@ -1,9 +1,11 @@
 /**
  * The channel's upstream wire protocol — the envelope shape shared by
  * the client transport and the server's connection-session layer
- * ([[connection-session]]). Import-safe on
+ * ([[connection-session]]), plus the ATTACH statement (the body of the
+ * heartbeat's live-fire POST — the full client statement a connection
+ * opens with). Import-safe on
  * both sides: no server or DOM dependencies, just the endpoint path,
- * the envelope grammar, and its decoder.
+ * the grammar, and its decoders.
  *
  * An envelope is one coalesced, fire-and-forget POST: the client
  * states facts about itself — viewport flips today; URL moves, commit
@@ -20,6 +22,63 @@
  *  `createRscHandler` before any app routing — inside a lightweight
  *  request scope (see [[connection-session]]'s `handleChannelPost`). */
 export const CHANNEL_ENDPOINT = "/__parton/channel";
+
+/** Request-shape marker for the ATTACH — the heartbeat's live fire as
+ *  a POST whose body carries the client statement below. The explicit
+ *  dispatch signal `parseRenderRequest` keys on: an `_.rsc` POST with
+ *  this header is the attach (full segmented drive + fp-trailer), one
+ *  with `x-rsc-action` is an action (commit-only, one segment) — the
+ *  body's shape decides nothing. */
+export const ATTACH_HEADER = "x-parton-attach";
+
+/**
+ * The attach statement — the full client statement presented when a
+ * live connection opens, as the attach POST's JSON body:
+ *
+ *   - `cached` — the manifest: every `id:matchKey:fp` token the client
+ *     holds, stating WHAT it has. Uncapped: the body has no
+ *     request-line limit, and the client pool bounds it structurally
+ *     (the discrete `?cached=` URL form keeps its cap).
+ *   - `since` — the catch-up anchor, stating WHEN the client last
+ *     heard: the document's registry timeline point. `null` when the
+ *     client has no anchor (reopens, post-navigation fires).
+ *   - `visible` — the viewport seed, stating what the client SEES.
+ *     `null` is the unmeasured state (no statement); an empty array is
+ *     a measurement ("nothing in view").
+ */
+export interface AttachStatement {
+	cached: readonly string[];
+	since: { epoch: string; ts: number } | null;
+	visible: readonly string[] | null;
+}
+
+/**
+ * Decode a parsed JSON body into an attach statement. Returns `null`
+ * when the statement is malformed (the entry answers `400`). Unknown
+ * fields are IGNORED, never errors — the statement grows by adding
+ * fields (the ack watermark seeds here next), and an old server must
+ * stay indifferent to a newer client's statement.
+ */
+export function decodeAttachStatement(value: unknown): AttachStatement | null {
+	if (value === null || typeof value !== "object") return null;
+	const v = value as Record<string, unknown>;
+	if (!isStringArray(v.cached)) return null;
+	let since: AttachStatement["since"] = null;
+	if (v.since !== null && v.since !== undefined) {
+		if (typeof v.since !== "object") return null;
+		const s = v.since as Record<string, unknown>;
+		if (typeof s.epoch !== "string" || s.epoch.length === 0) return null;
+		if (typeof s.ts !== "number" || !Number.isFinite(s.ts) || s.ts < 0)
+			return null;
+		since = { epoch: s.epoch, ts: s.ts };
+	}
+	let visible: AttachStatement["visible"] = null;
+	if (v.visible !== null && v.visible !== undefined) {
+		if (!isStringArray(v.visible)) return null;
+		visible = v.visible;
+	}
+	return { cached: v.cached, since, visible };
+}
 
 /**
  * A viewport-visibility statement — the culling controller's report as

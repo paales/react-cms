@@ -211,14 +211,21 @@ export function _onFirstMeasurement(cb: () => void): void {
 	measurementWaiters.push(cb)
 }
 
-/** The current visible set as a `?visible=` param value, or `undefined`
- *  before the first viewport report (the unmeasured state — send no
- *  param). The heartbeat seeds each `?live=1` fire with this so the
- *  connection session starts from the client's measured set and the
- *  whole-tree first segment already renders against it. */
-export function _visibleSetParam(): string | undefined {
+/** The current visible set as ids, or `undefined` before the first
+ *  viewport report (the unmeasured state — no statement). The
+ *  heartbeat seeds each attach's `visible` with this so the connection
+ *  session starts from the client's measured set and the whole-tree
+ *  first segment already renders against it. */
+export function _visibleSetIds(): string[] | undefined {
 	if (!measured) return undefined
-	return [...inView].join(",")
+	return [...inView]
+}
+
+/** The current visible set as a `?visible=` param value — the URL
+ *  carrier the discrete (no-session) paths read; same unmeasured
+ *  contract as `_visibleSetIds`. */
+export function _visibleSetParam(): string | undefined {
+	return _visibleSetIds()?.join(",")
 }
 
 // Arm the full-set sync per established connection, at the first

@@ -8,7 +8,7 @@ import { _takeLiveCatchupAnchor } from "./partial-client-state.ts"
 import {
   _onFirstMeasurement,
   _visibilityMeasured,
-  _visibleSetParam,
+  _visibleSetIds,
 } from "./visibility.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
 
@@ -21,8 +21,11 @@ interface Props {
 }
 
 /**
- * Client component that holds a `?live=1` long-poll connection to
- * the current URL open. Mounted once near the React root by the
+ * Client component that holds the live connection to the current URL
+ * open — each fire is an ATTACH: a `?live=1` POST whose body carries
+ * the full client statement (manifest + catch-up anchor + viewport
+ * seed; see `channel-protocol.ts`), answered by the held segmented
+ * stream. Mounted once near the React root by the
  * framework's browser bootstrap (`../entry/browser.tsx`); an app
  * assembling its own bootstrap mounts it the same way:
  *
@@ -40,7 +43,7 @@ interface Props {
  *      warm-fp drift corrections applied
  *      (`_applyFpTrailerFromDocument` registers a `load` listener
  *      that runs `tryApplyTrailerNow`). Without this, the
- *      heartbeat's first request carries only cold fps; if a
+ *      attach's manifest carries only cold fps; if a
  *      parton's cold fp drifted from warm, the server doesn't
  *      fp-skip and re-renders it. For partons with time-dependent
  *      content (`new Date()`) that's a visible flash.
@@ -50,7 +53,7 @@ interface Props {
  * `load` listener.
  *
  * Behaviour:
- *   - Mount → fire one `reload({streaming: true, live: true})`.
+ *   - Mount → fire one `reload({streaming: true, live: true, attach})`.
  *     `live` holds the connection open as a subscription; `streaming`
  *     commits each pushed segment progressively. Batches with any
  *     in-tick client-side activator fires (when-mounted, when-visible)
@@ -105,24 +108,28 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         return
       }
       inFlight = new AbortController()
-      // Each fire is one connection. The SERVER mints its id at
+      // Each fire is one connection — an ATTACH: a POST whose body
+      // carries the full client statement (see `channel-protocol.ts`):
+      // the manifest states WHAT the client holds (filled by the
+      // refetch dispatcher, uncapped — the body has no request-line
+      // limit), the anchor states WHEN it last heard, the seed states
+      // what it SEES. This component contributes the anchor + seed
+      // halves. The SERVER mints the fire's id at
       // session open and ships it down as the stream's `conn` entry;
       // the channel transport establishes on receipt (the wire hook in
       // `entry/browser.tsx`), so envelopes can address the session the
       // moment the handshake arrives. Seeding the fire with the
-      // controller's current `?visible=` set (absent while unmeasured)
+      // controller's current visible set (`null` while unmeasured)
       // means the whole-tree first segment already renders against the
       // client's measured viewport instead of the cold anchor seed.
-      const params: Record<string, string> = {}
-      const visibleSeed = _visibleSetParam()
-      if (visibleSeed !== undefined) params.visible = visibleSeed
-      // The document's registry anchor (take-once): present it so the
-      // server opens the connection straight into lanes — only what
+      //
+      // The document's registry anchor (take-once): presenting it lets
+      // the server open the connection straight into lanes — only what
       // bumped after the document rendered — instead of replaying the
       // whole route the document just delivered. Reopened connections
-      // (anchor consumed) fall back to the full initial segment.
+      // (anchor consumed) attach with `since: null` and take the full
+      // initial segment.
       const anchor = _takeLiveCatchupAnchor()
-      if (anchor) params.since = `${anchor.epoch}:${anchor.ts}`
       // `live: true` holds the connection open as a whole-route
       // subscription (the server parks it for the keepalive and pushes
       // a segment on every relevant bump / expiresAt boundary).
@@ -145,7 +152,10 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
         streaming: true,
         live: true,
         signal: inFlight.signal,
-        params,
+        attach: {
+          since: anchor,
+          visible: _visibleSetIds() ?? null,
+        },
       })
       finished
         .catch(() => {
@@ -164,7 +174,7 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
     // (2) is what populates the warm-fp drift corrections from the
     // SSR HTML comment after `</html>` — only the trailing-comment
     // listener can fill those in. Firing before (2) means the
-    // heartbeat's first request carries only cold fps in `?cached=`,
+    // attach's manifest carries only cold fps,
     // and any parton whose cold fp drifted from warm gets re-
     // rendered. For partons with time-dependent content
     // (`new Date()`) that's a visible flash on first heartbeat.

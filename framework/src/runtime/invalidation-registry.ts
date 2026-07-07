@@ -421,9 +421,10 @@ export function _clearInvalidationRegistry(): void {
  *  counter, so a timestamp is only comparable WITHIN one registry
  *  lifetime — a restart (or a registry clear) starts a new timeline at
  *  1. The epoch names the lifetime: a client-held catch-up anchor
- *  (`?since=<epoch>:<ts>`, see segmented-response's live catch-up)
- *  is honored only when its epoch matches, otherwise the server falls
- *  back to the full initial render. Re-minted on every clear. */
+ *  (the attach statement's `since`, see segmented-response's live
+ *  catch-up) is honored only when its epoch matches, otherwise the
+ *  server falls back to the full initial render. Re-minted on every
+ *  clear. */
 let epoch = ""
 function mintEpoch(): void {
   epoch = Math.floor(Math.random() * 0xffffffffffff)

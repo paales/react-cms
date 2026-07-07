@@ -12,7 +12,12 @@
  * intercept stands down) and the client-side selector parser.
  */
 
-import { getCachedPartialIds, inFlightKey } from "./partial-client-state.ts"
+import type { AttachStatement } from "./channel-protocol.ts"
+import {
+  getAllCachedPartialTokens,
+  getCachedPartialIds,
+  inFlightKey,
+} from "./partial-client-state.ts"
 import { claimRefetchCommit, nextRefetchSeq } from "./refetch-ordering.ts"
 
 // ─── Framework-internal navigation info ───────────────────────────
@@ -128,6 +133,11 @@ interface RefetchBatchEntry {
    *  `?__cullFlip=1`, so the server may fp-skip an explicit target —
    *  the placeholder that confirms the client's parked copy. */
   cullFlip?: boolean
+  /** The live fire's attach halves (anchor + seed) — the transport
+   *  fills the manifest and ships the batch as an attach POST whose
+   *  body is the full client statement. Only the heartbeat sets it.
+   *  Mirrors `FrameworkReloadOptions.attach`. */
+  attach?: Omit<AttachStatement, "cached">
   /** Resolver for this entry's `streaming` milestone — called when the
    *  flushed batch's first segment lands. */
   resolveStreaming: () => void
@@ -148,6 +158,7 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
         url: string,
         signal?: AbortSignal,
         claimCommit?: () => boolean,
+        attach?: AttachStatement,
       ) => RefetchMilestones
     }
   ).__rsc_partial_refetch
@@ -170,6 +181,7 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   let streamingMode = false
   let liveMode = false
   let cullFlip = false
+  let attach: Omit<AttachStatement, "cached"> | undefined
   const extraParams = new Map<string, string>()
   for (const entry of batch) {
     for (const l of entry.labels) {
@@ -179,6 +191,9 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
     if (entry.streaming) streamingMode = true
     if (entry.live) liveMode = true
     if (entry.cullFlip) cullFlip = true
+    // At most one attach per batch by construction: the heartbeat is
+    // the sole producer and its fires are strictly sequential.
+    if (entry.attach) attach = entry.attach
     if (entry.params) for (const [k, v] of Object.entries(entry.params)) extraParams.set(k, v)
   }
 
@@ -219,14 +234,20 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   // With no selector (streaming heartbeat, full-page refetch), send
   // every cached entry so the fp-skip cascade prunes the page to
   // deltas.
-  const cachedIds = getCachedPartialIds()
-  if (cachedIds.length > 0) {
-    const targetPrefixes = [...forcedLabels].map((l) => `${l}:`)
-    const cached =
-      targetPrefixes.length > 0
-        ? cachedIds.filter((t) => !targetPrefixes.some((p) => t.startsWith(p)))
-        : cachedIds
-    if (cached.length > 0) url.searchParams.set("cached", cached.join(","))
+  //
+  // Two manifest forms, split by transport: an ATTACH batch carries
+  // the FULL manifest in the POST body (no request line to protect —
+  // see `getAllCachedPartialTokens`), while a discrete GET keeps the
+  // capped `?cached=` URL form. The forced-label strip applies to
+  // both — an explicit target must re-render on either transport.
+  const cachedIds = attach ? getAllCachedPartialTokens() : getCachedPartialIds()
+  const targetPrefixes = [...forcedLabels].map((l) => `${l}:`)
+  const cached =
+    targetPrefixes.length > 0
+      ? cachedIds.filter((t) => !targetPrefixes.some((p) => t.startsWith(p)))
+      : cachedIds
+  if (!attach && cached.length > 0) {
+    url.searchParams.set("cached", cached.join(","))
   }
 
   // Caller-supplied per-request params (ephemeral view state) — appended
@@ -247,7 +268,12 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
     claimCommit = () => claimRefetchCommit(orderKey, seq)
   }
 
-  const milestones = handler(url.toString(), signal, claimCommit)
+  const milestones = handler(
+    url.toString(),
+    signal,
+    claimCommit,
+    attach ? { cached, since: attach.since, visible: attach.visible } : undefined,
+  )
   milestones.streaming.then(
     () => {
       for (const e of batch) e.resolveStreaming()

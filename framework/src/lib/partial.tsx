@@ -60,6 +60,7 @@ import {
   type SpecComponentProps,
 } from "./spec-catalog.ts"
 import {
+  _getAttachStatement,
   _getCachedOverride,
   _setCachedOverride,
   getRequest,
@@ -2205,8 +2206,9 @@ interface PartialRootProps {
 }
 
 /**
- * Parse `?cached=id:matchKey:fp,…` into two maps the request state
- * consults:
+ * Parse the client manifest — `?cached=id:matchKey:fp,…` (the comma-
+ * joined URL form) or the attach statement's token array — into two
+ * maps the request state consults:
  *   - `cachedFingerprints: Map<id, Set<fp>>` — drives fp-skip decisions
  *     (server's computed fp ∈ set ⇒ emit placeholder).
  *   - `cachedMatchKeys: Map<id, Set<matchKey>>` — drives hidden Activity
@@ -2217,14 +2219,15 @@ interface PartialRootProps {
  * hex hash (URL-safe, no colons) so the three-segment split is
  * unambiguous regardless of the id's content.
  */
-export function parseCachedTokens(raw: string | null): {
+export function parseCachedTokens(raw: string | readonly string[] | null): {
   fingerprints: Map<string, Set<string>>
   matchKeys: Map<string, Set<string>>
 } {
   const fingerprints = new Map<string, Set<string>>()
   const matchKeys = new Map<string, Set<string>>()
   if (!raw) return { fingerprints, matchKeys }
-  for (const token of raw.split(",").map((s) => s.trim())) {
+  const tokens = Array.isArray(raw) ? raw : (raw as string).split(",")
+  for (const token of tokens.map((s) => s.trim())) {
     if (!token) continue
     const fpIdx = token.lastIndexOf(":")
     if (fpIdx <= 0) continue
@@ -2349,7 +2352,11 @@ export function partialFromSnapshot(id: string, snap: PartialSnapshot): ReactNod
 export async function PartialRoot({ children }: PartialRootProps): Promise<ReactNode> {
   const requestUrl = new URL(getRequest().url)
   const partialsParam = requestUrl.searchParams.get("partials")
-  const cachedParam = requestUrl.searchParams.get("cached")
+  // The client manifest: the attach statement's uncapped token array
+  // (the heartbeat's live fire — see `channel-protocol.ts`), or the
+  // capped `?cached=` URL form every discrete request carries.
+  const cachedParam =
+    _getAttachStatement()?.cached ?? requestUrl.searchParams.get("cached")
   const populateCache = requestUrl.searchParams.has("__populateCache")
 
   const frameNames = requestUrl.searchParams.getAll("__frame")

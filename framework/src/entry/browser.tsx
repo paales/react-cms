@@ -21,6 +21,7 @@ import React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
 import { _channelWireEntry } from "../lib/channel-client.ts";
+import type { AttachStatement } from "../lib/channel-protocol.ts";
 import type { FpUpdatesPayload } from "../lib/fp-trailer-marker.ts";
 import {
 	type DemuxedLane,
@@ -154,7 +155,6 @@ async function main() {
 			"cached",
 			"streaming",
 			"live",
-			"since",
 			"visible",
 			"page",
 			"__frame",
@@ -172,11 +172,19 @@ async function main() {
 	 * separately from the full-body-drained moment. The work runs in a
 	 * detached async IIFE so the caller can attach handlers before the
 	 * fetch even starts.
+	 *
+	 * `attach` turns the fire into the heartbeat's attach POST: the
+	 * full client statement (manifest + anchor + seed) rides the JSON
+	 * body instead of URL params, and the response is the same held
+	 * segmented stream a live GET drives. Everything downstream of the
+	 * fetch — the splitter, the lanes path, the commit guards — is one
+	 * shared path.
 	 */
 	function fetchRscPayload(
 		overrideUrl?: string,
 		signal?: AbortSignal,
 		claimCommit?: () => boolean,
+		attach?: AttachStatement,
 	): { streaming: Promise<void>; finished: Promise<void> } {
 		let resolveStreaming!: () => void;
 		let rejectStreaming!: (err: unknown) => void;
@@ -215,9 +223,10 @@ async function main() {
 				// Tell the server which partials are already cached so it can skip them.
 				// If the caller already set ?cached= (e.g. a targeted refetch built by
 				// `useNavigation().reload({selector})`), respect that instead of overwriting
-				// with the full list.
+				// with the full list. An attach fire carries its manifest in the
+				// POST body — never in the URL.
 				const url = new URL(overrideUrl ?? window.location.href);
-				if (!url.searchParams.has("cached")) {
+				if (!attach && !url.searchParams.has("cached")) {
 					const cachedIds = getCachedPartialIds();
 					if (cachedIds.length > 0) {
 						url.searchParams.set("cached", cachedIds.join(","));
@@ -240,7 +249,11 @@ async function main() {
 				//     Good for search / filter results where per-row reveal
 				//     improves perceived latency.
 				const streamingMode = url.searchParams.has("streaming");
-				const renderRequest = createRscRenderRequest(url.toString());
+				const renderRequest = createRscRenderRequest(
+					url.toString(),
+					undefined,
+					attach,
+				);
 				// Network → HTTP → decode. Each failure mode maps to a typed
 				// NavigationError kind so consumers can branch on it without
 				// string matching. AbortError stays untouched — it's a normal
@@ -308,7 +321,7 @@ async function main() {
 					)) {
 						if (segment.kind === "lanes") {
 							// The subscription is established the moment the lanes
-							// region opens. On a catch-up boot (`?since=` honored)
+							// region opens. On a catch-up boot (attach anchor honored)
 							// this is the FIRST segment — there is no whole-route
 							// payload to commit, the client's current tree IS the
 							// state — so `streaming` must resolve here or the
@@ -459,7 +472,8 @@ async function main() {
 		url: string,
 		signal?: AbortSignal,
 		claimCommit?: () => boolean,
-	) => fetchRscPayload(url, signal, claimCommit);
+		attach?: AttachStatement,
+	) => fetchRscPayload(url, signal, claimCommit, attach);
 	// Preload counterpart: warm-only, no commit. See `warmRscPayload`.
 	(window as any).__rsc_partial_preload = (url: string, signal?: AbortSignal) =>
 		warmRscPayload(url, signal);

@@ -1,4 +1,12 @@
 import { clearCaches, expect, test, waitForPageInteractive, waitForRscIdle } from "./fixtures.ts"
+import type { Response } from "@playwright/test"
+
+/** The response of a server-action POST — discriminated by the
+ *  `x-rsc-action` header the action transport stamps, so the wait can
+ *  never latch onto the heartbeat's attach POST (also `_.rsc`, also
+ *  POST — its marker is `x-parton-attach`). */
+const isActionPost = (r: Response) =>
+  r.request().method() === "POST" && "x-rsc-action" in r.request().headers()
 
 // CMS editor tests mutate the shared draft.json file. Run them
 // serially so concurrent `/__test/clear-caches` calls (in another
@@ -110,7 +118,7 @@ test.describe("CMS editor — smoke", () => {
     // otherwise — the navigation aborts the in-flight request, the
     // draft never gets written, and the assertion below sees the
     // original published value instead of the edited one.
-    const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+    const responseP = page.waitForResponse((r) => isActionPost(r) && r.ok(), {
       timeout: 10000,
     })
     await page
@@ -184,7 +192,7 @@ test.describe("CMS editor — smoke", () => {
     // pre-action state + the subsequent assertion sits on a DOM
     // that never updates.
     async function waitForActionResponse(page: import("./fixtures.ts").Page) {
-      await page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+      await page.waitForResponse((r) => isActionPost(r) && r.ok(), {
         timeout: 10000,
       })
     }
@@ -309,7 +317,7 @@ test.describe("CMS editor — smoke", () => {
     ).toHaveCount(0)
 
     await page.getByTestId("cms-edit-field-input-headline").fill("Modified default")
-    const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+    const responseP = page.waitForResponse((r) => isActionPost(r) && r.ok(), {
       timeout: 10000,
     })
     await page
@@ -367,7 +375,7 @@ test.describe("CMS editor — smoke", () => {
     await expect(preview.locator('a[href="/"]').first()).toContainText("Pokemon")
 
     await page.getByTestId("cms-edit-field-input-label").fill("Pokédex (live)")
-    const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+    const responseP = page.waitForResponse((r) => isActionPost(r) && r.ok(), {
       timeout: 10000,
     })
     await page
@@ -460,7 +468,7 @@ test.describe("CMS editor — smoke", () => {
     await page.goto("/cms-demo?select=composed-text-1")
     await waitForPageInteractive(page)
     await page.getByTestId("cms-edit-field-input-body").fill("Edited rich-text body")
-    const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+    const responseP = page.waitForResponse((r) => isActionPost(r) && r.ok(), {
       timeout: 10000,
     })
     await page
@@ -489,7 +497,7 @@ test.describe("CMS editor — smoke", () => {
     // preview — otherwise the assertion races the in-flight request,
     // and parallel-test load can push the response just past the 5s
     // toContainText timeout. See the same pattern in the test above.
-    const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+    const responseP = page.waitForResponse((r) => isActionPost(r) && r.ok(), {
       timeout: 10000,
     })
     await page
@@ -808,7 +816,7 @@ test.describe("CMS editor — smoke", () => {
       await waitForRscIdle(page)
       await page.getByTestId("cms-edit-field-input-title").fill("Editor-set title")
 
-      const responseP = page.waitForResponse((r) => r.request().method() === "POST" && r.ok(), {
+      const responseP = page.waitForResponse((r) => isActionPost(r) && r.ok(), {
         timeout: 10000,
       })
       await page

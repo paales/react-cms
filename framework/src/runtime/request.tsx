@@ -1,3 +1,8 @@
+import {
+  ATTACH_HEADER,
+  type AttachStatement,
+} from "../lib/channel-protocol.ts"
+
 const URL_POSTFIX = "_.rsc"
 const HEADER_ACTION_ID = "x-rsc-action"
 
@@ -25,7 +30,8 @@ export const HEADER_RSC_RENDER = "x-parton-render"
  *  `__frame` / `__frameUrl` are deliberately NOT here: a spec may read them
  *  legitimately (the CMS editor checks `__frame=preview`). Neither is
  *  `visible` — the cull gate reads it off the request URL as the
- *  no-connection fallback carrier. A real SSR
+ *  no-connection fallback carrier. The catch-up anchor rides the
+ *  attach POST's body statement, never a URL. A real SSR
  *  document load carries none of these params anyway, so the serialized
  *  page URL is already clean there — this is belt-and-braces. */
 export const FRAMEWORK_URL_PARAMS = [
@@ -33,7 +39,6 @@ export const FRAMEWORK_URL_PARAMS = [
   "cached",
   "streaming",
   "live",
-  "since",
   "__populateCache",
   "__nojs",
   "__cullFlip",
@@ -58,6 +63,12 @@ export function stripFrameworkParams(urlString: string): string {
 export type RenderRequest = {
   isRsc: boolean
   isAction: boolean
+  /** The heartbeat's attach — an `_.rsc` POST whose body is the client
+   *  statement (`AttachStatement`: manifest + catch-up anchor +
+   *  viewport seed) and whose response is the held segmented stream.
+   *  Dispatched on the explicit `ATTACH_HEADER` marker, never inferred
+   *  from the body's shape; mutually exclusive with an action. */
+  isAttach: boolean
   actionId?: string
   request: Request
   url: URL
@@ -66,6 +77,7 @@ export type RenderRequest = {
 export function createRscRenderRequest(
   urlString: string,
   action?: { id: string; body: BodyInit },
+  attach?: AttachStatement,
 ): Request {
   const url = new URL(urlString)
   url.pathname += URL_POSTFIX
@@ -73,25 +85,36 @@ export function createRscRenderRequest(
   if (action) {
     headers.set(HEADER_ACTION_ID, action.id)
   }
+  if (attach) {
+    headers.set(ATTACH_HEADER, "1")
+    headers.set("content-type", "application/json")
+  }
   return new Request(url.toString(), {
-    method: action ? "POST" : "GET",
+    method: action || attach ? "POST" : "GET",
     headers,
-    body: action?.body,
+    body: attach ? JSON.stringify(attach) : action?.body,
   })
 }
 
 export function parseRenderRequest(request: Request): RenderRequest {
   const url = new URL(request.url)
-  const isAction = request.method === "POST"
+  const isPost = request.method === "POST"
   if (url.pathname.endsWith(URL_POSTFIX)) {
     url.pathname = url.pathname.slice(0, -URL_POSTFIX.length)
     const actionId = request.headers.get(HEADER_ACTION_ID) || undefined
-    if (request.method === "POST" && !actionId) {
+    const isAttach = isPost && request.headers.get(ATTACH_HEADER) === "1"
+    // Dispatch is by explicit marker, one per request kind: the attach
+    // header opens the segmented drive, the action id runs an action.
+    // Both on one POST is an ill-formed request, not a tiebreak.
+    if (isAttach && actionId) {
+      throw new Error("RSC POST carries both an attach marker and an action id")
+    }
+    if (isPost && !actionId && !isAttach) {
       throw new Error("Missing action id header for RSC action request")
     }
     // Rebuild on the de-postfixed URL and stamp the RSC-render marker so
     // `PartialRoot` can tell a client refetch from an SSR document. Body
-    // is preserved (and `duplex` set) for action POSTs.
+    // is preserved (and `duplex` set) for action and attach POSTs.
     const headers = new Headers(request.headers)
     headers.set(HEADER_RSC_RENDER, "1")
     const init: RequestInit & { duplex?: "half" } = { method: request.method, headers }
@@ -101,11 +124,12 @@ export function parseRenderRequest(request: Request): RenderRequest {
     }
     return {
       isRsc: true,
-      isAction,
+      isAction: isPost && !isAttach,
+      isAttach,
       actionId,
       request: new Request(url, init),
       url,
     }
   }
-  return { isRsc: false, isAction, request, url }
+  return { isRsc: false, isAction: isPost, isAttach: false, request, url }
 }

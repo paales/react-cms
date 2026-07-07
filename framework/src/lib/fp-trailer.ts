@@ -361,7 +361,7 @@ export function wrapSsrStreamWithFpTrailer(
         if (snapshots.size === 0) return
         // The live catch-up anchor: this document IS the page state as
         // of the registry timeline point below, so the heartbeat's
-        // first `?live=1` fire presents it (`?since=<epoch>:<ts>`) and
+        // first attach presents it (the statement's `since`) and
         // the connection opens straight into lanes — only what bumped
         // after this document renders, never a whole-route replay of
         // bytes the document just delivered. Emitted before (and

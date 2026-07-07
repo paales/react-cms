@@ -32,7 +32,10 @@ import {
 import type { ComponentType, ReactNode } from "react";
 import type { ReactFormState } from "react-dom/client";
 import { CHANNEL_ENDPOINT } from "../lib/channel-protocol.ts";
-import { handleChannelPost } from "../lib/connection-session.ts";
+import {
+	applyAttachStatement,
+	handleChannelPost,
+} from "../lib/connection-session.ts";
 import {
 	wrapSsrStreamWithFpTrailer,
 	wrapStreamWithCommitOnly,
@@ -198,6 +201,21 @@ export function createRscHandler(config: RscHandlerConfig): {
 		let formState: ReactFormState | undefined;
 		let temporaryReferences: unknown | undefined;
 		let actionStatus: number | undefined;
+
+		// The attach — the heartbeat's live fire as a POST whose body is
+		// the client statement (manifest + catch-up anchor + viewport
+		// seed). Dispatched on the explicit request marker
+		// (`parseRenderRequest`), never the body's shape: an action POST
+		// with a statement-shaped body stays an action, and this POST
+		// never decodes as one. The statement lands on the request store
+		// here so the segment driver and `PartialRoot` read it in place
+		// of the `?cached=`/`?visible=` URL params a discrete GET
+		// carries; the response falls through to the full segmented
+		// drive + fp-trailer path exactly as a live GET's does.
+		if (renderRequest.isAttach) {
+			const statement = await applyAttachStatement(request);
+			if (statement === null) return new Response(null, { status: 400 });
+		}
 
 		if (renderRequest.isAction === true) {
 			if (renderRequest.actionId) {

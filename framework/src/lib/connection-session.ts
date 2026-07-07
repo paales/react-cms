@@ -21,7 +21,7 @@
  *
  * Lifecycle: the segment driver mints the id and opens the session
  * when it starts driving a `?live=1` response (seeding `visible` from
- * the request's `?visible=` param, so the whole-tree first segment
+ * the attach statement's seed, so the whole-tree first segment
  * already renders against the client's measured set; binding the
  * attach's scope + session identity for the envelope checks below) and
  * closes it when the drive loop exits (keepalive elapsed, client
@@ -51,10 +51,12 @@
  *     beacon can't probe which of the two it hit.
  */
 
-import { getScope } from "../runtime/context.ts";
+import { _setAttachStatement, getScope } from "../runtime/context.ts";
 import { getSessionId } from "../runtime/session.ts";
 import {
+	type AttachStatement,
 	type ChannelEnvelope,
+	decodeAttachStatement,
 	decodeChannelEnvelope,
 	type VisibleFrame,
 } from "./channel-protocol.ts";
@@ -98,11 +100,13 @@ export interface ConnectionSession {
 	 *  the same scope — the assert-and-404 above. */
 	readonly scope: string;
 	/** Session identity bound at attach — `getSessionId() ?? ""` as of
-	 *  the `?live=1` request. The empty string IS an identity (the
-	 *  anonymous page); every envelope must present the same one. A
-	 *  session cookie minted mid-connection (an action's
-	 *  `ensureSessionId`) fails the check until the heartbeat's next
-	 *  fire rebinds — the transport's 404 fallback covers the gap. */
+	 *  the attach request. The empty string IS an identity (the
+	 *  anonymous page); every envelope must present the same one. The
+	 *  attach is the explicit rebind point: every attach binds its own
+	 *  request's identity fresh, so a session cookie minted
+	 *  mid-connection (an action's `ensureSessionId`) fails the check —
+	 *  the transport's 404 fallback covers the gap — until the next
+	 *  attach carries the new cookie and envelopes work again. */
 	readonly boundSessionId: string;
 	/** The connection's current visible set. `null` until the request's
 	 *  `?visible=` seed or the first statement — the pre-measurement
@@ -251,6 +255,28 @@ export function takeConnectionFlips(
 function detachConnectionSession(session: ConnectionSession): void {
 	session.detached = true;
 	for (const wake of [...session.flipWakes]) wake();
+}
+
+/**
+ * Decode an attach POST's body into its statement and stash it on the
+ * request store — the one seam both the entry (`createRscHandler`) and
+ * the in-process live-drive harness bind an attach through, so the
+ * driver's statement reads see identical state on both paths. Runs
+ * inside `runWithRequestAsync`; returns `null` on a malformed body
+ * (the entry answers `400` — a protocol violation, like a malformed
+ * known-kind frame).
+ */
+export async function applyAttachStatement(
+	request: Request,
+): Promise<AttachStatement | null> {
+	let decoded: AttachStatement | null;
+	try {
+		decoded = decodeAttachStatement(await request.json());
+	} catch {
+		return null;
+	}
+	if (decoded !== null) _setAttachStatement(decoded);
+	return decoded;
 }
 
 /**

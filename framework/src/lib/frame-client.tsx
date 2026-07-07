@@ -827,6 +827,10 @@ export function buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeN
             live: options?.live ?? false,
             signal: options?.signal,
             params: options?.params,
+            // The heartbeat's attach halves (anchor + seed) — the
+            // dispatcher fills the manifest and ships the fire as an
+            // attach POST. See `FrameworkReloadOptions.attach`.
+            attach: options?.attach,
           })
           await refetch.streaming
           m.streaming.resolve()

@@ -97,6 +97,15 @@ interface RequestStore {
    *  `../lib/connection-session.ts`). One-shot requests never set it
    *  and fall back to the `?visible=` URL param. */
   connectionSession?: ConnectionSessionHandle | null
+  /** The attach request's decoded body statement — the client's full
+   *  manifest (`cached`), catch-up anchor (`since`), and viewport seed
+   *  (`visible`), stashed by the entry (or the live-drive harness)
+   *  before any render runs and constant for the request's lifetime.
+   *  What `PartialRoot` and the segment driver's catch-up/seed paths
+   *  read instead of the `?cached=`/`?visible=` URL params a discrete
+   *  GET carries (the anchor has no URL form at all). Absent on every
+   *  non-attach request. */
+  attachStatement?: AttachStatementHandle | null
 }
 
 /** The slice of a connection session the request context carries —
@@ -104,6 +113,15 @@ interface RequestStore {
  *  (`../lib/connection-session.ts` owns the full session shape). */
 export interface ConnectionSessionHandle {
   visible: ReadonlySet<string> | null
+}
+
+/** The attach statement as the request context carries it — structural
+ *  for the same reason as `ConnectionSessionHandle`: the wire grammar
+ *  (and its decoder) lives in `../lib/channel-protocol.ts`. */
+export interface AttachStatementHandle {
+  readonly cached: readonly string[]
+  readonly since: { readonly epoch: string; readonly ts: number } | null
+  readonly visible: readonly string[] | null
 }
 
 /** In-memory mirror of `?cached=…`. Same identity Maps shared across
@@ -350,6 +368,21 @@ export function _getCachedOverride(): CachedOverride | null {
 export function _setConnectionSession(session: ConnectionSessionHandle | null): void {
   const store = requestContext.getStore()
   if (store) store.connectionSession = session
+}
+
+/** Stash the attach request's decoded body statement on the request
+ *  store. Called once per attach, before any render runs — by the
+ *  entry (`applyAttachStatement` in `../lib/connection-session.ts`). */
+export function _setAttachStatement(statement: AttachStatementHandle): void {
+  const store = requestContext.getStore()
+  if (store) store.attachStatement = statement
+}
+
+/** The attach request's body statement, or `null` on every non-attach
+ *  request (discrete GETs, actions, SSR documents) — the callers'
+ *  signal to read the URL-param carriers instead. */
+export function _getAttachStatement(): AttachStatementHandle | null {
+  return requestContext.getStore()?.attachStatement ?? null
 }
 
 /** The connection's current visible set, or `null` when this request

@@ -27,6 +27,8 @@
  * Access the browser's `navigation` global via `getNavigation()`.
  */
 
+import type { AttachStatement } from "../lib/channel-protocol.ts"
+
 // ─── Framework state shapes ───────────────────────────────────────
 
 /**
@@ -223,6 +225,15 @@ export interface FrameworkReloadOptions extends NavigationReloadOptions {
    *  They are NOT added to `FRAMEWORK_URL_PARAMS` (that would strip them
    *  before any tracked read ever sees them). */
   params?: Record<string, string>
+  /** The live fire's ATTACH statement — the catch-up anchor (`since`)
+   *  and viewport seed (`visible`) halves; the transport fills the
+   *  manifest (`cached`) at fire time. Setting this turns the fire
+   *  into an attach POST whose body carries the full client statement
+   *  (see `AttachStatement` in `../lib/channel-protocol.ts`) instead
+   *  of a GET re-presenting state in URL params. Only the framework's
+   *  `<LivePageHeartbeat>` sets it, always together with
+   *  `live: true`. */
+  attach?: Omit<AttachStatement, "cached">
 }
 
 // ─── Fire functions + progress tuple ──────────────────────────────

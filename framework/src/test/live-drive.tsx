@@ -8,6 +8,8 @@
 import type { ReactNode } from "react"
 import { _captureCommitHandle, runWithRequestAsync } from "../runtime/context.ts"
 import { refreshSelector } from "../runtime/invalidation-registry.ts"
+import { ATTACH_HEADER, type AttachStatement } from "../lib/channel-protocol.ts"
+import { applyAttachStatement } from "../lib/connection-session.ts"
 import { TAG_CONNECTION_ID } from "../lib/fp-trailer-marker.ts"
 import { wrapStreamWithFpTrailer } from "../lib/fp-trailer.ts"
 import { type DemuxedLane, splitAtFpTrailer, splitSegments } from "../lib/fp-trailer-split.ts"
@@ -30,14 +32,40 @@ export interface DriveHandle {
   shutdown: (wakeSelector: string) => Promise<void>
 }
 
+export interface LiveDriveInit {
+  /** Drive an ATTACH — a POST whose body is the client statement,
+   *  bound through the same `applyAttachStatement` seam the entry
+   *  uses, so the driver's statement reads see production state. */
+  attach?: AttachStatement
+  /** Extra request headers (e.g. a `cookie` for the session-identity
+   *  binding the attach records). */
+  headers?: Record<string, string>
+}
+
 export async function withLiveDrive(
   url: string,
   page: () => ReactNode,
   scope: string,
   run: (h: DriveHandle) => Promise<void>,
+  init?: LiveDriveInit,
 ): Promise<void> {
-  const request = new Request(url, { headers: { "x-test-scope": scope } })
+  const request = init?.attach
+    ? new Request(url, {
+        method: "POST",
+        headers: {
+          "x-test-scope": scope,
+          [ATTACH_HEADER]: "1",
+          "content-type": "application/json",
+          ...init.headers,
+        },
+        body: JSON.stringify(init.attach),
+      })
+    : new Request(url, { headers: { "x-test-scope": scope, ...init?.headers } })
   await runWithRequestAsync(request, async () => {
+    if (init?.attach) {
+      const statement = await applyAttachStatement(request)
+      if (statement === null) throw new Error("malformed attach statement")
+    }
     let controller!: ReadableStreamDefaultController<Uint8Array>
     const response = new ReadableStream<Uint8Array>({
       start(c) {

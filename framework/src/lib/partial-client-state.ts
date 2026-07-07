@@ -121,14 +121,17 @@ export function cacheStore(
  *  for the same variant are stale and only bloat `?cached=`. */
 export const FP_CAP_PER_VARIANT = 4;
 
-/** Cap on `?cached=` manifest ENTRIES advertised to the server. The
- *  client's local fp cache is unbounded within a page (pruned to the
- *  live tree), but the manifest travels in the request URL — a page
- *  with hundreds of partons (the website's chunk world) would
- *  otherwise blow the server's request-line limit (HTTP 431). Only
- *  the most recently REGISTERED variants are advertised; anything
- *  older re-renders server-side on its next appearance (over-fetch,
- *  never stale) and re-enters the manifest by registering again. */
+/** Cap on `?cached=` manifest ENTRIES advertised to the server —
+ *  the URL form only. The client's local fp cache is unbounded within
+ *  a page (pruned to the live tree), but the URL manifest travels in
+ *  the request line — a page with hundreds of partons (the website's
+ *  chunk world) would otherwise blow the server's request-line limit
+ *  (HTTP 431). Only the most recently REGISTERED variants are
+ *  advertised; anything older re-renders server-side on its next
+ *  appearance (over-fetch, never stale) and re-enters the manifest by
+ *  registering again. The attach BODY manifest
+ *  (`getAllCachedPartialTokens`) has no request line to protect and
+ *  carries everything. */
 export const CACHED_MANIFEST_CAP = 96;
 
 /** Cap on distinct ids retained in the client maps. A long journey
@@ -339,6 +342,27 @@ export function getCachedPartialIds(): string[] {
 		if (emitted.has(id)) continue;
 		emitted.add(id);
 		if (!emitId(id)) return out;
+	}
+	return out;
+}
+
+/**
+ * The FULL client manifest — every advertised `id:matchKey:fp` token,
+ * uncapped: the attach statement's `cached` (see `channel-protocol.ts`).
+ * The attach travels as a POST body, so the request-line limit behind
+ * `CACHED_MANIFEST_CAP` doesn't apply, and the priority walk is moot —
+ * nothing is left out. The size is structurally bounded by the client
+ * pool itself: at most `CLIENT_POOL_CAP` ids, each variant capped at
+ * `FP_CAP_PER_VARIANT` fps (variants per id are pruned to the live
+ * tree's references) — the manifest can never exceed what the maps
+ * hold.
+ */
+export function getAllCachedPartialTokens(): string[] {
+	const out: string[] = [];
+	for (const [id, byMatchKey] of _currentPageFingerprints) {
+		for (const [matchKey, fps] of byMatchKey) {
+			for (const fp of fps) out.push(`${id}:${matchKey}:${fp}`);
+		}
 	}
 	return out;
 }

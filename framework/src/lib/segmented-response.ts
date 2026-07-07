@@ -34,6 +34,7 @@ import {
 	_captureCommitHandle,
 	_clearConnectionLive,
 	_clearRequestEphemeralStorage,
+	_getAttachStatement,
 	_getCachedOverride,
 	_isConnectionLive,
 	_setCachedOverride,
@@ -222,8 +223,8 @@ export async function driveSegmentedResponse(
 		let segmentIndex = 0;
 		let lastTs = _currentTs();
 
-		// Live catch-up: the heartbeat's first fire presents the document's
-		// registry anchor (`?since=<epoch>:<ts>`, minted into the SSR
+		// Live catch-up: the attach's first fire presents the document's
+		// registry anchor (the statement's `since`, minted into the SSR
 		// trailing comment). The document IS the page state as of that
 		// point, so re-rendering the whole route here would only re-ship
 		// bytes the client already holds — skip the initial segment
@@ -368,12 +369,15 @@ async function waitForDemand(
 }
 
 /**
- * Resolve the request's live catch-up anchor — the `?since=<epoch>:<ts>`
- * the heartbeat's first fire carries (the document's registry anchor).
- * Returns the anchor timestamp when it is honorable: a live
- * subscription, the epoch names the CURRENT registry timeline, and the
- * route still has snapshots to lane from. `null` otherwise — the caller
- * falls through to the full initial render (over-fetch, never stale).
+ * Resolve the request's live catch-up anchor — the attach statement's
+ * `since` (the document's registry anchor the heartbeat's first fire
+ * presents; see [[channel-protocol]]'s `AttachStatement`). The anchor
+ * rides ONLY the attach body — no URL form exists — so a discrete live
+ * GET always takes the full initial render. Returns the anchor
+ * timestamp when it is honorable: a live subscription, the epoch names
+ * the CURRENT registry timeline, and the route still has snapshots to
+ * lane from. `null` otherwise — the caller falls through to the full
+ * initial render (over-fetch, never stale).
  */
 function liveCatchupTs(): number | null {
 	let request: Request;
@@ -384,39 +388,28 @@ function liveCatchupTs(): number | null {
 	} catch {
 		return null;
 	}
-	const url = new URL(request.url);
-	if (url.searchParams.get("live") !== "1") return null;
-	const since = url.searchParams.get("since");
-	if (!since) return null;
-	const sep = since.indexOf(":");
-	if (sep <= 0) return null;
-	const epoch = since.slice(0, sep);
-	const ts = Number(since.slice(sep + 1));
-	if (!Number.isFinite(ts) || ts < 0) return null;
-	if (epoch !== _registryEpoch()) return null;
+	if (new URL(request.url).searchParams.get("live") !== "1") return null;
+	const since = _getAttachStatement()?.since ?? null;
+	if (since === null) return null;
+	if (since.epoch !== _registryEpoch()) return null;
 	const routeKey = computeRouteKey(request.url);
 	if (_readSnapshotsForRoute(scope, routeKey).size === 0) return null;
-	return ts;
+	return since.ts;
 }
 
 /**
- * Install the connection's cached override from the request's
- * `?cached=` manifest. On the full-render path PartialRoot does this
- * during the initial segment; the catch-up path skips that render, and
- * without an override the flip machinery would treat the client as
- * holding nothing — every flip-in would re-render and DROP the parked
- * fiber (drop-on-drift) instead of confirming it. The manifest is the
- * client's own attestation, so skips against it are truthful.
+ * Install the connection's cached override from the attach statement's
+ * manifest. On the full-render path PartialRoot does this during the
+ * initial segment; the catch-up path skips that render, and without an
+ * override the flip machinery would treat the client as holding
+ * nothing — every flip-in would re-render and DROP the parked fiber
+ * (drop-on-drift) instead of confirming it. The manifest is the
+ * client's own attestation, so skips against it are truthful. Catch-up
+ * requires an anchor, and the anchor rides only the attach body, so
+ * the statement is always present here.
  */
 function installCatchupCachedOverride(): void {
-	let request: Request;
-	try {
-		request = getRequest();
-	} catch {
-		return;
-	}
-	const raw = new URL(request.url).searchParams.get("cached");
-	const parsed = parseCachedTokens(raw);
+	const parsed = parseCachedTokens(_getAttachStatement()?.cached ?? null);
 	_setCachedOverride({
 		fingerprints: parsed.fingerprints,
 		matchKeys: parsed.matchKeys,
@@ -429,10 +422,14 @@ function installCatchupCachedOverride(): void {
  * client-chosen URL param — that shape invites fixation and leaks the
  * addressable token into access logs; the id ships downstream as the
  * stream's `conn` entry instead). Seeds the visible set from the
- * request's `?visible=` param (`null` when absent — the
- * pre-measurement state) and binds the attach's scope + session
+ * attach statement's `visible` — the in-process live GET's `?visible=`
+ * param is the statement-less carrier — with `null` as the
+ * pre-measurement state, and binds the attach's scope + session
  * identity (what every channel envelope must re-present — see
- * `handleChannelPost` in `connection-session.ts`). The session is
+ * `handleChannelPost` in `connection-session.ts`). Every attach binds
+ * its OWN request's identity, which makes it the explicit rebind
+ * point: a session cookie minted mid-connection starts working the
+ * moment the next attach presents it. The session is
  * stamped onto the request's ALS store so the cull gate and
  * `evalDepKeys` read it for the connection's whole lifetime. Returns
  * `null` for one-shot requests — no envelope can address those, so no
@@ -447,9 +444,17 @@ function openLiveConnectionSession(): ConnectionSession | null {
 	}
 	const params = new URL(request.url).searchParams;
 	if (params.get("live") !== "1") return null;
-	const rawVisible = params.get("visible");
-	const seed =
-		rawVisible === null ? null : new Set(rawVisible.split(",").filter(Boolean));
+	const statement = _getAttachStatement();
+	let seed: ReadonlySet<string> | null;
+	if (statement !== null) {
+		seed = statement.visible === null ? null : new Set(statement.visible);
+	} else {
+		const rawVisible = params.get("visible");
+		seed =
+			rawVisible === null
+				? null
+				: new Set(rawVisible.split(",").filter(Boolean));
+	}
 	const session = _openConnectionSession(crypto.randomUUID(), seed, {
 		scope: getScope(),
 		sessionId: getSessionId() ?? "",

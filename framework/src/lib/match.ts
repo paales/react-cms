@@ -88,11 +88,13 @@ export interface CompiledMatch {
 
 /** Search params the framework mints for transport — refetch targeting
  *  (`partials`), the client cache manifest (`cached`), live holds
- *  (`live`) and their catch-up anchor (`since`), commit mode
+ *  (`live`), commit mode
  *  (`streaming`), the viewport-visibility set (`visible` — read by the
  *  `cull` gate, a tracked dependency, never a match dimension), the
  *  culling-flip stamp (`__cullFlip`), and frame routing (`__frame`,
- *  `__frameUrl`). Match never sees them: the SAME page arrives with
+ *  `__frameUrl`). The catch-up anchor rides the attach POST's body
+ *  statement — no URL param exists for it. Match never sees these:
+ *  the SAME page arrives with
  *  and without them (SSR vs targeted refetch vs live heartbeat), and
  *  a wildcard search capture (`"*q=:query"`) would otherwise swallow
  *  them into the named param — splitting variant identity by
@@ -103,7 +105,6 @@ export const TRANSPORT_PARAMS = [
   "cached",
   "live",
   "streaming",
-  "since",
   "visible",
   "__frame",
   "__frameUrl",

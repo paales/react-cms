@@ -100,6 +100,15 @@ try {
       liveUrls.push(e.request.url)
     }
   })
+  // Attach statements: each live fire is a POST whose JSON body carries
+  // the client statement ({cached, since, visible}); the boot check
+  // reads the anchor off the first fire's body.
+  const liveFires = []
+  page.on("request", (r) => {
+    if (r.url().includes("live=1")) {
+      liveFires.push({ method: r.method(), post: r.postData() ?? "" })
+    }
+  })
   cdp.on("Network.dataReceived", (e) => {
     if (liveRequestIds.has(e.requestId)) liveChunks.push({ t: Date.now(), n: e.dataLength })
   })
@@ -159,13 +168,18 @@ try {
   await page.waitForTimeout(4000)
   // The live boot must be a CATCH-UP, not a route replay: the document
   // carries a registry anchor (`<!--live-anchor:…-->`), the heartbeat's
-  // first fire presents it as `?since=`, and the server opens the
-  // connection straight into lanes. A replay here re-ships hundreds of
-  // KB the document just delivered (the 370KB-boot regression).
+  // first fire is an attach POST presenting it as the statement's
+  // `since`, and the server opens the connection straight into lanes.
+  // A replay here re-ships hundreds of KB the document just delivered
+  // (the 370KB-boot regression).
   check(
-    liveUrls.length > 0 && /[?&]since=/.test(liveUrls[0]),
-    "live boot presents the document's catch-up anchor",
-    liveUrls[0]?.replace(/cached=[^&]*/, "cached=…").slice(0, 140) ?? "no live fire",
+    liveFires.length > 0 &&
+      liveFires[0].method === "POST" &&
+      /"since":\{"epoch"/.test(liveFires[0].post),
+    "live boot attaches with the document's catch-up anchor",
+    liveFires[0]
+      ? `${liveFires[0].method} ${liveFires[0].post.replace(/"cached":\[[^\]]*\]/, '"cached":[…]').slice(0, 140)}`
+      : "no live fire",
   )
   const errCards = await page.$$eval("[data-partial-error], .partial-error", (els) => els.length).catch(() => 0)
   check(errCards === 0, "no error cards after pulse soak", `${errCards} cards`)
