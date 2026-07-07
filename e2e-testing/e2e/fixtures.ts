@@ -159,63 +159,62 @@ export async function waitForLiveConnection(
 }
 
 /**
- * One targeted refetch / navigation dispatch, on whichever transport
- * carried it: `"rsc"` — a discrete `_.rsc` request with `?partials=`;
- * `"channel"` — a `url` frame on a `/__parton/channel` envelope (an
- * attached page states the refetch as its page URL with the
- * `?__force=` overlay — the whole-tree segment's forced targets — and
- * the response rides the held stream).
+ * One targeted refetch / navigation dispatch, on whichever carrier the
+ * channel routed it: `"channel"` — a `url` frame on a
+ * `/__parton/channel` envelope (an attached page states the refetch as
+ * its page URL with the `?__force=` overlay — the whole-tree segment's
+ * forced targets — and the response rides the held stream);
+ * `"attach"` — the statement folded into a `POST /__parton/live` body
+ * (a pre-establishment fire riding the attach it triggered).
  */
 export interface PartialDispatch {
-  transport: "rsc" | "channel"
-  /** The dispatch's target selector — `?partials=` on the discrete
-   *  form, `?__force=` on the channel statement (`null`: a full-page
-   *  nav). */
+  transport: "channel" | "attach"
+  /** The dispatch's target selector — the statement URL's `?__force=`
+   *  overlay (`null`: a full-page nav). */
   partials: string | null
   url: string
 }
 
 /**
- * Record every partial dispatch from `page`, across BOTH transports.
+ * Record every partial dispatch from `page`, across BOTH carriers.
  * Specs that assert dispatch counts/shapes use this instead of
- * counting raw `_.rsc` requests — whether a given fire rides the
- * channel depends on whether the live connection was established by
- * then (an interaction racing the attach goes discrete), so the
- * assertion must be transport-agnostic. The heartbeat's own live
- * attach (`?live=1`) is transport, not a dispatch, and is excluded.
+ * counting raw requests — whether a given fire rides an envelope or
+ * the attach it triggered depends on whether the live connection was
+ * established by then, so the assertion must be carrier-agnostic. A
+ * bare attach (no `__force`, no pending statement) is transport, not
+ * a dispatch, and records nothing.
  */
 export function recordPartialDispatches(page: Page): PartialDispatch[] {
   const dispatches: PartialDispatch[] = []
+  const recordStated = (transport: PartialDispatch["transport"], url: string) => {
+    try {
+      const stated = new URL(url, "http://localhost")
+      if (!stated.searchParams.has("__force")) return
+      dispatches.push({
+        transport,
+        partials: stated.searchParams.get("__force"),
+        url,
+      })
+    } catch {}
+  }
   page.on("request", (req) => {
     const url = req.url()
-    if (url.includes("_.rsc")) {
-      try {
-        const u = new URL(url)
-        if (u.searchParams.get("live") === "1") return
-        if (!u.searchParams.has("partials")) return
-        dispatches.push({
-          transport: "rsc",
-          partials: u.searchParams.get("partials"),
-          url,
-        })
-      } catch {}
-      return
-    }
     if (url.includes("/__parton/channel")) {
       try {
         const envelope = JSON.parse(req.postData() ?? "") as {
-          frames?: Array<{ kind: string; url?: string }>
+          frames?: Array<{ kind: string; url?: string; frame?: string[] }>
         }
         for (const frame of envelope.frames ?? []) {
-          if (frame.kind !== "url" || !frame.url) continue
-          const stated = new URL(frame.url, "http://localhost")
-          if (!stated.searchParams.has("__force")) continue
-          dispatches.push({
-            transport: "channel",
-            partials: stated.searchParams.get("__force"),
-            url: frame.url,
-          })
+          if (frame.kind !== "url" || !frame.url || frame.frame) continue
+          recordStated("channel", frame.url)
         }
+      } catch {}
+      return
+    }
+    if (url.includes("/__parton/live")) {
+      try {
+        const statement = JSON.parse(req.postData() ?? "") as { url?: string }
+        if (statement.url) recordStated("attach", statement.url)
       } catch {}
     }
   })
@@ -223,14 +222,15 @@ export function recordPartialDispatches(page: Page): PartialDispatch[] {
 }
 
 /**
- * One FRAME navigation dispatch, on whichever transport carried it:
- * `"rsc"` — a discrete `_.rsc` request with `?__frame=&__frameUrl=`;
- * `"channel"` — a frame-scoped `url` frame on a `/__parton/channel`
- * envelope (an attached page states the frame URL and the response
- * lanes on the held stream).
+ * One FRAME navigation dispatch, on whichever carrier the channel
+ * routed it: `"channel"` — a frame-scoped `url` frame on a
+ * `/__parton/channel` envelope (the endpoint writes the session frame
+ * URL and the response lanes on the held stream); `"attach"` — a
+ * statement riding a `POST /__parton/live` body's `frames` intent (a
+ * pre-establishment fire).
  */
 export interface FrameDispatch {
-  transport: "rsc" | "channel"
+  transport: "channel" | "attach"
   /** Dotted frame key (`"search"`, `"chat-overlay"`). */
   frame: string
   /** The stated frame URL. */
@@ -239,26 +239,15 @@ export interface FrameDispatch {
 
 /**
  * Record every frame-navigation dispatch from `page`, across BOTH
- * transports — the frame twin of `recordPartialDispatches`: whether a
- * given frame nav rides the channel depends on whether the live
- * connection was established by then, so specs assert
- * transport-agnostically.
+ * carriers — the frame twin of `recordPartialDispatches`: whether a
+ * given frame nav rides an envelope or the attach it triggered depends
+ * on whether the live connection was established by then, so specs
+ * assert carrier-agnostically.
  */
 export function recordFrameDispatches(page: Page): FrameDispatch[] {
   const dispatches: FrameDispatch[] = []
   page.on("request", (req) => {
     const url = req.url()
-    if (url.includes("_.rsc")) {
-      try {
-        const u = new URL(url)
-        const frame = u.searchParams.get("__frame")
-        const frameUrl = u.searchParams.get("__frameUrl")
-        if (frame && frameUrl) {
-          dispatches.push({ transport: "rsc", frame, frameUrl })
-        }
-      } catch {}
-      return
-    }
     if (url.includes("/__parton/channel")) {
       try {
         const envelope = JSON.parse(req.postData() ?? "") as {
@@ -273,6 +262,22 @@ export function recordFrameDispatches(page: Page): FrameDispatch[] {
           })
         }
       } catch {}
+      return
+    }
+    if (url.includes("/__parton/live")) {
+      try {
+        const statement = JSON.parse(req.postData() ?? "") as {
+          frames?: Array<{ kind: string; url?: string; frame?: string[] }>
+        }
+        for (const frame of statement.frames ?? []) {
+          if (frame.kind !== "url" || !frame.url || !frame.frame) continue
+          dispatches.push({
+            transport: "attach",
+            frame: frame.frame.join("."),
+            frameUrl: frame.url,
+          })
+        }
+      } catch {}
     }
   })
   return dispatches
@@ -280,22 +285,17 @@ export function recordFrameDispatches(page: Page): FrameDispatch[] {
 
 /**
  * Replacement for `page.waitForLoadState("networkidle")` that
- * ignores the framework's live-update heartbeat connection.
+ * ignores the framework's held live connection.
  *
- * Why we can't use `networkidle`: `startLivePageHeartbeat()`
- * (mounted in the browser entry) keeps one `?streaming=1` RSC
- * long-poll connection open against the current URL for the
- * lifetime of the page. The network is never idle by design —
- * it's the channel for server-pushed updates.
+ * Why we can't use `networkidle`: the heartbeat's attach
+ * (`POST /__parton/live`) keeps one held stream open for the lifetime
+ * of the page. The network is never idle by design — it's the channel
+ * for server-pushed updates.
  *
- * What this waits for: every non-streaming RSC request (the
- * normal page-load / nav / partial-refetch / action flow)
- * finishes AND no new ones land for `quietMs`. Streaming
- * requests (`?streaming=1`) are excluded from the tracked set.
- *
- * Use this any place a test previously used
- * `page.waitForLoadState("networkidle")` to sync on "the
- * server-side response from my last action has applied."
+ * What this waits for: every action POST (`_.rsc` — the one discrete
+ * request kind) finishes AND no new ones land for `quietMs`.
+ * Refetches and navigations ride the held stream and produce no
+ * trackable request — sync on DOM state for those.
  */
 export async function waitForRscIdle(
   page: Page,
@@ -304,19 +304,10 @@ export async function waitForRscIdle(
   const quietMs = opts.quietMs ?? 300
   const timeout = opts.timeout ?? 10_000
 
-  const isTracked = (url: string): boolean => {
-    // RSC endpoints have a `_.rsc` suffix on the path. Filter out
-    // the heartbeat's streaming connection — it's intentionally
-    // long-lived and would prevent the idle window from ever
-    // settling.
-    if (!url.includes("_.rsc")) return false
-    try {
-      const u = new URL(url)
-      return u.searchParams.get("streaming") !== "1"
-    } catch {
-      return false
-    }
-  }
+  // Action POSTs carry the `_.rsc` path suffix; the held live stream
+  // is `/__parton/live` and intentionally long-lived, so it never
+  // enters the tracked set.
+  const isTracked = (url: string): boolean => url.includes("_.rsc")
 
   const inFlight = new Set<string>()
   let lastActivity = Date.now()
