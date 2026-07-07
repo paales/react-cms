@@ -53,8 +53,9 @@ import {
 import type { DemuxedLane } from "../fp-trailer-split.ts";
 import { PartialRoot, parton, type RenderArgs } from "../partial.tsx";
 import { clearRegistry } from "../partial-registry.ts";
+import { searchParam } from "../server-hooks.ts";
 
-const renders = { shared: 0, a: 0, b: 0, slow: 0 };
+const renders = { shared: 0, a: 0, b: 0, slow: 0, outer: 0, child: 0 };
 
 // The mid-render supersede's controllable stall — re-armed per test.
 let releaseSlow: () => void = () => {};
@@ -95,6 +96,37 @@ const NavSlow = parton(
 	{ match: "/nav-slow", selector: "nav-slow" },
 );
 
+// A nested wrapper + addressable child that reads a searchParam — the
+// fold-exclusion fixture. `#fold-outer` folds `#fold-child`'s deps, so
+// without the exclusion a `?x=` change on the child moves the wrapper's
+// fp and re-renders it; with the child force-refetched, the wrapper's
+// fold excludes it and the wrapper fp-skips.
+const FoldChild = parton(
+	function FoldChildRender(_: RenderArgs) {
+		renders.child++;
+		const x = searchParam("x") ?? "";
+		return <div data-fold-child>{`child:${x}:${renders.child}`}</div>;
+	},
+	{ selector: "fold-child" },
+);
+const FoldOuter = parton(
+	function FoldOuterRender(_: RenderArgs) {
+		renders.outer++;
+		return (
+			<div data-fold-outer>
+				{`outer:${renders.outer}`}
+				<FoldChild />
+			</div>
+		);
+	},
+	{ match: "/fold", selector: "fold-outer" },
+);
+const PageFold = (): ReactNode => (
+	<PartialRoot>
+		<FoldOuter />
+	</PartialRoot>
+);
+
 const PageNav = (): ReactNode => (
 	<PartialRoot>
 		<NavShared />
@@ -110,6 +142,8 @@ beforeEach(() => {
 	renders.a = 0;
 	renders.b = 0;
 	renders.slow = 0;
+	renders.outer = 0;
+	renders.child = 0;
 	armSlowGate();
 });
 
@@ -718,5 +752,98 @@ describe("the mirror stays honest across navigations", () => {
 		} finally {
 			_closeConnectionSession("nav-gate");
 		}
+	});
+});
+
+describe("the descendant fold excludes forced targets", () => {
+	it("a forced child's dep change does not re-render its fp-skipping ancestor", async () => {
+		const scope = freshLiveScope("fold-excl");
+		await withLiveDrive(
+			"http://localhost/fold?live=1",
+			PageFold,
+			scope,
+			async (h) => {
+				const first = await h.segments.next();
+				if (first.done || first.value.kind !== "payload")
+					throw new Error("expected payload segment 0");
+				const seg0 = await drainPayloadSegment(first.value);
+				expect(seg0).toContain("outer:1");
+				expect(seg0).toContain("child::1");
+				const conn = h.connectionId() ?? "";
+				await h.segments.next(); // initial lanes
+				expect(
+					await post(scope, {
+						connection: conn,
+						seq: 2,
+						frames: [{ kind: "ack", delivered: 1 }],
+					}),
+				).toBe(204);
+
+				// Force-refetch fold-child with ?x=1. The wrapper's fold now
+				// EXCLUDES the forced child, so its fp differs from seg0's (which
+				// folded the child) — a one-time mismatch re-renders the wrapper
+				// (over-fetch, never stale) and promotes the excluded fp.
+				expect(
+					await post(scope, {
+						connection: conn,
+						seq: 3,
+						frames: [
+							{
+								kind: "url",
+								url: "/fold?x=1&__force=fold-child",
+								intent: "push",
+							},
+						],
+					}),
+				).toBe(204);
+				const nav1 = await h.segments.next();
+				if (nav1.done || nav1.value.kind !== "payload")
+					throw new Error("expected the first refetch segment");
+				await drainPayloadSegment(nav1.value);
+				const lanes1 = await h.segments.next(); // reopened lanes (forced)
+				if (lanes1.done || lanes1.value.kind !== "lanes")
+					throw new Error("expected reopened lanes");
+				const laneIter1 = lanes1.value.lanes[Symbol.asyncIterator]();
+				const forced1 = await nextLane(laneIter1);
+				expect(forced1.partonId).toBe("fold-child");
+				await decodeLane(forced1);
+				expect(renders.outer).toBe(2);
+
+				// Force-refetch again with ?x=2. The wrapper's fp EXCLUDES the
+				// child, so x=1→x=2 does NOT move it — the mirror holds the
+				// excluded fp and the wrapper fp-skips to a placeholder
+				// (renders.outer stays 2). Only fold-child re-lanes fresh.
+				expect(
+					await post(scope, {
+						connection: conn,
+						seq: 4,
+						frames: [
+							{
+								kind: "url",
+								url: "/fold?x=2&__force=fold-child",
+								intent: "push",
+							},
+						],
+					}),
+				).toBe(204);
+				const nav2 = await h.segments.next();
+				if (nav2.done || nav2.value.kind !== "payload")
+					throw new Error("expected the second refetch segment");
+				const nav2Body = await drainPayloadSegment(nav2.value);
+				expect(nav2Body).toContain('"data-partial-id":"fold-outer"');
+				expect(nav2Body).not.toContain("outer:3");
+				expect(renders.outer).toBe(2);
+
+				const lanes2 = await h.segments.next();
+				if (lanes2.done || lanes2.value.kind !== "lanes")
+					throw new Error("expected the second reopened lanes");
+				const laneIter2 = lanes2.value.lanes[Symbol.asyncIterator]();
+				const forced2 = await nextLane(laneIter2);
+				expect(forced2.partonId).toBe("fold-child");
+				expect((await decodeLane(forced2)).bodyText).toContain("child:2:");
+
+				await h.shutdown("fold-outer");
+			},
+		);
 	});
 });

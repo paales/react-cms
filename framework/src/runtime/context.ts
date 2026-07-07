@@ -79,6 +79,14 @@ interface RequestStore {
    *  `url.toString()` + `new Request(...)` per segment — ~7% of CPU in
    *  the streaming case. */
   cachedOverride?: CachedOverride
+  /** The ids being FORCE-refetched on the current render — a selector
+   *  nav's `__force` targets, resolved to ids. The descendant fold
+   *  excludes these (and their subtrees) so an ancestor can fp-skip
+   *  while the forced target re-lanes independently (parent-valid,
+   *  child-invalid). Set by the segment driver around a navigation's
+   *  whole-tree segment render; absent on every other render (a full
+   *  fold). */
+  foldExclusionIds?: ReadonlySet<string> | null
   /** Per-request cell-write accounting for the deferred-commit
    *  decision. `total` counts every successful cell write made during
    *  this request; `deferred` counts those whose cell declared
@@ -416,6 +424,22 @@ export function _setCachedOverride(override: CachedOverride): void {
  *  or PartialRoot hasn't installed one yet (single-segment cold path). */
 export function _getCachedOverride(): CachedOverride | null {
   return requestContext.getStore()?.cachedOverride ?? null
+}
+
+/** Set the ids being force-refetched on the current render (a selector
+ *  nav's targets) — the descendant fold excludes them and their
+ *  subtrees. `null` clears it (a full fold). Called by the segment
+ *  driver around a navigation's whole-tree segment render. */
+export function _setFoldExclusionIds(ids: ReadonlySet<string> | null): void {
+  const store = requestContext.getStore()
+  if (store) store.foldExclusionIds = ids
+}
+
+/** The ids the descendant fold excludes on the current render, or
+ *  `null` when nothing is force-refetched (the common case — a full
+ *  fold). */
+export function _getFoldExclusionIds(): ReadonlySet<string> | null {
+  return requestContext.getStore()?.foldExclusionIds ?? null
 }
 
 /** Attach (or detach) the live connection's session to the request

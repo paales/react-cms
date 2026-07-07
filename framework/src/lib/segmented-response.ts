@@ -39,6 +39,7 @@ import {
 	_runWithWarmRequestScope,
 	_setCachedOverride,
 	_setConnectionSession,
+	_setFoldExclusionIds,
 	getRequest,
 	getScope,
 	setRequest,
@@ -1724,62 +1725,80 @@ async function driveLaneStream(
 		// statements' URLS are moot (the covering statement's stands),
 		// but their FORCES are not: a silent restatement with a disjoint
 		// target must not lose the earlier statement's refetch.
-		const forceLabels = new Set<string>();
-		while (true) {
-			const nav = takeConnectionNavigation(session);
-			if (nav === null) break;
-			const current = new URL(request.url);
-			const target = new URL(nav.url, current.origin);
-			// `__force` is the statement's one-shot overlay, never part of
-			// the request state: forced targets render as LANES below —
-			// isolated snapshot renders, the same path a discrete
-			// `?partials=` refetch takes — because a whole-tree render
-			// cannot force a target whose ANCESTOR fp-skips (the ancestor's
-			// fold doesn't move on a force, so its placeholder would cut
-			// the target out of the tree) or whose ancestor replays a byte
-			// cache.
-			for (const label of (target.searchParams.get("__force") ?? "")
-				.split(",")
-				.map((t) => t.trim())
-				.filter(Boolean)) {
-				forceLabels.add(label);
+		// Resolve `__force` selectors (+ torn unfulfilled forces) to the
+		// ids they hit on the current route: id match first, then label
+		// fan-out — the same narrowing the reopened forced lanes take.
+		const resolveForcedIds = (
+			labels: ReadonlySet<string>,
+			extra: readonly string[],
+		): Set<string> => {
+			const snapshots = _readSnapshotsForRoute(scope, routeKey);
+			const wanted = [...labels];
+			const ids = new Set<string>();
+			for (const id of extra) if (snapshots.has(id)) ids.add(id);
+			for (const name of wanted) if (snapshots.has(name)) ids.add(name);
+			for (const [id, snap] of snapshots) {
+				if (ids.has(id)) continue;
+				if (snap.labels.some((l) => wanted.includes(l))) ids.add(id);
 			}
-			target.searchParams.delete("__force");
-			setRequest(new Request(target, { headers: request.headers }));
-			request = getRequest();
-			routeKey = computeRouteKey(request.url);
-			session.routeKey = routeKey;
-			session.consumedNavSeq = nav.seq;
-			const outcome = await emitNavSegment();
-			if (outcome === "closed") return false;
-			if (outcome === "superseded") continue;
+			return ids;
+		};
+		const forceLabels = new Set<string>();
+		try {
+			while (true) {
+				const nav = takeConnectionNavigation(session);
+				if (nav === null) break;
+				const current = new URL(request.url);
+				const target = new URL(nav.url, current.origin);
+				// `__force` is the statement's one-shot overlay, never part of
+				// the request state: forced targets render as LANES below —
+				// isolated snapshot renders, the same path a discrete
+				// `?partials=` refetch takes. The whole-tree segment fp-skips
+				// them (and their subtrees) via the fold exclusion below, so a
+				// forced target's ancestor can answer with a placeholder while
+				// the forced lane re-renders it fresh.
+				for (const label of (target.searchParams.get("__force") ?? "")
+					.split(",")
+					.map((t) => t.trim())
+					.filter(Boolean)) {
+					forceLabels.add(label);
+				}
+				target.searchParams.delete("__force");
+				setRequest(new Request(target, { headers: request.headers }));
+				request = getRequest();
+				routeKey = computeRouteKey(request.url);
+				session.routeKey = routeKey;
+				session.consumedNavSeq = nav.seq;
+				// Exclude the forced targets (and their subtrees) from every
+				// ancestor's descendant fold on THIS segment render: the force
+				// re-lanes them independently, so their change must not move an
+				// ancestor's fp — the ancestor fp-skips, the forced lane covers
+				// the change (parent-valid, child-invalid).
+				if (forceLabels.size > 0 || unfulfilledForces.length > 0) {
+					_setFoldExclusionIds(resolveForcedIds(forceLabels, unfulfilledForces));
+				}
+				const outcome = await emitNavSegment();
+				if (outcome === "closed") return false;
+				if (outcome === "superseded") continue;
+			}
+		} finally {
+			// A later invalidation lane or reconcile on this connection folds
+			// in full — the exclusion is one nav segment's concern only.
+			_setFoldExclusionIds(null);
 		}
 		lastFullSegmentAt = Date.now();
 		since = _currentTs();
 		if (!enqueue(nextMarker)) return false;
 		if (!enqueue(lanesMarker)) return false;
 		// The statement's forced targets lane on the reopened region:
-		// resolved against the new route's just-committed snapshots (id
-		// match first, then label fan-out) and rendered EXPLICIT
-		// (`forcedLaneIds` — the lane state's explicitIds), so fp-skip
-		// and the defer gate both yield: a refetch target must
-		// re-render, never match-and-skip. Torn-but-unfulfilled forces
-		// re-lane alongside (their id must still snapshot on the new
-		// route — a real route change legitimately drops them).
+		// rendered EXPLICIT (`forcedLaneIds` — the lane state's
+		// explicitIds), so fp-skip and the defer gate both yield: a
+		// refetch target must re-render, never match-and-skip.
+		// Torn-but-unfulfilled forces re-lane alongside (their id must
+		// still snapshot on the new route — a real route change
+		// legitimately drops them).
 		if (forceLabels.size > 0 || unfulfilledForces.length > 0) {
-			const snapshots = _readSnapshotsForRoute(scope, routeKey);
-			const wanted = [...forceLabels];
-			const ids = new Set<string>();
-			for (const name of wanted) {
-				if (snapshots.has(name)) ids.add(name);
-			}
-			for (const [id, snap] of snapshots) {
-				if (ids.has(id)) continue;
-				if (snap.labels.some((l) => wanted.includes(l))) ids.add(id);
-			}
-			for (const id of unfulfilledForces) {
-				if (snapshots.has(id)) ids.add(id);
-			}
+			const ids = resolveForcedIds(forceLabels, unfulfilledForces);
 			if (ids.size > 0) {
 				enterRequestRegistry(routeKey, "cache");
 				for (const id of ids) {

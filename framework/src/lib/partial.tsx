@@ -62,6 +62,7 @@ import {
   _getAttachStatement,
   _getCachedOverride,
   _getConnectionAckedFps,
+  _getFoldExclusionIds,
   _setCachedOverride,
   getRequest,
   parseCookies,
@@ -760,6 +761,15 @@ function computeDescendantFold(ancestorId: string): string {
 
   const parts: string[] = []
   for (const [descId, snap] of bucket) {
+    // A descendant being force-refetched on this render (a selector nav's
+    // targets) — or one under such a target — refetches independently, so
+    // its change does NOT need to invalidate this ancestor's fp-skip: the
+    // force is the "child-invalid" path, this fold is "parent-valid"
+    // safety. Excluding it lets the ancestor skip while the forced target
+    // re-lanes. Scoped to targets STRICTLY BELOW the ancestor: a force AT
+    // the ancestor (or above) leaves its own subtree folded, so a later
+    // dep change still moves its fp.
+    if (excludedByForce(ancestorId, descId, snap.parentPath)) continue
     let contribution = scratch.contributions.get(descId)
     if (contribution === undefined) {
       contribution = descendantContribution(descId, snap)
@@ -771,6 +781,32 @@ function computeDescendantFold(ancestorId: string): string {
   // keeps it deterministic across registry iteration order changes.
   parts.sort()
   return `|desc=${hash(parts.join(","))}`
+}
+
+/**
+ * True when `descId` is force-refetched on this render, or sits under a
+ * forced target that is a STRICT descendant of `ancestorId` — in which
+ * case it must NOT fold into `ancestorId`'s fp (the force re-lanes it
+ * independently, so the ancestor can fp-skip). A force AT `ancestorId`
+ * (or above it) is deliberately NOT an exclusion: the ancestor's own
+ * subtree stays folded so a later dep change still moves its fp.
+ */
+function excludedByForce(
+  ancestorId: string,
+  descId: string,
+  parentPath: readonly string[],
+): boolean {
+  const forced = _getFoldExclusionIds()
+  if (forced === null || forced.size === 0) return false
+  if (forced.has(descId)) return true
+  // Only forced targets BELOW the ancestor exclude — walk the path from
+  // just past the ancestor down to (but not including) descId.
+  const start = parentPath.indexOf(ancestorId)
+  if (start < 0) return false
+  for (let i = start + 1; i < parentPath.length; i++) {
+    if (forced.has(parentPath[i])) return true
+  }
+  return false
 }
 
 /**
