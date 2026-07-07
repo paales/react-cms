@@ -309,6 +309,7 @@ export interface UrlFrame {
 	kind: "url";
 	url: string;
 	intent: "push" | "replace" | "silent";
+	streaming?: boolean;
 	frame?: string[];
 }
 
@@ -500,6 +501,7 @@ function decodeUrlFrameShape(f: Record<string, unknown>): UrlFrame | null {
 		kind: "url",
 		url: f.url,
 		intent: f.intent,
+		...(f.streaming === true ? { streaming: true } : {}),
 		...(framePath ? { frame: framePath } : {}),
 	};
 }

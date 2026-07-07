@@ -550,7 +550,12 @@ export function _channelNavigate(init: {
 	// (click time), before any flush, or a pre-nav delivery landing in
 	// the reservation window would still commit.
 	navPoint = envelopeSeq + 1;
-	pendingNavFrame = { kind: "url", url: init.url, intent: init.intent };
+	pendingNavFrame = {
+		kind: "url",
+		url: init.url,
+		intent: init.intent,
+		...(init.streaming === true ? { streaming: true } : {}),
+	};
 	if (_getLiveConnectionId() !== null) {
 		scheduleChannelFlush();
 	} else if (!_requestAttachNow()) {

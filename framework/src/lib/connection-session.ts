@@ -126,6 +126,7 @@ export interface PendingNavigation {
 	/** Target as path + search, same-origin-validated at the endpoint. */
 	readonly url: string;
 	readonly intent: UrlFrame["intent"];
+	readonly streaming?: true;
 	/** Envelope seq of the statement — the client's navigation point,
 	 *  and the AS-OF value every post-consume emission carries. */
 	readonly seq: number;
@@ -368,6 +369,9 @@ export interface ConnectionSession {
 	 *  at consume time, never at latch: an emission between latch and
 	 *  consume still rendered the pre-navigation state and must say so. */
 	consumedNavSeq: number;
+	/** Commit-mode wish of the consumed window url statement. Forced
+	 *  window lanes announce early only when this is true. */
+	consumedNavStreaming: boolean;
 }
 
 /** Per-id bound on every mirror layer's fp / matchKey sets — the
@@ -449,6 +453,7 @@ export function _openConnectionSession(
 		voidSeqs: new Set(),
 		statedNavSeq: 0,
 		consumedNavSeq: 0,
+		consumedNavStreaming: false,
 	};
 	sessions.set(id, session);
 	return session;
@@ -677,6 +682,7 @@ function applyUrlFrame(
 	session.pendingNav = {
 		url: target.pathname + target.search,
 		intent: frame.intent,
+		...(frame.streaming === true ? { streaming: true } : {}),
 		seq,
 	};
 }

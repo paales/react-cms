@@ -1142,6 +1142,24 @@ async function driveLaneStream(
 				// live) so the client commits progressively; a normal lane
 				// announces at drain, just before its `muxend`.
 				let announcedSeq: number | null = null;
+				let bufferUntilDrain =
+					runtime.forced &&
+					navSeq === undefined &&
+					session?.consumedNavStreaming !== true;
+				const bufferedFrames: Uint8Array[] = [];
+				const flushBufferedFrames = async (): Promise<boolean> => {
+					if (bufferedFrames.length === 0) {
+						bufferUntilDrain = false;
+						return true;
+					}
+					for (const frame of bufferedFrames) {
+						if (!(await awaitDemand(runtime))) return false;
+						if (!enqueue(frame)) return false;
+					}
+					bufferedFrames.length = 0;
+					bufferUntilDrain = false;
+					return true;
+				};
 				// A window-force lane (a selector nav's `__force` target, not a
 				// frame lane — those carry a `navSeq`) announces its delivery seq
 				// EARLY: a plain seq entry before the body, so the client holds it
@@ -1152,7 +1170,11 @@ async function driveLaneStream(
 				// Frame lanes and producers keep their own `muxlive` announcement:
 				// setting the seq here would suppress it (`maybeAnnounceProducer`
 				// gates on `announcedSeq`).
-				if (runtime.forced && navSeq === undefined && session !== null) {
+				if (
+					runtime.forced &&
+					navSeq === undefined &&
+					session?.consumedNavStreaming === true
+				) {
 					announcedSeq = assignedSeq ?? ++session.deliverySeq;
 					if (
 						!enqueue(
@@ -1162,10 +1184,11 @@ async function driveLaneStream(
 						return;
 				}
 				let wroteBytes = false;
-				const maybeAnnounceProducer = (): boolean => {
+				const maybeAnnounceProducer = async (): Promise<boolean> => {
 					if (announcedSeq !== null || session === null) return true;
 					if (!wroteBytes || !probe.live()) return true;
 					runtime.producer = true;
+					if (bufferUntilDrain && !(await flushBufferedFrames())) return false;
 					announcedSeq = assignedSeq ?? ++session.deliverySeq;
 					return enqueue(
 						muxLiveEntry(id, announcedSeq, session.consumedNavSeq, navSeq),
@@ -1221,26 +1244,30 @@ async function driveLaneStream(
 								// propagates the wait into the lane's Flight stream, so a
 								// stalled reader holds at most one frame per lane
 								// server-side instead of every wake's full payload.
-								if (
-									!(await awaitDemand(runtime)) ||
-									tearingLanesForNav ||
-									runtime.cancelled
-								) {
-									await reader.cancel().catch(() => {});
-									return runtime.cancelled || tearingLanesForNav
-										? "torn"
-										: "closed";
-								}
-								if (!enqueue(muxFrame(id, value))) {
-									await reader.cancel().catch(() => {});
-									return "closed";
+								if (bufferUntilDrain) {
+									bufferedFrames.push(muxFrame(id, value));
+								} else {
+									if (
+										!(await awaitDemand(runtime)) ||
+										tearingLanesForNav ||
+										runtime.cancelled
+									) {
+										await reader.cancel().catch(() => {});
+										return runtime.cancelled || tearingLanesForNav
+											? "torn"
+											: "closed";
+									}
+									if (!enqueue(muxFrame(id, value))) {
+										await reader.cancel().catch(() => {});
+										return "closed";
+									}
 								}
 								wroteBytes = true;
 							}
 							// Producer announcement — checked at every pump step so
 							// the mark lands on the wire before the render's producer
 							// await stalls the body.
-							if (!maybeAnnounceProducer()) {
+							if (!(await maybeAnnounceProducer())) {
 								await reader.cancel().catch(() => {});
 								return "closed";
 							}
@@ -1288,6 +1315,12 @@ async function driveLaneStream(
 					if (runtime.cancelled && wroteBytes && !closed) {
 						enqueue(muxEndFrame(id));
 					}
+					if (assignedSeq !== null && announcedSeq === null) {
+						session?.voidSeqs.add(assignedSeq);
+					}
+					return;
+				}
+				if (!(await flushBufferedFrames())) {
 					if (assignedSeq !== null && announcedSeq === null) {
 						session?.voidSeqs.add(assignedSeq);
 					}
@@ -1636,10 +1669,11 @@ async function driveLaneStream(
 	// nav-latch arm on the session's wake set (disposer-registered, one
 	// per emission — the wake-arm release invariant), the reader is
 	// cancelled (aborting the Flight render), and the caller consumes
-	// the newer statement. The truncated segment is closed by the next
-	// `next` delimiter; the client drains it without decoding past the
-	// as-of check, and its consumed-not-recorded seq stays honest via
-	// the processed-drop ack.
+	// the newer statement. Non-streaming navs buffer their Flight bytes
+	// until drain, so a superseded delivery has only its early seq entry
+	// on the wire; the next `next` delimiter closes an empty, stale
+	// segment and the client consumes its processed-drop ack without
+	// handing React a partial payload.
 	const emitNavSegment = async (): Promise<"done" | "superseded" | "closed"> => {
 		if (!enqueue(nextMarker)) return "closed";
 		let deliverySeq: number | null = null;
@@ -1651,6 +1685,18 @@ async function driveLaneStream(
 				return "closed";
 		}
 		const consumedSeq = session?.consumedNavSeq ?? 0;
+		const bufferUntilDrain =
+			session !== null && session.consumedNavStreaming !== true;
+		const bufferedSegment: Uint8Array[] = [];
+		const flushBufferedSegment = async (): Promise<boolean> => {
+			if (!bufferUntilDrain || bufferedSegment.length === 0) return true;
+			for (const chunk of bufferedSegment) {
+				if (!(await awaitDemand())) return false;
+				if (!enqueue(chunk)) return false;
+			}
+			bufferedSegment.length = 0;
+			return true;
+		};
 		const supersededBy = (): boolean =>
 			session !== null &&
 			session.pendingNav !== null &&
@@ -1691,13 +1737,17 @@ async function driveLaneStream(
 				const { done, value } = winner.r;
 				if (done) break;
 				if (value && value.byteLength > 0) {
-					if (!(await awaitDemand())) {
-						await reader.cancel().catch(() => {});
-						return "closed";
-					}
-					if (!enqueue(value)) {
-						await reader.cancel().catch(() => {});
-						return "closed";
+					if (bufferUntilDrain) {
+						bufferedSegment.push(value);
+					} else {
+						if (!(await awaitDemand())) {
+							await reader.cancel().catch(() => {});
+							return "closed";
+						}
+						if (!enqueue(value)) {
+							await reader.cancel().catch(() => {});
+							return "closed";
+						}
 					}
 				}
 			}
@@ -1706,6 +1756,7 @@ async function driveLaneStream(
 			reader.releaseLock();
 		}
 		if (supersededBy()) return "superseded";
+		if (!(await flushBufferedSegment())) return "closed";
 		if (!(await awaitDemand())) return "closed";
 		if (!enqueue(settledMarker)) return "closed";
 		if (session !== null) session.firstDeliverySettledAt ??= Date.now();
@@ -1796,6 +1847,7 @@ async function driveLaneStream(
 				routeKey = computeRouteKey(request.url);
 				session.routeKey = routeKey;
 				session.consumedNavSeq = nav.seq;
+				session.consumedNavStreaming = nav.streaming === true;
 				// Exclude the forced targets (and their subtrees) from every
 				// ancestor's descendant fold on THIS segment render: the force
 				// re-lanes them independently, so their change must not move an
