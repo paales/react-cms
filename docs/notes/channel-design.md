@@ -110,7 +110,10 @@ Frame kinds, v1:
   Moves the session's cached mirror from optimistic (promoted at emit)
   to evidence-based (advanced at ack). An unacked window past a
   threshold is backpressure: the driver coalesces lanes for that
-  client instead of streaming ahead.
+  client instead of streaming ahead. Cadence: acks are passengers on
+  envelopes other statements justify; the client drives one only for
+  a connection's first ack and at half the window (threshold-driven),
+  never per commit.
 - `telemetry` — viewport size, scroll vector, timing marks. Lossy
   class (see below). First consumer: predictive chunk warming in the
   website world; second: the analytics sink apps currently buy from

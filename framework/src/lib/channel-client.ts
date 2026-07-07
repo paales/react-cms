@@ -35,8 +35,13 @@
  *     stream's emissions carry (`seq` entries) and the seqs the merge
  *     layer COMMITS (the browser entry's lane/segment commit hooks),
  *     and acks the highest contiguously committed value upstream via
- *     an internal producer — piggybacked on any pending envelope, else
- *     the same rAF-coalesced flush every statement rides (no timers).
+ *     an internal producer. The ack is a PASSENGER, never a driver:
+ *     a watermark advance marks the producer dirty and any envelope
+ *     other frames justify carries the current value for free —
+ *     except the connection's FIRST committed delivery (the prompt
+ *     duplex proof the degrade machinery times) and the unacked count
+ *     crossing `ACK_FLUSH_THRESHOLD`, which request the same
+ *     rAF-coalesced flush every statement rides (no timers).
  *   - **The reliable class + retransmit.** Frames from producers
  *     declaring `reliable: true` are buffered per envelope (with the
  *     envelope's seq) until the downstream `applied` marker covers
@@ -59,6 +64,7 @@ import {
 	CHANNEL_ENDPOINT,
 	type ChannelEnvelope,
 	type ChannelFrame,
+	UNACKED_DELIVERY_WINDOW,
 } from "./channel-protocol.ts";
 import {
 	TAG_CONNECTION_ID,
@@ -147,6 +153,17 @@ let deliveredWatermark = 0;
 const deliveredOutOfOrder = new Set<number>();
 /** The watermark value last carried on a collected ack frame. */
 let lastAckCollected = 0;
+/** Unacked-commit count at which the transport DRIVES a flush for the
+ *  ack's own sake — half the server's backpressure window, so a client
+ *  under sustained lane traffic acks once per threshold crossing and
+ *  the window always keeps 2× headroom. Below the threshold the ack is
+ *  a PASSENGER: the watermark rides whatever envelope other statements
+ *  justify, because every envelope costs the browser's full Cookie
+ *  header (~3.5–4.5KB under a commerce cookie jar — [[channel]]'s cost
+ *  section) and no consumer of the ack needs per-commit resolution:
+ *  the mirror's hot layer is the OPTIMISTIC skip-set, and the window
+ *  only needs freeing well before it fills. */
+const ACK_FLUSH_THRESHOLD = UNACKED_DELIVERY_WINDOW / 2;
 /** An ack frame for the CURRENT connection has been delivered (its
  *  envelope answered 204). Until it has, an ack-carrying envelope's
  *  failure means the connection never acked once — the degrade
@@ -254,8 +271,14 @@ export function _segmentDeliverySeq(tag: string, body: Uint8Array): number | nul
 	return Number.isFinite(seq) ? seq : null;
 }
 
-/** Record a committed delivery and schedule the coalesced ack when the
- *  contiguous frontier advanced. */
+/** Record a committed delivery. A contiguous-frontier advance leaves
+ *  the ack producer dirty and nothing more — a PASSENGER: any flush
+ *  other frames justify (visibility statements, detach, future kinds)
+ *  collects the current watermark for free. Exactly two advances drive
+ *  a flush of their own, on the normal rAF-coalesced path (no timers):
+ *  the connection's FIRST committed delivery — the prompt duplex proof
+ *  both sides' degrade machinery times — and the unacked count
+ *  crossing `ACK_FLUSH_THRESHOLD`. */
 function commitDelivery(seq: number): void {
 	if (seq <= deliveredWatermark) return;
 	if (seq === deliveredWatermark + 1) {
@@ -263,10 +286,12 @@ function commitDelivery(seq: number): void {
 		while (deliveredOutOfOrder.delete(deliveredWatermark + 1)) {
 			deliveredWatermark += 1;
 		}
-		// Piggyback on any pending envelope, else ride the transport's
-		// own rAF batch — the ack producer contributes iff the watermark
-		// moved past the last collected value. No timers.
-		if (deliveredWatermark > lastAckCollected) scheduleChannelFlush();
+		if (
+			lastAckCollected === 0 ||
+			deliveredWatermark - lastAckCollected >= ACK_FLUSH_THRESHOLD
+		) {
+			scheduleChannelFlush();
+		}
 		return;
 	}
 	deliveredOutOfOrder.add(seq);
@@ -300,9 +325,11 @@ export function _laneDeliveryDropped(partonId: string): void {
 
 /** The transport's own ack producer — cumulative committed delivery
  *  seq, contributed whenever the watermark advanced past the last
- *  collected value. Loss-tolerant: a lost ack is subsumed by the next
- *  one; a failed FIRST ack is the degrade signal (handled in `flush`,
- *  which sees the whole envelope's fate). */
+ *  collected value. A passenger on whatever envelope flushes (the two
+ *  advances that drive one live at `commitDelivery`). Loss-tolerant: a
+ *  lost ack is subsumed by the next one; a failed FIRST ack is the
+ *  degrade signal (handled in `flush`, which sees the whole envelope's
+ *  fate). */
 const ackProducer: ChannelProducer = {
 	collect(connection: string | null): ChannelFrame | null {
 		if (connection === null) return null;

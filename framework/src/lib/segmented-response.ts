@@ -49,6 +49,7 @@ import {
 	_registryEpoch,
 } from "../runtime/invalidation-registry.ts";
 import { getSessionId } from "../runtime/session.ts";
+import { UNACKED_DELIVERY_WINDOW as PROTOCOL_UNACKED_DELIVERY_WINDOW } from "./channel-protocol.ts";
 import {
 	_closeConnectionSession,
 	_openConnectionSession,
@@ -122,16 +123,20 @@ export function _setKeepaliveMs(ms?: number): void {
  * the client never committed (a torn downstream, a frozen proxy
  * buffer).
  *
- * 64 because both quantities it bounds stay inside the soak budget
- * (bench/README § soak — ~20KB/connection is the mirror's planning
- * number): the per-seq `pendingDeliveries` records are a few `(id,fp)`
- * pairs each (~100–200B), so a full window pends ~10KB, and a healthy
- * client acks cumulatively once per RTT (rAF-coalesced, one envelope
- * in flight), so at ~100 lanes/s and a 300ms RTT steady state sits an
- * order of magnitude below the cap — a healthy connection never grazes
- * it.
+ * The default is the protocol's `UNACKED_DELIVERY_WINDOW` (64) because
+ * both quantities it bounds stay inside the soak budget (bench/README
+ * § soak — ~20KB/connection is the mirror's planning number): the
+ * per-seq `pendingDeliveries` records are a few `(id,fp)` pairs each
+ * (~100–200B), so a full window pends ~10KB. The client acks LAZILY —
+ * the watermark is a passenger on envelopes other statements justify,
+ * and self-drives a flush only when its unacked count crosses
+ * `ACK_FLUSH_THRESHOLD` (half this window; [[channel-client]]) — so
+ * under sustained lane traffic the unacked count saws between zero and
+ * ~half the window plus one RTT of deliveries: 2× headroom by
+ * construction. Only a client that stopped committing what the kernel
+ * swallowed fills it.
  */
-const DEFAULT_UNACKED_DELIVERY_WINDOW = 64;
+const DEFAULT_UNACKED_DELIVERY_WINDOW = PROTOCOL_UNACKED_DELIVERY_WINDOW;
 
 let UNACKED_DELIVERY_WINDOW = DEFAULT_UNACKED_DELIVERY_WINDOW;
 

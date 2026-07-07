@@ -49,6 +49,16 @@ export const CHANNEL_ENDPOINT = "/__parton/channel";
  *  body's shape decides nothing. */
 export const ATTACH_HEADER = "x-parton-attach";
 
+/** Max delivery seqs a connection may have in flight past the client's
+ *  cumulative ack before the driver stops opening lanes — the server's
+ *  backpressure gate (sizing rationale at [[segmented-response]]'s
+ *  window). Protocol-level because BOTH sides size against it: the
+ *  client's self-driven ack cadence (`ACK_FLUSH_THRESHOLD` in
+ *  [[channel-client]], half this window) must free the gate well
+ *  before it fills, so the number the cadence derives from and the
+ *  number the gate enforces are one constant. */
+export const UNACKED_DELIVERY_WINDOW = 64;
+
 /**
  * The attach statement — the full client statement presented when a
  * live connection opens, as the attach POST's JSON body:

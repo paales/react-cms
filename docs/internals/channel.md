@@ -205,8 +205,27 @@ Downstream delivery stops being assumed the moment a session opens:
 - **The `ack` frame.** The transport acks the highest CONTIGUOUSLY
   committed seq (lanes commit concurrently, so out-of-order commits
   wait for their gap to fill) via an internal producer on the
-  standard producer contract — piggybacked on any pending envelope,
-  else the same rAF-coalesced flush every statement rides. No timers.
+  standard producer contract. The ack is a PASSENGER, never a
+  driver: a watermark advance marks the producer dirty and nothing
+  more — any envelope other statements justify (visibility flips,
+  detach, future kinds) collects the current watermark for free.
+  Exactly two advances drive a flush of their own, on the same
+  rAF-coalesced path every statement rides (no timers): the
+  connection's FIRST committed delivery — the prompt duplex proof
+  both sides' degrade machinery times — and the unacked count
+  crossing `ACK_FLUSH_THRESHOLD` (half the server's
+  `UNACKED_DELIVERY_WINDOW`, one shared protocol constant), so a
+  client under sustained lane traffic acks once per ~32 commits and
+  the window always keeps 2× headroom. The third moment an ack
+  could seem due — attach — owes nothing: delivery seqs are
+  per-connection, so a fresh connection opens with zero ack debt
+  (the attach manifest is the durable evidence; the `applied` field
+  covers the separate upstream timeline). The cadence is a cost
+  rule: every envelope carries the browser's full Cookie header
+  (§Telemetry's numbers — ~3.5–4.5 KB, >90 % cookie under a
+  commerce jar), and no consumer of the ack needs per-commit
+  resolution — the mirror's hot layer is the OPTIMISTIC skip-set,
+  and the window only needs freeing well before it fills.
 - **The `applied` marker.** The mirror image of the ack: after an
   envelope applies, the driver's next wake ships the session's
   highest applied upstream seq as an `applied` entry (once per
@@ -447,8 +466,10 @@ producer's statement and the envelope on the wire:
   `channel-acks.rsc.test.tsx` (delivery-seq emission ordering across
   segments + lanes, the ack watermark + acked-layer fold, the
   `applied` marker + duplicate-envelope convergence, the attach
-  `applied` seed, window-exceeded coalescing, the never-acked
-  degrade + the acking client that never degrades, the reconcile
+  `applied` seed, window-exceeded coalescing, the window vs the lazy
+  cadence — threshold-cadence steady state never gates, a silent
+  client fills the window and one cumulative ack frees it — the
+  never-acked degrade + the acking client that never degrades, the reconcile
   cadence, mirror layering: flip statements superseding the acked
   layer and the acked-fallback verdict),
   `live-catchup.rsc.test.tsx` (the attach statement: anchor catch-up,
@@ -460,9 +481,10 @@ producer's statement and the envelope on the wire:
   warm-vs-cold flip latency, the per-park cap, the window skip).
 - node tier: `channel-client.test.ts` (coalescing, page-lifetime seq,
   serialization, the fallback signal, pagehide detach),
-  `channel-client-acks.test.ts` (contiguous commit watermark, ack
-  coalescing + piggyback, dropped-lane attribution, the reliable
-  buffer's prune/retransmit assembly, the first-ack degrade mark),
+  `channel-client-acks.test.ts` (contiguous commit watermark, the
+  passenger policy + its two driving flushes — first ack, threshold
+  crossing — dropped-lane attribution, the reliable buffer's
+  prune/retransmit assembly, the first-ack degrade mark),
   `channel-telemetry.test.ts` (the lossy producer: newest-wins, no
   self-scheduled traffic, drop on fail, never buffered; the strict
   decoder), `attach-dispatch.test.ts` (statement decoder grammar

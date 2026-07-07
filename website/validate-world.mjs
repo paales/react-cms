@@ -117,6 +117,13 @@ try {
       liveFires.push({ method: r.method(), post: r.postData() ?? "" })
     }
   })
+  // Upstream envelope beacons, timestamped — every one carries the full
+  // Cookie header, so their CADENCE is a cost the quiet-window check
+  // budgets below.
+  const channelPosts = []
+  page.on("request", (r) => {
+    if (r.method() === "POST" && r.url().includes("/__parton/channel")) channelPosts.push(Date.now())
+  })
   cdp.on("Network.dataReceived", (e) => {
     if (liveRequestIds.has(e.requestId)) liveChunks.push({ t: Date.now(), n: e.dataLength })
   })
@@ -294,6 +301,17 @@ try {
   const quietBytes = liveBytesSince(quietStart)
   check(quietBytes < 600_000, "parked chunks stay off the live stream", `${Math.round(quietBytes / 1024)}KB over 6s (budget 600KB)`)
   timing("quiet-window live bytes", quietBytes)
+  // Acks are passengers: at rest — no flips, no telemetry — the only
+  // envelopes the page may DRIVE are threshold acks, one per
+  // ACK_FLUSH_THRESHOLD (32) committed lane deliveries. Budget: the
+  // ~dozen chunks laning at this position pulse every ~2.4s on average
+  // (base 0.4–4.4s, mean jitter 1.0) ≈ 12/2.4 ≈ 5 commits/s ≈ 30
+  // commits over the 6s window → ⌈30/32⌉ = 1 driven ack, +1 for an
+  // unacked counter straddling the window edge, +2 headroom for a hot
+  // pulse neighborhood = 4. An ack-only POST per commit batch (the
+  // per-advance defect) lands in the tens and fails this.
+  const quietPosts = channelPosts.filter((t) => t >= quietStart).length
+  check(quietPosts <= 4, "upstream beacons at threshold cadence in quiet window", `${quietPosts} channel POSTs over 6s (budget 4)`)
   const redFlashes = await page.evaluate(() => window.__redFlashes)
   check(redFlashes === 0, "no red mount-flashes at rest", `${redFlashes} in 6s`)
   const rest = await pulsesAdvance(5000)

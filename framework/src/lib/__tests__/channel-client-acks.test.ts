@@ -6,8 +6,13 @@
  *      chain order; the ack producer contributes the highest
  *      CONTIGUOUSLY committed seq (out-of-order commits wait for the
  *      gap to fill), coalesced — one cumulative frame per flush;
- *   2. the ack piggybacks on any pending statement's envelope — no
- *      envelope of its own when another producer is firing anyway;
+ *   2. the ack is a PASSENGER, never a driver: past the connection's
+ *      delivered first ack, a watermark advance flushes NOTHING of its
+ *      own — the current watermark rides any envelope other statements
+ *      justify. Exactly two advances drive a flush: the connection's
+ *      FIRST committed delivery (the prompt duplex proof), and the
+ *      unacked count crossing ACK_FLUSH_THRESHOLD — half the server's
+ *      backpressure window, so steady state keeps 2× headroom;
  *   3. a DROPPED lane (stale-page guard, torn decode) consumes its
  *      queued seq without recording it, so the watermark stalls at
  *      the drop and later commits stay correctly attributed;
@@ -37,8 +42,17 @@ import {
 	registerChannelProducer,
 	scheduleChannelFlush,
 } from "../channel-client.ts"
-import type { ChannelEnvelope, ChannelFrame, VisibleFrame } from "../channel-protocol.ts"
+import {
+	type ChannelEnvelope,
+	type ChannelFrame,
+	UNACKED_DELIVERY_WINDOW,
+	type VisibleFrame,
+} from "../channel-protocol.ts"
 import { _getLiveConnectionId } from "../partial-client-state.ts"
+
+// The transport's driving cadence, by its own derivation: half the
+// server's backpressure window.
+const ACK_FLUSH_THRESHOLD = UNACKED_DELIVERY_WINDOW / 2
 
 let rafQueue: FrameRequestCallback[] = []
 function raf(): void {
@@ -106,8 +120,9 @@ describe("delivery tracking + the ack producer", () => {
 		await flushOnce()
 		expect(fetchCalls).toHaveLength(0)
 
-		// p1 commits — the frontier reaches 2 through the filled gap; ONE
-		// cumulative ack rides one envelope.
+		// p1 commits — the frontier reaches 2 through the filled gap; the
+		// connection's FIRST committed delivery drives ONE flush, and the
+		// cumulative ack rides it.
 		_laneDeliveryCommitted("p1")
 		await flushOnce()
 		expect(fetchCalls).toHaveLength(1)
@@ -130,6 +145,101 @@ describe("delivery tracking + the ack producer", () => {
 		expect(sentEnvelopes().map((e) => e.frames)).toEqual([
 			[{ kind: "ack", delivered: 3 }],
 		])
+	})
+
+	it("the first committed delivery drives a prompt flush of its own — the duplex proof", async () => {
+		_channelEstablished("c1")
+		expect(rafQueue).toHaveLength(0)
+		laneSeqEntry("p", 1)
+		_laneDeliveryCommitted("p")
+		// The commit alone scheduled the flush — no producer, no manual
+		// request. The degrade machinery on both sides times exactly this
+		// promptness (FIRST_ACK_DEADLINE_MS server-side, the sticky client
+		// degrade on the envelope's failure).
+		expect(rafQueue).toHaveLength(1)
+		raf()
+		await settle()
+		expect(sentEnvelopes().map((e) => e.frames)).toEqual([
+			[{ kind: "ack", delivered: 1 }],
+		])
+	})
+
+	it("past the delivered first ack, a watermark advance is a passenger — no flush of its own", async () => {
+		_channelEstablished("c1")
+		laneSeqEntry("p", 1)
+		_laneDeliveryCommitted("p")
+		await flushOnce()
+		expect(fetchCalls).toHaveLength(1)
+
+		// A commit with nothing else to say sends NOTHING: no rAF is
+		// scheduled, no envelope fires — the advance only marks the ack
+		// producer dirty.
+		laneSeqEntry("p", 2)
+		_laneDeliveryCommitted("p")
+		expect(rafQueue).toHaveLength(0)
+		await settle()
+		expect(fetchCalls).toHaveLength(1)
+
+		// A statement flush (the visibility controller's schedule is this
+		// exact call) picks the current watermark up for free.
+		const statement: VisibleFrame = {
+			kind: "visible",
+			changed: ["a"],
+			visible: ["a"],
+			cached: [],
+		}
+		let pending: VisibleFrame | null = statement
+		registerChannelProducer({
+			collect: (conn) => {
+				if (conn === null || pending === null) return null
+				const frame = pending
+				pending = null
+				return frame
+			},
+			deliveryFailed: vi.fn(),
+		})
+		await flushOnce()
+		expect(fetchCalls).toHaveLength(2)
+		expect(sentEnvelopes()[1].frames).toEqual([
+			{ kind: "ack", delivered: 2 },
+			statement,
+		])
+	})
+
+	it("the unacked count crossing the threshold drives one flush with the cumulative ack", async () => {
+		_channelEstablished("c1")
+		laneSeqEntry("p", 1)
+		_laneDeliveryCommitted("p")
+		await flushOnce()
+		expect(fetchCalls).toHaveLength(1)
+
+		// Sustained lane traffic below the threshold: every commit is a
+		// passenger, nothing fires.
+		for (let seq = 2; seq <= ACK_FLUSH_THRESHOLD; seq++) {
+			laneSeqEntry("p", seq)
+			_laneDeliveryCommitted("p")
+		}
+		expect(rafQueue).toHaveLength(0)
+		await settle()
+		expect(fetchCalls).toHaveLength(1)
+
+		// The crossing commit drives the flush; the ack is cumulative —
+		// one envelope covers the whole run.
+		laneSeqEntry("p", ACK_FLUSH_THRESHOLD + 1)
+		_laneDeliveryCommitted("p")
+		expect(rafQueue).toHaveLength(1)
+		raf()
+		await settle()
+		expect(fetchCalls).toHaveLength(2)
+		expect(sentEnvelopes()[1].frames).toEqual([
+			{ kind: "ack", delivered: ACK_FLUSH_THRESHOLD + 1 },
+		])
+
+		// The counter re-anchors at the collected value: the next commit
+		// is a passenger again.
+		laneSeqEntry("p", ACK_FLUSH_THRESHOLD + 2)
+		_laneDeliveryCommitted("p")
+		expect(rafQueue).toHaveLength(0)
 	})
 
 	it("piggybacks the ack on a pending statement's envelope", async () => {

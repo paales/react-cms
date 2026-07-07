@@ -26,6 +26,12 @@
  *      new lanes open; touched ids coalesce and render their LATEST
  *      state when an ack frees the window (nothing dropped, one render
  *      per id no matter how many wakes coalesced);
+ *   5b. the window vs the client's lazy cadence — acks are cumulative
+ *      and the gate reads the unacked COUNT, so a client acking at the
+ *      transport's threshold cadence (half the window) never engages
+ *      the gate under sustained lane traffic, while a genuinely silent
+ *      client fills the window exactly (lanes flow up to it, coalesce
+ *      past it, one cumulative ack frees everything);
  *   6. never-acked degrade — a connection whose first delivery settled
  *      a full deadline ago with no ack frame EVER received closes with
  *      `degradedReason: "never-acked"`; an acking client is NEVER
@@ -73,7 +79,18 @@ import {
 	_setUnackedDeliveryWindow,
 } from "../segmented-response.ts";
 
-const renders = { a: 0, b: 0, win: 0, wib: 0, deg: 0, rec: 0, lay: 0, iso: 0 };
+const renders = {
+	a: 0,
+	b: 0,
+	win: 0,
+	wib: 0,
+	cad: 0,
+	sil: 0,
+	deg: 0,
+	rec: 0,
+	lay: 0,
+	iso: 0,
+};
 
 const AckA = parton(
 	function AckARender(_: RenderArgs) {
@@ -102,6 +119,20 @@ const WinB = parton(
 		return <div data-wib>{`wib:${renders.wib}`}</div>;
 	},
 	{ selector: "win-b" },
+);
+const CadA = parton(
+	function CadARender(_: RenderArgs) {
+		renders.cad++;
+		return <div data-cad>{`cad:${renders.cad}`}</div>;
+	},
+	{ selector: "cad-a" },
+);
+const SilA = parton(
+	function SilARender(_: RenderArgs) {
+		renders.sil++;
+		return <div data-sil>{`sil:${renders.sil}`}</div>;
+	},
+	{ selector: "sil-a" },
 );
 const DegA = parton(
 	function DegARender(_: RenderArgs) {
@@ -142,6 +173,16 @@ const PageWin = (): ReactNode => (
 	<PartialRoot>
 		<WinA />
 		<WinB />
+	</PartialRoot>
+);
+const PageCad = (): ReactNode => (
+	<PartialRoot>
+		<CadA />
+	</PartialRoot>
+);
+const PageSil = (): ReactNode => (
+	<PartialRoot>
+		<SilA />
 	</PartialRoot>
 );
 const PageDeg = (): ReactNode => (
@@ -503,6 +544,117 @@ describe("the unacked delivery window", () => {
 			},
 		);
 	}, 10_000);
+});
+
+describe("the window vs the client's lazy ack cadence", () => {
+	it("a threshold-cadence client never engages the window under sustained lane traffic", async () => {
+		// Window 8, client acks every 4 commits — the transport's own
+		// derivation (ACK_FLUSH_THRESHOLD = half the window) at test
+		// scale. Every bump must lane individually: the unacked count
+		// saws at half the window and the gate never trips.
+		_setUnackedDeliveryWindow(8);
+		const scope = freshLiveScope("cadence");
+		await withLiveDrive(
+			"http://localhost/cadence?live=1",
+			PageCad,
+			scope,
+			async (h) => {
+				const first = await h.segments.next();
+				if (first.done || first.value.kind !== "payload")
+					throw new Error("expected payload segment 0");
+				await drainPayloadSegment(first.value);
+				const conn = h.connectionId() ?? "";
+				// The first committed delivery acks promptly — the duplex
+				// proof is the one per-commit flush the client drives.
+				expect(await post(scope, ackEnvelope(conn, 1, 1))).toBe(204);
+
+				const second = await h.segments.next();
+				if (second.done || second.value.kind !== "lanes")
+					throw new Error("expected lanes segment");
+				const laneIter = second.value.lanes[Symbol.asyncIterator]();
+
+				let watermark = 1;
+				let acked = 1;
+				let envSeq = 1;
+				for (let i = 0; i < 12; i++) {
+					refreshSelector("cad-a");
+					const lane = await nextLane(laneIter);
+					expect(lane.partonId).toBe("cad-a");
+					await decodeLane(lane);
+					watermark += 1;
+					if (watermark - acked >= 4) {
+						envSeq += 1;
+						expect(await post(scope, ackEnvelope(conn, envSeq, watermark))).toBe(
+							204,
+						);
+						acked = watermark;
+					}
+				}
+				// Twelve bumps, twelve individual lanes — nothing coalesced,
+				// so the window never gated a single open.
+				expect(renders.cad).toBe(13);
+
+				await h.shutdown("cad-a");
+			},
+		);
+	}, 15_000);
+
+	it("lanes flow up to the window with no acks; past it they coalesce until one cumulative ack frees everything", async () => {
+		_setUnackedDeliveryWindow(4);
+		// The client acks only at the very end — keep the never-acked
+		// deadline from closing the drive under full-suite load.
+		_setFirstAckDeadlineMs(60_000);
+		const scope = freshLiveScope("silent");
+		await withLiveDrive(
+			"http://localhost/silent?live=1",
+			PageSil,
+			scope,
+			async (h) => {
+				const first = await h.segments.next();
+				if (first.done || first.value.kind !== "payload")
+					throw new Error("expected payload segment 0");
+				await drainPayloadSegment(first.value);
+				const conn = h.connectionId() ?? "";
+
+				const second = await h.segments.next();
+				if (second.done || second.value.kind !== "lanes")
+					throw new Error("expected lanes segment");
+				const laneIter = second.value.lanes[Symbol.asyncIterator]();
+
+				// The initial segment holds delivery 1; lanes 2–4 open while
+				// the unacked count stays under the window.
+				for (let i = 0; i < 3; i++) {
+					refreshSelector("sil-a");
+					const lane = await nextLane(laneIter);
+					expect(lane.partonId).toBe("sil-a");
+					await decodeLane(lane);
+				}
+				expect(renders.sil).toBe(4);
+
+				// The window is full — further wakes coalesce, nothing lanes,
+				// nothing renders.
+				refreshSelector("sil-a");
+				await sleep(60);
+				refreshSelector("sil-a");
+				await sleep(80);
+				expect(renders.sil).toBe(4);
+
+				// ONE cumulative ack covers the whole run and frees the
+				// window: the coalesced id renders its latest state once.
+				expect(await post(scope, ackEnvelope(conn, 1, 4))).toBe(204);
+				const lane = await nextLane(laneIter);
+				expect(lane.partonId).toBe("sil-a");
+				expect((await decodeLane(lane)).bodyText).toContain("sil:5");
+				expect(renders.sil).toBe(5);
+
+				// Leave the window free before teardown (same care as the
+				// window suite: a gated window opens no lane for the harness
+				// to detect the torn client on).
+				expect(await post(scope, ackEnvelope(conn, 2, 5))).toBe(204);
+				await h.shutdown("sil-a");
+			},
+		);
+	}, 15_000);
 });
 
 describe("never-acked degrade", () => {
