@@ -27,8 +27,9 @@
  * know about it to keep the connection session's lane parking honest.
  * The controller is the channel's first PRODUCER ([[channel-client]]):
  * each delta schedules a transport flush (rAF-coalesced, one envelope
- * in flight), and at flush time the controller contributes its
- * statement over one of two paths:
+ * in flight) — measurement-only state (`newlyMeasured`) is a PASSENGER
+ * instead, riding the next driven flush — and at flush time the
+ * controller contributes its statement over one of two paths:
  *
  *   - **Live connection open** (`collect` receives the id): a
  *     `visible` frame ([[channel-protocol]]) on the envelope,
@@ -114,9 +115,18 @@ let changed = new Set<string>()
  *  when it AGREES with the primed display state (no flip, nothing to
  *  revalidate), the connection session hasn't heard of the id — its
  *  `?visible=` seed and any earlier sync predate the id's observer
- *  (late-adopting subtrees measure after hydration). The flush sends
- *  a full-set report (empty `changed`) so the session's parking stays
- *  honest. */
+ *  (late-adopting subtrees measure after hydration). The next flush
+ *  folds a full-set report (empty `changed`) so the session's parking
+ *  stays honest — but the state is a PASSENGER, never a driver (the
+ *  ack-cadence precedent): it marks the producer dirty and requests
+ *  no flush of its own. An agreeing measurement has zero urgency —
+ *  an out-agreement's absence from the session set already parks it
+ *  correctly, and an in-agreement only lags its LIVE lane cadence,
+ *  which the next driven envelope (a real flip, a threshold ack) or
+ *  the next attach's seed re-establishes. During a scroll across a
+ *  cullable field, every lane commit mounts fresh skeletons whose
+ *  first measurements agree — a flush per wave would be one
+ *  cookie-laden POST per frame saying nothing. */
 let newlyMeasured = false
 /** Whether ANY viewport report has landed yet. Gates the visible-set
  *  param/report: before the first report the correct wire state is
@@ -132,7 +142,15 @@ let measurementWaiters: (() => void)[] = []
  *  connection's first measurement (see the establishment listener
  *  below): flips that fired between the connection's `?visible=` seed
  *  and its establishment rode the reload fallback, so the session's
- *  set may lag the client's — the sync closes that gap. */
+ *  set may lag the client's — the sync closes that gap. Unlike
+ *  `newlyMeasured`, this state DRIVES a flush: the lag can cover
+ *  partons the user is looking at (their fallback reload already
+ *  materialized them, but the session would park their lanes), and
+ *  nothing else is guaranteed to flush soon after establishment — a
+ *  catch-up attach on a quiet route opens straight into lanes and may
+ *  never commit a delivery, so even the first-ack flush can't be
+ *  counted on to carry it. Once per establishment, so the cost is one
+ *  envelope per connection, not one per measurement wave. */
 let fullSyncPending = false
 /** A reload-fallback dispatch is in flight. Serializes the fallback
  *  path AND blocks the frame path while it runs — one dispatch in
@@ -173,7 +191,9 @@ export function _primeVisible(id: string, isInView: boolean): void {
  *  previously reported) schedules a dispatch. Every delta also updates
  *  the cull-park display state, so the parton's Activity slots swap
  *  immediately — the scheduled dispatch is the revalidation, not the
- *  swap. */
+ *  swap. A FIRST measurement that agrees with the primed state only
+ *  marks the producer dirty (`newlyMeasured`) — a passenger on the
+ *  next driven flush, never a flush of its own. */
 export function reportVisible(id: string, isInView: boolean): void {
 	if (!measured) {
 		measured = true
@@ -184,7 +204,6 @@ export function reportVisible(id: string, isInView: boolean): void {
 	if (!everReported.has(id)) {
 		everReported.add(id)
 		newlyMeasured = true
-		schedule()
 	}
 	if (inView.has(id) === isInView) return
 	if (isInView) inView.add(id)
@@ -237,13 +256,14 @@ export function _visibleSetParam(): string | undefined {
 // statement would ever carry it. Failure needs no handling: a failed
 // sync means the connection is gone, and the transport already fell
 // back.
-onChannelEstablished((connection) => {
+function armEstablishmentSync(connection: string): void {
 	_onFirstMeasurement(() => {
 		if (_getLiveConnectionId() !== connection) return
 		fullSyncPending = true
 		schedule()
 	})
-})
+}
+onChannelEstablished(armEstablishmentSync)
 
 /** Every observer of a cullable parton released past a commit flush.
  *  Drop it from the live set so the visible set doesn't carry a stale
@@ -322,6 +342,24 @@ const visibilityProducer: ChannelProducer = {
 	},
 }
 registerChannelProducer(visibilityProducer)
+
+/** Test-only: reset the controller's module state and re-register its
+ *  transport hooks — `_resetChannelClient` clears the producer and
+ *  establishment-listener registries this module joined at import.
+ *  Both re-registrations are idempotent (same references, Set-backed
+ *  registries). */
+export function _resetVisibilityController(): void {
+	inView.clear()
+	everReported.clear()
+	changed = new Set()
+	newlyMeasured = false
+	measured = false
+	measurementWaiters = []
+	fullSyncPending = false
+	fallbackInFlight = false
+	registerChannelProducer(visibilityProducer)
+	onChannelEstablished(armEstablishmentSync)
+}
 
 /**
  * Reload fallback (no live connection): culling is a POST-SETTLE

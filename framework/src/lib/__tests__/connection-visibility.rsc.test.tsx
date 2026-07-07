@@ -39,7 +39,12 @@
  *      the gate's reads only: no cell labels, no expires deadline);
  *      the flip-in revalidation re-renders the returning state fresh,
  *      folding everything that landed while parked;
- *   8. flip resolution is PER-STATEMENT — each pending flip resolves
+ *   8. a pure SYNC statement (`changed: []` — the client's
+ *      measurement passenger riding a driven envelope) updates the
+ *      session set WITHOUT laning anything: later wakes park and
+ *      unpark against the synced set (the parking honesty the
+ *      passenger cadence relies on);
+ *   9. flip resolution is PER-STATEMENT — each pending flip resolves
  *      against its own frame's statement (the id's presence in THAT
  *      frame's `visible` snapshot), never against a later frame's
  *      snapshot: a mid-scroll burst legitimately dips the snapshot
@@ -405,6 +410,51 @@ describe("connection-session visibility", () => {
 				expect(childBody).toContain('"data-partial-confirm":true');
 
 				await h.shutdown("cull-parent");
+			},
+		);
+	});
+
+	it("a pure sync statement (changed: []) aligns the set without laning", async () => {
+		let conn = "";
+		const scope = freshLiveScope("conn-vis");
+		await withLiveDrive(
+			`http://localhost/world?live=1&visible=cull-a`,
+			Page,
+			scope,
+			async (h) => {
+				const first = await h.segments.next();
+				if (first.done || first.value.kind !== "payload")
+					throw new Error("expected payload segment 0");
+				const seg0 = await drainPayloadSegment(first.value);
+				conn = h.connectionId() ?? "";
+				expect(conn).not.toBe("");
+				expect(seg0).toContain("a:full:1");
+				expect(renders.b).toBe(0);
+
+				// The sync: no flips, just the client's full measured set —
+				// the shape a measurement passenger contributes when another
+				// statement drives the envelope. It must lane NOTHING at
+				// statement time: the next lane on the wire is a's bump.
+				expect(
+					await postVisible(scope, conn, 1, [], ["cull-a", "cull-b"]),
+				).toBe(204);
+				refreshSelector("cull-a");
+				const second = await h.segments.next();
+				if (second.done || second.value.kind !== "lanes")
+					throw new Error("expected lanes segment");
+				const laneIter = second.value.lanes[Symbol.asyncIterator]();
+				const laneA = await nextLane(laneIter);
+				expect(laneA.partonId).toBe("cull-a");
+				expect(renders.b).toBe(0);
+
+				// …but the SET took the statement: b is unparked, so a bump
+				// now lanes it — the parking honesty the sync exists for.
+				refreshSelector("cull-b");
+				const laneB = await nextLane(laneIter);
+				expect(laneB.partonId).toBe("cull-b");
+				expect((await decodeLane(laneB)).bodyText).toContain("b:full:1");
+
+				await h.shutdown("cull-b");
 			},
 		);
 	});

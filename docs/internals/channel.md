@@ -598,7 +598,18 @@ producer's statement and the envelope on the wire:
   (`telemetry.ts`) uses the same contract with drop semantics at
   every choice point (§Telemetry). The visibility controller
   (`visibility.tsx`) is the first external producer; the transport's
-  own ack producer rides the same contract.
+  own ack producer rides the same contract. Producers split their
+  state into DRIVERS and PASSENGERS: only statements with urgency
+  request a flush (a real viewport flip, the controller's
+  once-per-establishment full-set sync, the ack's first-commit and
+  threshold advances), while everything else (measurement-only
+  reports, ordinary watermark advances, telemetry) marks the
+  producer dirty and rides whatever envelope the next driver
+  justifies — `collect` is consulted on every flush, so a passenger
+  needs no transport-level registration. The cost rule behind the
+  split: every envelope carries the browser's full Cookie header
+  (§Telemetry's numbers), so a statement without urgency must never
+  be the reason an envelope exists.
 - **Coalescing + serialization.** Flushes coalesce per animation
   frame and serialize — one envelope in flight; a flush requested
   mid-flight re-fires when it lands. Retransmits go first at a fresh
@@ -624,7 +635,9 @@ producer's statement and the envelope on the wire:
   origin/scope/cookie checks, unknown-kind skip, in-envelope frame
   ordering, the mint handshake, detach ending a held drive),
   `connection-visibility.rsc.test.tsx` (visibility statement
-  semantics through the envelope, against a real drive),
+  semantics through the envelope, against a real drive — incl. the
+  pure sync statement, `changed: []`, aligning the set without
+  laning),
   `channel-acks.rsc.test.tsx` (delivery-seq emission ordering across
   segments + lanes, the ack watermark + acked-layer fold, the
   `applied` marker + duplicate-envelope convergence, the attach
@@ -650,6 +663,10 @@ producer's statement and the envelope on the wire:
   stale-restatement idempotence).
 - node tier: `channel-client.test.ts` (coalescing, page-lifetime seq,
   serialization, the fallback signal, pagehide detach),
+  `visibility-passenger.test.ts` (the controller's statement cadence:
+  measurement-only state never drives, rides driven flushes as the
+  full-set report; flips and the establishment sync drive; the
+  no-session fallback consumes measurement syncs without a reload),
   `channel-client-acks.test.ts` (contiguous commit watermark, the
   passenger policy + its two driving flushes — first ack, threshold
   crossing — dropped-lane attribution incl. the processed as-of

@@ -450,7 +450,9 @@ channel's first PRODUCER (`lib/channel-client.ts` — see
 flush (rAF-coalesced, one dispatch in flight), ordered
 viewport-first on both paths (in-view flips outrank stale cull-outs
 — across batches, since the cap slices in-view first, and within one
-dispatch). At flush time, `collect` receiving the open connection's
+dispatch). Only deltas and the once-per-establishment sync drive a
+flush; measurement-only state is a PASSENGER on the next driven
+envelope (the ack-cadence rule — see the newly-measured sync below). At flush time, `collect` receiving the open connection's
 id contributes ONE `visible` frame (cap 256; ids ride the envelope's
 JSON body, so no request-line limit); receiving `null` runs the
 one-shot `reload({selector, params: {visible}})` fallback for the
@@ -474,12 +476,27 @@ lifecycle:
   listener arms a full-set statement (`changed: []`) at the first
   viewport measurement — whichever side of the connection's
   establishment it lands on — so a connection established before
-  hydration finished measuring still learns the set.
+  hydration finished measuring still learns the set. The sync DRIVES
+  a flush of its own: the gap it closes can cover partons the user is
+  looking at (flips that rode the reload fallback between the seed
+  and establishment), and nothing else is guaranteed to flush after
+  establishment (a catch-up attach on a quiet route may never commit
+  a delivery). Once per establishment, so the cost is one envelope
+  per connection.
 - **The newly-measured sync.** A first measurement for an id the
   session has never heard of (late-adopting subtrees measure after
-  the seed and any earlier sync) schedules a full-set statement even
-  when it AGREES with the primed display state — without it the
-  session would park every late-measuring parton forever.
+  the seed and any earlier sync) marks the statement due even when
+  it AGREES with the primed display state — without it the session
+  would park every late-measuring parton for the connection's life.
+  Unlike the establishment sync it is a PASSENGER: it requests no
+  flush, riding the next driven envelope (a flip, a threshold ack)
+  as the full-set report. An agreeing measurement has zero urgency —
+  an out-agreement's absence from the session set already parks it
+  correctly, an in-agreement only lags its live lane cadence, and
+  the next attach's seed is the durable re-establisher (the
+  loss-tolerant class). During a scroll, lane commits mount fresh
+  skeletons every frame — a flush per agreeing wave would be one
+  cookie-laden `changed: []` POST per frame.
 - **Only measured nodes testify.** Three rules keep the observer's
   evidence honest across content transitions
   (`VisibilityObserver` in `lib/visibility.tsx`, `CullPair` in
