@@ -57,11 +57,13 @@ any selector-routing logic that could replace it.
    attach); the SERVER mints the fire's **connection id** at session open
    and ships it down as the stream's `conn` entry (see
    §Visibility rides the connection and
-   [`channel.md`](./channel.md)). On a DEGRADED channel
-   (`_channelIsDegraded()` — the page's first delivery ack could
-   never be delivered upstream) the heartbeat stops attaching: each
-   interval tick fires a one-shot discrete reload instead — periodic
-   polling at the heartbeat's own cadence
+   [`channel.md`](./channel.md)). Failures are BOUNDED, never sticky:
+   a single failed attach re-establishes, and only a run past the
+   channel's failure limit falls to DOCUMENT-NAV MODE
+   (`_channelIsDegraded()`), where the navigate listener stands down
+   (links become document loads) but the heartbeat KEEPS firing — its
+   interval is the recovery probe, so a later successful attach lifts
+   the mode and restores channel navigation
    ([`channel.md`](./channel.md) §The never-acked degrade).
 3. **Server-side segment driver runs.** For each rendered segment,
    it races the wake arms:

@@ -27,20 +27,25 @@
  *      retransmit at the next establishment with their ORIGINAL seqs,
  *      in order, before new flushes; the downstream `applied` marker
  *      prunes the buffer; `deliveryFailed` is never called for them;
- *   6. an envelope failure carrying the connection's FIRST ack marks
- *      the page degraded (sticky); a connection that delivered an ack
- *      before a later failure is NOT degraded.
+ *   6. bounded re-establishment: a SINGLE failed first-ack envelope
+ *      re-attaches (not a degrade); only a RUN past the failure limit
+ *      falls to document-nav mode, and a later delivered ack RECOVERS
+ *      it. A connection that delivered an ack before a later failure is
+ *      never degraded.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
 	_channelAppliedWatermark,
+	_channelConnectionClosed,
 	_channelEstablished,
 	_channelIsDegraded,
 	_channelWireEntry,
 	_laneDeliveryCommitted,
 	_laneDeliveryDropped,
 	_laneDeliveryDroppedStale,
+	_registerAttachRequester,
+	_registerLiveStreamAbort,
 	_reportAsOfDrop,
 	_resetChannelClient,
 	_segmentDelivery,
@@ -462,20 +467,60 @@ describe("the reliable buffer + retransmit", () => {
 	})
 })
 
-describe("the degrade mark", () => {
-	it("a failed envelope carrying the connection's FIRST ack degrades the page — sticky", async () => {
+describe("bounded re-establishment", () => {
+	it("a SINGLE failed first-ack envelope re-establishes — not a page degrade", async () => {
+		const aborts: number[] = []
+		const attaches: number[] = []
+		_registerLiveStreamAbort(() => aborts.push(1))
+		_registerAttachRequester(() => attaches.push(1))
 		_channelEstablished("c1")
 		laneSeqEntry("p", 1)
 		_laneDeliveryCommitted("p")
 		fetchResults.push(new Error("blocked by client"))
 		await flushOnce()
-		expect(_channelIsDegraded()).toBe(true)
+		// The now-unackable stream is pulled down, but the page is NOT
+		// degraded — a single stumble re-establishes.
+		expect(aborts).toHaveLength(1)
+		expect(_channelIsDegraded()).toBe(false)
 		expect(_getLiveConnectionId()).toBeNull()
+		// The stream's settle re-attaches (backoff attempt 1 is immediate).
+		_channelConnectionClosed({ aborted: true })
+		expect(_channelIsDegraded()).toBe(false)
+		expect(attaches).toHaveLength(1)
+	})
 
-		// Sticky across establishments — the heartbeat reads this and
-		// stops holding live attaches for the page lifetime.
-		_channelEstablished("c2")
+	it("a RUN of first-ack failures falls to document-nav mode; a delivered ack recovers it", async () => {
+		_registerLiveStreamAbort(() => {})
+		_registerAttachRequester(() => {})
+		// The blocked-`/__parton/channel` signature: each connection
+		// establishes and delivers (downstream works), but its first ack
+		// can never land (upstream blocked). Three consecutive such
+		// failures cross the bound.
+		for (let i = 1; i <= 3; i++) {
+			_channelEstablished(`c${i}`)
+			laneSeqEntry("p", 1)
+			_laneDeliveryCommitted("p")
+			fetchResults.push(new Error("blocked"))
+			await flushOnce()
+			_channelConnectionClosed({ aborted: true })
+			// The stream's settle counts the first-ack failure; document-nav
+			// mode arrives only once the run reaches the bound.
+			expect(_channelIsDegraded()).toBe(i >= 3)
+		}
+
+		// Establishment alone does NOT clear a first-ack streak (that was
+		// the upstream, not the downstream) — only the full duplex proof
+		// does.
+		_channelEstablished("c4")
 		expect(_channelIsDegraded()).toBe(true)
+		// A fresh delivery whose ack LANDS proves the duplex — recovered.
+		laneSeqEntry("p", 1)
+		_laneDeliveryCommitted("p")
+		await flushOnce()
+		expect(sentEnvelopes().at(-1)?.frames).toEqual([
+			{ kind: "ack", delivered: 1 },
+		])
+		expect(_channelIsDegraded()).toBe(false)
 	})
 
 	it("a connection whose first ack DELIVERED is never degraded by a later failure", async () => {

@@ -5,7 +5,6 @@ import {
   _channelAppliedWatermark,
   _channelConnectionClosed,
   _channelConsumeWindowNavClaim,
-  _channelIsDegraded,
   _registerAttachRequester,
   _registerLiveStreamAbort,
 } from "./channel-client.ts"
@@ -80,12 +79,12 @@ type AttachTransport = (
  *     currently open. While a stream is open the tick is a no-op.
  *     When the server's keepalive elapses, the next tick reattaches —
  *     the transient-reconnect recovery loop.
- *   - On a DEGRADED page (`_channelIsDegraded()` — the explicit
- *     degrade signals: a failed first-ack envelope, an
- *     interaction-riding attach that never established) the heartbeat
- *     stops firing entirely: the page is browser-native from here —
- *     links and form posts are document loads, and every document
- *     load is a fresh SSR render.
+ *   - Failures are BOUNDED, never sticky. A single failed attach
+ *     re-establishes; only a run past the channel's failure bound falls
+ *     to document-nav mode (links and form posts become document loads —
+ *     fresh SSR renders). Even then the heartbeat KEEPS firing (its
+ *     interval is the recovery probe): a later successful attach lifts
+ *     the mode and restores channel navigation.
  *   - On a `navigate`, the deferred abort check consumes the
  *     channel's navigation claim: a CLAIMED navigation (the navigate
  *     listener stated it on the channel) KEEPS the stream — the
@@ -117,11 +116,12 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
     const fire = () => {
       if (!alive) return
       if (inFlight) return
-      // DEGRADED channel: the transport proved itself broken (a failed
-      // first-ack envelope, an interaction's attach that never
-      // established). No fire — document navigation is the page's
-      // freshness from here. Sticky for the page lifetime.
-      if (_channelIsDegraded()) return
+      // No degrade gate: failures are BOUNDED, never sticky. Even in
+      // document-nav mode (a run of failures fell back to document loads)
+      // the heartbeat KEEPS firing — its interval is the recovery probe.
+      // A later successful attach lifts the mode and restores channel
+      // navigation (`_channelConnectionClosed` clears it on establish /
+      // delivered ack).
       const attach = (
         window as Window & { __rsc_live_attach?: AttachTransport }
       ).__rsc_live_attach

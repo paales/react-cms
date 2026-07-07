@@ -375,8 +375,10 @@ Lane OPENING gates on two signals:
 A connection whose client commits deliveries but can never say so
 must not be held behind a window that can never free — the review
 finding this kills: a blocked `/__parton/*` POST path (ad-blocker,
-corporate proxy) would otherwise freeze liveness. Both sides degrade
-on their own real signal:
+corporate proxy) would otherwise freeze liveness. But the connection
+is "just" HTTP: a torn one RE-ESTABLISHES, it never permanently
+degrades. Both sides act on their own real signal, and the client
+side is BOUNDED and RECOVERABLE:
 
 - **Server** — the first delivery-seq'd emission's settle starts the
   client's ack obligation (`firstDeliverySettledAt`); if no ack frame
@@ -390,20 +392,31 @@ on their own real signal:
   the driver stops holding, closing after settle. Any ack frame at
   all (`firstAckReceived`) disarms the deadline for good: an acking
   client is never degraded.
-- **Client** — two explicit signals, both sticky for the page
-  lifetime (`_channelIsDegraded`). An envelope carrying the
-  connection's FIRST ack that fails to deliver proves the duplex
-  broken from the client's side. And an attach that settles without
-  EVER establishing while interaction records rode it proves the
-  transport unusable under a real interaction (a background reattach
-  failure is a transient — the reattach loop keeps trying). Degraded,
-  the page is browser-native: the heartbeat stops attaching, the
-  navigate listener stops intercepting — links, traverses and form
-  posts are document loads (SSR renders; a plain website) — and
+- **Client** — a SINGLE transient failure re-establishes, never
+  degrades (`channel-client.ts`). Two blocked-path signatures each
+  accrue a consecutive-failure counter, reset on their own success:
+  a FIRST-ACK failure (the envelope carrying the connection's first
+  ack fails to deliver — a blocked `/__parton/channel`; reset on a
+  delivered ack) and an ESTABLISHMENT failure that STRANDED a real
+  interaction (an attach settled without ever establishing while a
+  nav/refetch record rode it — a blocked `/__parton/live`; reset on
+  establishment). An idle-heartbeat non-establishment is a benign
+  transient (the interval retries) — never counted, so a saturated
+  server can't false-trip the fallback; our own supersede is never a
+  failure. On a failure UNDER the bound the client re-attaches with
+  backoff (immediate, then exponential) — pending records LATCH and
+  ride the next attach, never flushed to a document navigation on a
+  single stumble. Only a RUN past `CHANNEL_FAILURE_LIMIT` (3) of
+  EITHER counter falls to DOCUMENT-NAV MODE (`_channelIsDegraded`):
+  the navigate listener stops intercepting — links, traverses and
+  form posts are document loads (SSR renders; a plain website) — and
   pending interaction records complete as ONE document navigation
   carrying their target state (`__frame`/`__frameUrl` document params
-  for frame moves). A later ack's failure after a delivered first ack
-  is a transient — no degrade.
+  for frame moves). Even that stays RECOVERABLE: the heartbeat keeps
+  firing (its interval is the recovery probe), and a later successful
+  attach / delivered ack clears the mode and restores channel
+  navigation. A later ack's failure after a delivered first ack is a
+  transient — no degrade.
 
 ## Navigation rides the channel
 
@@ -835,10 +848,13 @@ producer's statement and the envelope on the wire:
 - **Detach.** `pagehide` sends a final `detach` frame via keepalive
   fetch and clears the id (a bfcache restore re-establishes via the
   next heartbeat fire).
-- **Degrade.** `_channelIsDegraded()` is the page-lifetime flag the
-  heartbeat consults (§The never-acked degrade);
-  `_channelAppliedWatermark()` is the heard upstream watermark the
-  next attach statement presents.
+- **Bounded re-establishment.** A single failure re-attaches with
+  backoff; only a run past `CHANNEL_FAILURE_LIMIT` of either the
+  first-ack or the interaction-stranding establishment counter falls
+  to DOCUMENT-NAV MODE (`_channelIsDegraded()` — the navigate
+  listener's stand-down cue), and a proven-working connection clears
+  it (§The never-acked degrade). `_channelAppliedWatermark()` is the
+  heard upstream watermark the next attach statement presents.
 
 ## Testing
 

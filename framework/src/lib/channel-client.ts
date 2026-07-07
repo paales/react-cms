@@ -55,14 +55,17 @@
  *     practice its buffered frames retire at the next ATTACH rather
  *     than retransmit (the attach's own request line restates the
  *     URL — see the navigation section below).
- *   - **Degrade.** A connection that commits deliveries but cannot get
- *     its FIRST ack through (the envelope carrying it fails — blocked
- *     `/__parton/*` POSTs, ad-blockers) proves the duplex broken; an
- *     attach that settles without establishing while interaction
- *     records rode it proves the transport unusable. Either marks the
- *     PAGE degraded — sticky for the page lifetime: the heartbeat
- *     stops attaching, the navigate listener stops intercepting, and
- *     the page is browser-native from there (`_channelIsDegraded`).
+ *   - **Bounded re-establishment.** A torn connection RE-ESTABLISHES;
+ *     it never permanently degrades. A single transient failure — a
+ *     failed first-ack envelope, or an attach that never established —
+ *     re-attaches with backoff (pending records latch and ride it). Two
+ *     blocked-path signatures each accrue a consecutive-failure counter
+ *     (`/__parton/live` never establishing; `/__parton/channel`'s first
+ *     ack never landing); a run of EITHER past `CHANNEL_FAILURE_LIMIT`
+ *     falls to the document-nav fallback (`_channelIsDegraded`) — and
+ *     even that stays RECOVERABLE: a later successful attach / delivered
+ *     ack clears it and restores channel navigation. Our own supersede
+ *     is never a failure signal.
  */
 
 import {
@@ -316,30 +319,66 @@ let appliedWatermark = 0;
  *  them (original seqs, in order) before collecting producers. */
 let retransmitPending = false;
 
-// ─── Degrade (page-lifetime) ─────────────────────────────────────────
+// ─── Bounded re-establishment + document-nav fallback ────────────────
+//
+// The connection is "just" HTTP: a torn one RE-ESTABLISHES, it never
+// permanently degrades. Two blocked-path signatures each accrue a
+// consecutive-failure counter; a run of EITHER past
+// `CHANNEL_FAILURE_LIMIT` falls to the document-nav fallback — and even
+// that stays RECOVERABLE (a later successful attach / delivered ack
+// clears it and restores channel navigation):
+//
+//   - ESTABLISHMENT failures — an attach that settled without ever
+//     establishing (conn never arrived / the POST errored), not our own
+//     supersede: a blocked `/__parton/live`. Reset on establishment.
+//   - FIRST-ACK failures — the connection established and delivered, but
+//     the envelope carrying its first ack couldn't land: a blocked
+//     `/__parton/channel`. Reset on a delivered ack (the duplex proof).
 
-/** The transport is proven unusable for this page: a connection
- *  committed deliveries but the envelope carrying its FIRST ack failed
- *  (blocked POST path, connection-gone race), or an attach that
- *  interaction records rode settled without ever establishing. Sticky
- *  for the page lifetime — the heartbeat stops attaching, the navigate
- *  listener stops intercepting, and the page is browser-native:
- *  document navigations are its renders. */
-let degraded = false;
+/** Consecutive attach-establishment failures — reset the moment an
+ *  attach establishes. */
+let establishFailures = 0;
+/** Consecutive first-ack-delivery failures — reset the moment an ack
+ *  envelope lands (the full duplex is proven). */
+let firstAckFailures = 0;
+/** A run of EITHER counter past this falls to document-nav mode. Small:
+ *  one transient stumble must re-establish, a genuinely blocked path
+ *  must fall back promptly. */
+const CHANNEL_FAILURE_LIMIT = 3;
+/** The flush that failed carried this connection's FIRST ack — read by
+ *  the close arbitration (which the same flush triggers by pulling the
+ *  stream down) to count it as a first-ack failure, not a benign abort. */
+let firstAckFailedThisConnection = false;
 
-/** Whether the channel is page-degraded — the heartbeat's cue to stop
- *  attaching and the navigate listener's cue to stand down. */
+/** The channel has fallen to the document-nav fallback: enough
+ *  consecutive failures of either signature to conclude the transport is
+ *  blocked. RECOVERABLE — a proven-working connection clears it. The
+ *  navigate listener stands down while it holds; the heartbeat keeps
+ *  probing so recovery can happen. */
+let documentNavMode = false;
+
+/** Whether the channel is in document-nav fallback mode — the navigate
+ *  listener's cue to stand down (links become document loads). Not
+ *  sticky: cleared by a proven-working connection. */
 export function _channelIsDegraded(): boolean {
-	return degraded;
+	return documentNavMode;
 }
 
-/** Flip the sticky page degrade and stamp the presence-only
- *  `data-parton-degraded` marker — the explicit signal specs and
- *  tooling wait on (the page is browser-native from here). */
-function markPageDegraded(): void {
-	degraded = true;
+/** Recompute the fallback state from the two failure counters and sync
+ *  the presence-only `data-parton-degraded` marker (the explicit signal
+ *  specs and tooling wait on). Entering: enough consecutive failures of
+ *  either signature. Leaving: a counter reset dropped both below the
+ *  limit — the channel works again, channel navigation resumes. */
+function refreshDocumentNavMode(): void {
+	const fallback =
+		establishFailures >= CHANNEL_FAILURE_LIMIT ||
+		firstAckFailures >= CHANNEL_FAILURE_LIMIT;
+	if (fallback === documentNavMode) return;
+	documentNavMode = fallback;
 	if (typeof document !== "undefined") {
-		document.documentElement.setAttribute("data-parton-degraded", "");
+		if (fallback)
+			document.documentElement.setAttribute("data-parton-degraded", "");
+		else document.documentElement.removeAttribute("data-parton-degraded");
 	}
 }
 
@@ -381,17 +420,16 @@ export function _channelAppliedWatermark(): number {
 //     URL statement, so an attach fire retires the navigation point,
 //     drops buffered url frames, and re-anchors any still-pending
 //     records — a fresh connection opens with as-of 0 on both sides.
-//   - **Degrade.** The page degrades on exactly two explicit signals:
-//     the envelope carrying the connection's FIRST ack failing (the
-//     duplex proof), and an attach fire that settles without EVER
-//     establishing while interaction records were riding it (the
-//     transport proved itself unusable under a real interaction; a
-//     background reattach failure is a transient — the reattach loop
-//     keeps trying). Degraded is sticky for the page lifetime: the
-//     navigate listener stops intercepting (links and form posts are
-//     browser-native document loads — SSR renders, a plain website),
-//     and pending interaction records complete as ONE document
-//     navigation carrying their target state.
+//   - **Document-nav fallback.** A single failure re-establishes (the
+//     records latch and ride the next attach). Only a RUN of failures —
+//     `CHANNEL_FAILURE_LIMIT` consecutive first-ack failures OR attach
+//     non-establishments — falls to document-nav mode (a genuinely
+//     blocked `/__parton/*` path). While it holds, the navigate listener
+//     stands down (links and form posts are browser-native document
+//     loads — SSR renders, a plain website) and pending interaction
+//     records complete as ONE document navigation carrying their target
+//     state. It is RECOVERABLE: a later successful attach / delivered
+//     ack clears it and restores channel navigation.
 
 /** An abort rejection every consumer's `instanceof Error &&
  *  name === "AbortError"` check recognizes across realms (a
@@ -451,7 +489,7 @@ let establishedSinceClose = false;
  *  (attach-with-intent); only DEGRADED pages answer `null` from the
  *  navigate fns — the caller's cue for a document navigation. */
 export function _channelNavAvailable(): boolean {
-	return !degraded && _getLiveConnectionId() !== null;
+	return !documentNavMode && _getLiveConnectionId() !== null;
 }
 
 export function _registerAttachRequester(requester: (() => void) | null): void {
@@ -466,6 +504,33 @@ export function _requestAttachNow(): boolean {
 	if (attachRequester === null) return false;
 	attachRequester();
 	return true;
+}
+
+/** Schedule a re-attach after a transient failure: immediate on the
+ *  first consecutive failure, exponential backoff (capped) after. The
+ *  bound (`CHANNEL_FAILURE_LIMIT`) caps how many fast retries happen
+ *  before document-nav mode takes over — past it the heartbeat's own
+ *  interval is the (paced) recovery probe — so this never becomes a
+ *  tight loop. `fire()` is idempotent (a stream in flight makes it a
+ *  no-op), so a stray timer can never double-attach. */
+let reattachTimer: ReturnType<typeof setTimeout> | null = null;
+const RECONNECT_BASE_MS = 250;
+const RECONNECT_CAP_MS = 10_000;
+function scheduleReattach(): void {
+	if (reattachTimer !== null) return;
+	const attempt = Math.max(establishFailures, firstAckFailures);
+	const delay =
+		attempt <= 1
+			? 0
+			: Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 2), RECONNECT_CAP_MS);
+	if (delay === 0 || typeof setTimeout === "undefined") {
+		_requestAttachNow();
+		return;
+	}
+	reattachTimer = setTimeout(() => {
+		reattachTimer = null;
+		_requestAttachNow();
+	}, delay);
 }
 
 /** The client's navigation point — the envelope seq of its latest url
@@ -543,7 +608,7 @@ export function _channelNavigate(init: {
 	signal?: AbortSignal;
 	record?: boolean;
 }): { streaming: Promise<void>; finished: Promise<void> } | null {
-	if (degraded) return null;
+	if (documentNavMode) return null;
 	// Reserve the statement's envelope seq: flushes serialize and only
 	// collect-flushes mint, so the next envelope is exactly
 	// `envelopeSeq + 1` — and the navigation point must advance NOW
@@ -839,7 +904,7 @@ export function _channelFrameNavigate(init: {
 	streaming?: boolean;
 	signal?: AbortSignal;
 }): { streaming: Promise<void>; finished: Promise<void> } | null {
-	if (degraded) return null;
+	if (documentNavMode) return null;
 	const key = init.path.join(".");
 	const topLabel = init.path[0];
 	// Reserve the statement's envelope seq — flushes serialize and only
@@ -1259,7 +1324,7 @@ let pendingWarm: string | null = null;
  * envelope drops it too. Returns whether the statement was taken.
  */
 export function _channelWarm(url: string): boolean {
-	if (degraded || _getLiveConnectionId() === null) return false;
+	if (documentNavMode || _getLiveConnectionId() === null) return false;
 	pendingWarm = url;
 	scheduleChannelFlush();
 	return true;
@@ -1342,6 +1407,16 @@ export function _channelEstablished(connection: string): void {
 	navStreamingByPoint.clear();
 	ackDeliveredOnConnection = false;
 	establishedSinceClose = true;
+	// A successful attach clears the establishment-failure streak and any
+	// pending backoff timer; document-nav mode lifts here UNLESS a
+	// first-ack-failure streak is still holding it (that clears on a
+	// delivered ack — the full duplex proof).
+	establishFailures = 0;
+	if (reattachTimer !== null) {
+		clearTimeout(reattachTimer);
+		reattachTimer = null;
+	}
+	refreshDocumentNavMode();
 	// Consequence gates anchor on the PREVIOUS connection's delivery
 	// seqs — dead numbers now. Release them: the fresh connection's
 	// whole-tree render is the catch-up (over-fetch, never a frozen
@@ -1370,17 +1445,26 @@ export function _channelEstablished(connection: string): void {
 }
 
 /** The live connection settled (keepalive elapsed, abort, error) —
- *  clear the published id and the liveness marker, then arbitrate any
- *  records the stream never answered. Establishment is the real
- *  signal: a fire that established (or was OUR OWN abort — a
- *  supersede) leaves the reattach loop in charge, and pending records
- *  re-ride the next attach immediately (`_requestAttachNow`). A fire
- *  that settled WITHOUT ever establishing while interaction records
- *  rode it proves the transport unusable under a real interaction —
- *  the page degrades (sticky) and the records complete as one
- *  document navigation. The heartbeat calls this when its fire's
- *  `finished` settles; fires are strictly sequential, so the settling
- *  connection's id is the current one. */
+ *  clear the published id and the liveness marker, then arbitrate.
+ *  Failures are BOUNDED, never sticky: a single stumble re-establishes.
+ *  Two blocked-path signatures each accrue a consecutive-failure
+ *  counter, and a run of EITHER past `CHANNEL_FAILURE_LIMIT` falls to
+ *  the (recoverable) document-nav mode:
+ *
+ *    - ESTABLISHMENT failure — the fire settled without EVER
+ *      establishing and it wasn't our own supersede (conn never
+ *      arrived / the POST errored): a blocked `/__parton/live`.
+ *    - FIRST-ACK failure — the connection established and delivered but
+ *      the envelope carrying its first ack couldn't land: a blocked
+ *      `/__parton/channel`. The failing flush flagged it and pulled
+ *      this stream down, so its settle counts it here.
+ *
+ *  Under the bound a failure re-attaches with backoff; pending nav /
+ *  refetch records LATCH and ride the next attach (never flushed to a
+ *  document navigation on a single stumble). Our own supersede that did
+ *  NOT first-ack-fail is never a failure. The heartbeat calls this when
+ *  its fire's `finished` settles; fires are strictly sequential, so the
+ *  settling connection's id is the current one. */
 export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
 	if (typeof document !== "undefined") {
 		document.documentElement.removeAttribute("data-parton-live");
@@ -1388,20 +1472,57 @@ export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
 	_setLiveConnectionId(null);
 	const established = establishedSinceClose;
 	establishedSinceClose = false;
+	const firstAckFailed = firstAckFailedThisConnection;
+	firstAckFailedThisConnection = false;
 	// The connection's delivery seqs are dead — a gate anchored on them
 	// can never pass. Release: the reattach's whole-tree render carries
 	// the consequences (over-fetch, never a frozen overlay).
 	releaseAllConsequenceGates();
+
+	const establishmentFailed = !established && opts?.aborted !== true;
 	const pendingInteraction =
 		pendingNavRecords.some((r) => !r.settled) ||
 		pendingFrameNavRecords.some((r) => !r.settled);
-	if (!pendingInteraction) return;
-	if (!established && opts?.aborted !== true && !degraded) {
-		markPageDegraded();
-		documentNavForPendingRecords();
+
+	// What COUNTS toward the document-nav bound (each counter has its own
+	// reset — establishment / delivered-ack — so the establish→ack-fail
+	// loop of an upstream-only block still accrues):
+	//   - an establishment failure that STRANDED a real interaction (a
+	//     blocked path under a navigation — master's caller 2). An
+	//     idle-heartbeat non-establishment is a benign transient (a
+	//     saturated server, a keepalive race) — NOT counted, so a slow
+	//     server can never false-trip the fallback; the interval retries.
+	//   - a first-ack failure on any connection (a delivered-but-unackable
+	//     connection is a genuine blocked upstream, not a load blip).
+	const countsToward =
+		(establishmentFailed && pendingInteraction) || firstAckFailed;
+	if (establishmentFailed && pendingInteraction) establishFailures += 1;
+	if (firstAckFailed) firstAckFailures += 1;
+	refreshDocumentNavMode();
+
+	if (documentNavMode) {
+		// The bound is reached — a genuinely blocked path. Pending
+		// interactions complete as ONE document navigation; the heartbeat's
+		// interval keeps probing (its fire is no longer degrade-gated), so
+		// a later successful attach lifts the mode and restores channel
+		// navigation. RECOVERABLE.
+		if (pendingInteraction) documentNavForPendingRecords();
 		return;
 	}
-	_requestAttachNow();
+	if (countsToward) {
+		// Transient failure under the bound: re-attach with backoff (the
+		// counter grew, so this can't tight-loop). Pending records LATCH
+		// and ride the next attach (folded by `_channelNavSubsumedByAttach`
+		// at fire) — never document-navved on a single stumble.
+		scheduleReattach();
+		return;
+	}
+	// Not counted — a benign idle non-establishment, a normal keepalive
+	// close, or our own supersede. Re-ride a pending interaction
+	// immediately; otherwise the heartbeat's interval reopens on its own
+	// (a background non-establishment retries there — no fast loop while
+	// the counter stays put).
+	if (pendingInteraction) _requestAttachNow();
 }
 
 /** Request an envelope flush. Coalesced per animation frame (the
@@ -1504,18 +1625,13 @@ async function flush(): Promise<void> {
 			}
 			// The envelope carried this connection's FIRST ack and it never
 			// got through: the client committed deliveries the server will
-			// never learn about — the duplex is broken (a blocked
-			// `/__parton/*` POST path). Sticky page-lifetime degrade: the
-			// heartbeat stops attaching and the navigate listener stands
-			// down — the page is browser-native from here.
+			// never learn about (a blocked `/__parton/channel` POST path).
+			// NOT a sticky degrade — flag it and pull the now-unackable
+			// stream down; its settle counts a first-ack failure and
+			// arbitrates re-establishment vs the recoverable document-nav
+			// fallback through the bound (`_channelConnectionClosed`).
 			if (carriesAck && !ackDeliveredOnConnection) {
-				markPageDegraded();
-				if (
-					pendingNavRecords.some((r) => !r.settled) ||
-					pendingFrameNavRecords.some((r) => !r.settled)
-				) {
-					documentNavForPendingRecords();
-				}
+				firstAckFailedThisConnection = true;
 				_channelAbortLiveStream();
 			} else if (
 				pendingNavRecords.length > 0 ||
@@ -1529,7 +1645,14 @@ async function flush(): Promise<void> {
 				_channelAbortLiveStream();
 			}
 		} else if (carriesAck) {
+			// The first ack landed — the full duplex is proven. Clear the
+			// first-ack-failure streak; document-nav mode lifts if that was
+			// what held it.
 			ackDeliveredOnConnection = true;
+			if (firstAckFailures > 0) {
+				firstAckFailures = 0;
+				refreshDocumentNavMode();
+			}
 		}
 	} finally {
 		inFlight = false;
@@ -1613,7 +1736,14 @@ export function _resetChannelClient(): void {
 	retransmitBuffer = [];
 	appliedWatermark = 0;
 	retransmitPending = false;
-	degraded = false;
+	establishFailures = 0;
+	firstAckFailures = 0;
+	firstAckFailedThisConnection = false;
+	documentNavMode = false;
+	if (reattachTimer !== null) {
+		clearTimeout(reattachTimer);
+		reattachTimer = null;
+	}
 	if (typeof document !== "undefined") {
 		document.documentElement.removeAttribute("data-parton-degraded");
 	}

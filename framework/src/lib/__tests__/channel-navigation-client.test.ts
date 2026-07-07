@@ -34,6 +34,7 @@ import {
 	_channelConnectionClosed,
 	_channelDeliveryCommittable,
 	_channelEstablished,
+	_channelIsDegraded,
 	_channelNavAvailable,
 	_channelNavigate,
 	_channelNavPoint,
@@ -93,6 +94,24 @@ function probe(p: Promise<void>): { done: () => boolean; failed: () => boolean }
 		},
 	)
 	return { done: () => done, failed: () => failed }
+}
+
+/** Drive the channel to document-nav mode via a RUN of first-ack
+ *  failures (the blocked-`/__parton/channel` signature: each connection
+ *  establishes and delivers, but its first ack can never land). A single
+ *  failure re-establishes, so the fallback needs the whole run. */
+async function fallToDocumentNav(): Promise<void> {
+	_registerLiveStreamAbort(() => {})
+	_registerAttachRequester(() => {})
+	for (let i = 1; i <= 3; i++) {
+		_channelEstablished(`deg${i}`)
+		_channelWireEntry("seq", enc("p\n1 0"))
+		_laneDeliveryCommitted("p")
+		fetchResults.push(new Error("blocked"))
+		await flushOnce()
+		_channelConnectionClosed({ aborted: true })
+	}
+	if (!_channelIsDegraded()) throw new Error("expected document-nav mode")
 }
 
 beforeEach(() => {
@@ -172,14 +191,8 @@ describe("the navigation point + the url frame", () => {
 		expect(requested).toHaveLength(1)
 	})
 
-	it("returns null on a degraded page — the document-navigation cue", async () => {
-		_channelEstablished("c1")
-		// The connection's FIRST ack fails to deliver — the sticky page
-		// degrade (the transport proved the duplex broken).
-		_channelWireEntry("seq", enc("p\n1 0"))
-		_laneDeliveryCommitted("p")
-		fetchResults.push(new Error("blocked"))
-		await flushOnce()
+	it("returns null in document-nav mode — the document-navigation cue", async () => {
+		await fallToDocumentNav()
 		expect(_channelNavAvailable()).toBe(false)
 		expect(_channelNavigate({ url: "/b", intent: "push" })).toBeNull()
 	})
@@ -371,20 +384,44 @@ describe("connection loss under pending navigations", () => {
 		expect(finished.done()).toBe(true)
 	})
 
-	it("an attach that settles without establishing under a pending interaction degrades the page", async () => {
+	it("a single attach non-establishment re-attaches; the record latches and rides it", async () => {
 		const attaches: number[] = []
 		_registerAttachRequester(() => attaches.push(1))
 		const fire = _channelNavigate({ url: "/b", intent: "push" })
 		if (!fire) throw new Error("expected channel routing")
-		expect(attaches).toHaveLength(1)
-		const finished = probe(fire.finished)
+		expect(attaches).toHaveLength(1) // the statement's own triggered attach
 		// The triggered attach settles with NO establishment (not our own
-		// abort) — the transport proved unusable under a real interaction.
+		// abort). Under the bound this is a transient — re-attach, NOT a
+		// degrade; the record LATCHES and rides the next attach.
 		_channelConnectionClosed({ aborted: false })
-		expect(_channelNavAvailable()).toBe(false)
+		expect(_channelIsDegraded()).toBe(false)
+		expect(attaches).toHaveLength(2) // backoff attempt 1 is immediate
+		const intent = _channelNavSubsumedByAttach()
+		expect(intent.url).toBe("/b")
+		const finished = probe(fire.finished)
+		_channelNavSegmentCommitted(0)
+		_channelNavSegmentSettled(0)
+		await settle()
+		expect(finished.done()).toBe(true)
+	})
+
+	it("a RUN of attach non-establishments under an interaction falls to document-nav mode", async () => {
+		_registerAttachRequester(() => {})
+		const fire = _channelNavigate({ url: "/b", intent: "push" })
+		if (!fire) throw new Error("expected channel routing")
+		const finished = probe(fire.finished)
+		// Each triggered attach settles without establishing (a blocked
+		// `/__parton/live`). The record rides each re-attach until the run
+		// crosses the bound and completes it as a document navigation.
+		_channelConnectionClosed({ aborted: false })
+		expect(_channelIsDegraded()).toBe(false)
+		_channelConnectionClosed({ aborted: false })
+		expect(_channelIsDegraded()).toBe(false)
+		_channelConnectionClosed({ aborted: false })
+		expect(_channelIsDegraded()).toBe(true)
 		expect(_channelNavigate({ url: "/c", intent: "push" })).toBeNull()
-		// The records complete as a document navigation (no Navigation
-		// API in this environment — they settle as no-ops either way).
+		// The record completes as a document navigation (no Navigation API
+		// in this environment — it settles as a no-op either way).
 		await settle()
 		expect(finished.done()).toBe(true)
 	})
@@ -459,12 +496,8 @@ describe("the refetch dispatcher", () => {
 		).toBe("badge")
 	})
 
-	it("resolves as a no-op on a degraded page — document loads are its renders", async () => {
-		_channelEstablished("c1")
-		_channelWireEntry("seq", enc("p\n1 0"))
-		_laneDeliveryCommitted("p")
-		fetchResults.push(new Error("blocked"))
-		await flushOnce()
+	it("resolves as a no-op in document-nav mode — document loads are its renders", async () => {
+		await fallToDocumentNav()
 		expect(_channelNavAvailable()).toBe(false)
 		const fire = enqueueRefetch({ labels: ["cart"], streaming: false })
 		const finished = probe(fire.finished)

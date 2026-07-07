@@ -836,15 +836,20 @@ function listenNavigation(
 		// `"after-transition"` would scroll a push/replace to the top, yanking
 		// the viewport out from under whatever the user is doing.
 		if (isFrameworkSilentInfo(event.info)) {
-			// A window-silent URL sync on an attached page still states its
-			// URL on the channel (fire-and-forget, intent "silent"): the
-			// held connection's request state must follow silent moves too
-			// — match gates read the page URL — and the claim keeps the
-			// heartbeat from tearing the stream the statement rides. A
-			// selector nav's own refetch statement (dispatched by the
+			// A window-silent URL sync states its URL on the channel
+			// (fire-and-forget, intent "silent"): the held connection's
+			// request state must follow silent moves too — match gates read
+			// the page URL. The claim is UNCONDITIONAL on establishment (only
+			// document-nav mode stands it down): a silent nav that lands
+			// while the boot attach is still catching up must NOT tear it —
+			// the statement latches and rides that very attach (its url is
+			// subsumed / ships on establishment as a nav segment). The
+			// `_channelNavigate` send self-guards: established → the url
+			// frame; pre-establishment → it latches and requests the attach.
+			// A selector nav's own refetch statement (dispatched by the
 			// initiator right after this event) replaces the pending frame
 			// pre-flush, so exactly one url frame ships either way.
-			if (event.info.mode === "window" && _channelNavAvailable()) {
+			if (event.info.mode === "window" && !_channelIsDegraded()) {
 				const dest = new URL(event.destination.url);
 				if (!dest.searchParams.has("__frame")) {
 					_channelClaimWindowNav();
@@ -858,8 +863,10 @@ function listenNavigation(
 			// A FRAME nav with explicit history (push/replace) stamps a
 			// browser entry for an UNCHANGED window URL; its refetch is a
 			// frame url statement on the held stream (dispatched by the
-			// initiator right after this event) — keep the stream.
-			if (event.info.mode === "frame" && _channelNavAvailable()) {
+			// initiator right after this event) — claim so the boot attach
+			// it rides isn't torn (unconditional on establishment; only
+			// document-nav mode stands it down).
+			if (event.info.mode === "frame" && !_channelIsDegraded()) {
 				_channelClaimWindowNav();
 			}
 			event.intercept({ focusReset: "manual", scroll: "manual" });
