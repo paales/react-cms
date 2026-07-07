@@ -210,15 +210,17 @@ Per scenario (N connections, M = N/10 or 0 active):
   latency; cpu is process-CPU per tick (including the N−M idle scans);
   µs/lane amortizes it per delivered lane.
 - **B/wake** — heap a parked connection accretes per wake round
-  (post-gc drift ÷ wakes). Non-zero today (~1 KB): each re-arm of the
-  parked driver's wake race attaches fresh reactions to the
-  connection's long-lived `laneDrained` / visibility-flip promises,
-  which only release when those promises settle — so a parked
-  connection's heap grows with bump traffic. Production bounds the
-  accumulation via the 20s keepalive; the soak widens the keepalive
-  (`_setKeepaliveMs`, a bench-visible override in
+  (post-gc drift ÷ wakes). ≈0, gc noise: every wake arm is a
+  disposer-registered listener released when its race iteration
+  settles, so a parked connection's heap doesn't grow with bump
+  traffic. This column is the regression detector for that invariant
+  — a promise-shaped arm (a `.then` reaction frees only when its
+  promise settles, and irrelevant bumps re-arm the race inside one
+  park) reads directly as hundreds of B/wake. The soak widens the
+  keepalive (`_setKeepaliveMs`, a bench-visible override in
   `segmented-response.ts` — the production window is shorter than a
-  5000-connection scenario's span), which is what makes it measurable.
+  5000-connection scenario's span), which is what makes the drift
+  measurable at all.
 
 The correctness gate, in the spirit of the warm-tick one, proves the
 measurement is what it claims before any number is trusted:

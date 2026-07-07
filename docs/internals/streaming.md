@@ -77,15 +77,20 @@ any selector-routing logic that could replace it.
      bump); the relevance check is what gates the re-render.
 
      Every park's arms observe per-park state and release on wake —
-     the **wake-arm release invariant**: a promise reaction only
-     frees when its promise settles, so arming a park on long-lived
-     shared state (the registry's waiter set, the session's
-     `flipWakes`, a connection-lifetime promise) without releasing
-     the losers grows the heap by one full wake race per idle wake
-     for as long as the connection holds. `waitForSegmentWake` builds
-     one deferred per park and disposes every registration when it
-     settles; the lane driver's drain signal and the session's flip
-     signal are latch + per-park registrations for the same reason.
+     the **wake-arm release invariant**: wake arms are
+     disposer-registered listeners with entry latches, never `.then`
+     reactions on a promise that outlives one race iteration. A
+     reaction only frees when its promise settles, and an irrelevant
+     bump re-arms the race WITHIN one park — so a promise-shaped arm
+     on long-lived state (the registry's waiter set, the session's
+     `flipWakes`, the lane driver's drain wakes) accretes one
+     reaction, retaining its whole wake race, per idle wake for as
+     long as the connection holds. `waitForSegmentWake` builds one
+     deferred per race iteration and disposes every registration
+     when it settles; the lane driver's drain signal and the
+     session's flip signal are latch + listener set, the latch
+     re-checked at each iteration's entry so a signal that raced a
+     losing arm is consumed, not starved.
    - Expiry arm — the earliest `expires()` boundary among the
      route's snapshots (read through `effectiveExpiresAt`) elapses.
    - Visibility arm (lane driver only) — a channel envelope's
@@ -366,7 +371,7 @@ The pieces:
   (and everything until the heartbeat re-establishes) to ride the
   render-reload fallback.
 - **The visibility wake.** The lane driver races the session's flip
-  promise alongside the bump/expiry/keepalive arms. On a flip wake
+  wakes alongside the bump/expiry/keepalive arms. On a flip wake
   it drains the session's pending statements; only in-flips lane
   (through the same `partialFromSnapshot` path bump lanes use) — a
   cull-OUT is complete on the client the moment it happens (the pair

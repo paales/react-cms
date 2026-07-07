@@ -792,17 +792,19 @@ async function driveLaneStream(
 	// Lane-drained wake arm. A drained lane's fresh snapshot carries its
 	// next `expiresAt`; the wake re-arms the wait so the deadline is
 	// re-read from the committed snapshot instead of starving behind
-	// the open-lane expiry exclusion. A latch plus a per-park promise
-	// rather than one long-lived promise: the wait races a FRESH
-	// promise each park (discarded with the park, so exited waits
-	// retain nothing — the wake-arm release invariant), and a drain
-	// landing while the driver is busy sets the latch, which the next
-	// wait entry consumes without parking.
+	// the open-lane expiry exclusion. A latch plus a DISPOSABLE listener
+	// set (the flipWakes shape) rather than a promise: a promise
+	// reaction only frees when its promise settles, so arming each
+	// re-arm iteration with `.then` on a park-lived promise accretes
+	// one reaction (retaining its whole wake race) per idle wake — the
+	// wake-arm release invariant. A drain landing while the driver is
+	// busy sets the latch, which the next wait entry (and the wait's
+	// own re-arm loop) consumes without parking.
 	let laneDrainedPending = false;
-	let signalLaneDrained: () => void = () => {};
+	const laneDrainedWakes = new Set<() => void>();
 	const noteLaneDrained = (): void => {
 		laneDrainedPending = true;
-		signalLaneDrained();
+		for (const wake of [...laneDrainedWakes]) wake();
 	};
 
 	const enqueue = (bytes: Uint8Array): boolean => {
@@ -1125,9 +1127,10 @@ async function driveLaneStream(
 									windowDirty.size === 0
 										? openLaneIds
 										: new Set([...openLaneIds, ...windowDirty]),
-								laneDrained: new Promise<void>((resolve) => {
-									signalLaneDrained = resolve;
-								}),
+								laneDrained: {
+									pending: () => laneDrainedPending,
+									wakes: laneDrainedWakes,
+								},
 								session,
 								deadline: idleDeadline,
 								degradeAt,
@@ -1327,15 +1330,19 @@ interface SegmentWakeOptions {
 	 *  still show the just-serviced deadline, and arming on it would
 	 *  busy-loop the wait until the lane's commit lands. */
 	excludeExpiryIds?: ReadonlySet<string>;
-	/** Extra wake arm: resolves when a lane drains, so the wait
+	/** Extra wake arm: fires when a lane drains, so the wait
 	 *  re-evaluates expiry against the drained parton's FRESH snapshot
 	 *  (which carries its next deadline). Without it, a wait armed
 	 *  while the only expiring parton had an open lane would park on
 	 *  bump+keepalive alone and the parton's next tick would starve
-	 *  until the keepalive closed the connection. Minted fresh per
-	 *  park by the lane driver (drains between parks ride its latch),
-	 *  so the wait's reaction is discarded with the park. */
-	laneDrained?: Promise<void>;
+	 *  until the keepalive closed the connection. A disposable
+	 *  listener set + the driver's latch (never a promise: a `.then`
+	 *  reaction on a park-lived promise can't be released, and the
+	 *  irrelevant-bump re-arm loop would accrete one per idle wake);
+	 *  the wait registers per race iteration and releases with the
+	 *  other arms, re-checking `pending` at each re-arm so a drain
+	 *  that raced a losing arm is consumed, not starved. */
+	laneDrained?: { pending: () => boolean; wakes: Set<() => void> };
 	/** The live connection's session (per-parton driver only). Two
 	 *  roles. Parked partons' `expiresAt` deadlines must not arm the
 	 *  expiry timer — the driver skips their lanes, so arming on a
@@ -1393,15 +1400,19 @@ async function waitForSegmentWake(
 		expiresAtDelay !== null ? Date.now() + Math.max(0, expiresAtDelay) : null;
 	let since = sinceTs;
 	while (true) {
+		// A drain that landed while a previous iteration's race was being
+		// decided (its settle lost to a bump) is latched — consume it here
+		// instead of parking past it.
+		if (options?.laneDrained?.pending()) return "lane-drained";
 		const keepaliveRemaining = keepaliveDeadline - Date.now();
 		if (keepaliveRemaining <= 0) return false;
 		// One deferred per park, every arm registered against it with an
 		// explicit release — the wake-arm release invariant: a reaction
 		// only frees when its promise settles, so arming a park on
 		// long-lived shared state (the registry's waiter set, the
-		// session's flip wakes) without releasing the losers would grow
-		// the heap by one full wake race per idle wake, for as long as
-		// the connection holds.
+		// session's flip wakes, the lane driver's drain wakes) without
+		// releasing the losers would grow the heap by one full wake race
+		// per idle wake, for as long as the connection holds.
 		let settle!: (value: symbol | number) => void;
 		const woke = new Promise<symbol | number>((resolve) => {
 			settle = resolve;
@@ -1417,10 +1428,11 @@ async function waitForSegmentWake(
 			);
 			disposers.push(() => clearTimeout(expTimer));
 		}
-		if (options?.laneDrained) {
-			// A reaction on a per-park promise (see the lane driver's
-			// latch) — dropped with the park, nothing to release.
-			void options.laneDrained.then(() => settle(LANE_DRAINED_WAKE));
+		const laneDrainedWakes = options?.laneDrained?.wakes;
+		if (laneDrainedWakes) {
+			const onDrain = (): void => settle(LANE_DRAINED_WAKE);
+			laneDrainedWakes.add(onDrain);
+			disposers.push(() => laneDrainedWakes.delete(onDrain));
 		}
 		if (options?.degradeAt != null) {
 			const dgTimer = setTimeout(

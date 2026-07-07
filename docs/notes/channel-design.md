@@ -215,14 +215,13 @@ stands as the planning number. Two findings with design consequences:
 bump (at 100 bumps/s × 5000 idle connections that's ~2 cores doing
 nothing but filtering), so channel-primary wants relevance-indexed
 wakes (wake only connections whose route can match the bump) instead
-of wake-all-and-filter; and **per-wake parked-heap accretion**: originally ~1KB/wake from
-re-armed promise reactions; the channel-hardening pass (wake arms
-released per park) halved it to ~500B/wake. The residual is
-attributed — the lane-drained arm's `.then` reaction on the per-park
-promise (a wake arm expressed as a promise reaction violates
-arm-release: reactions free only at settle) — and its fix lands as
-its own change on top of W4; until then the keepalive cycle bounds
-it. W4's own delivery bookkeeping stays O(1) per wake (per-delivery
+of wake-all-and-filter; and **per-wake parked-heap accretion**:
+fixed — measured ≈0 B/wake (gc noise, −117…104 across the soak
+scenarios) with every wake arm a disposer-registered listener behind
+an entry latch; the lane-drained arm was the last promise-shaped one
+(a `.then` reaction frees only at settle, and irrelevant bumps re-arm
+inside one park — ~500B/wake while it stood).
+W4's own delivery bookkeeping stays O(1) per wake (per-delivery
 token records die at ack or connection close, bounded by the unacked
 window). The dominant per-connection cost is OUR mirror (visible set +
 cached tokens — world-page clients plausibly 100KB+), so the mirror is
