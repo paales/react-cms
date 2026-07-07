@@ -150,10 +150,14 @@ fp/url/settled trailers. Two additions:
   as-of correlation subsumes them; their discrete-mode twins survive
   in the GET fallback (one implementation, reached two ways).
 - Producer-await streams (chat) do NOT fold into plain lanes: a lane
-  ends at drain, a producer streams until its render resolves — and
-  `markConnectionLive` is only honored in the whole-tree segment loop
-  today. Frames hosting producers need a producer lane kind (or keep a
-  dedicated connection); reserved in the grammar now, resolved in W5.
+  ends at drain, a producer streams until its render resolves.
+  RESOLVED in W5b as the producer lane kind: `markConnectionLive()`
+  inside a lane render (attributed per lane by a store probe) makes
+  the lane announce its delivery early via the `muxlive` frame and
+  close only at producer resolve; the client commits progressively at
+  root-ready and clean region exits close (not error) producer
+  bodies. [docs/internals/channel.md](../internals/channel.md)
+  §Producer lanes.
 
 ### Transport, v1 and later
 
@@ -327,9 +331,25 @@ Each package is a worktree branch, lands green (`yarn test` +
   frame will address directly), and issue-seq + pageUrlKey retired on
   the channel path with their twins intact on the discrete GET path:
   [docs/internals/channel.md](../internals/channel.md) §Navigation
-  rides the channel. **W5b remains** — frame-scoped navigation +
-  producer lanes + the `cancel` frame kind + action consequence seqs;
-  frame long-polls keep their dedicated connections until then.
+  rides the channel. **W5b LANDED** — frame-scoped `url` frames (the
+  session frame URL written at the endpoint, the frame's targets
+  laned EXPLICIT on the open region with a `nav=<seq>` milestone
+  correlation, the discrete `__frame` GET intact as the
+  pre-attach/degraded twin), the `cancel` frame kind (reliable class;
+  a superseding frame fire ships cancel-then-url in one envelope and
+  the apply aborts the scope's in-flight lane renders — the
+  deferred-abort supersede retired on the channel path, alive on the
+  discrete one), producer lanes (the `muxlive` early delivery
+  announcement + progressive client commits + close-not-error region
+  exits), and action consequence seqs (`x-parton-conn` on action
+  POSTs, reservation INSIDE the action's transaction, the
+  `x-parton-consequences` response header, the `seqvoid` entry for
+  skipped reservations, and the cell overlay holding until the
+  committed watermark covers the seqs):
+  [docs/internals/channel.md](../internals/channel.md) §Frames ride
+  the channel, §Producer lanes, §Action consequence seqs. The frame
+  long-poll's dedicated connection survives only as the discrete
+  fallback.
 - **W6 — telemetry + world consumer.** Lossy frames, scroll-vector
   warming in the website world. LANDED (ahead of W5 — the two don't
   touch) — the `telemetry` frame kind + strict decoder, the lossy
@@ -363,8 +383,12 @@ Each package is a worktree branch, lands green (`yarn test` +
   window-free supersedes every skipped intermediate. Threshold
   `UNACKED_DELIVERY_WINDOW = 64`, sized against the W3 soak numbers
   (rationale at the constant in `segmented-response.ts`).
-- Whether the frame long-poll supersede
-  survives W5 or folds into the same stream-order argument.
+- ~~Whether the frame long-poll supersede survives W5~~ — RESOLVED
+  in W5b: it folds into the explicit `cancel` statement on the
+  channel path (stream order alone was not enough — a producer lane
+  streams until ITS producer resolves, so superseding it needs an
+  abort, not just ordering) and survives verbatim on the discrete GET
+  path until W7 retires it.
 - e2e scope isolation: resolved by the shipped pattern — upstream
   POSTs thread no scope (they run before the request ALS); isolation
   is the globally-unique connection id, and scope resolves only on the

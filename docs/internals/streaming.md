@@ -98,11 +98,16 @@ any selector-routing logic that could replace it.
      parton ids ([`channel.md`](./channel.md)). The same listener-set
      arm carries every session-state wake: a delivery `ack` freeing
      the unacked window, an applied-watermark advance to announce,
-     and a `url` frame latching — which outranks every other latch at
-     wait entry: the driver tears open lanes, applies the statement's
-     URL to the connection's request state, and answers with a
-     whole-tree navigation segment before anything else runs
-     ([`channel.md`](./channel.md) §Navigation rides the channel).
+     and a `url` frame latching. A WINDOW url statement outranks every
+     other latch at wait entry: the driver tears open lanes, applies
+     the statement's URL to the connection's request state, and
+     answers with a whole-tree navigation segment before anything
+     else runs ([`channel.md`](./channel.md) §Navigation rides the
+     channel). A FRAME url statement ranks just below it and lanes
+     the frame's targets on the OPEN region (no tear), and a `cancel`
+     statement's apply aborts its scope's open lane renders directly
+     through the session's cancel listeners
+     ([`channel.md`](./channel.md) §Frames ride the channel).
    - Never-acked degrade arm (lane driver only) — a timer anchored at
      the connection's first delivered-settle while its first ack is
      outstanding; on firing, the session notes
@@ -223,16 +228,20 @@ bumps the **already-open** heartbeat stream. The segment driver
 wakes, the next segment renders, the changed partial's fp moves, the
 bytes ship. The heartbeat is the one connection a write ever needs.
 
-A frame refetch, though, CAN open a second connection: the chat
-overlay's frame nav renders a `markConnectionLive` sentinel, so that
-targeted (cache-mode) refetch holds open and streams alongside the
-heartbeat's `?live=1` connection. Two live connections then commit
-onto the same React root. That's safe only because every payload —
-cache or streaming — carries the identical
-`<PageUrlProvider><PartialsClient>` root; otherwise the alternating
-commits would remount the whole page on each seam. See
-[`render-pipeline.md`](./render-pipeline.md) ("Both modes share one
-payload root").
+A frame refetch on a PRE-ATTACH or degraded page CAN still open a
+second connection: the chat overlay's discrete frame nav renders a
+`markConnectionLive` sentinel, so that targeted (cache-mode) refetch
+holds open and streams alongside the heartbeat's `?live=1`
+connection. Two live connections then commit onto the same React
+root. That's safe only because every payload — cache or streaming —
+carries the identical `<PageUrlProvider><PartialsClient>` root;
+otherwise the alternating commits would remount the whole page on
+each seam. See [`render-pipeline.md`](./render-pipeline.md) ("Both
+modes share one payload root"). On an ATTACHED page the frame nav is
+a channel statement instead and the chat streams as PRODUCER LANES on
+the held connection — no second connection exists
+([`channel.md`](./channel.md) §Frames ride the channel, §Producer
+lanes).
 
 ## `streaming` vs `live` — two orthogonal flags
 
@@ -262,11 +271,13 @@ The two subscription kinds emit differently after their first
 segment. A `?live=1` subscription switches to per-parton lanes (its
 wakes are relevance-matched bumps / `expires()` boundaries, which
 name the partons to render). A `markConnectionLive()` subscription
-(the chat's `ChunkSlot`) stays whole-tree: its next content comes
-from the render itself resolving a producer await, not from a bump,
-so there is nothing for a lane to key on — and inside a `?live=1`
-lane render, `markConnectionLive()` is not honored for the same
-reason.
+(the chat's `ChunkSlot`) stays whole-tree on a DISCRETE cache-mode
+GET: its next content comes from the render itself resolving a
+producer await, and each resolve closes one segment. Inside a
+`?live=1` LANE render, `markConnectionLive()` flags the lane a
+PRODUCER instead: the lane's delivery announces early (`muxlive`),
+the body streams until the producer resolves, and the client commits
+it progressively — see [`channel.md`](./channel.md) §Producer lanes.
 
 ## Deferred (stream-only) writes
 
@@ -700,7 +711,8 @@ Each segment's bytes look like:
 The tags split into two grammatical roles. **Milestones** (`settled`,
 `next`, `lanes`, `mux`, `muxend`) are phase transitions: they end the
 segment's body block. **Entries** (`fp`, `url`, `conn`, `seq`,
-`applied`, any future data tag) carry data and may appear ANYWHERE —
+`applied`, `muxlive`, `seqvoid`, any future data tag) carry data and
+may appear ANYWHERE —
 interleaved between Flight rows, not just after the body. The server exploits that for
 settle-time trailer emission: every parton's subtree settlement is
 observable (the `SettleScope` refcount in the Flight patch — see
@@ -727,7 +739,17 @@ commit acks and of its stale-commit arbitration
 ([`channel.md`](./channel.md) §Navigation rides the channel) — and
 `applied`, the cumulative upstream-envelope-applied watermark that
 prunes the client transport's retransmit buffer
-([`channel.md`](./channel.md) §Delivery is evidenced).
+([`channel.md`](./channel.md) §Delivery is evidenced). Two more are
+lane-region citizens: `muxlive` — a PRODUCER lane's early delivery
+announcement (`<parton-id>\n<seq> <asof>[ nav=<n>]`), written the
+moment the lane's render marks itself live, replacing that body's
+drain-time `seq` entry — and `seqvoid` — delivery seqs assigned ahead
+of a render (an action's consequence reservation) whose lane was
+skipped, counted PROCESSED by the client so the contiguous ack
+watermark can pass them. Lane `seq`/`muxlive` bodies carry an
+optional ` nav=<n>` token naming the FRAME url statement whose
+consume spawned the lane — the frame fire's milestone correlation
+([`channel.md`](./channel.md) §Frames ride the channel).
 
 The client's `splitSegments` consumes body bytes until a `\xFF`
 (UTF-8 invalid → never inside Flight payload), reads the marker with
@@ -771,10 +793,16 @@ own `fp` trailer), so the client decodes it with the same
 connection. Lanes regions are always safe to abort immediately: a
 torn lane rejects only its own un-committed decode, never a committed
 tree, so the deferred-abort gate applies only to payload segments.
-Every exit from a lanes region tears its still-open lanes the same
-way — source close, invalid frame, and a `next` delimiter arriving
-mid-payload all error the open bodies, so a lane's decode always
-settles (rejects) rather than hanging on a stream nothing closes. A
+Every exit from a lanes region settles its still-open lanes — a
+genuine tear (source close mid-frame, invalid frame) errors the open
+bodies so their decodes reject; a CLEAN exit (a `next` delimiter, the
+source closing between frames) errors normal bodies but CLOSES
+`muxlive`-flagged PRODUCER bodies, whose earlier bytes may already be
+committed progressively (a rejection would throw their pending rows
+into an error boundary; a clean close leaves the committed tree's
+Suspense fallback standing until the covering render replaces it).
+Either way a lane's decode always settles rather than hanging on a
+stream nothing closes. A
 lanes region ends cleanly with a `next` delimiter in two cases, both
 flowing a payload segment and reopening the region with `next` +
 `lanes`: the driver's scheduled whole-tree reconcile, at quiesce

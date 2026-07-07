@@ -5,16 +5,17 @@ shapes carry the statements: the ATTACH — the heartbeat's live fire
 as a POST whose body is the full client statement, answered by the
 held segmented stream — and the coalesced envelopes of frames a page
 POSTs to the session that stream opened. Visibility flips, delivery
-ACKS, viewport TELEMETRY, and window URL moves are the shipped frame
-kinds; the grammar is built to grow (cancel and frame-scoped
-navigation are designed but unshipped — the roadmap and the full
-design rationale live in
-[`../notes/channel-design.md`](../notes/channel-design.md)). The
+ACKS, viewport TELEMETRY, URL moves (window and frame scoped), and
+CANCEL statements are the shipped frame kinds — the kind table is
+complete; the design rationale and roadmap live in
+[`../notes/channel-design.md`](../notes/channel-design.md). The
 downstream half — segments, lanes, markers — is
 [`streaming.md`](./streaming.md); the delivery-seq / ack / applied
 machinery that makes the channel EVIDENCED is §Delivery is evidenced
 below; window navigation and selector refetches riding the stream is
-§Navigation rides the channel.
+§Navigation rides the channel; frame navigation, producer lanes, and
+action consequence seqs are §Frames ride the channel and §Action
+consequence seqs.
 
 ## The attach — the connection's opening statement
 
@@ -122,7 +123,8 @@ Frame kinds shipped:
 | `ack` | `{delivered}` — the highest CONTIGUOUSLY committed delivery seq (cumulative) | Advances the session's ack watermark, folds the covered deliveries' fps into the ACKED mirror layer, frees the unacked delivery window (the parked driver wakes), and — any ack frame at all — proves the duplex (`firstAckReceived`, the never-acked degrade's off-switch) |
 | `detach` | nothing | Explicit close: the parked driver wakes, the drive loop exits, the session closes. Best-effort by nature (sent on `pagehide` via keepalive fetch); the keepalive timeout remains the backstop |
 | `telemetry` | `{viewport: {w,h}, scroll: {x,y,vx,vy}, at}` — the client's scroll context: container box, position, velocity (px/s), performance-clock timestamp | Replaces the session's `telemetry` slot, latest-wins by envelope seq. NOTHING else: no invalidation, no wake, never a render — the channel carries freshness statements, and telemetry is CONTEXT, not a dependency. Consumers read the slot when awake for their own reasons (the warm pass — see §Telemetry) |
-| `url` | `{url, intent}` — the client's window URL statement: the target as path+search (a `?__force=` overlay names a refetch's forced targets), plus the history semantic (`push`/`replace`/`silent` — descriptive: the client's history work is done by send time) | Same-origin-validated (`400` the envelope on a cross-origin target — a violation, nothing applies), then LATCHED on the session (newest seq wins; a seq at or below the consumed navigation is a stale restatement, a no-op — retransmit idempotence). The driver consumes it navigation-FIRST at wait entry and answers with a whole-tree payload segment for the new request state, then forced-target lanes — see §Navigation rides the channel |
+| `url` | `{url, intent, frame?}` — a URL statement for a scope the client owns: absent `frame`, the WINDOW URL (a `?__force=` overlay names a refetch's forced targets); present, the named FRAME's URL (the frame path's segments). `intent` is the history semantic (`push`/`replace`/`silent` — descriptive: the client's history work is done by send time) | Same-origin-validated (`400` the envelope on a cross-origin target — a violation, nothing applies). WINDOW scope: LATCHED on the session (newest seq wins; a seq at or below the consumed navigation is a stale restatement, a no-op — retransmit idempotence); the driver consumes it navigation-FIRST at wait entry and answers with a whole-tree payload segment, then forced-target lanes — §Navigation rides the channel. FRAME scope: the session frame URL is written AT THE ENDPOINT (the same store `?__frame=` writes through — and the one channel response that can mint the session cookie; an anonymous binding rebinds in place); the render latches per frame key and the driver lanes the frame's targets on the open region — §Frames ride the channel |
+| `cancel` | `{scope}` — supersede the scope's in-flight renders: the frame's top-level name (the discrete twin's `?partials=<frame[0]>` narrowing) | Aborts the scope's open lane renders synchronously at apply (the driver's `cancelListeners` arm — the same reach into a suspended render the window supersede's nav-latch arm has). A cancelled body closes with a `muxend` and NO delivery announcement, so the client's decode settles, the content never commits, and the id can reopen for the covering statement's lane. Per-scope seq gate: a replayed cancel at or below its scope's applied seq is a no-op — it can never abort a newer statement's render |
 
 Responses carry no body: `204` applied; `400` malformed; `403`
 cross-site; `404` connection gone — see §Security. Frame kinds split
@@ -130,9 +132,9 @@ into three classes: **loss-tolerant** (`visible`, `detach`, `ack` —
 the protocol re-establishes their statements on its own: the next
 attach's seed, the keepalive backstop, the cumulative watermark),
 **lossy** (`telemetry` — newest-wins, droppable, no fallback: only
-the latest statement has value), and **reliable** (`url`; the cancel
-kind a later package adds), which ride the transport's retransmit
-buffer — see §Delivery is evidenced.
+the latest statement has value), and **reliable** (`url`, `cancel`),
+which ride the transport's retransmit buffer — see §Delivery is
+evidenced.
 
 Shared grammar + decoder: `framework/src/lib/channel-protocol.ts`
 (import-safe on both sides).
@@ -252,16 +254,21 @@ Downstream delivery stops being assumed the moment a session opens:
   page-lifetime seq) until the `applied` marker covers them, and
   retransmitted — original seqs, in order, ahead of new flushes — at
   the next establishment. `deliveryFailed` is never called for them;
-  the buffer owns redelivery. The url producer is the first
-  reliable-class source — though its buffered frames usually retire
-  at the next ATTACH rather than retransmit: the attach's own
-  request line restates the URL, so the fire subsumes them
-  (`_channelNavSubsumedByAttach` — §Navigation rides the channel).
-  Application idempotence across a reattach is the frame kind's own
-  seq-ordered statement contract (a `url` frame at or below the
-  session's consumed navigation seq applies as a no-op;
-  at-least-once with a bounded duplicate window when the marker
-  itself was lost — the session's state is disposable, so
+  the buffer owns redelivery. The window url producer and the
+  frame-navigation producer (url + cancel pairs) are the
+  reliable-class sources — though their buffered frames retire at the
+  next ATTACH rather than retransmit: the attach's own request line
+  restates the window URL, and the attach's whole-tree render reads
+  the SESSION frame URLs (a replayed frame url could regress a
+  discrete frame nav made in the gap, so uncovered frame fires
+  re-fire discrete instead)
+  (`_channelNavSubsumedByAttach` — §Navigation rides the channel,
+  §Frames ride the channel). Application idempotence across a
+  reattach is the frame kind's own seq-ordered statement contract (a
+  `url` frame at or below its scope's consumed navigation seq applies
+  as a no-op; a `cancel` at or below its scope's applied seq
+  likewise; at-least-once with a bounded duplicate window when the
+  marker itself was lost — the session's state is disposable, so
   exactly-once across a dead session is not on offer).
 
 ## The layered mirror
@@ -354,8 +361,6 @@ on their own real signal:
 On an attached, non-degraded page, WINDOW navigations and batched
 selector refetches are `url` frames — statements of the client's URL
 — and their responses arrive on the held stream in stream order.
-Frame-scoped navigation keeps its dedicated long-poll connections
-(the cancel/frame package moves it).
 
 **The routing table, as shipped:**
 
@@ -364,8 +369,9 @@ Frame-scoped navigation keeps its dedicated long-poll connections
 | Window navigation (`nav.navigate`, intercepted) | `url` frame, intent `push`/`replace` (a traverse states `replace`) | discrete `_.rsc` GET |
 | Silent window URL sync (`silent: true`, server-push application) | `url` frame, intent `silent`, fire-and-forget | nothing (the URL is client-local; pre-W5a the heartbeat's reopen re-synced the connection) |
 | Batched selector refetch (`reload({selector})`, `navigate({selector})`) | `url` frame, intent `silent`, page URL + `?__force=<labels>` | discrete GET with `?partials=` + capped `?cached=` |
-| Traverse with frame diffs (`__frame` pairs), culling flips, batches with ephemeral `params`, `live` fires | — (frame-scoped / no-session work) | discrete GET |
-| Heartbeat attach, action POSTs, preload/warm, cold start | — | discrete by design (the channel's own legs) |
+| Frame navigation (`useNavigation(frame).navigate/reload`, frame traverse) | frame-scoped `url` frame (+ a `cancel` co-rider when it supersedes an unsettled fire for the same frame) — §Frames ride the channel | discrete GET with `?__frame=&__frameUrl=&partials=<frame[0]>` (the long-poll form; deferred-abort supersede lives on here) |
+| Traverse combining a window move WITH frame diffs (`__frame` pairs), culling flips, batches with ephemeral `params`, `live` fires | — (one combined request / no-session work) | discrete GET |
+| Heartbeat attach, action POSTs, preload/warm, cold start | — | discrete by design (the channel's own legs; an attached page's action POST carries `x-parton-conn` — §Action consequence seqs) |
 
 The pieces:
 
@@ -476,6 +482,151 @@ The pieces:
   authoritative; applying an accepted push re-states it as a silent
   url frame (the silent-nav path), which is how the held
   connection's request state converges after an action-side push.
+
+## Frames ride the channel
+
+A frame navigate/reload/traverse on an attached, non-degraded page is
+a FRAME-scoped `url` frame (`_dispatchFrameRefetch` routes —
+`_channelFrameNavigate` in `channel-client.ts`); the frame long-poll's
+dedicated connection is gone on this path. The pieces:
+
+- **Two halves, split by where the state lives.** The session frame
+  URL is cookie-backed SHARED state, so the ENDPOINT writes it — the
+  same `setSessionFrameUrl` store `?__frame=` writes through, inside
+  the envelope's own request scope where the client's cookie resolves
+  and a freshly-minted session cookie can ride the `204` (an anonymous
+  binding REBINDS in place to the identity it just handed that same
+  client, and the driver re-presents the bound identity on the held
+  request so its renders can read the store). The RENDER latches per
+  frame key (`pendingFrameNavs`, newest seq per key; a seq at or below
+  the key's consumed seq is a stale restatement — and a stale
+  restatement skips the session write too, so a replay can never
+  regress a newer frame URL).
+- **The driver lanes, never tears.** Frame content is a subtree, so
+  the consume (`handleFrameNavs` — after a pending window navigation,
+  before flips) resolves the frame's targets by its TOP-LEVEL name (id
+  first, then label fan-out — the discrete twin's
+  `?partials=<frame[0]>` narrowing) and lanes them EXPLICIT on the
+  OPEN region: window partons' lanes are untouched. Each covering
+  lane's delivery announcement carries the statement's seq as a
+  ` nav=<seq>` token — the client's milestone correlation
+  (`streaming` at the covering lane's commit, `finished` at its
+  settle). Zero resolved targets (the frame never rendered on this
+  route) fall back to one whole-tree segment via the reconcile
+  machinery — its as-of covers the statement, because frame consumes
+  advance `consumedNavSeq` too (the as-of names the last consumed url
+  statement of EITHER scope; the window drop guard is unaffected —
+  the client's navigation point only moves on window statements).
+- **`cancel` retires the deferred-abort supersede.** A statement
+  superseding an UNSETTLED fire for the same frame ships
+  `{kind:"cancel", scope: frame[0]}` in the SAME envelope, ahead of
+  its url frame — the in-order pass gives cancel-then-url. The apply
+  aborts the scope's open lane renders synchronously (id, label, or
+  `framePath[0]` match); the cancelled body closes with a `muxend`
+  and NO delivery announcement, so the client's decode settles
+  without committing (an unannounced lane body on a seq-carrying
+  stream never commits — it is by construction a superseded render)
+  and the id reopens for the covering lane. The client's
+  deferred-abort machinery (`partial-client-state.ts`'s in-flight
+  queue) lives on only for the discrete GET path.
+- **The heartbeat keeps the stream.** The silent-info `frame` branch
+  and pure frame traverses CLAIM the held stream when attached — the
+  statement's response arrives ON it. A claim whose fire ends up
+  discrete is harmless: frame URLs are session state, so the kept
+  stream's next render reads what the discrete request wrote.
+- **Fallbacks.** No connection at dispatch → the discrete `__frame`
+  GET, unchanged. A failed envelope, the stream closing under pending
+  fires, or an attach subsume → ONE discrete `__frame` re-fire per
+  frame key for the latest statement (milestones chained). Frame url
+  + cancel frames are reliable class but RETIRE at the attach subsume
+  instead of retransmitting: the attach's whole-tree render reads the
+  session (server-authoritative), and a replayed frame url could
+  regress a discrete frame nav made while the connection was down.
+
+## Producer lanes
+
+A lane render that calls `markConnectionLive()` — a body that streams
+until a producer await resolves, the chat's `ChunkSlot` — is a
+PRODUCER lane. Attribution is per lane: each lane iteration renders
+inside a prototype-chained store probe (`_createConnectionLiveProbe`)
+whose own `connectionLive` field catches the mark, because concurrent
+lane renders share one request scope and the store-level flag cannot
+say whose render marked. On the flip:
+
+- **The announcement moves early.** The pump writes a `muxlive` frame
+  (`<id>\n<seq> <asof>[ nav=<n>]` — the lane delivery-seq body in the
+  mux frames' id-first shape) the moment it observes the mark, INSTEAD
+  of the drain-time `seq` entry: the client must hold seq + as-of
+  before the body closes, because the body only closes (`muxend`) at
+  producer resolve. Delivery recording server-side still happens at
+  drain, with the early-minted seq (`_recordDelivery`'s raced-ack path
+  folds if the client's progressive commit already acked it).
+- **The client commits progressively.** `handleLane` races the
+  trailer against the producer announcement; a live-flagged delivery
+  commits at ROOT-READY through `_commitPartonLaneProgressive` — a
+  lazy-aware walk that caches what has resolved and RE-WALKS the same
+  payload as its pending Flight chunks land (the one-shot walk stops
+  at the first pending row and would cache nothing), guarded by a
+  per-parton commit generation so a superseding commit stops an older
+  body's late re-walks. The fp trailer applies at the body's close.
+- **Tears stay isolated.** A clean region exit (a `next` delimiter,
+  the source closing between frames) CLOSES an open producer body
+  instead of erroring it — its progressively-committed tree keeps its
+  Suspense fallback until the covering render replaces it, rather
+  than rejecting pending rows into an error boundary. A genuinely
+  torn stream (mid-frame end, invalid marker) still rejects it — and
+  only it. The drive-loop exit aborts producer reads: an unbounded
+  producer await must not hold the wind-down.
+
+The chat is the shape this exists for: the open-pill's frame
+statement lanes the overlay as a producer lane (initial content
+commits at root, the "streaming…" fallback holds the producer's
+place), and each chunk's bump lanes the message parton — itself a
+producer lane — so chunks reveal progressively on the held stream,
+exactly as the discrete long-poll's per-segment commits did.
+
+## Action consequence seqs
+
+Actions stay discrete POSTs (the pinned decision), but with a channel
+attached the response carries the delivery seqs its invalidation
+consequences will ride — and the client's optimistic overlay holds
+until its committed watermark covers them, never clearing at the
+returnValue alone (under window coalescing the consequence lane can
+trail the response by the whole backpressure window, which is exactly
+when a returnValue-cleared overlay flashes the stale server value):
+
+- **The client names its connection** (`x-parton-conn` on the action
+  POST — an explicit statement, never inferred), when attached and
+  non-degraded.
+- **The server reserves INSIDE the action's transaction**
+  (`_reserveActionConsequences`, called by the entry between the
+  action body and the commit): the pending selectors match the
+  connection's route snapshots (`_routeMatchingSelectorIds`, parked
+  partons excluded), and each target id gets a delivery seq assigned
+  (`assignedLaneSeqs`). Because the commit's flush is what wakes the
+  drivers, the reservation is strictly ordered before any driver
+  could mint the same lanes' seqs — no race window exists.
+  Re-reserving an id with an unconsumed assignment reuses it: one
+  render of the latest state covers both writes. Binding checks
+  mirror the envelope's (scope + session identity); a mismatched
+  header reserves nothing.
+- **The pump consumes at iteration start;** every skip path VOIDS the
+  assignment (`voidSeqs` → the `seqvoid` entry: parked flips, a gone
+  snapshot, window-freed-then-parked ids, a navigation tear — which
+  voids everything). The client counts voided seqs PROCESSED, so the
+  contiguous watermark can always pass a reservation — a silent gap
+  would wedge the unacked window and hold the gate forever.
+- **The response header** (`x-parton-consequences: s1,s2`) registers
+  a gate (`_registerActionConsequences`) before the action's returned
+  promise resolves; the cell overlay's clear point awaits
+  `_awaitActionConsequences()` after the write POST lands — the `.set`
+  promise and the write queue's flow are untouched, only
+  `latestSentByCell` holds. The inverse race (consequence commits
+  before the POST resolves) registers no gate — the watermark already
+  covers it. Gates release when the connection ends (dead seqs must
+  never freeze an overlay; the reattach's whole-tree render is the
+  catch-up). Without a channel: no header, no gate — unchanged
+  behavior.
 
 ## The whole-tree reconcile
 
@@ -667,6 +818,29 @@ producer's statement and the envelope on the wire:
   decoder), `attach-dispatch.test.ts` (statement decoder grammar
   incl. `applied`; attach/action marker dispatch),
   `refetch-attach.test.ts` (the manifest cap split by transport).
+- rsc tier additions for the frame/cancel/producer/consequence
+  packages: `channel-frame-navigation.rsc.test.tsx` (a frame url frame
+  moves the session frame URL at the endpoint and lanes the frame's
+  targets on the open region with the `nav=` correlation — window
+  partons untouched; retransmit idempotence per frame key; a
+  cancel-then-url envelope aborting a stalled frame render with
+  exactly one settled covering lane and replay-safe cancel seqs; the
+  `muxlive` early announcement while the producer await still stalls
+  the body, muxend at resolve, no drain-time seq entry; the
+  consequence reservation assigning the covering lane's seq inside
+  the action's transaction with reuse on re-reservation; a window
+  navigation voiding a torn reservation — the `seqvoid` entry).
+- node tier additions: `channel-frame-client.test.ts` (the frame
+  statement's wire shape, cancel co-rider pairing + in-envelope
+  ordering, per-frame milestone correlation off `nav=` flags and
+  whole-tree as-of coverage, the discrete `__frame` fallback on
+  connection loss and the attach-subsume retire),
+  `channel-actions-client.test.ts` (consequence gates in both
+  orderings, `seqvoid` releasing a skipped reservation's gate,
+  release-all at connection close), and the producer cases in
+  `lanes-split.test.ts` (clean region exits CLOSE `muxlive`-flagged
+  bodies while normal siblings still error; a real tear rejects a
+  producer body — and only it).
 - The live-drive harness (`framework/src/test/live-drive.tsx`) reads
   the minted id off its own wire (`DriveHandle.connectionId`), logs
   every wire entry (`DriveHandle.entries` — how tests observe `seq` /
