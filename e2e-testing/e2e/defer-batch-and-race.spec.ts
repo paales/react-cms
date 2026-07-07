@@ -1,4 +1,4 @@
-import { clearCaches, test, expect, request } from "./fixtures"
+import { clearCaches, test, expect, recordPartialDispatches } from "./fixtures"
 
 /**
  * /defer-demo § 2,5 — dispatch behavior under concurrent activations.
@@ -19,17 +19,10 @@ test.beforeEach(async ({ baseURL }) => {
 })
 
 test.describe("defer batching + race", () => {
-  test("two <WhenMounted> partials coalesce into one RSC request", async ({ page }) => {
+  test("two <WhenMounted> partials coalesce into one dispatch", async ({ page }) => {
     // Both batch partials activate on mount, so each activator's
     // useEffect calls `fire()` in the same commit pass.
-    const rscCalls: Array<{ partials: string | null; url: string }> = []
-    page.on("request", (req) => {
-      const url = req.url()
-      if (url.includes("_.rsc")) {
-        const u = new URL(url)
-        rscCalls.push({ partials: u.searchParams.get("partials"), url })
-      }
-    })
+    const rscCalls = recordPartialDispatches(page)
 
     await page.goto("/defer-demo")
     // Wait for both partials to render their activated content — that
@@ -41,9 +34,9 @@ test.describe("defer batching + race", () => {
       timeout: 10000,
     })
 
-    // One RSC call should list BOTH `batch-a` and `batch-b` in its
-    // ?partials= param. Separate calls (one per partial) would be the
-    // batching bug.
+    // One dispatch should list BOTH `batch-a` and `batch-b` in its
+    // stated targets. Separate dispatches (one per partial) would be
+    // the batching bug.
     const matches = rscCalls.filter((c) => {
       if (!c.partials) return false
       const ids = c.partials.split(",")
@@ -51,13 +44,13 @@ test.describe("defer batching + race", () => {
     })
     expect(
       matches.length,
-      `expected one RSC call covering both batch-a + batch-b, got: ${JSON.stringify(
+      `expected one dispatch covering both batch-a + batch-b, got: ${JSON.stringify(
         rscCalls.map((c) => c.partials),
       )}`,
     ).toBeGreaterThanOrEqual(1)
 
-    // And no one-off calls for either partial alone — those would
-    // indicate un-batched dispatches.
+    // And no one-off dispatches for either partial alone — those would
+    // indicate un-batched fires.
     const soloA = rscCalls.filter((c) => c.partials === "batch-a")
     const soloB = rscCalls.filter((c) => c.partials === "batch-b")
     expect(soloA.length, "batch-a should not be refetched alone").toBe(0)

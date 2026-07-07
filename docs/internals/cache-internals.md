@@ -102,9 +102,9 @@ interface StoredHole {       // HoleRef + the registry snapshot
 
 On a hit, `replayEntry` first `registerPartial`s each hole's snapshot,
 so the parton stays addressable for `reload({selector})` and
-cache-mode reads even though the cached spec's body was
+isolated lane reads even though the cached spec's body was
 short-circuited. Each hole then renders via `partialFromSnapshot`
-(the same reconstruction an isolated partial-refetch uses — right
+(the same reconstruction an isolated lane render uses — right
 Component via the `type` fallback, parent from the snapshot, props
 replay, and `__instanceId` so the re-render keeps its per-instance
 wire id).

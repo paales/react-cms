@@ -75,7 +75,7 @@ plain `yarn dev` never sets the flag and stays fully live; delete
 ### Real readiness signals, not timing
 
 Specs never guess readiness from `waitForTimeout`, `__reactFiber`
-key-sniffing, or `window.__rsc_partial_refetch` presence (which is
+key-sniffing, or `window.__rsc_live_attach` presence (which is
 set before `hydrateRoot` even runs). The app publishes explicit
 markers; `e2e/fixtures.ts` wraps them:
 
@@ -122,13 +122,27 @@ references resolve through permissive Proxy manifests, so tests can
 inspect the Flight payload or the element tree without shipping real
 chunks. The surface:
 
-- `renderWithRequest(url, node, {headers?, signal?, onError?})` —
+- `renderWithRequest(url, node, {headers?, visible?, signal?, onError?})` —
   render inside a real request context (`runWithRequestAsync` opens
   the ALS store so tracked hooks and `<PartialRoot>` resolve).
+  `visible` presents a MEASURED visible set to the render — the
+  harness stamps a connection-session handle on the request store,
+  the same slot the segment driver stamps for a held connection;
+  omitted is the unmeasured state (cull gates resolve their seeds).
   Returns `{stream, cookies}`. It tees and drains the stream before
   returning so every `<PartialBoundary>` has registered by the time
   the request context's auto-commit fires — the caller's side is a
   frozen recording.
+- `withLiveDrive(url, page, scope, run, init?)`
+  (`framework/src/test/live-drive.tsx`) — runs
+  `driveSegmentedResponse` against an ATTACH through the real
+  production pieces (statement bind, fp-trailer wrap, segment
+  splitter, lane demux) with an in-process reader on the other end.
+  Every held drive binds an attach statement through the same
+  `bindAttachStatement` seam the entry uses — `bareAttach()` (empty
+  manifest, no anchor, unmeasured viewport) by default, the `url`
+  half defaulting to the drive URL — so the driver's statement reads
+  see production state.
 - `renderServerToFlight(node)` / `flightToString(stream)` /
   `consumePayload(stream)` / `renderAndInspect(node)` — raw Flight
   render, string-level assertions, decoded payload, or both.

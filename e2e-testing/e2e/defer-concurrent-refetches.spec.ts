@@ -1,4 +1,4 @@
-import { clearCaches, test, expect, request, waitForPageInteractive } from "./fixtures"
+import { clearCaches, test, expect, recordPartialDispatches, waitForPageInteractive } from "./fixtures"
 
 /**
  * /defer-demo § 6 — concurrent refetch behavior.
@@ -16,13 +16,7 @@ import { clearCaches, test, expect, request, waitForPageInteractive } from "./fi
  * happen simultaneously" and "what about race conditions".
  */
 
-test.beforeEach(async ({ baseURL, page }) => {
-  // These tests assert on the exact set of refetch RSC calls and on
-  // button-pending state; the background streaming heartbeat would
-  // inject extra calls and hold a connection open. Opt out of it.
-  await page.addInitScript(() => {
-    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
-  })
+test.beforeEach(async ({ baseURL }) => {
   await clearCaches(baseURL)
 })
 
@@ -42,16 +36,13 @@ test.describe("concurrent refetches", () => {
       .not.toBe(before)
   })
 
-  test("a streaming refetch is one-shot — the button doesn't hang loading", async ({ page }) => {
+  test("a streaming refetch's milestones settle promptly — the button doesn't hang loading", async ({ page }) => {
     // `refresh-concurrent-a` fires `reload({selector, streaming: true})`.
-    // `streaming` is a CLIENT commit-mode switch (progressive reveal) —
-    // it is NOT a subscription. The server must return the segment and
-    // close; only the heartbeat's `reload({live: true})` holds a
-    // connection open. The regression: a targeted `?streaming=1` refetch
-    // was held open for the full 20s keepalive, so the button — whose
-    // label is "…" while `committed && !finished` — sat in its loading
-    // state for 20s. The button keeps showing its label (`disabled` is
-    // off for streaming), but the text staying "…" is the visible hang.
+    // `streaming` is a CLIENT commit-mode switch (progressive reveal).
+    // The fire's `finished` resolves at the covering segment's settle
+    // on the held stream — the button, whose label is "…" while
+    // `committed && !finished`, must leave its loading state at the
+    // roundtrip, never ride the connection's 20s keepalive.
     await page.goto("/defer-demo")
     await page.waitForSelector('[data-testid="concurrent-a"]', {
       timeout: 10000,
@@ -74,21 +65,7 @@ test.describe("concurrent refetches", () => {
   })
 
   test("three distinct-id refetches run in parallel server-side", async ({ page }) => {
-    const rscCalls: Array<{
-      partials: string | null
-      startedAt: number
-    }> = []
-    const startNav = Date.now()
-    page.on("request", (req) => {
-      const url = req.url()
-      if (url.includes("_.rsc")) {
-        const u = new URL(url)
-        rscCalls.push({
-          partials: u.searchParams.get("partials"),
-          startedAt: Date.now() - startNav,
-        })
-      }
-    })
+    const rscCalls = recordPartialDispatches(page)
     page.on("console", (msg) => {
       if (["error", "warning"].includes(msg.type())) {
         console.log(`BROWSER ${msg.type()}: ${msg.text()}`)
@@ -144,9 +121,18 @@ test.describe("concurrent refetches", () => {
         c: expect.not.stringContaining(before.c),
       } as any)
 
-    // Each click → own RSC request. Expect three separate calls.
-    console.log(`RSC calls after concurrent clicks:`, JSON.stringify(rscCalls))
-    expect(rscCalls.length).toBeGreaterThanOrEqual(3)
+    // Every target was STATED — successive statements restate the
+    // union of uncovered forces, so across the dispatch log all three
+    // ids appear (however many envelopes carried them).
+    console.log(`dispatches after concurrent clicks:`, JSON.stringify(rscCalls))
+    const statedIds = new Set(
+      rscCalls.flatMap((c) => c.partials?.split(",").filter(Boolean) ?? []),
+    )
+    for (const id of ["concurrent-a", "concurrent-b", "concurrent-c"]) {
+      expect([...statedIds], `expected ${id} to be stated`).toContainEqual(
+        expect.stringContaining(id),
+      )
+    }
 
     // Parallelism check from the SERVER's own render intervals: each
     // concurrent partial stamps `data-started-at` / `data-finished-at`
@@ -180,13 +166,6 @@ test.describe("concurrent refetches", () => {
       `render intervals must overlap somewhere (parallel handling); intervals: ${JSON.stringify(intervals)}`,
     ).toBe(true)
 
-    // Each call should target exactly one id (not a coalesced batch).
-    const idsPerCall = rscCalls.map((c) => c.partials?.split(",").filter(Boolean) ?? [])
-    const hasMulti = idsPerCall.some((ids) => ids.length > 1)
-    expect(
-      hasMulti,
-      `each click in its own task should produce a single-id call; got ${JSON.stringify(idsPerCall)}`,
-    ).toBe(false)
   })
 
   test("rapid-fire refetches against the SAME id: last completion wins", async ({ page }) => {

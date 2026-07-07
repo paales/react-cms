@@ -1,6 +1,7 @@
 # Partial registry internals
 
-The registry powers cache-mode partial refetches by remembering
+The registry powers isolated per-parton re-renders (the lane pass's
+`partialFromSnapshot` reconstruction) by remembering
 *where* every spec was placed on the rendered tree. It does not
 remember *what* it rendered (no JSX, no rendered output) — that
 lives in `<Cache>` (see [`cache-internals.md`](./cache-internals.md)).
@@ -26,7 +27,7 @@ Two layers:
    request triggered the registration.
 
 2. **`hints`** — a per-routeKey index. Each entry maps `(routeKey,
-   id) → variantKey` so cache-mode lookup can resolve "which
+   id) → variantKey` so an isolated lookup can resolve "which
    variant of `cart` does this request want" without scanning the
    variant store. Bounded LRU (default 10 000 routeKeys).
 
@@ -66,7 +67,8 @@ through MurmurHash3's `fmix32` and concatenated. Pure JS keeps the
 module graph portable across every runtime RSC might land on —
 `node:crypto` triggers Vite's browser-externalisation warning
 whenever the hash module reaches the client bundle, even indirectly.
-Variant-key collision would cause cache-mode to reconstruct the
+Variant-key collision would cause an isolated re-render to
+reconstruct the
 wrong snapshot for a given `(route, id)` lookup, so the 64-bit
 composite is a correctness requirement, not a perf choice.
 
@@ -118,12 +120,12 @@ fall back to the route's committed hint:
 Registration is double-written. `registerPartial` buffers into the
 pending sets AND eagerly publishes the variant + hint entry to the
 canonical store — additive only, freshness-guarded (`_seq`, below).
-A CONCURRENT request must be able to see a partial before this
-request's commit fires: an activator-driven refetch that lands while
-the initial page's RSC stream is still flushing would otherwise hit
-registry-miss and get a full streaming-mode response instead of its
-targeted partial. The atomic prune/merge at commit still owns the
-FINAL hint shape.
+A CONCURRENT render must be able to see a partial before this
+request's commit fires: a targeted lane (an activator-driven refetch,
+a viewport flip) firing while the initial page's stream is still
+flushing would otherwise hit registry-miss and fall back to a
+whole-tree segment instead of its targeted lane. The atomic
+prune/merge at commit still owns the FINAL hint shape.
 
 Two fold reads rely on per-pass stability. `getRouteSnapshots()`
 merges the route's committed hint with the live overlay
@@ -222,9 +224,8 @@ Content changes and record removal are separate mechanisms:
 - **Snapshot invalidation.** `invalidateSnapshot(id)` removes the
   id's registry records entirely (inside a request: buffered into
   `ctx.invalidations`, applied at commit; outside: direct canonical
-  delete). For entries whose *placement* is gone — the next refetch
-  for the id falls through to a streaming-mode re-render that
-  re-registers it.
+  delete). For entries whose *placement* is gone — the next render
+  covering the id is a whole-tree pass that re-registers it.
 
 ## LRU bound
 
@@ -236,9 +237,9 @@ URLPattern combinations, not by URL cardinality. For a typical app
 the working set is small (the number of pattern-set equivalence
 classes is roughly the number of distinct page shapes), so the
 `HINT_LRU_MAX = 10_000` cap is rarely approached. Eviction drops
-a routeKey's hint entirely; the next refetch on a URL that hashes
-to that routeKey falls through to streaming-mode (registry miss),
-which re-registers and rebuilds the hint.
+a routeKey's hint entirely; the next targeted render on a URL that
+hashes to that routeKey falls through to a whole-tree segment
+(registry miss), which re-registers and rebuilds the hint.
 
 ## What snapshots intentionally do not capture
 
@@ -252,5 +253,5 @@ which re-registers and rebuilds the hint.
   flow through tracked hooks and re-resolve per request.
 
 The snapshot is a structural-placement + dependency-key record so
-cache-mode refetches can spawn a spec component at the right point
+an isolated lane render can spawn a spec component at the right point
 in the tree without re-running its ancestors.

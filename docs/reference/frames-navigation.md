@@ -138,33 +138,43 @@ await streaming
 ```
 
 **Transport.** Navigations and refetches — window AND frame scoped —
-ride the live channel when a connection is attached and healthy: the
-fire becomes a `url` frame on the held stream and the response
-arrives in stream order — a whole-tree segment for a window move, the
-frame's own subtrees as lanes for a frame move — with identical
-milestone semantics (`streaming` at the covering render's commit,
-`finished` at its settle). A frame fire that supersedes an unsettled
-one for the same frame ships an explicit `cancel` statement in the
-same envelope, which aborts the in-flight server render directly (the
-chat's open/close races resolve there). Pre-attach and on a degraded
-page the fire is a discrete `_.rsc` GET exactly as before — the first
-interaction never waits on the channel, and a frame fire the channel
-can no longer carry re-fires discrete on its own. This is a transport
-detail; nothing about the API surface changes. Mechanics:
+ride the live channel: the fire becomes a `url` frame on a channel
+envelope and the response arrives on the held stream in stream order
+— a whole-tree segment for a window move, the frame's own subtrees
+as lanes for a frame move — with identical milestone semantics
+(`streaming` at the covering render's commit, `finished` at its
+settle). A frame fire that supersedes an unsettled one for the same
+frame ships an explicit `cancel` statement in the same envelope,
+which aborts the in-flight server render directly (the chat's
+open/close races resolve there). Pre-establishment a fire latches
+and rides the ATTACH it triggers (attach-with-intent: window intent
+folds into the statement's `url`; frame intent rides its `frames`) —
+the first interaction never waits. On a DEGRADED page the navigate
+listener stands down and links and form posts are browser-native
+document loads; a degraded frame fire is a document GET carrying
+`__frame`/`__frameUrl` params. This is a transport detail; nothing
+about the API surface changes. Mechanics:
 [`../internals/channel.md`](../internals/channel.md) §Navigation
 rides the channel, §Frames ride the channel.
 
-### Deferred-abort supersede for selector refetches
+### Supersede ordering for selector refetches
 
 A selector-filtered `navigate({selector})` or `reload({selector})`
-joins a per-selector in-flight queue keyed by the sorted label set.
-When a newer fire for the same selector lands its `streaming`
-milestone (first segment back), the framework aborts every older
-fire in the queue. Until that moment the older fetches keep filling
-their Suspense boundaries, so the user sees the previous query's
-results gradually being replaced rather than vanishing mid-keystroke.
-Aborted fires reject `streaming` and `finished` with `AbortError`
-(a normal lifecycle signal, not surfaced through error boundaries).
+becomes a `url` statement on the channel — the page URL with the
+labels as a one-shot `?__force=` overlay, intent "silent"; multiple
+fires in one microtask coalesce into one statement. Ordering is the
+held stream's: responses arrive in stream order and every emission
+carries the navigation point it was rendered as-of, so a newer
+fire's segment can never be clobbered by an older one's, and a
+delivery predating a client-side navigation is dropped at commit.
+Until the newer fire's segment commits, the older content keeps
+filling its Suspense boundaries, so the user sees the previous
+query's results gradually being replaced rather than vanishing
+mid-keystroke. A rapid `history: "replace"` burst can still reject a
+superseded fire's milestones with `AbortError` — the browser
+Navigation API superseding the entry, a normal lifecycle signal, not
+surfaced through error boundaries — and `reload`'s caller-supplied
+`signal` rejects its own fire the same way.
 
 A search input becomes a one-liner per keystroke:
 
@@ -180,8 +190,8 @@ function onChange(next: string) {
 }
 ```
 
-No stagger / debounce / queue — the framework's in-flight queue
-handles ordering and the React transition wrapper handles visual
+No stagger / debounce / queue — the held stream's ordering handles
+supersession and the React transition wrapper handles visual
 continuity.
 
 When called with no name, `useNavigation()` looks up the closest
@@ -296,8 +306,8 @@ re-rendered spec sources its request-dependent inputs through its
 tracked reads / `match` / cells, which re-resolve against the current
 request. To drive a refetch with a fresh value, write it where the
 spec reads it: the page URL (`navigate(url, { selector })`), a frame
-URL, or a cookie (`navigate(url, { cookies, selector })`). A
-cache-mode refetch derives its fingerprint from the recorded read set
+URL, or a cookie (`navigate(url, { cookies, selector })`). The
+refetch derives its fingerprint from the recorded read set
 re-evaluated at the current request, so an input moves the result
 when it flows through one of those scopes. Activators (the
 framework's `useActivate`; the example app's `<WhenVisible>` /
@@ -308,11 +318,9 @@ framework's `useActivate`; the example app's `<WhenVisible>` /
 
 | Option | Effect |
 |---|---|
-| `streaming: true` | Progressive reveal — commit without `startTransition`, so Suspense fallbacks paint and Flight chunks land per-row. Default is `false` (transition-wrapped, atomic swap, no fallback flash). A CLIENT commit-mode switch only — it does **not** hold the connection open. Not to be confused with the `streaming` milestone in `progress` — the option is a behavior switch, the milestone is an event marker. |
-| `live: true` | Open the reload as a live subscription — the server holds the connection open (up to its keepalive) and pushes a fresh segment on every route-relevant bump / `expires()` boundary. `reload`-only; `<LivePageHeartbeat>` is the canonical caller. Orthogonal to `streaming` (commit mode): a plain `reload({selector, streaming: true})` stays one-shot. Pair with a `signal` so navigating away tears the long-poll down. |
+| `streaming: true` | Progressive reveal — commit without `startTransition`, so Suspense fallbacks paint and Flight chunks land per-row. Default is `false` (transition-wrapped, atomic swap, no fallback flash). Purely a CLIENT commit-mode switch. Not to be confused with the `streaming` milestone in `progress` — the option is a behavior switch, the milestone is an event marker. |
 | `silent: true` | Update the URL without firing any refetch. Wins over `selector` if both are set. Ignored on frame handles. `navigate`-only. |
-| `signal` | Caller-supplied `AbortSignal` — aborting cancels the in-flight fetch (and a `live` long-poll's server-side driver). `reload`-only. |
-| `params` | Extra query params appended to the REFETCH url only — never the page URL, never persisted. They reach the re-rendered specs through tracked `searchParam()` reads (the view-culling controller's `?visible=` set rides here). `reload`-only. |
+| `signal` | Caller-supplied `AbortSignal` — aborting before the fire completes rejects its milestones with `AbortError`; the covering statement's response is a channel delivery the supersede ordering already arbitrates. `reload`-only. |
 | `cookies` | Write client-side cookies before the refetch fires. `navigate`-only — `reload` does not accept it. See [Cookies](#cookies). |
 
 ### Cookies
@@ -353,14 +361,18 @@ Frame handles also write to `document.cookie` — a global write, the
 same any other handle would do. There is no per-frame cookie scope
 today.
 
-### Preload — warm a destination before the click
+### Preload — a warm intent before the click
 
-`useNavigation().preload(target)` warms a destination's partials into
-the client cache **without navigating** — the forward-looking
-counterpart to keepalive. Keepalive parks the subtree you just left so
-going back is instant; `preload` warms the subtree you're about to reach
-so going forward is instant. Same machinery (the partial cache +
-fp-skip), pointed forward in time.
+`useNavigation().preload(target)` states a route the user is about
+to visit — a WARM intent, advisory by nature. Attached, it ships a
+lossy `warm` frame on the channel (newest-wins: sweeping the pointer
+across a nav bar keeps only the latest hover); the server's segment
+driver runs ONE byte-silent whole-tree render of the stated target
+at its park point — bounded, window-respecting, never keepalive
+activity — filling the server's caches (`<Cache>` byte-cache
+entries, loader caches) and the target route's registered snapshots.
+The navigation statement that follows renders against warm caches.
+Nothing reaches the client until the navigation itself.
 
 Unlike `reload` / `navigate`, `preload` is a **plain imperative
 method**, not a hook — call it from an event handler (typically
@@ -371,50 +383,39 @@ const nav = useNavigation()
 <a href={href} onPointerEnter={() => void nav.preload(href)}>{label}</a>
 ```
 
-It issues a read-only RSC GET for `target` carrying the client's current
-`?cached=` set, then walks the response into the client partial cache —
-populating the subtrees and the fingerprints that `?cached=` advertises.
-It does **not** commit: no visible swap, no URL / history change,
-nothing mounts, no effects run (a GET render mutates no server state
-either). Because it sends `?cached=`, the warm render fp-skips shared
-chrome (nav, layout) and parked off-route partials — only the
-destination-specific partials come back fresh and land in the cache.
-
 The click stays an ordinary navigation that **always revalidates**
-against the server — it just starts warm: the warmed partials fp-skip,
-`renderTemplate` substitutes them from cache on the first commit, and
-only genuine deltas stream. Nothing about the click path changes;
-`preload` only fills the cache ahead of it.
+against the server — it just renders warm. Edges:
 
-- **Coalescing.** At most one preload is in flight per page — a newer
-  `preload()` aborts the prior one, so sweeping the pointer across a nav
-  bar doesn't pile up live fetches.
-- **Best-effort.** Failures are swallowed; a dropped warm just means the
-  next navigation pays full freight. Fire-and-forget — the returned
-  promise settles when warming finishes, but callers normally ignore it.
-- **Window-scoped today.** A frame handle's `preload` is a no-op
-  (warming a frame's destination would need the
-  `?__frame=&__frameUrl=` round-trip; deferred until a caller needs it).
-
-> Browser-native prefetch (the **Speculation Rules API**) is not a
-> substitute here. It operates on cross-document (MPA) navigations and
-> is bypassed by same-document `intercept()` — the mode every parton
-> `<Link>` uses — so it never warms the client RSC cache: an activated
-> prerender is a cold parton boot, and a prefetch warms the document
-> HTTP entry, not the `?cached=` RSC request. `preload` is the
-> parton-native path. Speculation Rules stays a complementary
-> cross-document enhancement (cold first paint, cross-origin links) —
-> see `docs/notes/IDEAS.md`.
+- **Degraded page:** the preload appends a Speculation Rules prefetch
+  for the target document — the browser warms the document's HTTP
+  cache entry, which is exactly what a degraded navigation loads.
+- **Pre-establishment:** dropped. A preload must never trigger an
+  attach (the navigation itself will), and a stale hint is worth
+  less than none.
+- **Best-effort.** A dropped warm just means the next navigation pays
+  full freight. Fire-and-forget — the returned promise settles when
+  the statement is handed off; callers normally ignore it.
+- **Window-scoped today.** A frame handle's `preload` is a no-op — a
+  frame's content is session-scoped subtree state with no standalone
+  route to warm, and an unsupported scope degrades silently rather
+  than throwing into an event handler.
 
 ## Frame URL on the wire
+
+Attached, a frame move is a frame-scoped `url` frame on a channel
+envelope — the endpoint writes the frame URL into the session and
+the driver lanes the frame's subtrees on the held stream. The
+document carrier
 
 ```
 ?__frame=<dotted-path>&__frameUrl=<url>
 ```
 
-`PartialRoot` reads these on every request and writes the URL into
-the session before any spec runs. Subsequent specs that open the
-named frame pick up the new URL via `getSessionFrameUrl()`.
+exists for renders with no channel: a degraded page's frame
+navigation and the CMS preview iframe. `PartialRoot` reads the
+params off the document URL and writes the session before any spec
+runs. Subsequent specs that open the named frame pick up the new URL
+via `getSessionFrameUrl()`.
 
 ## Sharp edges
 

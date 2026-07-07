@@ -129,6 +129,15 @@ interface RefetchBatchEntry {
 let _batchRef: RefetchBatchEntry[] = []
 let _batchScheduled = false
 
+// Labels of refetch statements whose covering segment has not settled.
+// The transport keeps ONE pending url frame (newest statement wins
+// pre-flush), so a batch flushed while an earlier batch is still
+// uncovered must RESTATE the earlier targets — its `?__force=` is the
+// union — or a same-frame pair of distinct-selector fires would drop
+// the first fire's targets. Restating a force that was already served
+// costs one extra explicit lane render; dropping one loses the refetch.
+const _uncoveredForces = new Map<object, readonly string[]>()
+
 function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   const labelSet = new Set<string>()
   let streamingMode = false
@@ -162,8 +171,12 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   // Pre-establishment the statement latches and rides the attach it
   // triggers; only a DEGRADED page answers null.
   const stated = new URL(window.location.href)
-  if (labelSet.size > 0) {
-    stated.searchParams.set("__force", [...labelSet].join(","))
+  const restated = new Set(labelSet)
+  for (const labels of _uncoveredForces.values()) {
+    for (const l of labels) restated.add(l)
+  }
+  if (restated.size > 0) {
+    stated.searchParams.set("__force", [...restated].join(","))
   }
   const routed = _channelNavigate({
     url: stated.pathname + stated.search,
@@ -179,6 +192,16 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
       e.resolveFinished()
     }
     return
+  }
+  if (labelSet.size > 0) {
+    const token = {}
+    _uncoveredForces.set(token, [...labelSet])
+    // The covering segment's settle retires the restatement duty —
+    // rejections (abort, teardown) retire it too.
+    routed.finished.then(
+      () => _uncoveredForces.delete(token),
+      () => _uncoveredForces.delete(token),
+    )
   }
   routed.streaming.then(
     () => {

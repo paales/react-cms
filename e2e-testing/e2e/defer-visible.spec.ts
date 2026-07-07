@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures"
+import { test, expect, recordPartialDispatches, waitForPageInteractive } from "./fixtures"
 
 /**
  * <Partial defer> + <VisibleTrigger> — the trivia card on
@@ -10,39 +10,25 @@ import { test, expect } from "./fixtures"
  * Assertions:
  *  1. On initial load the fallback is visible and the real content
  *     is NOT in the DOM.
- *  2. Scrolling the trivia partial into view triggers exactly ONE
- *     RSC refetch, and the real content appears.
+ *  2. Scrolling the trivia partial into view dispatches exactly ONE
+ *     trivia refetch (on whichever carrier is up), and the real
+ *     content appears.
  */
-test.beforeEach(async ({ page }) => {
-  // The assertion is "scrolling fires exactly one trivia refetch and
-  // nothing else"; the background streaming heartbeat is an unrelated
-  // call that would break it. Opt out of it.
-  await page.addInitScript(() => {
-    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
-  })
-})
-
 test("defer + VisibleTrigger activates the block when it enters the viewport", async ({ page }) => {
-  const rscCalls: Array<{ url: string; partials: string | null }> = []
-  page.on("request", (req) => {
-    const url = req.url()
-    if (url.includes("_.rsc")) {
-      const u = new URL(url)
-      rscCalls.push({ url, partials: u.searchParams.get("partials") })
-    }
-  })
+  const dispatches = recordPartialDispatches(page)
 
   await page.goto("/pokemon/1")
 
   // Hero/stats/species render immediately.
   await page.waitForSelector('[data-testid="lazy-spacer"]', { timeout: 15000 })
+  await waitForPageInteractive(page)
 
   // Before scroll: fallback is in the DOM, real content is not.
   await expect(page.locator('[data-testid="trivia-fallback"]')).toBeVisible()
   expect(await page.locator('[data-testid="trivia-content"]').count()).toBe(0)
 
-  // Reset the RSC counter before the scroll.
-  rscCalls.length = 0
+  // Reset the dispatch log before the scroll.
+  dispatches.length = 0
 
   // Scroll the trivia partial into view.
   await page.locator('[data-testid="trivia-fallback"]').scrollIntoViewIfNeeded()
@@ -52,27 +38,27 @@ test("defer + VisibleTrigger activates the block when it enters the viewport", a
     timeout: 15000,
   })
 
-  // Tiny settling window to catch any extra calls.
+  // Tiny settling window to catch any extra dispatches.
   await page.waitForTimeout(500)
 
   // The trivia spec's effective id is auto-derived from its catalog
   // id ("trivia") plus a hash of its JSX call-site props — looks like
-  // "trivia:abcdef0123". Any partials token whose first colon-segment
+  // "trivia:abcdef0123". Any stated token whose first colon-segment
   // is "trivia" is the trivia partial.
   const isTrivia = (token: string): boolean => token.split(":")[0] === "trivia"
-  const triviaCalls = rscCalls.filter(
+  const triviaCalls = dispatches.filter(
     (c) => c.partials != null && c.partials.split(",").some(isTrivia),
   )
-  const otherCalls = rscCalls.filter(
-    (c) => c.partials == null || !c.partials.split(",").some(isTrivia),
+  const otherTargets = dispatches.filter(
+    (c) => c.partials != null && !c.partials.split(",").some(isTrivia),
   )
 
-  console.log(`\n=== RSC calls after scroll (${rscCalls.length}) ===`)
-  for (const c of rscCalls) console.log(`  partials=${c.partials}`)
+  console.log(`\n=== dispatches after scroll (${dispatches.length}) ===`)
+  for (const c of dispatches) console.log(`  [${c.transport}] partials=${c.partials}`)
 
-  expect(triviaCalls.length, "expected exactly one RSC refetch for the trivia partial").toBe(1)
+  expect(triviaCalls.length, "expected exactly one trivia dispatch").toBe(1)
   expect(
-    otherCalls,
-    `expected no unrelated RSC calls; got: ${JSON.stringify(otherCalls)}`,
+    otherTargets,
+    `expected no unrelated targeted dispatches; got: ${JSON.stringify(otherTargets)}`,
   ).toHaveLength(0)
 })

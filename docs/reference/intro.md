@@ -54,23 +54,29 @@ one pipeline:
 3. **Fingerprint.** Each render hashes the spec id, match params,
    resolved cells, call-site props, invalidation bumps, the recorded
    reads re-evaluated at the current request, and every descendant's
-   contribution. The client sends the fingerprints it has on every
-   refetch; the server emits a placeholder for any spec whose fp is
-   unchanged, and the client paints the cached subtree from its
+   contribution. The client states the fingerprints it holds (the
+   attach statement's `cached` manifest; the `?cached=` URL form on
+   an action POST); the server emits a placeholder for any spec whose
+   fp is unchanged, and the client paints the cached subtree from its
    client-side partial cache.
-4. **Per-parton wire.** Every navigation can ask for any subset of
-   specs (`selector` labels); the server returns only what was asked
-   for, the client merges the parts into a persisted template.
-   Independently re-renderable: a targeted refetch re-runs only the
-   requested spec's body, never its ancestors.
+4. **Per-parton wire.** After first paint the page holds ONE channel
+   connection; navigations, selector refetches (`selector` labels),
+   and frame moves are `url` frames on it, and every rendered
+   consequence rides the held stream — whole-tree segments for
+   navigations, per-parton lanes for targeted work, each parton at
+   its own cadence. Independently re-renderable: a lane re-runs only
+   its parton's body, never its ancestors; the client merges lanes
+   and segments into a persisted template.
 5. **Writes.** Plain `"use server"` functions that import cells and
    call `.set`, wrapped in `atomic(fn)` for one transactional commit;
    invalidation fans back out to every parton that read the cell.
 
-> Render the whole tree on a full request. After that, every
-> client-initiated render is a navigation, and every navigation can
-> ask for any subset of specs; the server returns only what was
-> asked for, the client merges them into a persisted template.
+> Render the whole tree on the document request — the CDN-cacheable
+> artifact. After that, the page speaks to a live server process
+> over one held connection: every client statement is a frame on the
+> channel, every rendered consequence comes down the stream as
+> segments and per-parton lanes, and the client merges them into a
+> persisted template.
 
 Every render decision lives inside the spec component the
 constructor returns: match gate, fingerprint, skip, fall through.

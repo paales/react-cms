@@ -150,7 +150,7 @@ Rules that make the gate sound:
 
 - **Predicates are the gate itself — pure and sync.** The framework
   re-runs them outside any render (the descendant fold, route keying,
-  cache-mode refetch reconstruction). Each predicate sees one value; a
+  isolated snapshot reconstruction). Each predicate sees one value; a
   gate that needs two request dimensions is two fields (fields AND
   together). Gates sign by their source text, so HMR dedups an
   unchanged gate and an edited predicate body correctly counts as a
@@ -173,19 +173,18 @@ Rules that make the gate sound:
   / `headers` records gate specs but never split route buckets —
   route keys come from the URL-pattern half alone.
 - **Transport params are invisible.** The framework mints search
-  params for its own transport — refetch targeting (`partials`), the
-  client cache manifest (`cached`), live holds (`live`) and their
-  catch-up anchor (`since`), commit mode
-  (`streaming`), the viewport-visibility set (`visible` — read
-  by the `cull` gate, a tracked dependency, never a match dimension),
-  frame routing (`__frame`, `__frameUrl`) — so the SAME
-  page arrives with and without them (SSR, targeted refetch, live
-  heartbeat). Match evaluation and param extraction strip them first;
-  a wildcard search capture like `"*q=:query"` never swallows them
-  into the named param, so transport noise can't split variant
-  identity. The list is exported as `TRANSPORT_PARAMS` — the single
-  source of truth for code that needs to strip them too (the CMS
-  editor's href builder does).
+  params for its own transport — the client cache manifest (`cached`,
+  the capped URL form an action POST carries) and document-level
+  frame routing (`__frame`, `__frameUrl` — a degraded page's frame
+  navigation, the CMS preview iframe) — so the SAME page arrives with
+  and without them. Everything else rides the channel (the attach
+  statement's body and `url` frames on envelopes), never a page URL.
+  Match evaluation and param extraction strip them first; a wildcard
+  search capture like `"*q=:query"` never swallows them into the
+  named param, so transport noise can't split variant identity. The
+  list is exported as `TRANSPORT_PARAMS` — the single source of truth
+  for code that needs to strip them too (the CMS editor's href
+  builder does).
 
 ### Match miss = park
 
@@ -271,7 +270,7 @@ export const BrowsePage = parton(
   call-site props, cell props excluded). On the wire a culled
   instance costs one module reference + props — a couple hundred
   bytes instead of a rendered body — and needs no cache variant, no
-  fingerprint, no `?cached=` manifest slot. It must render real DOM:
+  fingerprint, no cached-manifest slot. It must render real DOM:
   it reserves the parton's space (a culled parton that collapses
   shifts the document) and hosts its viewport observer.
 - **`seed`** (optional, default "in view") — the cold-state
@@ -301,26 +300,26 @@ On the client the pair's slots observe their children through a
 `<Fragment ref>` + IntersectionObserver (no wrapper element); the
 controller compares each measurement against the DISPLAYED state
 (primed from the emission, overlaid by any live report for the id)
-and coalesces a frame's worth of real flips. Delivery depends on whether the page holds a live connection:
+and coalesces a frame's worth of real flips into one `visible` frame
+on the channel — a fire-and-forget envelope POST (`204`, no body),
+addressed to the held connection by its explicit id. The server
+stores the set as connection-session state and renders the
+flipped-IN partons as lane segments on the EXISTING stream — the
+gate reads the connection's current set, so flips never race the
+live connection with a second render channel. A cull-OUT lanes
+nothing: the pair swaps to its inline skeleton locally, and the
+report's only server effect is the session-set update that keeps
+lane parking honest.
 
-- **Live connection open** (the heartbeat's `?live=1` stream): the
-  flips travel as a fire-and-forget POST to the framework's
-  visibility endpoint (`204`, no body), addressed to the connection
-  by its explicit id. The server stores the set as connection-session
-  state and renders the flipped-IN partons as lane segments on the
-  EXISTING stream — the gate reads the connection's current set, so
-  flips never race the live connection with a second render channel.
-  A cull-OUT lanes nothing: the pair swaps to its inline skeleton
-  locally, and the report's only server effect is the session-set
-  update that keeps lane parking honest.
-- **No live connection**: the controller refetches the flipped-IN
-  partons by id, carrying the full visible set as `?visible=` so each
-  re-rendered gate reads its own bit. Cull-outs need no server at all.
+With no connection open (pre-establishment, or between a keepalive
+close and the next attach) flips PEND: the next attach's `visible`
+seed states the full set, its whole-tree first segment materializes
+anything in view, and the queued flips ride the fresh connection's
+first flush.
 
-Either way the visible set is part of the connection's request state
-— the heartbeat seeds each `?live=1` fire with the current set, and
-the gate/fp fold read session-first with the `?visible=` URL param as
-the one-shot fallback. Worked demo:
+The visible set is connection-session state, full stop — the attach
+statement seeds it and `visible` frames move it; no URL ever carries
+it. Worked demo:
 `e2e-testing/src/app/pages/magento/product-browse.tsx`; design
 rationale in [`../notes/view-culling.md`](../notes/view-culling.md);
 wire mechanics in
@@ -339,14 +338,14 @@ network. The content slot's observer mounts only over REAL content —
 an unbacked hole is a zero-size node whose testimony would flip the
 parton right back out.
 
-A flip-IN is a REVALIDATION (`?__cullFlip=1` on the reload path — the
-one case where an explicit `?partials=` target may fp-skip). The
-response settles the restored copy: an fp match returns the
-confirmation placeholder — zero content bytes, the parked subtree is
-current — while a moved fp (data changed while parked) returns fresh
-bytes that REPLACE the slot and drop the parked fiber (a real
-remount). Repeat flips whose content is unchanged are near-zero-byte
-round trips.
+A flip-IN is a REVALIDATION — the flipped-in parton comes back as a
+lane on the held stream. The lane settles the restored copy: an fp
+match returns the confirmation placeholder — zero content bytes, the
+parked subtree is current (the marker rides any skip verdict at a
+MEASURED visible set) — while a moved fp (data changed while parked)
+returns fresh bytes that REPLACE the slot and drop the parked fiber
+(a real remount). Repeat flips whose content is unchanged are
+near-zero-byte round trips.
 
 Parked-by-culling subtrees are budgeted: an LRU of the 64
 most-recently-culled ids keeps its content alive; past the budget the
@@ -471,8 +470,8 @@ surface.
 `at` (epoch ms) the output is no longer fresh. Two consumers:
 
 - the live segment driver arms its expiry timer on the earliest
-  boundary across the route's snapshots, so an open `?live=1`
-  connection wakes and re-renders the parton on time;
+  boundary across the route's snapshots, so a held live connection
+  wakes and re-renders the parton on time;
 - fp-skip declines to serve a snapshot past its boundary, even on an
   fp match — the boundary IS the declaration that identical inputs
   stop being fresh at that time.
@@ -594,9 +593,9 @@ per-instance id (`<spec-id>:<props-hash>`), so `<LivePrice sku="A" />`
 and `<LivePrice sku="B" />` are distinct registry entries with
 independent snapshots and cache slots, while both still carry the
 spec's labels for fan-out refetch. The framework captures the
-call-site props in the snapshot so a partial-refetch (cache-mode
-`?partials=…`) can re-invoke the child without going through its
-parent and still receive the same props.
+call-site props in the snapshot so an isolated re-render (a lane's
+`partialFromSnapshot` reconstruction) can re-invoke the child without
+going through its parent and still receive the same props.
 
 ## Slots
 
@@ -649,8 +648,8 @@ A spec emits in one of four shapes, in priority order:
 1. **`match` miss, no cached entry on the client.** Spec emits
    nothing — the JSX position is empty.
 2. **`match` miss, AND the client has one or more variants cached
-   (declared via `?cached=id:matchKey:fp`), AND `keepalive` is on
-   (default).** Spec emits one
+   (declared via the cached manifest's `id:matchKey:fp` tokens), AND
+   `keepalive` is on (default).** Spec emits one
    `<Activity mode="hidden" key={matchKey}>{placeholder}</Activity>`
    per cached variant. The client substitutes each placeholder with
    its cached subtree, so every cached variant stays parked under

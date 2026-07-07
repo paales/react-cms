@@ -416,6 +416,49 @@ describe("the refetch dispatcher", () => {
 		expect(finished.done()).toBe(true)
 	})
 
+	it("a statement superseding an uncovered batch restates its targets — the union", async () => {
+		_channelEstablished("c1")
+		const first = enqueueRefetch({ labels: ["cart"], streaming: false })
+		await settle()
+		// The second batch flushes while the first is uncovered — the
+		// transport keeps one pending url frame (newest wins), so the
+		// newer statement must carry BOTH forces.
+		const second = enqueueRefetch({ labels: ["price"], streaming: false })
+		await settle()
+		raf()
+		await settle()
+		const urlFrames = sentEnvelopes()
+			.flatMap((e) => e.frames)
+			.filter((f) => f.kind === "url")
+		const last = urlFrames[urlFrames.length - 1]
+		if (last.kind !== "url") throw new Error("unreachable")
+		const force =
+			new URL(last.url, "http://localhost").searchParams.get("__force") ?? ""
+		expect(force.split(",")).toContain("cart")
+		expect(force.split(",")).toContain("price")
+		// The covering segment settles both; the restatement duty retires.
+		const p1 = probe(first.finished)
+		const p2 = probe(second.finished)
+		_channelNavSegmentCommitted(_channelNavPoint())
+		_channelNavSegmentSettled(_channelNavPoint())
+		await settle()
+		expect(p1.done()).toBe(true)
+		expect(p2.done()).toBe(true)
+		// A batch AFTER the settle restates nothing stale.
+		enqueueRefetch({ labels: ["badge"], streaming: false })
+		await settle()
+		raf()
+		await settle()
+		const later = sentEnvelopes()
+			.flatMap((e) => e.frames)
+			.filter((f) => f.kind === "url")
+			.at(-1)
+		if (later?.kind !== "url") throw new Error("unreachable")
+		expect(
+			new URL(later.url, "http://localhost").searchParams.get("__force"),
+		).toBe("badge")
+	})
+
 	it("resolves as a no-op on a degraded page — document loads are its renders", async () => {
 		_channelEstablished("c1")
 		_channelWireEntry("seq", enc("p\n1 0"))

@@ -53,19 +53,29 @@ test("cache hit serves stored subtree without re-running the server component", 
   expect(fourthCount).toBe(firstCount)
 })
 
-test("partial refetch targeting a cached partial skips server work", async ({ request }) => {
+test("partial refetch targeting a cached partial skips server work", async ({
+  page,
+  request,
+}) => {
   // Seed the cache.
   const seed = await request.get("/cache-demo?flavor=vanilla-c")
   const beforeCount = extractRenderCount(await seed.text())
 
-  // Refetch only the slow partial. A flight response comes back; count
-  // in the response should still match the seed.
-  const refetch = await request.get("/cache-demo_.rsc?flavor=vanilla-c&partials=slow")
-  const refetchCount = extractRenderCount(await refetch.text())
-  expect(refetchCount).toBeDefined()
-  expect(refetchCount).toBe(beforeCount)
+  // Refetch only the slow partial through the browser — the statement
+  // rides the channel and the covering render replays the cache. The
+  // fires-settled counter is the completion signal (a cache hit
+  // changes no DOM).
+  await page.goto("/cache-demo?flavor=vanilla-c")
+  await waitForPageInteractive(page)
+  await page.locator('[data-testid="refetch-slow"][data-hydrated]').click()
+  await expect(page.locator('[data-testid="fires-settled"]')).toHaveAttribute(
+    "data-fires-settled",
+    "1",
+  )
+  await expect(page.locator('[data-testid="slow-content"]')).toBeVisible()
 
-  // Full page load again — still the same count.
+  // Full page load again — still the same count: the refetch replayed
+  // the stored subtree instead of re-running the server component.
   const revisit = await request.get("/cache-demo?flavor=vanilla-c")
   const revisitCount = extractRenderCount(await revisit.text())
   expect(revisitCount).toBe(beforeCount)
@@ -125,14 +135,6 @@ test("client component inside cached subtree hydrates and retains state", async 
 })
 
 test("ClickCounter state survives refetch of its cached Partial", async ({ page, request }) => {
-  // Pin the refetch to the discrete transport: the test's only commit
-  // signal is the `_.rsc` response (a cache-hit replay changes no
-  // DOM), and an attached page would state the refetch on the channel
-  // instead. The fiber-survival behavior under test is the client
-  // merge layer's, identical on both transports.
-  await page.addInitScript(() => {
-    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
-  })
   await request.get("/__test/clear-caches")
   await page.goto(`/cache-demo?flavor=retain-${Date.now()}`)
   await waitForPageInteractive(page)
@@ -148,11 +150,13 @@ test("ClickCounter state survives refetch of its cached Partial", async ({ page,
     ;(el as HTMLElement & { __stamp?: number }).__stamp = 42
   })
 
-  const refetchResponse = page.waitForResponse(
-    (r) => r.url().includes("_.rsc") && r.url().includes("partials=slow"),
-  )
+  // The fires-settled counter is the commit signal — a cache-hit
+  // replay changes no DOM.
   await page.locator('[data-testid="refetch-slow"][data-hydrated]').click()
-  await refetchResponse
+  await expect(page.locator('[data-testid="fires-settled"]')).toHaveAttribute(
+    "data-fires-settled",
+    "1",
+  )
 
   const stamped = await page
     .locator('[data-testid="click-counter"]')

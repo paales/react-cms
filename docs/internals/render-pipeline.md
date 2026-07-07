@@ -1,13 +1,14 @@
 # Render pipeline
 
-The framework runs every page through `<PartialRoot>` in either
-**streaming mode** (full render) or **cache mode** (partial
-refetch).
+Every request renders through `<PartialRoot>` as ONE whole-tree
+pass; isolated per-parton re-renders exist only as LANES on a held
+live connection, reconstructed from snapshots via
+`partialFromSnapshot`. There is no partial-refetch request mode.
 
-## Streaming mode
+## The whole-tree pass
 
-Triggered when no `?partials=` filter is set, or when the filter
-doesn't resolve to any registered snapshot (registry miss).
+Every render `<PartialRoot>` runs — the SSR document, the attach's
+first segment, navigation segments, action responses, reconciles.
 
 1. `PartialRoot` opens a request-scoped registry context (`mode:
    "streaming"`).
@@ -17,34 +18,36 @@ doesn't resolve to any registered snapshot (registry miss).
    a snapshot via `<PartialBoundary>` either way.
 3. On stream flush, `commitRequestRegistry` merges the rendered
    snapshots into the deduplicated variant store and MERGES
-   `pendingHints` into the current routeKey's hint. Both modes
+   `pendingHints` into the current routeKey's hint. Both passes
    merge — wholesale replace would erode the descendants of every
    fp-skipped ancestor (see
    [`registry-internals.md`](./registry-internals.md)). The
    routeKey is the hash of matched URLPatterns for the request
    URL, not the URL itself.
 
-## Cache mode
+## The lane pass — isolated re-renders
 
-Triggered by a refetch whose `?partials=` selector resolves to ids
-the route's hint table knows about.
+A held connection's segment driver re-renders individual partons as
+per-parton lanes — a viewport flip, a bump or expiry wake, a `url`
+statement's `?__force=` target, a frame navigation's subtrees (see
+[`streaming.md`](./streaming.md)).
 
-1. `PartialRoot` opens a request-scoped registry context (`mode:
-   "cache"`).
-2. For each requested id, look up the snapshot via the routeKey
-   hint and reconstruct it with `partialFromSnapshot`: resolve the
+1. Each lane opens a registry context (`mode: "cache"`) inside the
+   connection's request scope.
+2. The target id's snapshot is looked up via the routeKey hint and
+   reconstructed with `partialFromSnapshot`: resolve the
    Component (`componentById` by id, or the spec catalog by
    `snap.type` for per-instance placements) and invoke it as a
    flat sibling with `__parent={path, frameChain}`,
    `__instanceId={id}` and the snapshot's captured props. A
    remote-sourced snapshot (`snap.source.kind === "remote"`)
    instead renders a fresh `<RemoteFrame>` at the remote's
-   `/__remote/<id>` endpoint, so refetch routes back to the origin
-   that produced it.
+   `/__remote/<id>` endpoint, so the re-render routes back to the
+   origin that produced it.
 3. The spec's wrapper re-runs the same pipeline (match, props cell
    resolution, fingerprint, skip / render). No ancestor execution.
 4. On commit, the routeKey's hint is merged — ids that didn't
-   refetch keep their existing variant pointers.
+   re-render keep their existing variant pointers.
 
 ## The spec wrapper pipeline
 
@@ -60,9 +63,8 @@ wrapper (`createSpecComponent` in `partial.tsx`):
    `lib/match.ts`) evaluates it — URLPattern strings plus per-value
    predicates over `searchParams` / `cookies` / `headers`. Gates
    see the request AS SENT (raw `Cookie` header, no same-request
-   `setCookie` overlay) with the `TRANSPORT_PARAMS` (`partials`,
-   `cached`, `live`, `streaming`, `since`, `visible`,
-   `__frame`, `__frameUrl`, `__cullFlip`) stripped, so transport
+   `setCookie` overlay) with the `TRANSPORT_PARAMS` (`cached`,
+   `__frame`, `__frameUrl`) stripped, so transport
    noise never splits variant identity. A
    miss emits the parked keepalive (one hidden `<Activity>` per
    cached matchKey) and returns.
@@ -102,11 +104,16 @@ placeholder instead of the body only when ALL of these hold:
 
 - `fpSkip !== false` — the spec hasn't opted out
   (always-authoritative surfaces like the CMS editor chrome do);
-- the request's `?cached=` set contains the computed fp;
-- the id is not an explicit `?partials=` target — an explicit
-  refetch must re-render — UNLESS the request carries `?__cullFlip=1`
-  (a culling revalidation; the skip's placeholder is the
-  restore-with-zero-bytes confirmation — see *Cull-to-park*);
+- the client's cached manifest contains the computed fp — the attach
+  statement's `cached` tokens, carried on the connection (or an
+  action POST's capped `?cached=` URL form), backed by the
+  connection's ACKED layer (fps whose delivering emission the client
+  committed), consulted on an optimistic miss;
+- the id is not an explicit target (a `url` statement's `?__force=`
+  label resolved to it, a forced lane) — an explicit refetch must
+  re-render. A culling flip's lane is NOT explicit: its fp-skip
+  placeholder is the restore-with-zero-bytes confirmation, stamped
+  `data-partial-confirm` on a MEASURED verdict — see *Cull-to-park*;
 - the spec wasn't called with `children`: a transparent wrapper's
   output IS its children, which the JSX parent renders directly,
   so there is nothing for fp-skip to gate;
@@ -118,45 +125,39 @@ placeholder instead of the body only when ALL of these hold:
 - the prior snapshot isn't past its `expires()` boundary — the
   fp-skip TTL gate.
 
-## Both modes share one payload root
+## One payload root
 
-Whatever the mode, `PartialRoot` returns the SAME outer shape:
-`<PageUrlProvider url={pageUrl}><PartialsClient mode=…>…`. The
-root element type must match across modes, because a single page can
-hold two live connections that commit onto the same React root as
-alternating `BrowserRoot` payloads:
+`PartialRoot` returns ONE outer shape for every render:
+`<PageUrlProvider url={pageUrl}><PartialsClient>…`. Every payload
+the client commits onto the React root — the SSR document, the
+attach's whole-tree first segment, navigation segments, action
+responses — shares that root element type, so React reconciles
+successive payloads in place. A differing root element type at any
+segment seam would unmount + remount the whole subtree —
+`page-shell` and everything under it torn down and recreated (a
+full-page flicker).
 
 The `url` prop is the SSR / pre-hydration seed for descendant client
 components' `useNavigation()` (see `PageUrlContext`) — consulted only
 while `window.navigation` is absent. So `PartialRoot` only serializes it
 on the **SSR document** render (where it strips framework-internal params
-like `?cached=` first — those are consumed off the raw request and must
-not echo back). On a client-driven `.rsc` refetch the value is never read
-(the live Navigation API supersedes it), so `pageUrl` is `null` and the
-whole row drops — the `?cached=` token list alone would otherwise run to
-kilobytes echoed back on every navigation. The element type stays
-`PageUrlProvider` either way, so the cross-mode reconciliation below holds.
-`PartialRoot` distinguishes the two via the `x-parton-render` header that
-`parseRenderRequest` stamps on `.rsc` requests.
-
-- the chat overlay's frame refetch becomes a `markConnectionLive`
-  long-poll and commits in **cache mode**;
-- the page heartbeat holds a `?live=1` connection that also
-  renders the open chat and commits in **streaming mode**.
-
-If one payload's root were `<PageUrlProvider>` and the other a bare
-`<PartialsClient>`, React would see a different element type at the
-root on every segment seam and unmount + remount the whole subtree —
-`page-shell` and everything under it torn down and recreated many
-times a second (a full-page flicker). Identical roots let React
-reconcile the two payloads in place.
+first — those are consumed off the raw request and must not echo back).
+On a client-driven render (the attach's drive, an action POST) the value
+is never read (the live Navigation API supersedes it), so `pageUrl` is
+`null` and the whole row drops — an action URL's `?cached=` token list
+alone would otherwise run to kilobytes echoed back into the payload.
+The element type stays `PageUrlProvider` either way. `PartialRoot`
+distinguishes the two via the `x-parton-render` header stamped on
+client-driven render requests (`parseRenderRequest` for action POSTs,
+the attach endpoint for the connection's drive).
 
 `PartialsClient` carries the same requirement one level down: while a
-Flight chunk is still in flight (the chat's `<ChunkSlot>` suspended),
-the streaming-mode commit renders through the persisted `_template` +
-cache — the exact path a cache-mode commit takes — rather than
-returning raw children. Matching shapes there keep the partials
-*inside* the page (e.g. the nav) reconciling too.
+Flight chunk is still in flight (the chat's producer lane holding a
+`<ChunkSlot>` suspended), the commit renders through the persisted
+`_template` + cache — the same path a lane commit's template
+re-render takes — rather than returning raw children. Matching
+shapes there keep the partials *inside* the page (e.g. the nav)
+reconciling too.
 
 This reuse is scoped to the **same page**. `_template` records the
 pathname it was derived for (`_templateRoute`); the pending-lazy
@@ -185,10 +186,10 @@ Server pipeline:
 | `partial.tsx` | `parton()`, `createSpecComponent` (the wrapper pipeline), `PartialBoundary`, `PartialRoot`, `partialFromSnapshot`, `computeRouteKey`, the descendant fold + per-pass fold scratch. |
 | `match.ts` | `compileMatch` — the request gate (URLPattern strings + per-value predicates), `TRANSPORT_PARAMS` stripping, gate signatures for routeKey hashing. |
 | `partial-registry.ts` | Snapshot store + hint table + `_seq` freshness guard + per-request registry ALS. See [`registry-internals.md`](./registry-internals.md). |
-| `partial-request-state.ts` | The per-request parse of `?partials=` / `?cached=` (`explicitIds`, `cachedFingerprints`, `cachedMatchKeys`). |
+| `partial-request-state.ts` | The per-request partial state: the parsed cached manifest (`cachedFingerprints`, `cachedMatchKeys`) and the explicit-target set (`explicitIds` — `?__force=` labels resolved to ids, forced lanes; never skipped). |
 | `current-parton.ts` | The parton self-context (`getCurrentParton`, `tag`) on the rendering ALS frame — read-your-own, not inherited. |
 | `server-hooks.ts` | Tracked reads (`cookie`, `searchParam`, `header`, `pathname`, `match`, `session`, `visible`), wake hints (`expires`, `staleUntil`, `time`), `registerDepKind`, and `evalDepKeys` (the store-and-reread evaluator). |
-| `spec-catalog.ts` | The `id → {Component, match, labels}` catalog cache-mode reconstruction and the descendant fold resolve specs from. |
+| `spec-catalog.ts` | The `id → {Component, match, labels}` catalog snapshot reconstruction (`partialFromSnapshot`) and the descendant fold resolve specs from. |
 | `cache.tsx` / `cache-options.ts` / `flight-graph.ts` | The byte cache (strip-on-store / splice-on-hit). See [`cache-internals.md`](./cache-internals.md). |
 | `cell.ts` / `cell-gql.ts` | Cell handles, `resolveCellValue`, `atomic()`'s ALS storage overlay, fragment auto-hydration. Write endpoints live in `runtime/cell-actions.ts`. See [`cell-internals.md`](./cell-internals.md). |
 | `frame.tsx` / `remote-frame.tsx` / `snapshot-trailer.ts` / `flight-rewrite.ts` | `<Frame>` scope opening; cross-origin parton embedding + its wire-level snapshot sidecar and line-level Flight rewriter. |
@@ -211,18 +212,17 @@ Client merge layer:
 
 | Module | Owns |
 |---|---|
-| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `touchClientPartial`, `_applyFpUpdates`, `getCachedPartialIds`, `pruneToLive`; the `?cached=` manifest is doubly bounded — `FP_CAP_PER_VARIANT` fps per variant, `CACHED_MANIFEST_CAP` entries total, parked-by-culling ids first (`_setManifestPriorityIds`) then newest-sighting-first, since it travels in the request URL and a many-parton page would otherwise blow the server's request-line limit; `CLIENT_POOL_CAP` bounds distinct ids, aging out the least-recently-sighted — every walk touches the ids it sees, so recency means "still emitted by commits"), the id-pruned listener (`_setIdPrunedListener` — the page-membership teardown signal cull-park registers on), the persisted template (`getTemplate` / `setTemplate`), the lane-commit subscription (`subscribeLaneCommits` / `notifyLaneCommit`), the in-flight registry (`abortPredecessors` — frame long-polls only), and the frame-URL cache. |
-| `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel (pending lazies' Flight chunks are captured into `LazyWalkStats.thenables` so `PartialsClient` can arrange a re-walk when they land), `treeHasPendingLazy`, warm-preload (`_warmCacheFromPayload`), the per-parton lane commit (`_commitPartonLane` — synchronous cache walk + fp updates + the notify that re-renders `PartialsClient`; see [streaming.md](./streaming.md)) and the fp-trailer DOM scan. |
+| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `touchClientPartial`, `_applyFpUpdates`, `pruneToLive`; the cached manifest has two forms — the attach statement's BODY manifest (`getAllCachedPartialTokens`) carries everything, no request line to protect, while the action POST's `?cached=` URL form (`getCachedPartialIds`) is doubly bounded: `FP_CAP_PER_VARIANT` fps per variant, `CACHED_MANIFEST_CAP` entries total, parked-by-culling ids first (`_setManifestPriorityIds`) then newest-sighting-first, since it travels in the request URL and a many-parton page would otherwise blow the server's request-line limit; `CLIENT_POOL_CAP` bounds distinct ids, aging out the least-recently-sighted — every walk touches the ids it sees, so recency means "still emitted by commits"), the id-pruned listener (`_setIdPrunedListener` — the page-membership teardown signal cull-park registers on), the persisted template (`getTemplate` / `setTemplate`), the lane-commit subscription (`subscribeLaneCommits` / `notifyLaneCommit`), the live-connection id (`_setLiveConnectionId` / `_getLiveConnectionId`) + the take-once catch-up anchor, and the frame-URL cache. |
+| `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel (pending lazies' Flight chunks are captured into `LazyWalkStats.thenables` so `PartialsClient` can arrange a re-walk when they land), `treeHasPendingLazy`, the per-parton lane commit (`_commitPartonLane` — synchronous cache walk + fp updates + the notify that re-renders `PartialsClient`; see [streaming.md](./streaming.md)) and the fp-trailer DOM scan. |
 | `partial-template.tsx` | `deriveTemplate` + `renderTemplate`. |
 | `cull-key.ts` / `cull-park.ts` / `cull-pair.tsx` | Cull-to-park (see the section below): the registry-internal `~cull` variant-key grammar; the client pool state (reported viewport per id, the parked-by-culling LRU + `CULL_PARK_CAP`, the drop-on-drift generation + `parkedSince`, the observer refcount); the `CullPair` client component (both `<Activity>` slots in one component — content + inline skeleton — modes from the reported state, display-state priming, per-slot observers). |
-| `refetch.ts` | `enqueueRefetch` (microtask-batched targeted refetch → `?partials=`), selector parsing, the silent-navigation info brand. |
-| `refetch-ordering.ts` | The per-selector monotonic issue sequence (`nextRefetchSeq` / `claimRefetchCommit`) — see *Selector-refetch commit ordering*. |
+| `refetch.ts` | `enqueueRefetch` (microtask-batched targeted refetch → one channel `url` statement: the page URL with the labels as its one-shot `?__force=` overlay, intent "silent"), selector parsing, the silent-navigation info brand. |
 | `frame-client.tsx` | The frames tree on the nav entry (read/write + the write serialiser), `FrameNameProvider`, frame refetch dispatch, and the window/frame imperative handle builders. |
 | `use-navigation.tsx` | The `useNavigation()` hook layer (`[fire, progress]` tuples, `@self` resolution, preload), `useActivate`, `useScrollRestore`, `PageUrlContext`, `PartialIdContext`. |
 | `cell-client.tsx` | `useCell` + the client-side write batcher (see [`cell-internals.md`](./cell-internals.md)). |
 | `channel-client.ts` | The channel's client transport ([`channel.md`](./channel.md)): envelope assembly + per-connection seq, rAF-coalesced serialized flushes over registered producers, the delivery-failure hand-back, connection lifecycle (`_channelWireEntry` establishment from the stream's `conn` handshake, the presence-only `data-parton-live` marker), and the `pagehide` detach frame. |
-| `live-page-heartbeat.tsx` | The `?live=1` long-poll (mounted by `bootBrowser`), fired as the ATTACH POST — its body statement carries the measured visible seed (the first fire waits for the first viewport measurement when cullable observers are mounted) and the take-once catch-up anchor from the document; the refetch dispatcher fills the uncapped manifest ([`channel.md`](./channel.md) §The attach). Connection ids are server-minted; establishment rides the stream's `conn` entry, not this component (see [`streaming.md`](./streaming.md)). |
-| `visibility.tsx` / `page-interactive.ts` | The viewport observer for cullable partons + the flip controller — the channel's first producer (display-state priming, delta-only dispatch, first-measurement sync, `visible` frames onto the open live connection; `?visible=` render-reload fallback for flip-INs only); the `data-parton-interactive` root marker. |
+| `live-page-heartbeat.tsx` | The held connection's keeper (mounted by `bootBrowser`) — each fire is the ATTACH: a `POST /__parton/live` whose JSON body is the full client statement, carrying the measured visible seed (the first fire waits for the first viewport measurement when cullable observers are mounted), the uncapped manifest, and the take-once catch-up anchor from the document ([`channel.md`](./channel.md) §The attach). Its ~5s interval tick is the reattach loop — a no-op while a connection is open, the recovery path after a transient tear. Connection ids are server-minted; establishment rides the stream's `conn` entry, not this component (see [`streaming.md`](./streaming.md)). |
+| `visibility.tsx` / `page-interactive.ts` | The viewport observer for cullable partons + the flip controller — the channel's first producer (display-state priming, delta-only dispatch, first-measurement sync, `visible` frames onto the open live connection; with no connection the flips PEND and ride the next attach's first flush); the `data-parton-interactive` root marker. |
 
 `framework/src/runtime/` holds the request plumbing: `context.ts`
 (request ALS, scope derivation, the cached-fp override carrier, the
@@ -248,31 +248,32 @@ handoff via `import.meta.viteRsc.loadModule("ssr", "index")`, which
 the plugin resolves from the APP's vite config, so the framework
 never imports app code), `ssr.tsx` (`renderHTML` — Flight→HTML with
 the inline FLIGHT_DATA injection), and `browser.tsx` (`bootBrowser()`
-— hydration, the Navigation API intercept, the segmented refetch /
-preload transports, the server-action callback, and
+— hydration, the Navigation API intercept, the attach transport
+(`window.__rsc_live_attach` — the channel's opening statement and the
+page's one held stream), the server-action callback, and
 `<LivePageHeartbeat />`).
 
 ### Bounding the client cache (and the pending-lazy guard)
 
-Both commit paths bound `_currentPagePartials` / `_currentPageFingerprints`
+The payload commit bounds `_currentPagePartials` / `_currentPageFingerprints`
 to what the rendered page actually references, so a superseded variant
 (a churned-away instance id, an evicted match variant) stops being
-advertised in `?cached=`. The streaming-mode path prunes against the
-walk's `seen` set; the cache-mode path harvests the rendered tree
-(`renderTemplate` output) and drops anything not present.
+advertised in the cached manifest. The walk prunes against its `seen`
+set — fresh wrappers, placeholders, and the nested (id, matchKey)
+pairs harvested from cached wrappers. Lane commits never prune: they
+only write fresher content into slots the page already references.
 
-Both prune **only on a complete render**. A substituted cache wrapper
-can still carry an in-flight Flight lazy — a slow descendant (a search
-stage, the chat's `<ChunkSlot>`) hadn't resolved when the wrapper was
-last cached. The partials *behind* that lazy are still live but aren't
-materialised in the rendered tree, so a harvest under-counts them.
-Pruning then would evict their cache + advertised-fp entries, and the
-next render's fp-skip placeholder would have nothing to substitute —
-blanking the region until a full re-render restores it (the "content
-behind the search disappears" bug). The streaming-mode path gets this
-for free (it prunes only in its non-pending branch); the cache-mode
-path guards explicitly via `treeHasPendingLazy(rendered)` and defers
-the prune to a later commit whose render is whole.
+The prune runs **only on a complete render**. A substituted cache
+wrapper can still carry an in-flight Flight lazy — a slow descendant
+(a search stage, the chat's `<ChunkSlot>`) hadn't resolved when the
+wrapper was last cached. The partials *behind* that lazy are still
+live but aren't materialised in the rendered tree, so a harvest
+under-counts them. Pruning then would evict their cache +
+advertised-fp entries, and the next render's fp-skip placeholder
+would have nothing to substitute — blanking the region until a full
+re-render restores it (the "content behind the search disappears"
+bug). So the walk prunes only in its non-pending branch, deferring to
+a later commit whose render is whole.
 
 A second bound, `CLIENT_POOL_CAP`, caps the number of distinct ids
 retained across a long journey (a scroll across a cullable field
@@ -290,33 +291,31 @@ entry while being the subtree everything hangs off. A page whose
 live tree alone exceeds the cap keeps every live entry (correctness
 bounds memory there); the cap bounds everything else.
 
-## Preload (warm-only client commit)
+## Preload (server-side warm intent)
 
 `useNavigation().preload(target)` (see
 [`frames-navigation.md`](../reference/frames-navigation.md) §Preload)
-adds **no server mode**. Its server render is an ordinary
-**streaming-mode** render of the destination URL, issued with the
-client's current `?cached=` set — so shared chrome and parked off-route
-partials fp-skip and only the destination-specific partials come down
-fresh.
+adds **no client commit path and no request mode**. Attached, it
+ships a lossy `warm` frame on the channel (newest-wins — one pending
+target, the latest hover); applying one replaces the connection
+session's warm slot and wakes the segment driver, whose park point
+runs ONE byte-silent whole-tree render of the stated target
+(`warmPreloadTarget` in `segmented-response.ts`). The render runs
+inside a nested request scope for the target URL
+(`_runWithWarmRequestScope`) and drains into the void — no
+controller, no delivery seq, no promote, never keepalive activity —
+under the same delivery-window discipline as the telemetry warm
+pass. The durable effects are the caches it fills (`<Cache>`
+byte-cache entries, loader caches) and the target route's registered
+snapshots; the navigation statement that follows renders warm, so
+its segment carries only genuine deltas. Nothing reaches the client
+until the navigation itself.
 
-What's new is a **third client commit path** alongside streaming and
-cache mode. The browser entry decodes the preload response and hands
-each payload to `_warmCacheFromPayload`, which runs the same cache walk
-(`cacheFromStreamingChildren`) the streaming-mode commit uses — filling
-`_currentPagePartials` (subtrees) and `_currentPageFingerprints` (the fp
-set `?cached=` advertises) — but **without** `setPayload`, without
-deriving a `_template`, and without touching the visible tree. Nothing
-mounts; no effects run. A later navigation to the destination then
-fp-skips the warmed partials (their fps are now in `?cached=`) and
-`renderTemplate` substitutes them from cache on the first commit, while
-the nav revalidates against the server as usual.
-
-Once warmed, the destination's ids ride in `?cached=` on every
-subsequent request, so the cross-route keepalive path emits hidden
-`<Activity>` placeholders for them on the current page's next render
-(e.g. the heartbeat) — the preloaded subtree pre-mounts (DOM present,
-effects deferred) ahead of the click, for free.
+On a DEGRADED page the client appends a Speculation Rules prefetch
+rule for the target document instead (`use-navigation.tsx`) — the
+browser warms the document HTTP entry a degraded navigation loads.
+Pre-establishment the intent DROPS: a preload must never trigger an
+attach, and a stale hint is worth less than none.
 
 ## Snapshot shape
 
@@ -327,7 +326,7 @@ interface PartialSnapshot {
   labels: string[]                      // refetch labels (selector)
   cache?: CacheOptions
   framePath: readonly string[]
-  parentFrameChain: readonly string[]   // for cache-mode reconstruction
+  parentFrameChain: readonly string[]   // for isolated reconstruction
   parentPath: readonly string[]
   props?: Record<string, unknown>       // captured call-site JSX props
   constraintArgs?: Record<string, unknown> // bound-cell args, for invalidation matching
@@ -345,11 +344,11 @@ interface PartialSnapshot {
 Snapshots store no JSX. The derived bits that matter most:
 
 - `props` — the call-site JSX props the spec was last rendered with.
-  Cache-mode replays them so a child rendered via a parent wrapper
+  The lane pass replays them so a child rendered via a parent wrapper
   still receives `id={...}` / `flavor={...}` etc. when the framework
   re-invokes it without going through the wrapper. Request-dependent
   inputs flow through tracked reads / `match` / cells, which
-  re-resolve on the refetch.
+  re-resolve on the re-render.
 - `deps` — the dependency keys the spec's tracked reads recorded on
   its most-recent render (`"cookie:cart_id"`, `"search:q"`, …). The
   spec's next own fp and every ancestor's descendant fold re-read
@@ -365,7 +364,7 @@ Snapshots store no JSX. The derived bits that matter most:
   re-evaluation even when their URL / CMS deps just changed.
 
 Dep VALUES are NOT stored — every fold re-reads the recorded keys
-against the current request. Cache-mode reconstruction
+against the current request. Isolated reconstruction
 (`partialFromSnapshot`) looks up the spec component by id (or by
 `type` for per-instance placements) and renders it as
 `<Component __parent={{path: snap.parentPath, frameChain:
@@ -376,45 +375,44 @@ bounds — see [`registry-internals.md`](./registry-internals.md).
 
 ## Refetch addressing
 
-Wire params:
+Targeted work is addressed on the CHANNEL, not the URL. A selector
+refetch (`reload({selector})` / `navigate({selector})`) is a `url`
+statement — the page URL with the labels as its one-shot `?__force=`
+overlay, intent "silent". The driver resolves the labels against the
+route's snapshots (direct id match plus any snapshot whose label list
+contains a wanted token — cosmetic `#`/`.` stripped), renders a
+whole-tree segment (the URL may have moved with the fire, and fp-skip
+prunes the unchanged to placeholders), and lanes each named target
+EXPLICIT — forced past fp-skip. The overlay never enters request
+state; a statement that fired pre-establishment latches and rides the
+attach it triggers.
+
+The URL params that remain:
 
 | Param | Carries |
 |---|---|
-| `partials` | Selector labels (cosmetic `#`/`.` stripped). Resolves against snapshot `labels` AND `id` for fan-out targeting. |
-| `cached` | `id:matchKey:fp,…` — fingerprints the client has |
-| `live` / `streaming` | Server hold-open subscription / client commit mode — see [`streaming.md`](./streaming.md) |
-| `__frame=...&__frameUrl=...` | session-write a frame URL before render |
-| `visible` | The viewport-visibility id set the `cull` gate reads — on a live request it seeds the connection session's set |
-| `since` | The live catch-up anchor (`<epoch>:<ts>`) — the heartbeat's first fire presents the document's registry anchor so the connection opens straight into lanes (see [`streaming.md`](./streaming.md) §Live catch-up) |
-| `__cullFlip` | The visibility controller's revalidation stamp on the reload fallback — its explicit `?partials=` targets may fp-skip (see *Cull-to-park*) |
-| `__populateCache` | Post-action full render that repopulates the client cache without treating `?partials=` as a filter |
+| `cached` | `id:matchKey:fp,…` — the capped manifest form on an action POST's URL. The attach statement's `cached` field is the uncapped body form. |
+| `__frame=...&__frameUrl=...` | session-write a frame URL before render — the DOCUMENT carrier (a degraded page's frame navigation, the CMS preview iframe) |
 
-`partials`, `cached`, `live`, `streaming`, `since`, `visible`,
-`__cullFlip`, `__frame` and `__frameUrl` are the
-`TRANSPORT_PARAMS` (`lib/match.ts`) — `match` never sees them. (The
-live connection's id travels the OTHER way — server-minted, shipped
-as the stream's `conn` entry, presented back on channel envelopes;
-it is never a URL param.)
-`visible` is still a real request dimension — the cull gate reads it
-(session-first, URL fallback) and it folds into fps — it is only
-invisible to match gates, where it would otherwise split variant
-identity by transport noise.
+`cached`, `__frame` and `__frameUrl` are the `TRANSPORT_PARAMS`
+(`lib/match.ts`) — `match` never sees them. Everything else rides the
+channel: the visible set is connection-session state (the attach's
+`visible` seed + `visible` frames), the catch-up anchor is the attach
+statement's `since`, holding open is the attach itself, and commit
+mode (`streaming`) is client-local. (The live connection's id travels
+the OTHER way — server-minted, shipped as the stream's `conn` entry,
+presented back on channel envelopes; it is never a URL param.) The
+resolved visibility is still a real request dimension — the cull gate
+reads the connection session and the resolved state folds into fps.
 
 After a server function commits, refetch routing is driven entirely by
 the invalidation registry — cell writes fire their `cell:` selectors
 (batched inside `atomic()`), and a function can call
 `getServerNavigation().reload({selector})` in-body (queued inside the
 invalidation transaction); the response render computes fresh fps for
-any partial whose selector matches. Cold clients (no `?cached=`) receive the full root
-tree; warm clients get fp-skip placeholders for everything unchanged.
-No URL-rewrite step in between.
-
-`PartialRoot` resolves `partials` against the route's hint table to
-derive the union of ids to refetch — direct id match plus any
-snapshot whose label list contains a wanted token. Unmatched tokens
-trigger a streaming-mode fallback (so a fresh range expansion like
-`?end=N+1` re-renders the page rather than producing a registry
-miss).
+any partial whose selector matches. Cold clients (an empty manifest)
+receive the full root tree; warm clients get fp-skip placeholders for
+everything unchanged. No URL-rewrite step in between.
 
 ## Cull-to-park
 
@@ -471,21 +469,20 @@ replacement. The moving parts, end to end:
   fresh content store): its emission predates the park, so the
   baseline is out and the observer's first measurement is
   authoritative — an in-flip drives, an out-agreement rides.
-- **The revalidation.** With a live connection open, flips ride the
-  connection as session state (a `visible` frame on a channel
-  envelope; flipped-IN partons come back as lane segments, cull-OUTs
-  lane nothing — see [`streaming.md`](./streaming.md) and
-  [`channel.md`](./channel.md)); otherwise the controller's flush
-  fires the reload fallback (`enqueueRefetch({cullFlip: true})`) for
-  the flipped-IN partons only, which keeps its targets' `?cached=`
-  tokens (a normal explicit target's are stripped) and stamps
-  `?__cullFlip=1`, letting the explicit targets fp-skip. On either
-  transport the render reads the connection's CURRENT visible set, so
-  an fp match answers with a CONFIRMATION placeholder
-  (`data-partial-confirm` — a cullable spec's skip verdict at a
-  MEASURED visible set, distinct from a plain hole; an unmeasured
-  skip says nothing about a parked fiber's state and carries no
-  marker); a moved fp answers with fresh bytes.
+- **The revalidation.** Flips ride the connection as session state (a
+  `visible` frame on a channel envelope): flipped-IN partons come
+  back as lane segments, cull-OUTs lane nothing — see
+  [`streaming.md`](./streaming.md) and [`channel.md`](./channel.md).
+  With no connection open the flips PEND and ride the next attach —
+  its `visible` seed states the full set, its whole-tree first
+  segment materializes anything in view, and the queued flips ride
+  the fresh connection's first flush, fp-skipping to confirmations
+  where the segment already delivered the bytes. The render reads the
+  connection's CURRENT visible set, so an fp match answers with a
+  CONFIRMATION placeholder (`data-partial-confirm` — a cullable
+  spec's skip verdict at a MEASURED visible set, distinct from a
+  plain hole; an unmeasured skip says nothing about a parked fiber's
+  state and carries no marker); a moved fp answers with fresh bytes.
 - **While parked, the server stays quiet.** On a live connection,
   bump/expiry wakes skip any parton whose own snapshot or cullable
   ancestor's is outside the session's measured visible set
@@ -509,61 +506,52 @@ replacement. The moving parts, end to end:
   content is destroyed (`evictCulledContent` — cache slots +
   advertised fps; the inline skeleton needs no cache entry and keeps
   holding the parton's space) and its next return renders cold.
-  Parked ids also hold `?cached=` manifest slots ahead of the recency
-  walk (`_setManifestPriorityIds`): on a busy live page, lane
-  registrations would otherwise churn a parked id out of the manifest
-  and its restore could never be fp-confirmed.
+  Parked ids also hold capped-manifest slots ahead of the recency
+  walk (`_setManifestPriorityIds` — the action POST's `?cached=` URL
+  form; the attach's body manifest is uncapped): on a busy live page,
+  lane registrations would otherwise churn a parked id out of the
+  manifest and its restore could never be fp-confirmed.
 - **Page-membership teardown.** All per-id cull state dies when the
   merge layer's prune drops the id's last cache/fp entries
   (`_setIdPrunedListener`) — observer lifecycles are NOT that signal:
   an Activity flip can unmount one slot's observer in a different
   render pass than it mounts the other's, so the visibility
-  controller's gone-handling only clears the live `?visible=` set
+  controller's gone-handling only clears the live reported set
   (self-healing — a re-mounting observer's initial
   IntersectionObserver callback re-reports) and never cancels a
   pending flip.
 
 ## Selector-refetch commit ordering
 
-Window-scoped selector refetches (`navigate({selector})` /
-`reload({selector})`) are **not aborted on supersede** — aborting one
-mid-decode rejects its whole Flight document and tears the page through
-the error boundary. So a burst of fires (every search keystroke, a
-rapidly-clicked refresh) all drain and commit. Their responses can
-arrive **out of order**, so the framework must commit them in **issue
-order, not arrival order**: a late older fire must not clobber a newer
-one.
-
-The arbiter is a monotonic per-selector issue sequence
-(`lib/refetch-ordering.ts`). The refetch dispatcher
-(`flushRefetchBatch`) stamps each fire with `nextRefetchSeq(key)` —
-`key` is the sorted label set, matching `?partials=` — and hands the
-host a commit gate bound to that seq. Before every segment commit the
-host calls `claimRefetchCommit(key, seq)`, which returns `false` once a
-newer seq has committed for that selector; a dropped commit is skipped
-(trailers included) while the stream still drains.
-
-This is the real signal, not the page-URL staleness check that sits
-beside it. `pageUrlKey` drops a commit when the page **navigated away**
-since the fire was issued (cross-nav staleness); it cannot order two
-fires for the **same** URL — exactly the case that matters for live
-server state, where a `reload({selector})` of a cell-backed or
-time-varying partial returns different content on each fire of one URL.
-The two guards are complementary: `pageUrlKey` for cross-navigation,
-the issue sequence for same-selector supersession.
-
-The fires are still not aborted, so a burst holds its connections until
-each drains — superseded work isn't cancelled, only its commit is
-dropped. That's a deliberate safety tradeoff (cancelling a committed
-fire's stream would tear its visible tree); the cost is bounded
-because superseded fires fp-skip to near-empty bytes.
+Selector refetches ride the held stream, so ordering is structural:
+responses arrive in STREAM ORDER — a newer fire's covering segment is
+emitted after the older's, so a late older response clobbering a
+newer one cannot happen on the wire. The remaining staleness class is
+client-side motion: a delivery rendered before the client's own
+navigation must not commit over the new page. Every emission
+therefore carries the navigation point it was rendered AS-OF (the
+`seq` entry's `asof` — the envelope seq of the last `url` statement
+the connection's request state reflects, see
+[`channel.md`](./channel.md)), and the client commits a delivery only
+when its as-of covers the client's current navigation point
+(`_channelDeliveryCommittable`). An as-of-dropped delivery still acks
+as processed; the server's fold gate keeps its fps out of the acked
+mirror. Superseded work isn't cancelled — a superseded window fire's
+whole-tree segment still drains, its cost bounded because fp-skip
+prunes it to near-empty bytes, and a newer statement's covering
+segment resolves the older fires' milestones too. (Frame fires are
+the exception: a superseding frame statement ships an explicit
+`cancel` co-rider that aborts the in-flight lane render server-side.)
 
 ## Fingerprint protocol
 
 Each spec emits its `fp` via `<PartialErrorBoundary partialId,
 partialFingerprint>`; the client's `_currentPageFingerprints` map
-captures it. On the next nav the client serializes the map as
-`?cached=`. The server's spec body skips when its current `fp` matches.
+captures it. The map IS the manifest: the attach statement's `cached`
+field carries every token, an action POST serializes the capped
+`?cached=` URL form, and on a held connection the driver appends
+newly-emitted tuples directly to the connection's carrier between
+emissions. The server's spec body skips when its current `fp` matches.
 
 `_currentPageFingerprints` is `Map<id, Map<matchKey, Set<fp>>>` —
 each (id, matchKey) variant can carry multiple fingerprints. The
@@ -590,7 +578,7 @@ dropped, not mis-attached.
 
 Each `(id, matchKey)` fp set is additionally capped at
 `FP_CAP_PER_VARIANT` (4) entries, oldest-first — a live parton
-re-emitting per segment would otherwise inflate `?cached=`
+re-emitting per segment would otherwise inflate the manifest
 unboundedly.
 
 The fp folds in:
@@ -642,9 +630,9 @@ wire**. The four-step fp cycle is collapsed for them:
 - `registerClientPartial` is guarded by
   `if (this.props.partialFingerprint)`, so no entry lands in
   `_currentPageFingerprints` for the id.
-- `getCachedPartialIds()` therefore produces no
-  `id:matchKey:fp` triple for the spec on the next nav's
-  `?cached=`.
+- the manifest accessors (`getAllCachedPartialTokens` /
+  `getCachedPartialIds`) therefore produce no `id:matchKey:fp`
+  triple for the spec.
 
 Critically, **the descendant fold still folds non-addressable
 specs in**. Snapshots are recorded unconditionally
@@ -719,8 +707,8 @@ The client-side `_applyFpTrailerFromDocument` (in
 and for each entry aliases `to` (warm) onto whichever `(id, matchKey)`
 slot's fp set still holds `from` (cold) — matched by CONTENT, not by
 "most recently rendered". The slot now carries BOTH `fp_cold` (from PEB
-hydration) and `fp_warm` (from the trailer); the next nav's `?cached=`
-carries both and the server's `shouldSkip` matches whichever applies.
+hydration) and `fp_warm` (from the trailer); the manifest advertises
+both and the server's `shouldSkip` matches whichever applies.
 
 Matching by `from` is load-bearing for concurrency. The trailer is
 async — it lands after its response's body has committed. A concurrent
@@ -728,7 +716,7 @@ refetch for a DIFFERENT query against the same stable `(id, matchKey)`
 (e.g. two search queries sharing a tracked-read+cell stage's constant matchKey)
 can overwrite the slot — and clear its fp set — between the body commit
 and the trailer. A "latest matchKey" heuristic would then pin this warm
-fp onto the superseded slot, so `?cached=` would advertise a fingerprint
+fp onto the superseded slot, so the manifest would advertise a fingerprint
 whose content the slot no longer holds; a server fp-skip on it restores
 the wrong node. Content-matching drops such a superseded trailer (no
 slot holds `from`), keeping the advertised fp-set in lockstep with the
@@ -750,8 +738,9 @@ Two transports, both at the same routeKey-bound flush hook:
   `_applyFpTrailerFromDocument` at hydration time, or — when the
   parser hasn't reached the trailing comment by then — on the
   subsequent `load` event.
-- **RSC response (GET *and* action POST)**: per-segment trailer
-  entries after the Flight bytes (see `wrapStreamWithFpTrailer`,
+- **RSC response (the attach's held stream *and* action POSTs)**:
+  per-segment trailer entries after the Flight bytes (see
+  `wrapStreamWithFpTrailer`,
   `wrapStreamWithCommitOnly`, and `splitSegments`). Each entry is
   framed as `\xFF[parton:tag:length]\n<length-byte body>` — one
   UTF-8-invalid lead byte (`\xFF` cannot occur inside Flight JSON)
@@ -768,7 +757,7 @@ Action POSTs use `wrapStreamWithCommitOnly`, which emits a `url`
 trailer when the action body called `getServerNavigation().navigate(...)`
 and otherwise emits no trailer entries. The browser-side
 `setServerCallback` runs the response through `splitSegments` (same
-splitter the GET path uses) so the `url` entry reaches the client,
+splitter the attach path uses) so the `url` entry reaches the client,
 where `applyStandardTrailers` (`segment-trailers-client.ts`)
 applies it via `_windowNav().navigate(url, { history, silent:
 true })` — the Navigation API, never the History API, so
@@ -782,8 +771,8 @@ An action whose every cell write went to a [`deferred`](../reference/cells.md#de
 cell takes this further: the entry renders `root: null` (no tree at
 all), and the client's `setServerCallback` skips the commit
 (`if (payload.root != null) setPayload(payload)`) while still reading
-`returnValue`. The change reaches the page over the open heartbeat
-stream instead. See [`streaming.md`](./streaming.md) § "Deferred
+`returnValue`. The change reaches the page over the held live
+connection instead. See [`streaming.md`](./streaming.md) § "Deferred
 (stream-only) writes".
 
 ## Stream-driven commit timing

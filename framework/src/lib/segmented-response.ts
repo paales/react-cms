@@ -757,6 +757,14 @@ interface LaneRuntime {
 	 *  exit aborts producer reads (an unbounded await must not hold the
 	 *  wind-down). */
 	producer: boolean;
+	/** The current iteration renders an EXPLICIT force whose content
+	 *  has not drained. A navigation tear catching it re-forces the id
+	 *  after the reopen — the force was never satisfied, and the torn
+	 *  body's replacement lanes as-of the new statement (a silent
+	 *  restatement must not lose a disjoint target's refetch). Cleared
+	 *  at drain; a `cancel` is a deliberate supersede and never
+	 *  re-forces. */
+	forced: boolean;
 }
 
 /**
@@ -941,6 +949,7 @@ async function driveLaneStream(
 				snap?.framePath[0] === cancelScope;
 			if (!inScope) continue;
 			runtime.cancelled = true;
+			runtime.forced = false;
 			runtime.abortRead?.();
 		}
 		for (const release of [...gateWaiters]) release();
@@ -1031,6 +1040,7 @@ async function driveLaneStream(
 			abortRead: null,
 			cancelled: false,
 			producer: false,
+			forced: false,
 		};
 		lanes.set(id, runtime);
 		openLaneIds.add(id);
@@ -1056,6 +1066,7 @@ async function driveLaneStream(
 		// path. One-shot: the force is consumed here; re-lanes of the same
 		// parton skip and defer as usual.
 		const forced = forcedLaneIds.delete(id);
+		runtime.forced = forced;
 		if (laneOverride || forced) {
 			enterPartialState({
 				requestedIds: null,
@@ -1275,6 +1286,8 @@ async function driveLaneStream(
 				if (session !== null && deliverySeq !== null) {
 					_recordDelivery(session, deliverySeq, carried, session.consumedNavSeq);
 				}
+				// The force is satisfied — its content drained.
+				runtime.forced = false;
 				if (!runtime.dirty) return;
 			}
 		} finally {
@@ -1670,6 +1683,12 @@ async function driveLaneStream(
 	// Returns false when the connection closed under it.
 	const handleNavigation = async (): Promise<boolean> => {
 		if (session === null) return true;
+		// Explicit forces whose lanes this consume tears were never
+		// satisfied — they re-lane after the reopen alongside the new
+		// statement's own forces.
+		const unfulfilledForces = [...lanes.entries()]
+			.filter(([, rt]) => rt.forced)
+			.map(([id]) => id);
 		await tearLanesForNavigation();
 		// The route is left behind: consequence seqs assigned for its
 		// lanes can never emit (their client commits would be
@@ -1679,10 +1698,12 @@ async function driveLaneStream(
 		for (const [, seq] of session.assignedLaneSeqs) session.voidSeqs.add(seq);
 		session.assignedLaneSeqs.clear();
 		laneNavSeqs.clear();
-		// The final consumed statement's `__force` selector — the targets
-		// that lane after the region reopens. Superseded statements' force
-		// sets are moot (the covering statement's stands).
-		let forceSelector: string | null = null;
+		// The union of the consumed statements' `__force` selectors — the
+		// targets that lane after the region reopens. Superseded
+		// statements' URLS are moot (the covering statement's stands),
+		// but their FORCES are not: a silent restatement with a disjoint
+		// target must not lose the earlier statement's refetch.
+		const forceLabels = new Set<string>();
 		while (true) {
 			const nav = takeConnectionNavigation(session);
 			if (nav === null) break;
@@ -1696,7 +1717,12 @@ async function driveLaneStream(
 			// fold doesn't move on a force, so its placeholder would cut
 			// the target out of the tree) or whose ancestor replays a byte
 			// cache.
-			forceSelector = target.searchParams.get("__force");
+			for (const label of (target.searchParams.get("__force") ?? "")
+				.split(",")
+				.map((t) => t.trim())
+				.filter(Boolean)) {
+				forceLabels.add(label);
+			}
 			target.searchParams.delete("__force");
 			setRequest(new Request(target, { headers: request.headers }));
 			request = getRequest();
@@ -1714,16 +1740,15 @@ async function driveLaneStream(
 		if (!enqueue(lanesMarker)) return false;
 		// The statement's forced targets lane on the reopened region:
 		// resolved against the new route's just-committed snapshots (id
-		// match first, then label fan-out — the same resolution a discrete
-		// `?partials=` takes) and rendered EXPLICIT (`forcedLaneIds` — the
-		// lane state's explicitIds), so fp-skip and the defer gate both
-		// yield: a refetch target must re-render, never match-and-skip.
-		if (forceSelector !== null) {
+		// match first, then label fan-out) and rendered EXPLICIT
+		// (`forcedLaneIds` — the lane state's explicitIds), so fp-skip
+		// and the defer gate both yield: a refetch target must
+		// re-render, never match-and-skip. Torn-but-unfulfilled forces
+		// re-lane alongside (their id must still snapshot on the new
+		// route — a real route change legitimately drops them).
+		if (forceLabels.size > 0 || unfulfilledForces.length > 0) {
 			const snapshots = _readSnapshotsForRoute(scope, routeKey);
-			const wanted = forceSelector
-				.split(",")
-				.map((s) => s.trim())
-				.filter(Boolean);
+			const wanted = [...forceLabels];
 			const ids = new Set<string>();
 			for (const name of wanted) {
 				if (snapshots.has(name)) ids.add(name);
@@ -1731,6 +1756,9 @@ async function driveLaneStream(
 			for (const [id, snap] of snapshots) {
 				if (ids.has(id)) continue;
 				if (snap.labels.some((l) => wanted.includes(l))) ids.add(id);
+			}
+			for (const id of unfulfilledForces) {
+				if (snapshots.has(id)) ids.add(id);
 			}
 			if (ids.size > 0) {
 				enterRequestRegistry(routeKey, "cache");

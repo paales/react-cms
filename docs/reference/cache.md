@@ -7,6 +7,15 @@ the spec's subtree and replays them on hit. Distinct from the
 (wake hint for the segment driver, no byte storage). Caching needs
 an explicit opt-in.
 
+The cache lives on the server, full stop. parton is
+server-at-the-edge semantics: the DOCUMENT is the CDN-cacheable
+artifact, and everything after first paint is a stateful connection
+to a live server process — rendered partials exist only as segments
+and lanes on the held stream, never as shared-CDN artifacts.
+Broadcast semantics (one rendered payload fanned out to many
+clients) are a later investigation tied to the multi-instance bus
+question ([`../notes/channel-design.md`](../notes/channel-design.md)).
+
 ```tsx
 const ProductHero = parton(ProductHeroRender, {
   match: "/p/:slug",
@@ -171,9 +180,9 @@ Three axes:
 
 See [`docs/internals/streaming.md`](../internals/streaming.md) for
 the time-based reactivity path. Short version: the `expires()`
-boundary is a wake hint for the segment driver's `?live=1` long-poll
-loop. The `cache` prop is independent — caching is byte storage,
-`expires()` is a freshness boundary.
+boundary is a wake hint for the segment driver holding the page's
+live connection. The `cache` prop is independent — caching is byte
+storage, `expires()` is a freshness boundary.
 
 ## Predictive warming
 
@@ -197,8 +206,12 @@ vector maps onto parton coordinates (`candidates` carry each parked
 parton's `type` + placement props) — and returns ids in priority
 order; the segment driver renders them into the byte cache at its
 park point, bounded, backpressure-aware, and without emitting a
-byte. The next real viewport flip then replays warm bytes. The
-worked example is the website world
+byte. The next real viewport flip then replays warm bytes.
+`useNavigation().preload(target)` fills the same caches by explicit
+intent — its `warm` statement runs one byte-silent whole-tree render
+of the stated target at the same park point, under the same bounds
+(see [`frames-navigation.md`](./frames-navigation.md#preload--a-warm-intent-before-the-click)).
+The worked example is the website world
 (`website/src/app/world/{scroller.tsx,warm.ts,chunk.tsx}`);
 mechanics in [`../internals/streaming.md`](../internals/streaming.md)
 §Predictive warming at park.

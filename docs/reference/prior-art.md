@@ -328,21 +328,23 @@ shape. Three contrasts hold:
    Nothing on the connection is ever the only copy.
 
 2. **Degradation.** The channel carries freshness, never semantics:
-   every upstream frame is a statement equally presentable on a
-   discrete request, attach IS the discrete path, and a channel that
-   cannot prove its duplex drops the page to GET-shaped polling (the
-   never-acked degrade — shipped as mechanism, not aspiration). A
-   LiveView page without its socket is a dead form: the events, the
-   state, and the render loop all live on the other end of it.
+   the client's frames are statements the protocol re-establishes on
+   its own (the next attach restates the URL, the manifest, the
+   viewport), and a channel that cannot prove its duplex drops the
+   page to document navigation — links and forms go browser-native,
+   SSR renders a plain website (the never-acked degrade — shipped as
+   mechanism, not aspiration). A LiveView page without its socket is
+   a dead form: the events, the state, and the render loop all live
+   on the other end of it.
 
 3. **The wire/cache model.** LiveView has no client-cache concept —
    every diff computes against server-known DOM state; no byte-cache,
    no skip, no CDN story. Parton's client holds a real cache the
    server only ever CONFIRMS (fp mirror, fp-skip placeholders, acked
    holdings), the server holds a byte-cache it can warm ahead of the
-   viewport, and cold start is a CDN-cacheable GET — the static end
-   of the dynamic range has first-class existence. The channel is one
-   transport under that model, not the model.
+   viewport, and cold start is a CDN-cacheable document GET — the
+   static end of the dynamic range has first-class existence. The
+   channel is one transport under that model, not the model.
 
 What LiveView keeps: a genuinely smaller programming model — one
 process, one state, one loop. Parton pays for the fp/mirror machinery

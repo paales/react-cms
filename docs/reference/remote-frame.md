@@ -366,7 +366,7 @@ The host's `<RemoteFrame>` parses the trailer via the streaming
 splitter in `framework/src/lib/snapshot-trailer.ts` and registers
 each snapshot in the host's request registry via `registerPartial`.
 Selector refetch then finds the id and routes through the normal
-cache-mode path.
+isolated-render path (`partialFromSnapshot`).
 
 ## Module-ref rewriting
 

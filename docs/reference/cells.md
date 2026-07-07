@@ -25,10 +25,10 @@ doesn't know which backend produced the value.
 
 **Why connection-scoped for ephemeral?** Each HTTP connection gets
 its own in-memory cache for the duration of its ALS request context
-— including all segments a streaming heartbeat emits, because the
-segment driver loops inside one `runWithRequestAsync` scope. Short
-POSTs (mutations) and cold GETs each get their own short-lived
-storage; long heartbeats hold their storage for the connection's
+— including all segments and lanes a held live connection emits,
+because the segment driver loops inside one `runWithRequestAsync`
+scope. Short POSTs (mutations) and cold document GETs each get their
+own short-lived storage; a held connection holds its storage for its
 lifetime. No leakage between connections (different tabs, different
 users). Cross-connection caching (when we eventually want it) is a
 separate layer added on top, not a default.
@@ -594,7 +594,7 @@ the new bytes come back on the POST response, and the client reconciles
 them. For high-frequency, last-write-wins broadcast state — cursor
 position, scroll offset, presence — that round-trip is wasted work. The
 writer is already painting locally, every viewer (the writer included)
-is going to catch up over the open streaming connection anyway, and
+is going to catch up over the held live connection anyway, and
 committing the POST's re-render back over the optimistic value just
 costs a render and a reconcile per keystroke.
 
@@ -616,23 +616,23 @@ reading it re-renders on the next stream segment exactly as usual. What
 changes is the **action POST response**: when every write in a request
 was to a deferred cell, the framework omits the response root (no
 re-render on the POST), and the client skips committing it. The bump
-reaches the page only through the already-open
-[`<LivePageHeartbeat>`](../internals/streaming.md) connection.
+reaches the page only through its held live connection
+([`streaming.md`](../internals/streaming.md)).
 
 The up-channel is the regular `cell.set` POST (fire it as fast as you
 like — `useCell(cell).set` is single-inflight + replace-coalesce, so it
 self-throttles to one round-trip at a time and only ever sends the
-latest value); the down-channel is the heartbeat stream that propagates
+latest value); the down-channel is the held stream that propagates
 to every viewer. Fire up, stream down.
 
 Constraints and edges:
 
 - **Storage must be visible across connections.** The write POST and a
-  viewer's heartbeat are different connections. Default `localCell`
+  viewer's held stream are different connections. Default `localCell`
   storage is process-global (and in-memory for non-default test
   scopes), so it broadcasts. **Do not** pair `deferred` with
   `getEphemeralCellStorage` — that storage is request-scoped, so the
-  write would be invisible to every other connection's heartbeat.
+  write would be invisible to every other held connection.
 - **Mixed batches still render.** If one action writes both a deferred
   and a non-deferred cell, the response renders normally — the
   non-deferred cell needs the POST commit. `deferred` only suppresses
@@ -642,10 +642,10 @@ Constraints and edges:
   from the POST. Don't bind a control to a deferred cell's
   `serverValue` expecting the action response to reconcile it — for
   that, use a normal (non-deferred) cell.
-- **Requires the heartbeat.** With no open streaming connection (the
-  heartbeat off, or a page that never mounts one), a deferred write
-  lands on the server but nothing on the page moves. Deferred state is
-  a live-updates feature.
+- **Requires the held connection.** With no live connection (a
+  degraded page, or one that never mounts the heartbeat), a deferred
+  write lands on the server but nothing on the page moves. Deferred
+  state is a live-updates feature.
 
 **Multiplayer presence (every viewer's cursor).** The single-value
 example above reacts to *one* shared cursor. To show *all* viewers'
@@ -655,7 +655,7 @@ cursors, hold the whole set in **one map cell keyed by viewer id** —
 because cells are point-read by partition and the set of partitions
 isn't enumerable, so a viewer can't "read every cursor partition." Each
 viewer writes its key; every viewer renders the whole map off the
-heartbeat. The e2e-testing app's `/cursors` page is a worked two-tab
+held stream. The e2e-testing app's `/cursors` page is a worked two-tab
 example (`pages/cursors-state.ts`, `cursors-actions.ts`,
 `components/cursor-layer.tsx`).
 

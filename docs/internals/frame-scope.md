@@ -32,9 +32,15 @@ once; the tracked hooks read from that resolved request.
 
 ## Wire protocol
 
-Frame navigation drops `?__frame=<dotted-path>&__frameUrl=<url>` on
-the URL. `PartialRoot` reads them on every request and writes the
-URL into the session before any spec runs. The session is
+Attached, a frame navigation is a frame-scoped `url` frame on a
+channel envelope — the endpoint writes the frame URL into the
+session and the driver lanes the frame's subtrees on the held stream
+(see [`channel.md`](./channel.md) §Frames ride the channel). The
+document carrier `?__frame=<dotted-path>&__frameUrl=<url>` exists
+for renders with no channel — a degraded page's frame navigation and
+the CMS preview iframe; `PartialRoot` reads the params off the
+document URL and writes the same session store before any spec runs.
+The session is
 cookie-backed (`__frame_sid`); state lives in the in-memory store in
 `framework/src/runtime/session.ts`. Entries expire on inactivity —
 every read or write refreshes the session's idle clock, so an active
