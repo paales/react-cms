@@ -329,9 +329,11 @@ Each package is a worktree branch, lands green (`yarn test` +
   lane replays in ~3ms where the same parton's cold lane pays its
   full body (~127ms at a 120ms body) —
   `channel-warm.rsc.test.tsx`.
-- **Docs sweep** rides each package; the prior-art LiveView section is
-  rewritten once W4 lands (state-authority + degradation + wire-model
-  contrasts replace the per-request-HTTP contrast).
+- **Docs sweep** rides each package. The prior-art LiveView rewrite
+  landed with W6: state authority + degradation + wire/cache model
+  replaced the per-request-HTTP contrast
+  ([docs/reference/prior-art.md](../reference/prior-art.md) §Adjacent
+  server + collaborative systems).
 
 ## Open questions
 

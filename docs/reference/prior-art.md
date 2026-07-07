@@ -309,13 +309,45 @@ ride the snapshot where they can be inspected.
 
 **Phoenix LiveView (Elixir).** The closest non-React server-render
 cousin. `assigns` is the dependency surface; templates re-render on
-assign change; the wire protocol patches the DOM at marked positions. Nested
-`LiveComponent` ≡ spec; `phx-update="ignore"` ≡ `keepalive: false`.
-The big architectural difference: LiveView holds an open websocket per
-session and pushes diffs; this framework renders per-request over plain
-HTTP and skips via fp. LiveView trades infrastructure cost (websocket
-per user) for latency; this framework trades latency for infrastructure
-simplicity.
+assign change; the wire protocol patches the DOM at marked positions.
+Nested `LiveComponent` ≡ spec; `phx-update="ignore"` ≡
+`keepalive: false`. Both hold a connection in steady state now — the
+channel (attach + held stream + upstream envelopes) is parton's
+primary transport — so the differentiator is no longer transport
+shape. Three contrasts hold:
+
+1. **State authority.** LiveView's assigns ARE the application
+   state: authoritative, in-process, one copy. A process death is a
+   user-visible event papered over by remount-and-refetch. Parton's
+   connection session is a disposable, EVIDENCED mirror —
+   authoritative state lives in cells (storage-backed) and in the
+   client's own cache; the session holds only re-presentable
+   statements (the visible set, acked holdings, telemetry) and their
+   proofs. Kill the process: the client reattaches anywhere,
+   re-presents its manifest, and the acked layer rebuilds from zero.
+   Nothing on the connection is ever the only copy.
+
+2. **Degradation.** The channel carries freshness, never semantics:
+   every upstream frame is a statement equally presentable on a
+   discrete request, attach IS the discrete path, and a channel that
+   cannot prove its duplex drops the page to GET-shaped polling (the
+   never-acked degrade — shipped as mechanism, not aspiration). A
+   LiveView page without its socket is a dead form: the events, the
+   state, and the render loop all live on the other end of it.
+
+3. **The wire/cache model.** LiveView has no client-cache concept —
+   every diff computes against server-known DOM state; no byte-cache,
+   no skip, no CDN story. Parton's client holds a real cache the
+   server only ever CONFIRMS (fp mirror, fp-skip placeholders, acked
+   holdings), the server holds a byte-cache it can warm ahead of the
+   viewport, and cold start is a CDN-cacheable GET — the static end
+   of the dynamic range has first-class existence. The channel is one
+   transport under that model, not the model.
+
+What LiveView keeps: a genuinely smaller programming model — one
+process, one state, one loop. Parton pays for the fp/mirror machinery
+precisely so the connection stays disposable and the static end stays
+real.
 
 **Erlang + OTP.** Every spec addressable by selector ↔ every actor
 addressable by `pid`. Selector-targeted refetch ↔ message-pass to a
