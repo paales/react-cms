@@ -30,6 +30,15 @@ test.beforeEach(async ({ baseURL }) => {
 test("a held stale search fetch must not re-open the header toggle after close", async ({
   page,
 }) => {
+  // Pin the DISCRETE transport: this guard is the pageUrlKey
+  // stale-commit twin on the GET path, and the network-layer hold
+  // below can only park a discrete request. An attached page would
+  // state the refetch on the channel — where the equivalent
+  // protection is the as-of drop, covered by the framework's channel
+  // suites — and the route handler would never engage.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
+  })
   await page.goto("/?search=url")
   const input = page.locator("dialog input[type=text][data-hydrated]")
   await input.waitFor({ state: "visible", timeout: 15000 })

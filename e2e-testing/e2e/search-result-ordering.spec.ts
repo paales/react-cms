@@ -62,6 +62,15 @@ test("?cached= stays bounded across many distinct queries", async ({ page }) => 
     tokenCounts.push(cached ? cached.split(",").length : 0)
   })
 
+  // The bound under test is a property of the DISCRETE transport's URL
+  // manifest (`?cached=` rides the request line). An attached page
+  // states refetches on the channel instead — no `?cached=` at all,
+  // the connection's mirror is the manifest — so pin the discrete path
+  // by keeping the heartbeat (and with it the channel) closed.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
+  })
+
   await page.goto("/?search=url")
   const input = page.locator("dialog input[type=text][data-hydrated]")
   await input.waitFor({ state: "visible", timeout: 15000 })

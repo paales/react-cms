@@ -1,4 +1,11 @@
-import { clearCaches, expect, request, test, waitForPageInteractive } from "./fixtures"
+import {
+  clearCaches,
+  expect,
+  recordPartialDispatches,
+  request,
+  test,
+  waitForPageInteractive,
+} from "./fixtures"
 
 /**
  * Dynamic Partial discovery + refresh end-to-end.
@@ -23,14 +30,9 @@ test.beforeEach(async ({ baseURL }) => {
 test("dynamic live-price Partial is discoverable and individually refetchable by id", async ({
   page,
 }) => {
-  const rscRefetches: Array<{ url: string; partials: string | null }> = []
-  page.on("request", (req) => {
-    const url = req.url()
-    if (url.includes("_.rsc") && url.includes("partials=")) {
-      const u = new URL(url)
-      rscRefetches.push({ url, partials: u.searchParams.get("partials") })
-    }
-  })
+  // Transport-agnostic dispatch log: an attached page states the
+  // refetch on the channel; pre-attach it goes discrete.
+  const refetches = recordPartialDispatches(page)
 
   await page.goto("/magento")
 
@@ -45,14 +47,14 @@ test("dynamic live-price Partial is discoverable and individually refetchable by
   const sku = testId!.replace(/^live-price-/, "")
   expect(sku.length).toBeGreaterThan(0)
 
-  rscRefetches.length = 0
+  refetches.length = 0
   await page.locator(`[data-testid="refresh-price-${sku}"][data-hydrated]`).first().click()
 
-  // The refetch should hit the RSC endpoint with a single id. The id
+  // The refetch dispatches a single id (on either transport). The id
   // is the framework-derived per-instance instance id — opaque on the
   // wire but stable for self-refetch via the `@self` selector token.
-  await expect.poll(() => rscRefetches.length, { timeout: 10000 }).toBeGreaterThan(0)
-  const partials = rscRefetches[0].partials
+  await expect.poll(() => refetches.length, { timeout: 10000 }).toBeGreaterThan(0)
+  const partials = refetches[0].partials
   expect(partials).toBeTruthy()
   // The id is derived from the spec id ("price") plus a per-instance
   // hash, so it starts with the spec id and is a single token.
@@ -105,20 +107,7 @@ test("clicking refresh updates the targeted price's tick in the DOM", async ({ p
 test("clicking 'refresh all prices' updates every visible price in one request", async ({
   page,
 }) => {
-  const rscRefetches: Array<{
-    url: string
-    partials: string | null
-  }> = []
-  page.on("request", (req) => {
-    const url = req.url()
-    if (url.includes("_.rsc") && url.includes("partials=")) {
-      const u = new URL(url)
-      rscRefetches.push({
-        url,
-        partials: u.searchParams.get("partials"),
-      })
-    }
-  })
+  const refetches = recordPartialDispatches(page)
 
   await page.goto("/magento")
   const firstPrice = page.locator('[data-testid^="live-price-"][data-price-tick]').first()
@@ -135,12 +124,12 @@ test("clicking 'refresh all prices' updates every visible price in one request",
   )
   expect(before.length).toBeGreaterThan(2)
 
-  rscRefetches.length = 0
+  refetches.length = 0
   await page.locator('[data-testid="refresh-all-prices"][data-hydrated]').click()
 
   // Exactly one refetch, carrying the `price` label.
-  await expect.poll(() => rscRefetches.length, { timeout: 10000 }).toBeGreaterThan(0)
-  expect(rscRefetches[0].partials).toBe("price")
+  await expect.poll(() => refetches.length, { timeout: 10000 }).toBeGreaterThan(0)
+  expect(refetches[0].partials).toBe("price")
 
   // Every price's tick should update to a new value.
   await expect

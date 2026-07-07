@@ -125,6 +125,14 @@ test("client component inside cached subtree hydrates and retains state", async 
 })
 
 test("ClickCounter state survives refetch of its cached Partial", async ({ page, request }) => {
+  // Pin the refetch to the discrete transport: the test's only commit
+  // signal is the `_.rsc` response (a cache-hit replay changes no
+  // DOM), and an attached page would state the refetch on the channel
+  // instead. The fiber-survival behavior under test is the client
+  // merge layer's, identical on both transports.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __partonHeartbeatDisabled?: boolean }).__partonHeartbeatDisabled = true
+  })
   await request.get("/__test/clear-caches")
   await page.goto(`/cache-demo?flavor=retain-${Date.now()}`)
   await waitForPageInteractive(page)

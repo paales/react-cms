@@ -159,6 +159,70 @@ export async function waitForLiveConnection(
 }
 
 /**
+ * One targeted refetch / navigation dispatch, on whichever transport
+ * carried it: `"rsc"` — a discrete `_.rsc` request with `?partials=`;
+ * `"channel"` — a `url` frame on a `/__parton/channel` envelope (an
+ * attached page states the refetch as its page URL with the
+ * `?__force=` overlay — the whole-tree segment's forced targets — and
+ * the response rides the held stream).
+ */
+export interface PartialDispatch {
+  transport: "rsc" | "channel"
+  /** The dispatch's target selector — `?partials=` on the discrete
+   *  form, `?__force=` on the channel statement (`null`: a full-page
+   *  nav). */
+  partials: string | null
+  url: string
+}
+
+/**
+ * Record every partial dispatch from `page`, across BOTH transports.
+ * Specs that assert dispatch counts/shapes use this instead of
+ * counting raw `_.rsc` requests — whether a given fire rides the
+ * channel depends on whether the live connection was established by
+ * then (an interaction racing the attach goes discrete), so the
+ * assertion must be transport-agnostic. The heartbeat's own live
+ * attach (`?live=1`) is transport, not a dispatch, and is excluded.
+ */
+export function recordPartialDispatches(page: Page): PartialDispatch[] {
+  const dispatches: PartialDispatch[] = []
+  page.on("request", (req) => {
+    const url = req.url()
+    if (url.includes("_.rsc")) {
+      try {
+        const u = new URL(url)
+        if (u.searchParams.get("live") === "1") return
+        if (!u.searchParams.has("partials")) return
+        dispatches.push({
+          transport: "rsc",
+          partials: u.searchParams.get("partials"),
+          url,
+        })
+      } catch {}
+      return
+    }
+    if (url.includes("/__parton/channel")) {
+      try {
+        const envelope = JSON.parse(req.postData() ?? "") as {
+          frames?: Array<{ kind: string; url?: string }>
+        }
+        for (const frame of envelope.frames ?? []) {
+          if (frame.kind !== "url" || !frame.url) continue
+          const stated = new URL(frame.url, "http://localhost")
+          if (!stated.searchParams.has("__force")) continue
+          dispatches.push({
+            transport: "channel",
+            partials: stated.searchParams.get("__force"),
+            url: frame.url,
+          })
+        }
+      } catch {}
+    }
+  })
+  return dispatches
+}
+
+/**
  * Replacement for `page.waitForLoadState("networkidle")` that
  * ignores the framework's live-update heartbeat connection.
  *

@@ -1,4 +1,11 @@
-import { clearCaches, test, expect, request, waitForPageInteractive } from "./fixtures"
+import {
+  clearCaches,
+  test,
+  expect,
+  recordPartialDispatches,
+  request,
+  waitForPageInteractive,
+} from "./fixtures"
 
 /**
  * /defer-demo — exercises the activation shapes of `<Partial defer>`:
@@ -19,14 +26,9 @@ test.beforeEach(async ({ baseURL }) => {
 
 test.describe("Partial defer demo", () => {
   test("defer={true}: button click activates via useNavigation.reload()", async ({ page }) => {
-    const rscCalls: Array<{ partials: string | null }> = []
-    page.on("request", (req) => {
-      const url = req.url()
-      if (url.includes("_.rsc")) {
-        const u = new URL(url)
-        rscCalls.push({ partials: u.searchParams.get("partials") })
-      }
-    })
+    // Transport-agnostic: attached, the activation refetch rides the
+    // channel; pre-attach it goes discrete.
+    const dispatches = recordPartialDispatches(page)
 
     await page.goto("/defer-demo")
 
@@ -34,16 +36,16 @@ test.describe("Partial defer demo", () => {
     expect(await page.locator('[data-testid="manual-content"]').count()).toBe(0)
     await waitForPageInteractive(page)
 
-    rscCalls.length = 0
+    dispatches.length = 0
     await page.locator('[data-testid="activate-manual"]').click()
     await expect(page.locator('[data-testid="manual-content"]')).toBeVisible({
       timeout: 5000,
     })
 
-    const hits = rscCalls.filter(
+    const hits = dispatches.filter(
       (c) => c.partials != null && c.partials.split(",").includes("manual"),
     )
-    expect(hits.length, "expected exactly one RSC refetch for `manual`").toBeGreaterThanOrEqual(1)
+    expect(hits.length, "expected exactly one refetch dispatch for `manual`").toBeGreaterThanOrEqual(1)
   })
 
   test("<WhenVisible>: scroll-into-view activates the Partial", async ({ page }) => {
