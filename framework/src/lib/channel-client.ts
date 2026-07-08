@@ -557,6 +557,30 @@ export function _channelAbortLiveStream(): void {
 	liveStreamAbort?.();
 }
 
+/** Set by `_channelRequestReattach` — the NEXT connection close re-fires
+ *  the attach even with no pending interaction. The transport-upgrade
+ *  handover is its only user: a deliberate close whose sole purpose is to
+ *  re-establish on the just-installed transport, so nothing else would
+ *  trigger the settle's re-fire. One-shot, consumed in
+ *  `_channelConnectionClosed`. */
+let reattachOnClose = false;
+
+/**
+ * The transport-upgrade handover: drop the held connection and
+ * immediately re-attach on the CURRENT transport (the caller has just
+ * `setChannelTransport`'d the confirmed WebSocket — [[channel-transport]]).
+ * Aborting the held fetch stream settles it through the normal close path
+ * (`_channelConnectionClosed`); the one-shot flag makes that close re-fire
+ * even though no navigation is pending. The re-attach presents the
+ * manifest + watermark, so fp-skip + the layered mirror + the retransmit
+ * buffer carry the brief overlap without frame loss — it IS an ordinary
+ * re-attach, only its trigger is new.
+ */
+export function _channelRequestReattach(): void {
+	reattachOnClose = true;
+	_channelAbortLiveStream();
+}
+
 // ─── Cookie changes over the channel ─────────────────────────────────
 //
 // A client cookie WRITE (`navigate(url, {cookies})`) no longer TEARS the
@@ -1537,6 +1561,11 @@ export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
 	_setLiveConnectionId(null);
 	const established = establishedSinceClose;
 	establishedSinceClose = false;
+	// One-shot: a transport-upgrade handover requested this close re-fire
+	// unconditionally (no pending interaction triggers it). Consume it
+	// here so it can never leak into a later close.
+	const forceReattach = reattachOnClose;
+	reattachOnClose = false;
 	const firstAckFailed = firstAckFailedThisConnection;
 	firstAckFailedThisConnection = false;
 	// The connection's delivery seqs are dead — a gate anchored on them
@@ -1583,11 +1612,12 @@ export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
 		return;
 	}
 	// Not counted — a benign idle non-establishment, a normal keepalive
-	// close, or our own supersede. Re-ride a pending interaction
+	// close, our own supersede, or a transport-upgrade handover. Re-ride a
+	// pending interaction (or the upgrade's requested re-attach)
 	// immediately; otherwise the heartbeat's interval reopens on its own
 	// (a background non-establishment retries there — no fast loop while
 	// the counter stays put).
-	if (pendingInteraction) _requestAttachNow();
+	if (pendingInteraction || forceReattach) _requestAttachNow();
 }
 
 /** Request an envelope flush. Coalesced per animation frame (the

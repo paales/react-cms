@@ -31,6 +31,8 @@ import {
 	CHANNEL_WT_ENDPOINT,
 	type ChannelEnvelope,
 } from "./channel-protocol.ts";
+import { TAG_CONNECTION_ID } from "./fp-trailer-marker.ts";
+import { splitSegments } from "./fp-trailer-split.ts";
 import { NavigationError } from "../runtime/navigation-error.ts";
 
 /**
@@ -449,33 +451,132 @@ function abortError(): Error {
 	return new DOMException("The channel open was aborted.", "AbortError");
 }
 
+/** A `?transport=` param (or `window.__partonTransport`) pinned the boot
+ *  transport — the user's explicit choice. Read by the boot orchestration
+ *  to STAND DOWN the auto-upgrade: a force is never second-guessed. */
+let transportForced = false;
+
+/** Whether the boot transport was explicitly forced (`?transport=…` /
+ *  `window.__partonTransport`). A forced page never auto-upgrades —
+ *  `fetch` pins fetch just as `ws` pins ws. */
+export function isTransportForced(): boolean {
+	return transportForced;
+}
+
 /**
- * Boot-time transport selection. The full-duplex transports are OPT-IN —
- * a `?transport=` query param or `window.__partonTransport`, each gated
- * on its global being present:
+ * Boot-time transport selection. The BOOT transport is fetch by default
+ * (instant, universal, no handshake wait) — the auto-upgrade
+ * (`armTransportUpgrade`, browser entry) is what promotes it to WebSocket
+ * where the socket works. A `?transport=` query param or
+ * `window.__partonTransport` FORCES a transport at boot and stands the
+ * auto-upgrade down (the user's explicit choice):
  *
  *   - `"webtransport"` → `WebTransportTransport` (needs a `WebTransport`
  *     global AND a standalone HTTP/3 server — see [[channel-server]]'s
  *     `createWebTransportServer`).
  *   - `"ws"` → `WebSocketTransport` (needs a `WebSocket` global AND the
  *     `partonChannelServer` Vite plugin serving `/__parton/ws`).
+ *   - `"fetch"` → the default, pinned: no background upgrade probe.
  *
- * Absent a matching opt-in (or with the named global missing) the default
- * fetch transport stands, so every existing page — and the whole test
- * suite — is unaffected. Call once before the heartbeat's first fire.
+ * Absent a `?transport=` value the default fetch transport stands AND the
+ * auto-upgrade is armed. Call once before the heartbeat's first fire.
  */
 export function selectChannelTransport(): void {
 	if (typeof window === "undefined") return;
 	const requested =
 		new URLSearchParams(window.location.search).get("transport") ??
 		(window as unknown as { __partonTransport?: string }).__partonTransport;
+	// Any recognized `?transport=` value is a FORCE — the auto-upgrade
+	// stands down, so `fetch` pins fetch just as `ws` pins ws.
 	if (requested === "webtransport") {
+		transportForced = true;
 		if (typeof WebTransport !== "undefined")
 			setChannelTransport(new WebTransportTransport());
 		return;
 	}
 	if (requested === "ws") {
+		transportForced = true;
 		if (typeof WebSocket !== "undefined")
 			setChannelTransport(new WebSocketTransport());
+		return;
 	}
+	if (requested === "fetch") {
+		transportForced = true;
+	}
+}
+
+/** How long the WS probe waits for the `conn` handshake before giving up.
+ *  A same-origin socket that WORKS confirms in ~100ms (handshake + the
+ *  server's `conn` mint); this backstops the cases that DON'T fail their
+ *  handshake — an endpoint the host leaves the upgrade HANGING (e.g. a
+ *  Vite dev server with no `partonChannelServer`), or one that opens but
+ *  is never driven. Kept tight so a plugin-less app gives up promptly. */
+const PROBE_CONN_TIMEOUT_MS = 2_000;
+
+/**
+ * Probe whether the WebSocket channel endpoint is usable: open a
+ * SPECULATIVE attach on a throwaway socket and resolve `true` iff the
+ * server-minted `conn` handshake arrives over it. That handshake — not a
+ * bare `onopen`, which only proves the TCP upgrade succeeded, never that
+ * the server actually drove the socket — is the REAL establishment signal
+ * (the driver mints ids only for sessions it opened, see [[channel-server]]
+ * §The id handshake). Resolves `false` on any failure (absent endpoint,
+ * close before `conn`, error) or if `timeoutMs` elapses, and ALWAYS closes
+ * the probe socket. The statement's manifest lets the server fp-skip its
+ * throwaway render; the socket closes the instant `conn` is seen, before
+ * that render matters.
+ *
+ * The confirmation reuses the live path's own establishment detection —
+ * `splitSegments`' `onEntry` surfacing the `TAG_CONNECTION_ID` marker,
+ * exactly as the browser entry reads it — so there is no second-guessed
+ * proxy for "it works": the signal is the one the transport already
+ * trusts.
+ */
+export function probeWebSocketTransport(
+	statement: AttachStatement,
+	opts: { url?: string; timeoutMs?: number } = {},
+): Promise<boolean> {
+	if (typeof WebSocket === "undefined") return Promise.resolve(false);
+	const probe = new WebSocketTransport(opts.url);
+	const abort = new AbortController();
+	return new Promise<boolean>((resolve) => {
+		let settled = false;
+		const finish = (ok: boolean): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			try {
+				abort.abort();
+			} catch {}
+			probe.close();
+			resolve(ok);
+		};
+		const timer = setTimeout(
+			() => finish(false),
+			opts.timeoutMs ?? PROBE_CONN_TIMEOUT_MS,
+		);
+		probe.open(statement, abort.signal).then(({ body }) => {
+			void (async () => {
+				try {
+					for await (const segment of splitSegments(body, abort.signal, (tag) => {
+						if (tag === TAG_CONNECTION_ID) finish(true);
+					})) {
+						if (settled) break;
+						// Drain minimally — a probe never commits content.
+						if (segment.kind === "lanes") {
+							for await (const lane of segment.lanes) {
+								if (settled) break;
+								await new Response(lane.body).arrayBuffer().catch(() => {});
+							}
+						} else {
+							await new Response(segment.body).arrayBuffer().catch(() => {});
+						}
+					}
+					finish(false);
+				} catch {
+					finish(false);
+				}
+			})();
+		}, () => finish(false));
+	});
 }

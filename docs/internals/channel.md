@@ -1008,8 +1008,56 @@ signal, and every envelope is a discrete request). A full-duplex
 transport folds both roles onto ONE connection behind the same
 interface — an OPAQUE TUNNEL carrying the SAME marker bytes, no
 reframing — so nothing above this module changes.
-`getChannelTransport()` / `setChannelTransport()` select it; the
-default stays fetch until something opts in.
+`getChannelTransport()` / `setChannelTransport()` select it; fetch is
+the BOOT transport, and an unforced page auto-upgrades from it to
+WebSocket where the socket works (§The default — boot fetch, upgrade to
+WebSocket).
+
+### The default — boot fetch, upgrade to WebSocket
+
+Fetch is the boot transport — instant, universal, no handshake to wait
+on — and the channel PROMOTES itself to the WebSocket transport in the
+background where the socket works. The socket.io-shaped default, but
+built on the framework's own re-attach machinery, not an in-place socket
+swap: client state (the cache, fingerprints, cull state,
+delivery/envelope timelines) is transport-independent module state, so
+"upgrade to WS" is just a RE-ATTACH on the WS transport
+(`armTransportUpgrade`, browser entry). The steps:
+
+1. **Boot on fetch.** `selectChannelTransport()` keeps fetch unless a
+   `?transport=` force pins one; first content rides the fetch attach.
+2. **Background probe.** Once the fetch connection establishes (first
+   content already delivered — the upgrade costs the user nothing), a
+   BACKGROUND probe opens a speculative WS attach on a throwaway socket
+   (`probeWebSocketTransport`). It confirms iff the server-minted `conn`
+   handshake arrives over the socket — the SAME establishment signal the
+   live path reads (`splitSegments`' `TAG_CONNECTION_ID`), not a bare
+   `onopen` (which only proves the TCP upgrade, never that the server
+   drove the socket). The probe presents the manifest so its throwaway
+   render fp-skips, and closes the socket the instant `conn` is seen.
+3. **Confirmed → flip + re-attach.** `setChannelTransport(new
+   WebSocketTransport())`, then `_channelRequestReattach()` drops the
+   held fetch stream; its settle re-attaches through the NORMAL close
+   path (`_channelConnectionClosed`), now opening on the socket. From
+   there every attach, lane, and envelope rides WS. No frame is lost
+   across the switch: the WS re-attach presents the manifest + applied
+   watermark, so fp-skip + the layered mirror elide anything the client
+   already holds, and the retransmit buffer covers reliable frames in the
+   brief overlap — it IS an ordinary re-attach, only its trigger is new.
+4. **Failed/absent → stay on fetch.** A blocked or absent `/__parton/ws`
+   fails the probe (the WS handshake errors before `onopen`, or `conn`
+   never arrives within the timeout); the probe socket closes and
+   everything stays on fetch, transparently. A bounded, backed-off
+   re-probe (up to `MAX_UPGRADE_PROBES`) covers a transient stumble, then
+   it gives up for the page lifetime — never hammering a blocked
+   endpoint. An app WITHOUT `partonChannelServer` (e.g. e2e-testing) is
+   the archetypal WS-unavailable surface: the probe fails silently and
+   the page is fetch, unchanged.
+
+A `?transport=` force (`fetch`/`ws`/`webtransport`) is the user's
+explicit choice and STANDS THE UPGRADE DOWN: `isTransportForced()` is
+the gate. So `?transport=fetch` pins fetch (no probe) and `?transport=ws`
+boots straight on WS (no probe needed).
 
 ### The WebSocket transport (opt-in)
 
@@ -1066,32 +1114,48 @@ Then load any page with `?transport=ws` — the whole channel (attach,
 lanes, navigation segments, every upstream envelope) rides the one socket
 and NOTHING POSTs to `/__parton/live` or `/__parton/channel`.
 
-**Selection.** `selectChannelTransport()` (run once at `bootBrowser`)
-installs the WebSocket transport only on an explicit opt-in
-(`?transport=ws` or `window.__partonTransport === "ws"`) with a
-`WebSocket` global present. Absent the opt-in the default fetch transport
-stands, so every existing page — and the whole test suite — is
-unaffected.
+**Selection.** With `partonChannelServer` serving `/__parton/ws`, the
+WebSocket transport is the DEFAULT reached via the auto-upgrade (§The
+default — boot fetch, upgrade to WebSocket): an unforced page boots fetch
+and promotes itself. `?transport=ws` (or `window.__partonTransport ===
+"ws"`) FORCES it at boot instead — the whole channel rides the socket
+from the first attach, skipping the fetch-first dance
+(`selectChannelTransport()`, run once at `bootBrowser`). An app WITHOUT
+the plugin has no `/__parton/ws`, so the upgrade probe fails and the page
+stays fetch — the default suite is unaffected.
 
-**Verification.** Two gates, one for the tunnel and one for the live
-glue:
+**Verification.** Three gates — the tunnel, the forced-WS live glue, and
+the auto-upgrade:
 
 - `channel-ws.rsc.test.tsx` proves the TUNNEL end to end over a REAL
   socket (the client transport + `driveChannelSocket`: attach, first
   segment, an expiry lane, and an upstream envelope whose seq surfaces on
   the `applied` marker) — but with a hand-built `ws` server, not the Vite
-  glue.
+  glue — PLUS `probeWebSocketTransport` in isolation: it confirms (`true`)
+  when the server drives the socket and mints `conn`, and declines
+  (`false`) when the socket opens but is never driven, or the endpoint is
+  absent (the WS-unavailable → stay-on-fetch guarantee, in miniature).
 - `website/validate-ws.mjs` proves the Vite PLUGIN's dev/preview upgrade
   glue in a running server (`yarn build:website && node
   website/validate-ws.mjs`, and `--dev` for the dev server): it drives
-  Chromium at `/?transport=ws` and asserts the socket establishes (the
-  `conn` handshake sets `data-parton-live`), the attach + scroll-driven
-  lanes stream down as BINARY frames, the scroll's visibility flips ride
-  UP the same socket (and the server acts on them — the flipped-in chunk
-  streams down), pulses stay live, ZERO POST hits either fetch endpoint,
-  and — in dev — Vite's own HMR still round-trips over its untouched
-  socket. The default fetch world stays gated by `validate-world.mjs`
-  (the plugin is additive, so it stays green unchanged).
+  Chromium at `/?transport=ws` (FORCED) and asserts the socket establishes
+  (the `conn` handshake sets `data-parton-live`), the attach +
+  scroll-driven lanes stream down as BINARY frames, the scroll's
+  visibility flips ride UP the same socket (and the server acts on them —
+  the flipped-in chunk streams down), pulses stay live, ZERO POST hits
+  either fetch endpoint, and — in dev — Vite's own HMR still round-trips
+  over its untouched socket.
+- `website/validate-upgrade.mjs` proves the AUTO-UPGRADE end to end
+  (`node website/validate-upgrade.mjs`, `--dev` too): it drives Chromium
+  at `/` with NO `?transport=` param and asserts the FIRST content rides
+  fetch (a `POST /__parton/live` before any socket opens), then the
+  connection UPGRADES within a short window (a `/__parton/ws` socket, WS
+  attach binary frames, `data-parton-live` still set), and streaming +
+  culling stay intact ACROSS the switch (scroll streams the new chunk in
+  over the socket, flips ride up it, pulses advance) with ZERO further
+  fetch-endpoint POSTs and no tear/duplication. The FETCH world stays
+  gated by `validate-world.mjs` (`?transport=fetch`, forced — its budgets
+  are fetch-transport contracts).
 
 One teardown note the live gate surfaced: a hard socket close during an
 in-flight render logs `Error: The render was aborted by the server

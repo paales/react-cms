@@ -23,7 +23,7 @@ import { decodeLane, freshLiveScope } from "../../test/live-drive.tsx";
 import { renderServerToFlight } from "../../test/rsc-server.ts";
 import type { AttachStatement } from "../channel-protocol.ts";
 import { type ChannelSocket, driveChannelSocket } from "../channel-server.ts";
-import { WebSocketTransport } from "../channel-transport.ts";
+import { probeWebSocketTransport, WebSocketTransport } from "../channel-transport.ts";
 import { TAG_CONNECTION_ID, TAG_UPSTREAM_APPLIED } from "../fp-trailer-marker.ts";
 import { type DemuxedLane, splitSegments } from "../fp-trailer-split.ts";
 import { wrapStreamWithFpTrailer } from "../fp-trailer.ts";
@@ -193,5 +193,85 @@ describe("channel WebSocket transport", () => {
 			transport.close();
 			await new Promise<void>((resolve) => wss.close(() => resolve()));
 		}
+	});
+});
+
+describe("probeWebSocketTransport — the auto-upgrade confirmation", () => {
+	// The probe is the auto-upgrade's gate: it CONFIRMS the socket works
+	// before the client flips off fetch, by watching for the same `conn`
+	// handshake the live path establishes on — not a bare `onopen`.
+	const probeStatement: AttachStatement = {
+		url: "/ws-clock",
+		cached: [],
+		since: null,
+		visible: null,
+	};
+
+	it("confirms (true) when the server drives the socket and mints conn", async () => {
+		const scope = freshLiveScope("ws-probe-ok");
+		const wss = new WebSocketServer({ port: 0 });
+		await new Promise<void>((resolve) => wss.once("listening", resolve));
+		const port = (wss.address() as AddressInfo).port;
+		wss.on("connection", (ws) => {
+			const socket = wsToChannelSocket(ws);
+			const upgradeRequest = new Request("http://localhost/", {
+				headers: { "x-test-scope": scope },
+			});
+			const renderOnce = (): ReadableStream<Uint8Array> =>
+				wrapStreamWithFpTrailer(
+					renderServerToFlight(
+						<PartialRoot>
+							<WsClock />
+						</PartialRoot>,
+					),
+					_captureCommitHandle(),
+				);
+			void driveChannelSocket(socket, upgradeRequest, renderOnce);
+		});
+		try {
+			const ok = await probeWebSocketTransport(probeStatement, {
+				url: `ws://localhost:${port}`,
+				timeoutMs: 3000,
+			});
+			expect(ok).toBe(true);
+		} finally {
+			await new Promise<void>((resolve) => wss.close(() => resolve()));
+		}
+	});
+
+	it("declines (false) when the socket opens but is never driven (no conn)", async () => {
+		// The endpoint exists and upgrades — a bare `onopen` would (wrongly)
+		// say "works" — but nothing drives it, so `conn` never arrives and
+		// the probe correctly declines. The server closes right after accept
+		// so the probe resolves without waiting out its timeout.
+		const wss = new WebSocketServer({ port: 0 });
+		await new Promise<void>((resolve) => wss.once("listening", resolve));
+		const port = (wss.address() as AddressInfo).port;
+		wss.on("connection", (ws) => {
+			ws.close();
+		});
+		try {
+			const ok = await probeWebSocketTransport(probeStatement, {
+				url: `ws://localhost:${port}`,
+				timeoutMs: 3000,
+			});
+			expect(ok).toBe(false);
+		} finally {
+			await new Promise<void>((resolve) => wss.close(() => resolve()));
+		}
+	});
+
+	it("declines (false) when the endpoint is absent (WS-unavailable → stay on fetch)", async () => {
+		// The fallback guarantee in miniature: no server on the port, the WS
+		// handshake fails, the probe declines — the caller stays on fetch.
+		const wss = new WebSocketServer({ port: 0 });
+		await new Promise<void>((resolve) => wss.once("listening", resolve));
+		const deadPort = (wss.address() as AddressInfo).port;
+		await new Promise<void>((resolve) => wss.close(() => resolve()));
+		const ok = await probeWebSocketTransport(probeStatement, {
+			url: `ws://127.0.0.1:${deadPort}`,
+			timeoutMs: 3000,
+		});
+		expect(ok).toBe(false);
 	});
 });

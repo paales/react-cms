@@ -172,17 +172,23 @@ yarn test:browser       # real Chromium via Vitest browser mode
 yarn test:e2e           # Playwright, e2e-testing/e2e/ (auto-starts dev servers)
 yarn lint               # ESLint: React Compiler + rules-of-hooks (advisory; Biome formats)
 yarn bench:server       # warm-tick CPU benchmark — see bench/README.md
-node website/validate-world.mjs  # standing world gate (prod build): boot wire
-                        # budgets incl. the attach catch-up, 4-direction
-                        # stream-in timing, refresh/stress/parked checks.
-                        # Run after any streaming/culling framework change:
-                        # `yarn build:website` first.
-node website/validate-ws.mjs     # WebSocket-transport gate: drives the world
-                        # at ?transport=ws and proves establish/attach/
+node website/validate-world.mjs  # FETCH-transport world gate (prod build):
+                        # forces ?transport=fetch (its byte/beacon budgets
+                        # are fetch contracts). Boot wire budgets incl. the
+                        # attach catch-up, 4-direction stream-in timing,
+                        # refresh/stress/parked checks. Run after any
+                        # streaming/culling change: `yarn build:website` first.
+node website/validate-ws.mjs     # forced-WS gate: drives the world at
+                        # ?transport=ws and proves establish/attach/
                         # stream/upstream all ride the one /__parton/ws
                         # socket (zero fetch to /__parton/{live,channel}),
                         # HMR intact. Preview by default; `--dev` for dev.
                         # `yarn build:website` first (preview mode).
+node website/validate-upgrade.mjs # AUTO-UPGRADE gate: boots the world with NO
+                        # ?transport= param and proves fetch-first (a POST
+                        # /__parton/live) then UPGRADE to the /__parton/ws
+                        # socket, streaming/culling intact across the switch,
+                        # zero further fetch POSTs. `yarn build:website` first.
 ```
 
 `yarn test` and `yarn test:e2e` cover disjoint suites — **both must

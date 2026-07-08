@@ -5,6 +5,15 @@
  * (starts its own preview server on PORT below; `--dev` runs the dev
  * server instead).
  *
+ * FETCH transport, forced. The website ships `partonChannelServer()`, so
+ * an unforced page auto-UPGRADES to WebSocket — but this gate's budgets
+ * are FETCH-transport contracts (downstream bytes on the held
+ * `/__parton/live` stream, upstream beacons as `POST /__parton/channel`),
+ * so it drives `?transport=fetch` to pin the transport and keep every
+ * budget meaningful. The WebSocket transport is gated by
+ * `validate-ws.mjs` (forced ws) and the auto-upgrade (fetch→ws, streaming
+ * + culling intact across the switch) by `validate-upgrade.mjs`.
+ *
  * Scenario battery:
  *   1. boot          — cold load, time-to-origin-content, pulse soak,
  *                      live-stream byte budget
@@ -182,8 +191,11 @@ try {
   }
 
   // ── 1. Boot ──
+  // Force fetch: the website auto-upgrades to WebSocket otherwise, and
+  // this gate's byte/beacon budgets are fetch-transport contracts. The
+  // reloads below preserve the query, so the whole run stays on fetch.
   const bootStart = Date.now()
-  await page.goto(BASE)
+  await page.goto(`${BASE}/?transport=fetch`)
   const bootMs = await until(
     async () => (await page.$('[data-testid="chunk-0,0"][data-loaded]')) !== null,
     15000,

@@ -324,9 +324,10 @@ additive on top (commit B). As built:
   environment (dev) / the built bundle (preview). WIRED into the website
   (`website/vite.config.ts`) — the additive, backend-free, heaviest
   streaming/culling app, so the socket path is exercisable end to end.
-- **Selection** `selectChannelTransport()` at boot — opt-in
-  (`?transport=ws` / `window.__partonTransport`); default stays fetch, so
-  the whole existing suite is unaffected.
+- **Selection** `selectChannelTransport()` at boot — the BOOT transport;
+  fetch by default, or forced by `?transport=` / `window.__partonTransport`.
+  The default now UPGRADES from fetch to WS in the background (P1b below),
+  so an app with the plugin ends up on the socket without an opt-in.
 - **Verified:** the tunnel end to end over a real socket
   (`channel-ws.rsc.test.tsx`: attach + first segment + an expiry lane +
   an upstream envelope's `applied` round-trip), AND — new — the Vite
@@ -344,6 +345,71 @@ additive on top (commit B). As built:
   socket-close teardown all held. (A hard close mid-render logs Flight's
   `render was aborted` — pre-existing, identical on the fetch path, and
   already an expected render error; not WS-specific.)
+
+### P1b — automatic transport upgrade (fetch → WebSocket)
+
+**The piece that makes WebSocket the default WHERE IT WORKS without the
+explicit `?transport=ws` opt-in** — the socket.io-shaped pattern, built
+on the existing re-attach machinery rather than an in-place socket swap.
+
+**Why re-attach, not a socket swap.** Client state — the cache,
+fingerprints, cull state, the delivery/envelope timelines — is
+transport-independent module state; only the CONNECTION moves. So
+"upgrade to WS" is exactly a RE-ATTACH on the WS transport: the catch-up
+anchor + connection-session mirror + P0a bounded re-establishment already
+do a clean handover (the WS re-attach presents the manifest + watermark,
+the server opens into lanes/fp-skipped placeholders for what changed, the
+retransmit buffer covers in-flight upstream). No new handover machinery —
+the upgrade reuses the one the framework runs on every keepalive/nav.
+
+**As built:**
+- **Boot on fetch** (`selectChannelTransport` — default, unless
+  `?transport=` forces one). First content rides fetch: instant, no wait
+  on a WS handshake, no penalty when WS is blocked.
+- **Background probe** (`probeWebSocketTransport`, `channel-transport.ts`)
+  fires a short delay after the FETCH connection establishes: a
+  throwaway speculative WS attach that resolves `true` iff the
+  server-minted `conn` handshake arrives over the socket — the SAME
+  establishment signal the live path reads (`splitSegments`'
+  `TAG_CONNECTION_ID`), NOT a bare `onopen` (which proves only the TCP
+  upgrade, never that the server drove the socket — a heuristic the "no
+  heuristics" rule forbids). The probe presents the manifest so its
+  throwaway render fp-skips, and closes the socket the instant `conn` is
+  seen.
+- **Confirmed → flip + re-attach** (`armTransportUpgrade`, browser entry):
+  `setChannelTransport(new WebSocketTransport())` then
+  `_channelRequestReattach()` (`channel-client.ts`) — a one-shot flag that
+  drops the held fetch stream and makes its settle
+  (`_channelConnectionClosed`) re-fire the attach even with no pending
+  interaction. The re-fire opens on WS (the transport is read fresh at
+  `open` time). From there everything rides the socket.
+- **Failure/timeout → stay on fetch,** transparently. Bounded
+  backed-off re-probes (`MAX_UPGRADE_PROBES`), then give up for the page
+  lifetime — never hammer a blocked endpoint.
+- **`?transport=` forces stand the upgrade down** (`isTransportForced()`):
+  `fetch` pins fetch (no probe), `ws`/`webtransport` boot straight on
+  their transport. The user's explicit choice is never second-guessed.
+
+**No frame loss / no leak.** The WS re-attach presents the manifest +
+`applied` watermark, so fp-skip + the layered mirror elide everything the
+client holds and the retransmit buffer carries reliable frames across the
+brief two-session overlap (loss-tolerant frames — visibility, acks —
+re-derive from the attach seed; url/frame/cookie frames retire at the
+subsume). The fetch stream is explicitly aborted and torn cooperatively
+via the splitter (its `close` is a no-op); the probe socket is closed on
+every path; exactly one connection is live after the switch (the
+heartbeat's single-`inFlight` invariant holds — the re-fire runs after
+`inFlight` clears).
+
+**Verified:** `probeWebSocketTransport` in isolation
+(`channel-ws.rsc.test.tsx` — confirms on a driven socket, declines on an
+undriven/absent one), the auto-upgrade end to end
+(`website/validate-upgrade.mjs` — fetch-first → socket-after, streaming +
+culling intact across the switch, zero further fetch POSTs), and the
+WS-unavailable fallback (`yarn test:e2e` on the plugin-less e2e-testing
+app — the probe fails silently, everything stays on fetch). The
+forced-fetch world (`validate-world.mjs`, now `?transport=fetch`) and
+forced-WS glue (`validate-ws.mjs`) gate the two pinned transports.
 
 ### P2 — WebTransport (task #22)
 

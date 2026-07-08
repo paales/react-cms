@@ -37,6 +37,7 @@ import {
 	_channelNavSegmentCommitted,
 	_channelNavSegmentSettled,
 	_channelNavSubsumedByAttach,
+	_channelRequestReattach,
 	_channelWireEntry,
 	_laneDeliveryCommitted,
 	_laneDeliveryDropped,
@@ -48,6 +49,7 @@ import {
 	_segmentDelivery,
 	_segmentDeliveryCommitted,
 	_segmentDeliveryDroppedStale,
+	onChannelEstablished,
 	type WireDelivery,
 } from "../lib/channel-client.ts";
 import {
@@ -56,8 +58,13 @@ import {
 	type UrlFrame,
 } from "../lib/channel-protocol.ts";
 import {
+	fetchTransport,
 	getChannelTransport,
+	isTransportForced,
+	probeWebSocketTransport,
 	selectChannelTransport,
+	setChannelTransport,
+	WebSocketTransport,
 } from "../lib/channel-transport.ts";
 import type { FpUpdatesPayload } from "../lib/fp-trailer-marker.ts";
 import {
@@ -93,12 +100,107 @@ import { createRscRenderRequest } from "../runtime/request.tsx";
 import type { RscPayload } from "./rsc.tsx";
 
 export function bootBrowser(): void {
-	// Pick the channel transport before anything fires. Opt-in only
-	// (`?transport=ws` / `window.__partonTransport`); the default stays
-	// fetch, so an unopted page — and the whole test suite — is
-	// unaffected. See [[channel-transport]].
+	// Pick the BOOT transport before anything fires — fetch by default
+	// (instant, universal, no handshake wait), or a `?transport=` force.
+	// See [[channel-transport]].
 	selectChannelTransport();
+	// Then arm the auto-upgrade: an unforced page boots on fetch and, once
+	// that connection is up, probes WebSocket in the background and
+	// promotes to it where the socket works (below). A forced page stands
+	// this down.
+	armTransportUpgrade();
 	void main();
+}
+
+/** Delay after the fetch connection first establishes before the WS
+ *  probe fires — long enough that first content already rendered over
+ *  fetch (the upgrade costs the user nothing), short enough that the
+ *  socket takes over promptly. */
+const UPGRADE_PROBE_DELAY_MS = 600;
+/** Backoff base between failed re-probes (scaled by the probe count). */
+const UPGRADE_REPROBE_MS = 2_000;
+/** Total WS probes before giving up for the page's lifetime — bounded so
+ *  a blocked endpoint is never hammered. Small: a same-origin socket that
+ *  works confirms on the FIRST probe (the cold-handler race is fixed
+ *  server-side), so the retry is only for a genuine transient blip, and an
+ *  app with no `/__parton/ws` (Vite leaves the upgrade hanging) should
+ *  give up promptly — the next document navigation re-arms anyway. */
+const MAX_UPGRADE_PROBES = 2;
+
+/**
+ * Auto-upgrade the live channel from fetch to WebSocket where the socket
+ * works — the socket.io-shaped default, built on the framework's own
+ * re-attach machinery rather than an in-place socket swap.
+ *
+ * Boot rides fetch (instant, universal). Once the fetch connection
+ * establishes, a BACKGROUND probe opens a speculative WS attach; if the
+ * server-minted `conn` handshake arrives over the socket (the real
+ * establishment signal — not a bare `onopen`, see
+ * `probeWebSocketTransport`), WebSocket becomes the active transport and
+ * the held fetch connection is dropped so its settle RE-ATTACHES on the
+ * socket (`_channelRequestReattach`). From there every attach, lane, and
+ * envelope rides the socket. A blocked/absent endpoint fails the probe
+ * and everything stays on fetch, transparently — no user-visible delay,
+ * bounded backed-off re-probes, then it gives up for the page lifetime.
+ *
+ * Stands down entirely when a `?transport=` force pins the transport (the
+ * user's explicit choice) or no `WebSocket` global exists.
+ */
+function armTransportUpgrade(): void {
+	if (isTransportForced()) return;
+	if (typeof WebSocket === "undefined") return;
+
+	let upgraded = false;
+	let probing = false;
+	let probes = 0;
+	let armed = false;
+
+	const tryUpgrade = async (): Promise<void> => {
+		if (upgraded || probing) return;
+		// Only ever upgrade FROM the default fetch transport.
+		if (getChannelTransport() !== fetchTransport) return;
+		probing = true;
+		probes += 1;
+		let confirmed = false;
+		try {
+			confirmed = await probeWebSocketTransport({
+				url: window.location.pathname + window.location.search,
+				// Present the manifest so the probe's throwaway server render
+				// fp-skips to placeholders. `since: null` — the catch-up anchor
+				// was consumed by the boot attach — and the socket closes on
+				// `conn` anyway, before that render matters.
+				cached: getAllCachedPartialTokens(),
+				since: null,
+				visible: null,
+				applied: 0,
+			});
+		} finally {
+			probing = false;
+		}
+		if (confirmed) {
+			upgraded = true;
+			// Flip the transport, then hand the connection over: the held
+			// fetch stream closes and its settle re-attaches — now on the
+			// socket. fp-skip + the layered mirror + the retransmit buffer
+			// cover the brief overlap, so no frame is lost across the switch.
+			setChannelTransport(new WebSocketTransport());
+			_channelRequestReattach();
+		} else if (probes < MAX_UPGRADE_PROBES) {
+			// Backed-off re-probe — never hammer a blocked endpoint.
+			setTimeout(() => void tryUpgrade(), UPGRADE_REPROBE_MS * probes);
+		}
+	};
+
+	// Probe once the FETCH connection is up (first content already
+	// delivered — no penalty). Arm on the FIRST establishment only; the
+	// probe and its bounded retry own the rest, so later re-establishments
+	// (keepalive, navigation) don't re-trigger it.
+	onChannelEstablished(() => {
+		if (armed) return;
+		if (getChannelTransport() !== fetchTransport) return;
+		armed = true;
+		setTimeout(() => void tryUpgrade(), UPGRADE_PROBE_DELAY_MS);
+	});
 }
 
 /** The page opted out of the interactive transport entirely (specs
