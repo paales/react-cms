@@ -1,0 +1,77 @@
+name: Benches
+
+# Slow and machine-variant, so kept OFF the per-PR path: master pushes,
+# a nightly run, and manual dispatch only.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Server warm-tick soak/scaling bench ────────────────────────────
+  bench-server:
+    name: Server warm-tick bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      # This one IS a real gate despite being a bench: its throws are
+      # correctness gates (faithful renders + exact render counts), which
+      # are machine-independent. The perf numbers are written to the JSON
+      # artifact for regression tracking, never asserted against a
+      # wall-clock budget — so a slow runner can't red it.
+      - name: Run server bench
+        run: yarn bench:server
+
+      - name: Upload server bench artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-server-results
+          path: bench/results/*.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ── Client scroll-frame CPU harness ────────────────────────────────
+  bench-client:
+    name: Client-scroll bench (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: Install Chromium
+        # `playwright` lives in the e2e-testing workspace, not the root.
+        run: yarn workspace @parton/e2e-testing exec playwright install --with-deps chromium
+
+      # Smoke only: builds a sourcemapped prod preview and drives Chromium
+      # to capture a trace + CPU profile. It MEASURES (no number-gate), and
+      # headless main-thread cost is GPU/present-bound and machine-variant,
+      # so a red here would be noise — non-blocking, artifacts are the value.
+      - name: Run client-scroll harness
+        continue-on-error: true
+        run: node bench/client-scroll.mjs
+
+      - name: Upload client bench artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-client-results
+          path: bench/results/client/**
+          retention-days: 30
+          if-no-files-found: warn

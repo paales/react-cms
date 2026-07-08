@@ -40,7 +40,13 @@ export default defineConfig({
   // saturated dev box (parallel workers + two dev servers) can push a
   // legitimate roundtrip past it without anything being wrong.
   expect: { timeout: 10_000 },
-  retries: 0,
+  // On CI a saturated runner (parallel workers + two dev servers + the live
+  // PokeAPI/GraphCommerce backends) turns transient wobble into spurious
+  // reds. A retry re-runs the exact failing spec against a real signal, so a
+  // flake passes while a genuine regression still fails all attempts —
+  // nothing is hidden. Local runs stay at 0: a flake there is a signal to
+  // chase, not to paper over.
+  retries: process.env.CI ? 2 : 0,
   // Workers > 1 is safe: `e2e/fixtures.ts` stamps every request with
   // a per-worker `x-test-scope` header, and the framework (see
   // `framework/src/runtime/context.ts` — `deriveScope`) routes each

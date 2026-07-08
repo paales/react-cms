@@ -1,0 +1,41 @@
+name: Setup toolchain
+description: >-
+  Node 24 + Corepack-provisioned Yarn 4 + a cached, immutable install.
+  Assumes the repo is already checked out (run actions/checkout first).
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        # Single source of truth for the Node major (the dev runs v24).
+        node-version-file: .nvmrc
+
+    - name: Enable Corepack
+      shell: bash
+      # `packageManager: yarn@4.14.1` + the committed `.yarn/releases`
+      # binary drive the version; Corepack is what makes `yarn` resolve to
+      # Yarn 4 at all (the runner ships Yarn Classic otherwise, which does
+      # not read `.yarnrc.yml`).
+      run: corepack enable
+
+    - name: Restore Yarn cache
+      uses: actions/cache@v4
+      with:
+        # `enableGlobalCache` defaults to true, which would put the cache
+        # under $HOME where a keyed cache can't find it. The install step
+        # forces it project-local so this path captures it deterministically.
+        path: .yarn/cache
+        key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+        restore-keys: |
+          yarn-${{ runner.os }}-
+
+    - name: Install dependencies
+      shell: bash
+      # `--immutable` fails the build on any lockfile drift. `enableScripts`
+      # is on in `.yarnrc.yml`, so the `@vitejs/plugin-rsc` patch in
+      # `.yarn/patches/` applies here.
+      run: yarn install --immutable
+      env:
+        YARN_ENABLE_GLOBAL_CACHE: "false"

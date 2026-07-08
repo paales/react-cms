@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# A newer push to the same ref supersedes an in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Static analysis ────────────────────────────────────────────────
+  lint-typecheck:
+    name: Lint & typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Typecheck (hard gate)
+        run: yarn typecheck
+
+      - name: Lint (advisory)
+        # `eslint .` runs ONLY the React Compiler / rules-of-hooks
+        # diagnostics (see eslint.config.js); CLAUDE.md documents them as
+        # advisory, and they are deliberately excluded from `yarn test`.
+        # master carries known violations (the module-level render-walk
+        # caches in framework/src/lib/partial-client.tsx), so this reports
+        # but never blocks — matching how the project treats the signal.
+        run: yarn lint
+        continue-on-error: true
+
+  # ── Fast unit tiers (node jsdom + in-process Flight, dev + prod) ────
+  unit:
+    name: Unit (node + rsc + rsc-prod)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      # Each script carries its own env (test:rsc* set the react-server
+      # condition via NODE_OPTIONS; test:rsc:prod sets NODE_ENV).
+      - name: Node tier (jsdom)
+        run: yarn test:node
+      - name: RSC tier (in-process Flight)
+        run: yarn test:rsc
+      - name: RSC tier (production Flight build)
+        run: yarn test:rsc:prod
+
+  # ── Browser tier (real Chromium via Vitest browser mode) ───────────
+  browser:
+    name: Unit (browser / real Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: Install Chromium
+        # `playwright` lives in the e2e-testing workspace, not the root.
+        run: yarn workspace @parton/e2e-testing exec playwright install --with-deps chromium
+
+      - name: Browser tier
+        run: yarn test:browser
+
+  # ── End-to-end (Playwright; auto-starts the app + magento companion) ─
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    # A saturated runner can push a legitimate RSC roundtrip past a spec's
+    # give-up bound; the dev-backend showcase specs (PokeAPI / GraphCommerce)
+    # also wobble under load. `retries: 2` (wired in playwright.config.ts
+    # behind CI) re-runs the exact failing spec — a transient flake passes,
+    # a real regression still fails all three attempts, so nothing is
+    # hidden. This stays a HARD gate: see the report note on why the
+    # external-backend specs are NOT quarantined into a soft lane.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: Install Chromium
+        # playwright.config.ts spawns both dev servers itself (host :5179 +
+        # magento companion :5181) and threads MAGENTO_REMOTE_ORIGIN, so no
+        # manual server start — a fresh runner has nothing to reuse.
+        # `playwright` lives in the e2e-testing workspace, not the root.
+        run: yarn workspace @parton/e2e-testing exec playwright install --with-deps chromium
+
+      - name: Run E2E suite
+        # GitHub sets CI=true, which flips playwright.config to retries: 2.
+        run: yarn test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e-testing/playwright-report/
+            e2e-testing/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ── Production builds (all three apps must compile) ────────────────
+  build:
+    name: Build (e2e + magento + website)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Build e2e-testing app
+        run: yarn build
+      - name: Build magento companion
+        run: yarn build:magento
+      - name: Build website
+        run: yarn build:website
+
+  # ── World gate: the prod streaming / culling / keepalive canary ────
+  world-gate:
+    name: World gate (prod streaming + WebSocket transport)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: Install Chromium
+        # `playwright` lives in the e2e-testing workspace, not the root.
+        run: yarn workspace @parton/e2e-testing exec playwright install --with-deps chromium
+
+      - name: Build website
+        run: yarn build:website
+
+      # Each validator spawns its OWN prod preview server (distinct ports)
+      # and drives it with Chromium; both assert correctness, not machine
+      # timing, so they hold on a CI runner.
+      - name: Validate world (boot / stream-in / refresh / stress / keepalive)
+        run: node website/validate-world.mjs
+      - name: Validate WebSocket transport
+        run: node website/validate-ws.mjs
