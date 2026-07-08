@@ -121,6 +121,14 @@ interface RequestStore {
  *  (`../lib/connection-session.ts` owns the full session shape). */
 export interface ConnectionSessionHandle {
   visible: ReadonlySet<string> | null
+  /** The connection's mutable cookie overlay — client cookie deltas
+   *  stated over the held channel (`cookie` frames). `parseCookies`
+   *  layers it between the raw `Cookie` header and the per-request
+   *  `setCookie` writes; a `null` value is a tombstone (delete). Absent
+   *  / empty on a fresh connection and on every non-live request (only
+   *  the segment driver attaches a session), so `parseCookies` is
+   *  unchanged off the held stream. */
+  cookies?: ReadonlyMap<string, string | null> | null
   /** The mirror's ACKED layer — fps whose delivering emission the
    *  client has COMMITTED (cumulative delivery acks). A live map
    *  reference: entries appear as acks land, for the connection's
@@ -698,6 +706,14 @@ export function readCookie(name: string): string | undefined {
  * Max-Age=0 follows browser deletion semantics — the cookie disappears
  * from the overlay. A non-zero Max-Age with an empty value is a set,
  * not a delete, and shows up as the empty string.
+ *
+ * On a HELD live connection a third layer sits between the header and
+ * the `setCookie` writes: the connection session's cookie overlay —
+ * client cookie changes stated over the channel (`cookie` frames), so a
+ * held stream's `cookie()` reads reflect a change without a reattach.
+ * Match gates bypass this (they read the raw header via
+ * `parseRawCookies`), keeping the "who you were when you asked"
+ * existence semantic.
  */
 export function parseCookies(request: Request): Record<string, string> {
   const out: Record<string, string> = {}
@@ -715,6 +731,16 @@ export function parseCookies(request: Request): Record<string, string> {
   }
   const store = requestContext.getStore()
   if (store) {
+    // The held connection's cookie overlay — under the setCookie writes
+    // (a server write this render made is the most-local statement),
+    // over the raw header. `null` is a tombstone.
+    const connCookies = store.connectionSession?.cookies
+    if (connCookies) {
+      for (const [name, value] of connCookies) {
+        if (value === null) delete out[name]
+        else out[name] = value
+      }
+    }
     for (const cookie of store.cookies) {
       const eq = cookie.indexOf("=")
       if (eq <= 0) continue

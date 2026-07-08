@@ -16,7 +16,12 @@
  * next nav.
  */
 import { describe, expect, it } from "vitest"
-import { parseCookies, runWithRequestAsync, setCookie } from "../context.ts"
+import {
+  _setConnectionSession,
+  parseCookies,
+  runWithRequestAsync,
+  setCookie,
+} from "../context.ts"
 
 describe("parseCookies", () => {
   it("reads cookies from request headers", async () => {
@@ -84,5 +89,42 @@ describe("parseCookies", () => {
       return parseCookies(req)
     })
     expect(result.flag).toBe("second")
+  })
+
+  it("overlays the held connection's cookie jar — over the header, under setCookie", async () => {
+    // The connection-session cookie overlay: client cookie changes
+    // stated over the held channel. A string sets/overrides the header
+    // value; a `null` is a tombstone (delete). Layered UNDER the
+    // per-request setCookie writes.
+    const req = new Request("http://t/", {
+      headers: { cookie: "a=1; theme=light" },
+    })
+    const { result } = await runWithRequestAsync(req, async () => {
+      _setConnectionSession({
+        visible: null,
+        ackedFps: new Map(),
+        cookies: new Map<string, string | null>([
+          ["theme", "dark"], // overrides the header
+          ["b", "2"], // adds a new one
+          ["a", null], // tombstones the header value
+        ]),
+      })
+      return parseCookies(req)
+    })
+    expect(result).toEqual({ theme: "dark", b: "2" })
+  })
+
+  it("setCookie overrides the connection overlay (the most-local statement)", async () => {
+    const req = new Request("http://t/", { headers: { cookie: "theme=light" } })
+    const { result } = await runWithRequestAsync(req, async () => {
+      _setConnectionSession({
+        visible: null,
+        ackedFps: new Map(),
+        cookies: new Map<string, string | null>([["theme", "dark"]]),
+      })
+      setCookie("theme", "server")
+      return parseCookies(req)
+    })
+    expect(result.theme).toBe("server")
   })
 })

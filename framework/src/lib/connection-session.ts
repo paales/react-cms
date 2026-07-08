@@ -63,6 +63,7 @@ import {
 	type AttachStatement,
 	type CancelFrame,
 	type ChannelEnvelope,
+	type CookieFrame,
 	decodeChannelEnvelope,
 	type TelemetryFrame,
 	type UrlFrame,
@@ -189,6 +190,23 @@ export interface ConnectionSession {
 	 *  binding (see `applyFrameUrlFrame`) — the same principal, handed
 	 *  its identity on this very response. */
 	boundSessionId: string;
+	/** The connection's mutable cookie overlay — client cookie changes
+	 *  stated over the channel (`cookie` frames) as a DELTA over the
+	 *  attach's open-time `Cookie` header: name → value, `null` a
+	 *  tombstone (delete). The held stream's `cookie()` reads consult it
+	 *  through `parseCookies` (the connection-scoped twin of the
+	 *  per-request `setCookie` overlay); MATCH GATES bypass it
+	 *  (`parseRawCookies` reads the raw header — "who you were when you
+	 *  asked"), so a delta re-renders `cookie()` bodies, never a parked
+	 *  variant's existence gate. Empty at open. */
+	readonly cookies: Map<string, string | null>;
+	/** Cookie names changed since the driver last drained — the
+	 *  per-connection re-lane worklist (the cookie twin of
+	 *  `pendingFlips`). The driver lanes exactly the snapshots whose
+	 *  tracked `cookie:<name>` deps name a drained cookie; their fp folds
+	 *  the overlay through `parseCookies`, so a changed value re-renders
+	 *  and an unchanged one fp-skips to the confirmation. */
+	readonly pendingCookieChanges: Set<string>;
 	/** The connection's current visible set. `null` until the request's
 	 *  `?visible=` seed or the first statement — the pre-measurement
 	 *  state, in which reads fall back to the request URL (absent →
@@ -420,6 +438,8 @@ export function _openConnectionSession(
 		id,
 		scope: binding?.scope ?? "default",
 		boundSessionId: binding?.sessionId ?? "",
+		cookies: new Map(),
+		pendingCookieChanges: new Set(),
 		visible: initialVisible,
 		lastSeq: 0,
 		pendingFlips: new Map(),
@@ -654,6 +674,36 @@ export function takeConnectionFlips(
 	const flips = new Map(session.pendingFlips);
 	session.pendingFlips.clear();
 	return flips;
+}
+
+/**
+ * Apply a `cookie` frame: update the connection's cookie overlay and
+ * queue the name for the driver's re-lane. `value === null` tombstones
+ * (delete); a string sets. Newest-wins by arrival (the transport
+ * serializes envelopes, so a later frame for the same name stands). The
+ * caller wakes the driver, which drains `pendingCookieChanges` and lanes
+ * the snapshots reading `cookie:<name>` — their fp folds the overlay
+ * through `parseCookies`, so a changed value re-renders and an unchanged
+ * one fp-skips to the confirmation placeholder.
+ */
+function applyCookieFrame(
+	session: ConnectionSession,
+	frame: CookieFrame,
+): void {
+	session.cookies.set(frame.name, frame.value);
+	session.pendingCookieChanges.add(frame.name);
+}
+
+/** Drain the session's pending cookie changes — the changed names the
+ *  driver lanes readers for. A change landing right after the drain
+ *  re-queues into `pendingCookieChanges`, which the driver's wait-entry
+ *  check consumes before its next park — no statement vanishes. */
+export function takeConnectionCookieChanges(
+	session: ConnectionSession,
+): Set<string> {
+	const names = new Set(session.pendingCookieChanges);
+	session.pendingCookieChanges.clear();
+	return names;
 }
 
 /**
@@ -960,6 +1010,13 @@ export async function handleChannelPost(request: Request): Promise<Response> {
 				// The wake is the park point's cue — an explicit preload
 				// intent should warm promptly, not at the next natural wake.
 				applyWarmFrame(session, envelope.seq, frame.url, request.url);
+				wakeNeeded = true;
+				break;
+			case "cookie":
+				// Update the connection's cookie overlay and wake the driver
+				// to re-lane the cookie's readers on the held stream — no
+				// reattach.
+				applyCookieFrame(session, frame);
 				wakeNeeded = true;
 				break;
 			case "url":

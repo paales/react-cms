@@ -28,7 +28,7 @@ import {
   type NavigateTarget,
   type NavigationMilestones,
 } from "../runtime/navigation-api.ts"
-import { _channelCookiesChanged, _channelFrameNavigate, _channelIsDegraded } from "./channel-client.ts"
+import { _channelCookieChange, _channelFrameNavigate, _channelIsDegraded } from "./channel-client.ts"
 import {
   getFrameUrl,
   hasFrameUrl,
@@ -651,19 +651,25 @@ function nullImperativeNavigation(
  */
 function applyClientCookies(cookies: Record<string, string> | undefined): void {
   if (!cookies) return
+  // The wire form each change would carry in the `Cookie` header —
+  // URL-encoded value, or `null` for a delete — so the channel overlay
+  // and a later reattach's raw header agree on the same value.
+  const changes: Record<string, string | null> = {}
   for (const [name, value] of Object.entries(cookies)) {
     if (value === "") {
       document.cookie = `${encodeURIComponent(name)}=; path=/; max-age=0; samesite=lax`
+      changes[name] = null
     } else {
       document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; path=/; max-age=31536000; samesite=lax`
+      changes[name] = encodeURIComponent(value)
     }
   }
-  // The write changed the request identity: the held connection's
-  // renders are pinned to its open-time cookie jar and can no longer
-  // speak for this client. Pull it down — the navigation that carried
-  // the cookies latches pre-establishment and rides the re-attach,
-  // whose request presents the fresh jar.
-  _channelCookiesChanged()
+  // State the change to the held connection instead of tearing it: the
+  // server applies it to the connection's cookie overlay and re-lanes
+  // the cookie's readers on the held stream, no reattach. With no
+  // connection open this is a no-op — the next attach's `Cookie` header
+  // carries the fresh jar.
+  _channelCookieChange(changes)
 }
 
 /**

@@ -7,7 +7,8 @@ whose body is the full client statement, answered by the held
 segmented stream — and the coalesced envelopes of frames a page POSTs
 to the session that stream opened. Visibility flips, delivery ACKS,
 viewport TELEMETRY, URL moves (window and frame scoped), CANCEL
-statements, and WARM intents are the shipped frame kinds — the kind
+statements, WARM intents, and COOKIE deltas are the shipped frame
+kinds — the kind
 table is complete; the design rationale and roadmap live in
 [`../notes/channel-design.md`](../notes/channel-design.md). The only
 GETs are documents (SSR — the CDN-cacheable artifact) and
@@ -149,6 +150,7 @@ Frame kinds shipped:
 | `url` | `{url, intent, frame?}` — a URL statement for a scope the client owns: absent `frame`, the WINDOW URL (a `?__force=` overlay names a refetch's forced targets); present, the named FRAME's URL (the frame path's segments). `intent` is the history semantic (`push`/`replace`/`silent` — descriptive: the client's history work is done by send time) | Same-origin-validated (`400` the envelope on a cross-origin target — a violation, nothing applies). WINDOW scope: LATCHED on the session (newest seq wins; a seq at or below the consumed navigation is a stale restatement, a no-op — retransmit idempotence); the driver consumes it navigation-FIRST at wait entry and answers with a whole-tree payload segment, then forced-target lanes — §Navigation rides the channel. FRAME scope: the session frame URL is written AT THE ENDPOINT (the same store `?__frame=` writes through — and the one channel response that can mint the session cookie; an anonymous binding rebinds in place); the render latches per frame key and the driver lanes the frame's targets on the open region — §Frames ride the channel |
 | `cancel` | `{scope}` — supersede the scope's in-flight renders: the frame's top-level name | Aborts the scope's open lane renders synchronously at apply (the driver's `cancelListeners` arm — the same reach into a suspended render the window supersede's nav-latch arm has). A cancelled body closes with a `muxend` and NO delivery announcement, so the client's decode settles, the content never commits, and the id can reopen for the covering statement's lane. Per-scope seq gate: a replayed cancel at or below its scope's applied seq is a no-op — it can never abort a newer statement's render |
 | `warm` | `{url}` — a stated preload target (`useNavigation().preload` on hover) | Same-origin-validated like `url` (the target becomes a render's request state). Replaces the session's warm slot (newest-wins by seq) and wakes the driver; the park point consumes it with ONE byte-silent whole-tree render of the target — bounded, window-respecting, never keepalive activity — so the navigation statement that follows renders against warm caches. Nothing reaches the wire for it |
+| `cookie` | `{name, value}` — a client cookie change (`value: null` = delete), the wire form of `document.cookie` | Applied to the connection's mutable cookie OVERLAY (name → value, `null` tombstone), which `parseCookies` layers under the per-request `setCookie` writes and over the raw header — so held-stream `cookie()` reads reflect the change without a reattach. Queues the name for the driver, which lanes EXACTLY the snapshots whose tracked `cookie:<name>` deps name it (their fp folds the overlay through `parseCookies`); a changed value re-renders, an unchanged one fp-skips. MATCH GATES bypass the overlay (`parseRawCookies` reads the raw header) — a delta re-renders `cookie()` bodies, never a parked variant's existence gate. Per-connection (this client's jar), so it wakes only its own session via the flip-wake arm — never a process-global `refreshSelector` |
 
 Responses carry no body: `204` applied; `400` malformed; `403`
 cross-site; `404` connection gone — see §Security. Frame kinds split
@@ -157,8 +159,11 @@ the protocol re-establishes their statements on its own: the next
 attach's seed, the keepalive backstop, the cumulative watermark),
 **lossy** (`telemetry`, `warm` — newest-wins, droppable, no fallback:
 only the latest statement has value, and a preload is advisory), and
-**reliable** (`url`, `cancel`), which ride the transport's retransmit
-buffer — see §Delivery is evidenced.
+**reliable** (`url`, `cancel`, `cookie`), which ride the transport's
+retransmit buffer — see §Delivery is evidenced. `cookie` retires at the
+next attach rather than retransmitting: the attach's own `Cookie` header
+restates the jar, so a replayed delta is redundant (the url/cancel-frame
+retire rule — §Delivery is evidenced).
 
 Shared grammar + decoder: `framework/src/lib/channel-protocol.ts`
 (import-safe on both sides).
@@ -614,6 +619,52 @@ A frame navigate/reload/traverse is a FRAME-scoped `url` frame
   plain website's version of the drawer link (the same params the CMS
   preview iframe uses).
 
+## Cookies ride the channel
+
+A client cookie change (`navigate(url, {cookies})`) does NOT tear the
+held connection. `applyClientCookies` writes `document.cookie` and
+`_channelCookieChange` states each change as a `cookie` frame on the
+OPEN connection (`channel-client.ts`). The change reaches the server two
+ways — this frame on the live connection AND the raw `Cookie` header on
+the next attach — so a lost frame self-heals at the next reattach, which
+is why the reliable-class cookie frame RETIRES at the attach subsume
+rather than retransmitting (`_channelNavSubsumedByAttach`).
+
+- **The mutable session cookie overlay.** The connection session holds
+  a cookie DELTA (`ConnectionSession.cookies` — name → value, `null` a
+  tombstone) over the attach's open-time `Cookie` header. `parseCookies`
+  layers it between the raw header and the per-request `setCookie`
+  writes, so every held-stream `cookie()` read — the tracked hook,
+  `evalDepKeys`' fold, and the cell-partition scope — reflects the
+  change without a reattach. The held stream's request object is pinned
+  at open time; the overlay is what lets its renders speak for the
+  client's CURRENT jar.
+- **Re-lane by tracked dep, per connection.** A `cookie` frame queues
+  the changed name (`pendingCookieChanges`) and wakes the driver via the
+  same flip-wake arm visibility uses. The driver lanes EXACTLY the
+  snapshots whose tracked-read `deps` include `cookie:<name>`
+  (`_routeMatchingCookieIds`) — their fp folds the overlay through
+  `parseCookies`, so a changed value re-renders and an unchanged one
+  fp-skips to the confirmation placeholder. Parked partons don't lane
+  (their catch-up is the flip-in revalidation, whose fp folds the change
+  too), exactly as on a bump wake. Cookie deps are TRACKED READS, not
+  labels, and a cookie change is per-CONNECTION (this client's jar), so
+  it never rides the process-global `refreshSelector` path — that would
+  spuriously wake every peer connection.
+- **Match gates keep the raw jar.** Gates read `parseRawCookies` (the
+  raw header), deliberately bypassing the overlay — "who you were when
+  you asked". So a cookie delta re-renders `cookie()` BODIES, never a
+  parked variant's EXISTENCE gate; a cookie change that would flip a
+  match gate materializes at the next attach's whole-tree render, not
+  mid-connection.
+- **Server → client.** A server cookie write on the channel/held path
+  (the session-mint `Set-Cookie` on the endpoint `204` / attach /
+  document response) stays a header write: the minted session cookie
+  must reach the client SYNCHRONOUSLY for the next envelope's binding
+  (§Security) — a downstream frame is async and would 404 the binding
+  in the gap. App-cookie downstream framing is designed but has no
+  in-tree writer yet.
+
 ## Producer lanes
 
 A lane render that calls `markConnectionLive()` — a body that streams
@@ -872,10 +923,16 @@ producer's statement and the envelope on the wire:
 
 ## Testing
 
-- rsc tier: `channel-endpoint.rsc.test.tsx` (decode, HTTP mapping,
-  origin/scope/cookie checks, unknown-kind skip, in-envelope frame
-  ordering, the mint handshake, detach ending a held drive),
-  `connection-visibility.rsc.test.tsx` (visibility statement
+- rsc tier: `channel-endpoint.rsc.test.tsx` (decode — incl. the
+  `cookie` frame set/delete grammar, HTTP mapping,
+  origin/scope/cookie-binding checks, unknown-kind skip, in-envelope
+  frame ordering, the mint handshake, detach ending a held drive),
+  `channel-cookies.rsc.test.tsx` (the `cookie` frame end to end: the
+  endpoint applies it to the session overlay and queues the re-lane; a
+  held-stream `cookie()` reader re-lanes with the fresh value while a
+  non-reader never re-renders; a delete re-lanes to the absent value;
+  match gates keep the raw jar), `connection-visibility.rsc.test.tsx`
+  (visibility statement
   semantics through the envelope, against a real drive — incl. the
   pure sync statement, `changed: []`, aligning the set without
   laning),
@@ -905,7 +962,9 @@ producer's statement and the envelope on the wire:
   descendant fold excluding a nav's forced targets,
   stale-restatement idempotence).
 - node tier: `channel-client.test.ts` (coalescing, page-lifetime seq,
-  serialization, the fallback signal, pagehide detach),
+  serialization, the fallback signal, pagehide detach, the cookie
+  producer — a client cookie change states `cookie` frames on the open
+  connection instead of tearing, and is a no-op with no connection),
   `visibility-passenger.test.ts` (the controller's statement cadence:
   measurement-only state never drives, rides driven flushes as the
   full-set report; flips and the establishment sync drive; the

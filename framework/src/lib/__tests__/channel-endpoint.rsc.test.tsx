@@ -148,6 +148,55 @@ describe("channel envelope decode", () => {
 		).toBeNull();
 	});
 
+	it("decodes a cookie frame (set + delete) and rejects a malformed one", () => {
+		// A string `value` is a set; an explicit `null` is a delete.
+		expect(
+			decodeChannelEnvelope({
+				connection: "c",
+				seq: 1,
+				frames: [
+					{ kind: "cookie", name: "theme", value: "dark" },
+					{ kind: "cookie", name: "cart_id", value: null },
+				],
+			})?.frames,
+		).toEqual([
+			{ kind: "cookie", name: "theme", value: "dark" },
+			{ kind: "cookie", name: "cart_id", value: null },
+		]);
+		// A missing name, an empty name, or a non-string/non-null value is
+		// a protocol violation like any known-kind field's.
+		expect(
+			decodeChannelEnvelope({
+				connection: "c",
+				seq: 1,
+				frames: [{ kind: "cookie", value: "dark" }],
+			}),
+		).toBeNull();
+		expect(
+			decodeChannelEnvelope({
+				connection: "c",
+				seq: 1,
+				frames: [{ kind: "cookie", name: "", value: "dark" }],
+			}),
+		).toBeNull();
+		expect(
+			decodeChannelEnvelope({
+				connection: "c",
+				seq: 1,
+				frames: [{ kind: "cookie", name: "theme", value: 3 }],
+			}),
+		).toBeNull();
+		// An absent `value` (undefined) is malformed — a delete states
+		// `null` explicitly.
+		expect(
+			decodeChannelEnvelope({
+				connection: "c",
+				seq: 1,
+				frames: [{ kind: "cookie", name: "theme" }],
+			}),
+		).toBeNull();
+	});
+
 	it("decodes an ack's optional `dropped` set and rejects a malformed one", () => {
 		// Absent `dropped` decodes to a bare ack.
 		expect(

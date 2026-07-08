@@ -55,7 +55,9 @@ dashboard — without bifurcating the stack.
   the response body** + `x-parton-consequences` header naming reserved
   delivery seqs.
 - Cookies: read from the request `Cookie` header (tracked `cookie()`
-  hook); written via a same-request setCookie overlay → `Set-Cookie`.
+  hook) plus a mutable connection overlay for held-stream reads (P0e);
+  a client cookie change rides an upstream `cookie` frame, not a tear.
+  Server writes still land via the setCookie overlay → `Set-Cookie`.
 - Lifecycle: 20s idle keepalive closes the stream; a 5s heartbeat tick
   reopens it; a first-ack deadline + failed-first-ack-envelope path
   **degrades the page permanently** to document navigation.
@@ -190,34 +192,41 @@ double-delivery (body render AND lanes) that exists today collapses to
 lanes-only. Net: an action POST returns a few bytes of return value,
 never RSC content.
 
-### P0e — cookies on the protocol (task #24)
+### P0e — cookies on the protocol (task #24) — UPSTREAM SHIPPED
 
-**Harder — the held stream's cookie jar is pinned at open time.** Today:
-- Client cookie change: `applyClientCookies` writes `document.cookie`
-  then `_channelCookiesChanged()` **tears the connection**
-  (`channel-client.ts:503`) — the re-attach's `Cookie` header carries
-  the fresh jar. Cookies do NOT ride the channel; they churn it.
-- Server cookie write: `store.cookies` → `Set-Cookie` header on
-  whichever discrete response (`rsc.tsx` channel-204 / attach /
-  document). No downstream frame.
-- The reason for the tear: the held stream's lane renders read cookies
-  from the connection's OPEN-TIME request jar; it can't change
-  mid-flight, so a cookie change must reopen.
+**The upstream tear is gone; the downstream write stays a header.**
 
-**Change (two parts):**
-1. **Mutable session cookie jar.** Give the connection session a
-   cookie overlay that lane renders read through (like the per-request
-   `store.cookies` overlay, but connection-scoped and mutable). Then a
-   cookie change need NOT tear the stream.
-2. **Cookie frames both ways.** Add a `cookie` frame kind
-   (`channel-protocol.ts`): upstream, a client cookie change applies to
-   the session jar (+ fans out invalidation for `cookie:<name>` deps)
-   instead of tearing; downstream, a server cookie write (from
-   `store.cookies` produced by a channel-scoped render) rides a `cookie`
-   frame the client applies to `document.cookie`, replacing the
-   Set-Cookie-on-204 path. Match gates keep reading the raw request jar
-   (`parseRawCookies`, `match.ts:128`) — "who you were when you asked" —
-   re-gating on the next upstream statement, unchanged.
+Shipped (`cookie` frame kind, `channel-protocol.ts`):
+1. **Mutable session cookie overlay.** `ConnectionSession.cookies` is a
+   DELTA (name → value, `null` a tombstone) over the attach's open-time
+   `Cookie` header. `parseCookies` layers it between the raw header and
+   the per-request `setCookie` writes, so every held-stream `cookie()`
+   read — the hook, `evalDepKeys`' fold, the cell-partition scope —
+   reflects a change without a reattach. No tear.
+2. **Upstream `cookie` frame.** `applyClientCookies` writes
+   `document.cookie` and `_channelCookieChange` states each change as a
+   reliable-class `cookie` frame on the OPEN connection (retires at the
+   attach subsume — the attach's own header restates the jar).
+   `handleChannelPost` applies it to the overlay and queues the name;
+   the driver lanes EXACTLY the snapshots whose tracked `cookie:<name>`
+   deps name it (`_routeMatchingCookieIds`) — per CONNECTION (the
+   flip-wake arm, never a process-global `refreshSelector` that would
+   wake every peer). Their fp folds the overlay through `parseCookies`,
+   so a changed value re-renders and an unchanged one fp-skips. Match
+   gates keep reading the raw jar (`parseRawCookies`, `match.ts`) — "who
+   you were when you asked" — so a delta re-renders `cookie()` bodies,
+   never a parked variant's existence gate (a gate-flipping cookie
+   materializes at the next attach's whole-tree render).
+
+**Downstream stays a header (documented split).** A server cookie write
+on the channel/held path is the session-mint `Set-Cookie` on the
+endpoint `204` / attach / document response — kept as a header because
+the minted session cookie must reach the client SYNCHRONOUSLY for the
+next envelope's binding (§Security); a downstream frame is async and
+would 404 the binding in the gap. App-cookie downstream framing is
+designed (the `cookie` frame is bidirectional in grammar) but has no
+in-tree writer — a held render writing an app cookie — to justify a
+downstream producer yet (YAGNI). Add it when a real caller appears.
 
 Sequenced AFTER P0a-c: it depends on the held stream being stable
 (no churn) to be worth doing — otherwise the tear-and-reattach it

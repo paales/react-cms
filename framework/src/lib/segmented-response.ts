@@ -60,6 +60,7 @@ import {
 	type ConnectionSession,
 	capOverrideSet,
 	type PendingFlip,
+	takeConnectionCookieChanges,
 	takeConnectionFlips,
 	takeConnectionFrameNavs,
 	takeConnectionNavigation,
@@ -98,6 +99,7 @@ import { muxEndFrame, muxFrame } from "./parton-mux.ts";
 import {
 	_routeHasMatchingBump,
 	_routeMatchingBumpIds,
+	_routeMatchingCookieIds,
 	_routeMatchingSelectorIds,
 } from "./segment-relevance.ts";
 import { _getWarmProjector, type WarmCandidate } from "./warm-projection.ts";
@@ -2080,11 +2082,13 @@ async function driveLaneStream(
 					? "frame-navigation"
 					: session !== null && session.pendingFlips.size > 0
 						? "visibility"
-						: laneDrainedPending
-							? "lane-drained"
-							: windowDirty.size > 0 && !deliveryWindowExceeded()
-								? "window"
-								: null;
+						: session !== null && session.pendingCookieChanges.size > 0
+							? "cookie"
+							: laneDrainedPending
+								? "lane-drained"
+								: windowDirty.size > 0 && !deliveryWindowExceeded()
+									? "window"
+									: null;
 		let wake: SegmentWake | null = latchedWake();
 		while (wake === null && (pendingPreloadWarm() || pendingWarmStatement())) {
 			// About to park with an unconsumed warm intent or telemetry
@@ -2249,6 +2253,21 @@ async function driveLaneStream(
 			}
 			if (!touched.includes(id)) touched.push(id);
 		}
+		// Cookie deltas — a client cookie change stated over the channel
+		// (shares the flip-wake arm, so drain regardless of which wake
+		// won). Lane exactly the snapshots reading `cookie:<name>`: their
+		// fp folds the overlay through `parseCookies`, so a changed value
+		// re-renders and an unchanged one fp-skips to the confirmation.
+		// Parked partons don't lane (their catch-up is the flip-in
+		// revalidation, whose fp folds the change too) — the bump-wake
+		// skip.
+		if (session !== null && session.pendingCookieChanges.size > 0) {
+			const changedCookies = takeConnectionCookieChanges(session);
+			for (const id of _routeMatchingCookieIds(snapshots, changedCookies)) {
+				if (isParkedOnConnection(id, snapshots, session)) continue;
+				if (!touched.includes(id)) touched.push(id);
+			}
+		}
 		if (wake === "bump") {
 			// Parked partons don't lane (see the parked-skip note above);
 			// their catch-up is the flip-in revalidation. A parked skip
@@ -2366,6 +2385,7 @@ type SegmentWake =
 	| "expiry"
 	| "lane-drained"
 	| "visibility"
+	| "cookie"
 	| "window"
 	| "navigation"
 	| "frame-navigation"

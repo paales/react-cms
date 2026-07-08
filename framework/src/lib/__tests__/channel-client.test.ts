@@ -22,6 +22,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
 	_channelConnectionClosed,
+	_channelCookieChange,
 	_channelEstablished,
 	type ChannelProducer,
 	onChannelEstablished,
@@ -247,6 +248,29 @@ describe("ChannelClient", () => {
 		window.dispatchEvent(new Event("pagehide"))
 		await settle()
 		expect(fetchCalls).toHaveLength(1)
+	})
+
+	it("a client cookie change states cookie frames on the OPEN connection instead of tearing", async () => {
+		_channelEstablished("conn-cookie")
+		_channelCookieChange({ theme: "dark", cart_id: null })
+		raf()
+		await settle()
+		// The connection is KEPT — no tear.
+		expect(_getLiveConnectionId()).toBe("conn-cookie")
+		expect(fetchCalls).toHaveLength(1)
+		const [env] = sentEnvelopes()
+		expect(env.connection).toBe("conn-cookie")
+		expect(env.frames).toEqual([
+			{ kind: "cookie", name: "theme", value: "dark" },
+			{ kind: "cookie", name: "cart_id", value: null },
+		])
+	})
+
+	it("a cookie change with no connection open is a no-op — the next attach's header carries the jar", async () => {
+		_channelCookieChange({ theme: "dark" })
+		raf()
+		await settle()
+		expect(fetchCalls).toHaveLength(0)
 	})
 
 	it("establishment publishes the liveness marker and notifies listeners; close retracts it", () => {

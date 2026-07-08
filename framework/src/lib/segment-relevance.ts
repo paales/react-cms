@@ -80,6 +80,40 @@ export function _routeMatchingSelectorIds(
 	return ids;
 }
 
+/**
+ * The ids whose snapshots READ one of the changed cookies — snapshots
+ * whose tracked-read `deps` include `cookie:<name>` for any `name` in
+ * `changed`. The per-parton driver lanes exactly these when a `cookie`
+ * frame updates the connection's cookie overlay, so a client cookie
+ * change re-renders only the `cookie()` readers (their fp folds the
+ * overlay through `parseCookies`), never the whole route.
+ *
+ * Cookie deps are TRACKED READS, not labels, so they never ride the
+ * registry-bump path (`_routeMatchingBumpIds` matches `snap.labels`).
+ * That is deliberate: a cookie change is PER-CONNECTION (this client's
+ * jar), so it wakes only its own session's driver via the flip-wake arm
+ * — never a process-global `refreshSelector` that would spuriously wake
+ * every peer connection.
+ */
+export function _routeMatchingCookieIds(
+	snapshots: ReadonlyMap<string, PartialSnapshot>,
+	changed: ReadonlySet<string>,
+): string[] {
+	if (changed.size === 0) return [];
+	const ids: string[] = [];
+	for (const [id, snap] of snapshots) {
+		const deps = snap.deps;
+		if (!deps) continue;
+		for (const name of changed) {
+			if (deps.has(`cookie:${name}`)) {
+				ids.push(id);
+				break;
+			}
+		}
+	}
+	return ids;
+}
+
 function constraintSurface(snap: PartialSnapshot): Record<string, unknown> {
 	let varyInputs: Record<string, unknown> | null = null;
 	if (snap.varyKey) {

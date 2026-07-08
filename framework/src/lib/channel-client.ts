@@ -557,19 +557,62 @@ export function _channelAbortLiveStream(): void {
 	liveStreamAbort?.();
 }
 
+// ─── Cookie changes over the channel ─────────────────────────────────
+//
+// A client cookie WRITE (`navigate(url, {cookies})`) no longer TEARS the
+// held connection. `document.cookie` is written client-side, then each
+// change is stated as a `cookie` frame the server applies to the
+// connection's cookie overlay — the held stream's `cookie()` readers
+// re-lane against the new value, no reattach. RELIABLE class (the change
+// must reach the server), but the buffered frames RETIRE at the next
+// attach rather than retransmit: the attach's own `Cookie` header
+// restates the jar, so a replayed delta is redundant (retired in
+// `_channelNavSubsumedByAttach`).
+
+/** Unsent cookie deltas, newest value per name (`null` = delete). */
+let pendingCookies = new Map<string, string | null>();
+
 /**
- * A client-side cookie WRITE changed the request identity
- * (`navigate(url, {cookies})`): the held stream renders against its
- * open-time cookie jar, so its renders are no longer truthful for
- * this client. Pull the connection down NOW — the id clears so the
- * very next statement latches pre-establishment and rides the
- * re-attach it triggers, whose request binds the fresh cookies.
+ * State one-or-more client cookie changes on the channel — the tear's
+ * replacement. `document.cookie` is already written (the browser ships
+ * the new jar on the next request); this states the changes to the OPEN
+ * connection so its held renders reflect them without a reattach. No
+ * connection open → nothing to update (the next attach's `Cookie` header
+ * carries them). Values are the wire form (URL-encoded, `null` = delete)
+ * — exactly what the raw `Cookie` header would carry — so the overlay
+ * and a later reattach's header agree.
  */
-export function _channelCookiesChanged(): void {
+export function _channelCookieChange(
+	changes: Record<string, string | null>,
+): void {
 	if (_getLiveConnectionId() === null) return;
-	_setLiveConnectionId(null);
-	_channelAbortLiveStream();
+	for (const name of Object.keys(changes)) {
+		pendingCookies.set(name, changes[name]);
+	}
+	scheduleChannelFlush();
 }
+
+/** The cookie producer — RELIABLE class. One frame per changed name;
+ *  `collect(null)` keeps the pending deltas latched (they ride the next
+ *  connection, though the subsume retires them — the attach header
+ *  restates the jar). */
+const cookieProducer: ChannelProducer = {
+	reliable: true,
+	collect(connection: string | null): ChannelFrame[] | null {
+		if (pendingCookies.size === 0 || connection === null) return null;
+		const frames: ChannelFrame[] = [];
+		for (const [name, value] of pendingCookies) {
+			frames.push({ kind: "cookie", name, value });
+		}
+		pendingCookies.clear();
+		return frames;
+	},
+	deliveryFailed(): void {
+		// Reliable class — the retransmit buffer owns redelivery; a torn
+		// connection reattaches and the attach's Cookie header restates
+		// the jar.
+	},
+};
 
 /** A server-initiated url push (a `url` trailer) applies only when the
  *  client hasn't navigated past the state the push was rendered as-of:
@@ -800,12 +843,17 @@ export function _channelNavSubsumedByAttach(): AttachIntent {
 	// Cancel co-riders are moot: the superseded renders died with the
 	// connection the attach replaces.
 	pendingCancelScopes.clear();
+	// Cookie deltas are restated by the attach's own `Cookie` header
+	// (document.cookie is already written), so a pending or buffered one
+	// is redundant — retire it.
+	pendingCookies.clear();
 	if (retransmitBuffer.length > 0) {
 		retransmitBuffer = retransmitBuffer
 			.map((entry) => ({
 				seq: entry.seq,
 				frames: entry.frames.filter(
-					(f) => f.kind !== "url" && f.kind !== "cancel",
+					(f) =>
+						f.kind !== "url" && f.kind !== "cancel" && f.kind !== "cookie",
 				),
 			}))
 			.filter((entry) => entry.frames.length > 0);
@@ -1703,13 +1751,14 @@ if (typeof window !== "undefined") {
 }
 
 // The transport's own producers — the ack passenger, the window url
-// statement source, the frame-navigation source, and the warm-intent
-// source — ride the same producer contract every external statement
-// source uses.
+// statement source, the frame-navigation source, the warm-intent
+// source, and the cookie-delta source — ride the same producer contract
+// every external statement source uses.
 registerChannelProducer(ackProducer);
 registerChannelProducer(urlProducer);
 registerChannelProducer(frameNavProducer);
 registerChannelProducer(warmProducer);
+registerChannelProducer(cookieProducer);
 
 /** Test-only: reset the transport's module state (seq, in-flight
  *  serialization, registrations, delivery tracking, buffer, degrade,
@@ -1720,6 +1769,7 @@ export function _resetChannelClient(): void {
 	registerChannelProducer(urlProducer);
 	registerChannelProducer(frameNavProducer);
 	registerChannelProducer(warmProducer);
+	registerChannelProducer(cookieProducer);
 	establishListeners.clear();
 	envelopeSeq = 0;
 	rafScheduled = false;
@@ -1752,6 +1802,7 @@ export function _resetChannelClient(): void {
 	pendingNavRecords = [];
 	pendingFrameFrames = new Map();
 	pendingCancelScopes = new Set();
+	pendingCookies = new Map();
 	pendingFrameNavRecords = [];
 	frameSeqKeys.clear();
 	consequenceGates.clear();

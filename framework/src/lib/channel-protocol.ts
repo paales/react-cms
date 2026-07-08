@@ -26,7 +26,7 @@
  *     delivery is simply dropped, and no fallback exists. The class is
  *     in the grammar NOW so a datagram transport can map onto it later
  *     without a redesign.
- *   - **reliable** (`url`, `cancel`) — buffered by the client
+ *   - **reliable** (`url`, `cancel`, `cookie`) — buffered by the client
  *     transport (per its producer's `reliable` declaration, see
  *     [[channel-client]]) until the downstream `applied` marker covers
  *     their envelope seq, and retransmitted at the next establishment
@@ -346,6 +346,31 @@ export interface WarmFrame {
 	url: string;
 }
 
+/**
+ * Cookie delta — a client cookie change (`navigate(url, {cookies})`)
+ * stated over the channel INSTEAD of tearing the held connection. The
+ * server applies it to the connection session's mutable cookie overlay,
+ * which the held stream's `cookie()` reads consult through `parseCookies`
+ * (the connection-scoped twin of the per-request `setCookie` overlay),
+ * and re-lanes exactly the cookie's readers. `document.cookie` is
+ * already written client-side, so the change reaches the server two
+ * ways — this frame on the OPEN connection, and the raw `Cookie` header
+ * on the next attach. Match gates keep reading the raw jar
+ * (`parseRawCookies`) — "who you were when you asked" — so a delta
+ * re-renders `cookie()` bodies, never a parked variant's existence gate.
+ * The RELIABLE class (the change must reach the server), but its
+ * buffered frames RETIRE at the next attach rather than retransmit: the
+ * attach's own `Cookie` header restates the jar, and a replayed delta
+ * is redundant.
+ */
+export interface CookieFrame {
+	kind: "cookie";
+	name: string;
+	/** The new value as it appears in the `Cookie` header (URL-encoded,
+	 *  the wire form `parseCookies` returns); `null` is a delete. */
+	value: string | null;
+}
+
 /** The frame kinds shipped today. The grammar is open: an envelope may
  *  carry kinds this build doesn't know, and the decoder SKIPS those
  *  rather than erroring, the same extensibility rule the downstream
@@ -357,7 +382,8 @@ export type ChannelFrame =
 	| TelemetryFrame
 	| UrlFrame
 	| CancelFrame
-	| WarmFrame;
+	| WarmFrame
+	| CookieFrame;
 
 export interface ChannelEnvelope {
 	/** The live connection this envelope addresses. An explicit token,
@@ -476,6 +502,14 @@ export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
 			// Same-origin validation lives with the endpoint, like `url`.
 			if (typeof f.url !== "string" || f.url.length === 0) return null;
 			frames.push({ kind: "warm", url: f.url });
+			continue;
+		}
+		if (f.kind === "cookie") {
+			// Strict-known: a malformed cookie frame is a protocol violation.
+			// `value` is required — a string set or an explicit `null` delete.
+			if (typeof f.name !== "string" || f.name.length === 0) return null;
+			if (f.value !== null && typeof f.value !== "string") return null;
+			frames.push({ kind: "cookie", name: f.name, value: f.value });
 			continue;
 		}
 		// Unknown kind — skipped, never an error.
