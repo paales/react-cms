@@ -85,6 +85,13 @@ export default defineConfig(() => ({
     },
     client: {
       build: {
+        // Hidden client sourcemaps when the client-scroll benchmark builds
+        // (`PARTON_BENCH_SOURCEMAP=1` — see bench/client-scroll.mjs): the
+        // CPU profile's minified call frames symbolicate back to real
+        // function names + source file:line. "hidden" emits the `.map`
+        // files without a runtime `sourceMappingURL` comment, so the shipped
+        // bundle is byte-identical to a plain build save the sidecar maps.
+        sourcemap: process.env.PARTON_BENCH_SOURCEMAP ? ("hidden" as const) : false,
         rollupOptions: {
           input: { index: "./src/entry.browser.tsx" },
         },

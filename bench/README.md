@@ -328,3 +328,107 @@ A coarse render-vs-fp-vs-encode phase split was deliberately left out: a
 clean split needs invasive instrumentation of framework internals that
 would pollute the hot path. The cpu-prof flame graph already attributes
 the cost by frame, which is enough to target.
+
+---
+
+# Client-scroll harness
+
+`node bench/client-scroll.mjs` — the standing tool for profiling the
+website world's **scroll frame on the client**. Where `bench:server`
+measures the per-tick server CPU and `website/validate-world.mjs`
+asserts correctness + wire budgets, this one answers: *where do the
+milliseconds of a scroll frame go?* It boots the prod website preview on
+its own port (mirroring `validate-world.mjs`), drives a fixed scripted
+scroll with Playwright, and captures three views through the Chrome
+DevTools Protocol.
+
+```bash
+node bench/client-scroll.mjs            # build (sourcemapped) + preview + measure
+node bench/client-scroll.mjs --no-build # reuse the current dist (must be a
+                                        #   PARTON_BENCH_SOURCEMAP build for symbols)
+node bench/client-scroll.mjs --dev      # drive the dev server (readable names,
+                                        #   but dev-Flight overhead — smoke only)
+node bench/client-scroll.mjs --soak     # also profile an idle pulse-soak window
+node bench/client-scroll.mjs --viewport=2560x1440   # denser world → more observers
+node bench/client-scroll.mjs --port=5187 --out=bench/results/client
+```
+
+Default rebuilds the website with `PARTON_BENCH_SOURCEMAP=1` (hidden
+client sourcemaps — the prod bundle mangles every function name, so the
+profile can't be read without them). `--no-build` reuses the current
+`website/dist` (which must be a sourcemap build).
+
+## The workload
+
+A deterministic rAF-driven scroll — east / south / diagonal, each a fixed
+**px per second for a fixed wall-time** — so every run covers the same
+world-distance in the same duration regardless of the frame rate
+achieved. Fast enough (2200 px/s) that many cull flips + lane commits
+land per frame: the regime the over-budget frames live in. The driver
+runs inside the page (`requestAnimationFrame`), not over the CDP wire, so
+there is no per-step protocol overhead skewing the cadence; its frames
+are named `__benchStep` and excluded from the app's scripting total.
+
+## What it captures
+
+1. **DevTools performance trace** (`Tracing`, `ReturnAsStream`, the full
+   `disabled-by-default-devtools.timeline,…,disabled-by-default-v8.cpu_profiler,…`
+   category set) → `trace-<ts>.json`, loadable in DevTools Performance /
+   `chrome://tracing`. The harness also parses it for the **main-thread
+   self-time by rendering phase** (scripting / style / layout /
+   intersection / paint / composite / gc / network — computed by
+   ts-containment on the busiest `CrRendererMain` thread so nested
+   timeline events don't double-count) and the **per-frame main-thread
+   self-time** binned into `BeginMainThreadFrame` windows.
+2. **CPU sampling profile** (`Profiler`, 50µs interval) → self-time
+   aggregated per function, **symbolicated** through the client bundle's
+   hidden sourcemaps (Node's `module.SourceMap`) so the hotspot list
+   reads as `name (source:line)` and rolls up per subsystem (React /
+   cull+visibility / partial cache / channel / app telemetry).
+3. **Frame stats** from an injected `PerformanceObserver` (rAF-delta
+   buckets, `longtask`, `layout-shift` / CLS).
+
+## Reading the numbers — two frame metrics, and why
+
+- **MAIN-THREAD FRAME COST** (per-frame self-time from the trace) is the
+  headline. It is **present-independent**: it counts only the work the
+  main thread does per frame, so it reflects what a fast-GPU device (an
+  M-series Mac, where the compositor is never the bottleneck) actually
+  pays. This is the metric to target.
+- **FRAME PACING** (rAF deltas) is wall-clock frame spacing. In **headless
+  Chromium the compositor is software (SwiftShader)**, so a fast scroll is
+  usually present/GPU-bound, not main-thread-bound — the rAF `>8.33ms`
+  count mostly measures the software compositor, not framework cost. Read
+  it as a sanity check, not the target. (On a real 120Hz display the two
+  converge, because there present is nearly free and the main thread sets
+  the frame time.)
+
+Because the multi-agent / loaded-machine CPU contention that a bench box
+often runs under adds noise to *absolute* self-time, the robust
+before/after signal is a **function's or subsystem's share of scripting**
+(`% of scripting`) — that ratio is stable across runs even when the
+absolute total swings. The harness prints it and saves it.
+
+## Artifacts
+
+`bench/results/client/` (gitignored — large + machine-local):
+`trace-<ts>.json` (open in DevTools) and `client-scroll-<ts>.json` +
+`client-scroll.latest.json` (the machine-readable summary: phases,
+per-frame buckets, rAF buckets, subsystem rollups, top-40 functions). A
+before/after pass is a diff of two summaries.
+
+## What a run of it found (2026-07, e8c60b5)
+
+The over-budget scroll frames are **not** dominated by framework slop.
+Per-frame main-thread self-time tops out at ~4–5ms (p95 ~2.5ms), 63% of
+which is scripting; the rest of the wall-clock frame is the rendering
+pipeline (paint / style / composite) + software present. Within
+scripting, the biggest single leaf is the app's own scroll telemetry
+handler (`website/src/app/world/scroller.tsx` — reading scroll position
+every frame), then React reconciliation of the real DOM churn as chunks
+stream and park, then the template merge (`substituteNested`, already
+batched by React to ~one walk per commit and spine-bound, not
+content-bound). The cull/visibility machinery is a thin ~4% of scripting.
+In short: the scroll path is already lean and the residual cost is
+largely inherent (real reconciliation + pipeline) rather than reducible
+framework overhead — a useful negative result the harness makes legible.

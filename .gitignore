@@ -40,6 +40,11 @@ bench/results/prof/
 bench/results/*.log
 bench/results/baseline.json
 
+# Client-scroll benchmark artifacts (bench/client-scroll.mjs) — DevTools
+# traces + CPU profiles + per-run summaries. Large and machine-specific;
+# the harness prints their paths, they never commit.
+bench/results/client/
+
 # GraphQL record/replay store for the e2e harness (see
 # e2e-testing/src/app/gql-disk-cache.ts). Machine-local; delete to
 # re-record.
