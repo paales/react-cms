@@ -19,7 +19,10 @@ import {
 } from "../partial-registry.ts"
 import { runWithRequestAsync } from "../../runtime/context.ts"
 
-function snap(parentPath: readonly string[], extra: Partial<PartialSnapshot> = {}): PartialSnapshot {
+function snap(
+  parentPath: readonly string[],
+  extra: Partial<PartialSnapshot> = {},
+): PartialSnapshot {
   return {
     type: extra.type ?? "test",
     fallback: null,
@@ -30,7 +33,12 @@ function snap(parentPath: readonly string[], extra: Partial<PartialSnapshot> = {
   }
 }
 
-async function runRequest(url: string, route: string, mode: "streaming" | "cache", fn: () => void | Promise<void>): Promise<void> {
+async function runRequest(
+  url: string,
+  route: string,
+  mode: "streaming" | "cache",
+  fn: () => void | Promise<void>,
+): Promise<void> {
   await runWithRequestAsync(new Request(url), async () => {
     const ctx = enterRequestRegistry(route, mode)
     await fn()

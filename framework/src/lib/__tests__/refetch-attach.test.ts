@@ -42,9 +42,7 @@ describe("manifest carriers — attach body vs action URL form", () => {
     // Newest registrations win the capped walk — the oldest tokens are
     // the ones that fall off (they re-render server-side and re-enter
     // by registering again: over-fetch, never stale).
-    expect(url.some((t) => t.startsWith(`tok-${CACHED_MANIFEST_CAP + 23}:`))).toBe(
-      true,
-    )
+    expect(url.some((t) => t.startsWith(`tok-${CACHED_MANIFEST_CAP + 23}:`))).toBe(true)
     expect(url.some((t) => t.startsWith("tok-0:"))).toBe(false)
   })
 })

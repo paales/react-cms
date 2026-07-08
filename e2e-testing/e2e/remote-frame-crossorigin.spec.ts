@@ -82,20 +82,16 @@ test("selector refetch routes back to the cross-origin remote", async ({ page })
   await expect(stocks).toBeVisible({ timeout: 15000 })
 
   const dispatches = recordPartialDispatches(page)
-  await page
-    .getByTestId("rfd-refresh-magento-stocks")
-    .and(page.locator("[data-hydrated]"))
-    .click()
+  await page.getByTestId("rfd-refresh-magento-stocks").and(page.locator("[data-hydrated]")).click()
 
   // The refetch routed as a selector-targeted dispatch on the channel
   // (the `__force` overlay names the stocks selector), not a full-page
   // nav — the wire signal that the refetch reached the host's refetch
   // machinery for the remote's namespaced id.
   await expect
-    .poll(
-      () => dispatches.filter((d) => d.partials?.includes("magento-stocks")).length,
-      { timeout: 10000 },
-    )
+    .poll(() => dispatches.filter((d) => d.partials?.includes("magento-stocks")).length, {
+      timeout: 10000,
+    })
     .toBeGreaterThan(0)
   await expect(stocks).toBeVisible()
 })

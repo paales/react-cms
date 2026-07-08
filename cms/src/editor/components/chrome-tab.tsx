@@ -138,7 +138,15 @@ export function ChromeTab({
             textDecoration: "none",
           }}
         >
-          <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          >
             <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />
           </svg>
         </a>

@@ -151,15 +151,9 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   // they're one statement. (In practice batched entries usually come
   // from the same event handler; cross-supersede happens only across
   // microtasks so each fire is in its own batch.)
-  const signals = batch
-    .map((e) => e.signal)
-    .filter((s): s is AbortSignal => s != null)
+  const signals = batch.map((e) => e.signal).filter((s): s is AbortSignal => s != null)
   const signal =
-    signals.length === 0
-      ? undefined
-      : signals.length === 1
-        ? signals[0]
-        : AbortSignal.any(signals)
+    signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
 
   // The batch as a url statement: the page URL with the labels as its
   // `?__force=` overlay, intent "silent". `__force`, not a target
@@ -231,10 +225,7 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
 export function enqueueRefetch(
   entry: Omit<
     RefetchBatchEntry,
-    | "resolveStreaming"
-    | "rejectStreaming"
-    | "resolveFinished"
-    | "rejectFinished"
+    "resolveStreaming" | "rejectStreaming" | "resolveFinished" | "rejectFinished"
   >,
 ): RefetchMilestones {
   let resolveStreaming!: () => void

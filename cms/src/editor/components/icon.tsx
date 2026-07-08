@@ -95,7 +95,9 @@ const PATHS: Record<string, ReactNode> = {
   chevDown: <path d="M3.5 6L8 10.5 12.5 6" />,
   chevRight: <path d="M6 3.5L10.5 8 6 12.5" />,
   close: <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" />,
-  trash: <path d="M3 4.5h10M6.5 4.5V3a1 1 0 011-1h1a1 1 0 011 1v1.5M4.5 4.5v8.5a1 1 0 001 1h5a1 1 0 001-1V4.5" />,
+  trash: (
+    <path d="M3 4.5h10M6.5 4.5V3a1 1 0 011-1h1a1 1 0 011 1v1.5M4.5 4.5v8.5a1 1 0 001 1h5a1 1 0 001-1V4.5" />
+  ),
   eye: (
     <>
       <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />

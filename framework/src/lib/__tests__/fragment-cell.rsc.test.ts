@@ -27,32 +27,66 @@ afterEach(() => {
 
 describe("fragmentCell — construction", () => {
   it("derives a kebab id from the fragment name", () => {
-    const cell = fragmentCell(graphql(`fragment CartLine on CartItem { uid }`), {
-      key: (d) => ({ uid: (d as { uid: string }).uid }),
-    })
+    const cell = fragmentCell(
+      graphql(`
+        fragment CartLine on CartItem {
+          uid
+        }
+      `),
+      {
+        key: (d) => ({ uid: (d as { uid: string }).uid }),
+      },
+    )
     expect(cell.id).toBe("cart-line")
   })
 
   it("defaults key to {id} when the fragment selects id", () => {
-    const cell = fragmentCell(graphql(`fragment Hero on Pokemon { id name }`))
+    const cell = fragmentCell(
+      graphql(`
+        fragment Hero on Pokemon {
+          id
+          name
+        }
+      `),
+    )
     expect(cell.keyOf!({ id: 42, name: "pikachu" } as never)).toEqual({ id: 42 })
   })
 
   it("throws when no id is selected and no key is given", () => {
     expect(() =>
-      fragmentCell(graphql(`fragment CartLine on CartItem { uid quantity }`)),
+      fragmentCell(
+        graphql(`
+          fragment CartLine on CartItem {
+            uid
+            quantity
+          }
+        `),
+      ),
     ).toThrow(/no `id` field is selected and no `key`/)
   })
 
   it("uses an explicit key over the id default", () => {
-    const cell = fragmentCell(graphql(`fragment CartLine on CartItem { uid }`), {
-      key: (d) => ({ uid: (d as { uid: string }).uid }),
-    })
+    const cell = fragmentCell(
+      graphql(`
+        fragment CartLine on CartItem {
+          uid
+        }
+      `),
+      {
+        key: (d) => ({ uid: (d as { uid: string }).uid }),
+      },
+    )
     expect(cell.keyOf!({ uid: "abc" } as never)).toEqual({ uid: "abc" })
   })
 
   it("keyOf throws on a null value", () => {
-    const cell = fragmentCell(graphql(`fragment Hero on Pokemon { id }`))
+    const cell = fragmentCell(
+      graphql(`
+        fragment Hero on Pokemon {
+          id
+        }
+      `),
+    )
     expect(() => cell.keyOf!(null)).toThrow(/null value/)
   })
 })
@@ -62,8 +96,13 @@ describe("spreadSitesOf — query AST analysis", () => {
     const q = graphql(`
       query Cart($id: String!) {
         cart(cart_id: $id) {
-          items { uid ...CartLine }
-          extras { ...Slow @defer }
+          items {
+            uid
+            ...CartLine
+          }
+          extras {
+            ...Slow @defer
+          }
         }
       }
     `)
@@ -77,7 +116,15 @@ describe("spreadSitesOf — query AST analysis", () => {
   })
 
   it("uses field aliases for the path", () => {
-    const q = graphql(`query Q { box: cart { rows: items { ...CartLine } } }`)
+    const q = graphql(`
+      query Q {
+        box: cart {
+          rows: items {
+            ...CartLine
+          }
+        }
+      }
+    `)
     expect(spreadSitesOf(q)[0]).toEqual({
       path: ["box", "rows"],
       fragName: "CartLine",
@@ -89,12 +136,26 @@ describe("spreadSitesOf — query AST analysis", () => {
 describe("auto-hydration — walk a result, populate keyed partitions", () => {
   it("hydrates every matching node into its keyed partition", async () => {
     await runWithRequestAsync(new Request("http://t/"), async () => {
-      const cartLine = fragmentCell(graphql(`fragment CartLine on CartItem { uid quantity }`), {
-        key: (d) => ({ uid: (d as { uid: string }).uid }),
-      })
+      const cartLine = fragmentCell(
+        graphql(`
+          fragment CartLine on CartItem {
+            uid
+            quantity
+          }
+        `),
+        {
+          key: (d) => ({ uid: (d as { uid: string }).uid }),
+        },
+      )
       const query = graphql(`
         query Cart($id: String!) {
-          cart(cart_id: $id) { items { uid quantity ...CartLine } }
+          cart(cart_id: $id) {
+            items {
+              uid
+              quantity
+              ...CartLine
+            }
+          }
         }
       `)
       const result = {
@@ -116,12 +177,25 @@ describe("auto-hydration — walk a result, populate keyed partitions", () => {
 
   it("skips deferred spreads (those stream in via the loader)", async () => {
     await runWithRequestAsync(new Request("http://t/"), async () => {
-      const slow = fragmentCell(graphql(`fragment Slow on CartItem { uid detail }`), {
-        key: (d) => ({ uid: (d as { uid: string }).uid }),
-      })
+      const slow = fragmentCell(
+        graphql(`
+          fragment Slow on CartItem {
+            uid
+            detail
+          }
+        `),
+        {
+          key: (d) => ({ uid: (d as { uid: string }).uid }),
+        },
+      )
       const query = graphql(`
         query Cart($id: String!) {
-          cart(cart_id: $id) { items { uid ...Slow @defer } }
+          cart(cart_id: $id) {
+            items {
+              uid
+              ...Slow @defer
+            }
+          }
         }
       `)
       hydrateFragmentsFromResult(query, {

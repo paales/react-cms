@@ -80,13 +80,17 @@ const check = (ok, label, detail = "") => {
 }
 
 try {
-  await until(async () => {
-    try {
-      return (await fetch(BASE)).ok
-    } catch {
-      return false
-    }
-  }, 30000, "server up")
+  await until(
+    async () => {
+      try {
+        return (await fetch(BASE)).ok
+      } catch {
+        return false
+      }
+    },
+    30000,
+    "server up",
+  )
 
   const browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
@@ -103,11 +107,17 @@ try {
     const isParton = ws.url().includes("/__parton/ws")
     ws.on("framereceived", (f) => {
       const binary = typeof f.payload !== "string"
-      if (isParton) partonRecv.push({ t: Date.now(), binary, n: binary ? f.payload.byteLength : f.payload.length })
+      if (isParton)
+        partonRecv.push({
+          t: Date.now(),
+          binary,
+          n: binary ? f.payload.byteLength : f.payload.length,
+        })
       else if (typeof f.payload === "string") hmrFrames.push({ t: Date.now(), text: f.payload })
     })
     ws.on("framesent", (f) => {
-      if (isParton && typeof f.payload === "string") partonSent.push({ t: Date.now(), text: f.payload })
+      if (isParton && typeof f.payload === "string")
+        partonSent.push({ t: Date.now(), text: f.payload })
     })
   })
   // The fetch endpoints must NEVER fire under `?transport=ws` — everything
@@ -121,7 +131,8 @@ try {
   page.on("pageerror", (e) => pageErrors.push(e.message.slice(0, 160)))
   const netFails = []
   page.on("requestfailed", (r) => {
-    if (!r.failure()?.errorText.includes("ERR_ABORTED")) netFails.push(`${r.failure()?.errorText} ${r.url().slice(0, 80)}`)
+    if (!r.failure()?.errorText.includes("ERR_ABORTED"))
+      netFails.push(`${r.failure()?.errorText} ${r.url().slice(0, 80)}`)
   })
 
   const scroller = '[data-testid="world-scroller"]'
@@ -140,36 +151,75 @@ try {
     "origin content",
   )
   await page.waitForTimeout(2500)
-  const live = await page.$eval("html", (h) => h.hasAttribute("data-parton-live")).catch(() => false)
+  const live = await page
+    .$eval("html", (h) => h.hasAttribute("data-parton-live"))
+    .catch(() => false)
   const partonSockets = socketUrls.filter((u) => u.includes("/__parton/ws"))
-  check(partonSockets.length >= 1, "WebSocket to /__parton/ws opened", `${partonSockets.length} socket(s)`)
+  check(
+    partonSockets.length >= 1,
+    "WebSocket to /__parton/ws opened",
+    `${partonSockets.length} socket(s)`,
+  )
   check(live, "conn handshake established (data-parton-live set)")
-  check(posts.live === 0, "no POST to /__parton/live (attach rode the socket)", `${posts.live} POSTs`)
-  check(posts.channel === 0, "no POST to /__parton/channel (envelopes ride the socket)", `${posts.channel} POSTs`)
+  check(
+    posts.live === 0,
+    "no POST to /__parton/live (attach rode the socket)",
+    `${posts.live} POSTs`,
+  )
+  check(
+    posts.channel === 0,
+    "no POST to /__parton/channel (envelopes ride the socket)",
+    `${posts.channel} POSTs`,
+  )
 
   // ── 2. Attach — initial content, tunneled down as binary ──
   check(true, "attach delivered origin content", `${bootMs}ms`)
   const binaryDown = partonRecv.filter((r) => r.binary).length
   const textDown = partonRecv.filter((r) => !r.binary).length
-  check(binaryDown > 0 && textDown === 0, "downstream is opaque binary (the marker tunnel)", `${binaryDown} binary / ${textDown} text frames`)
-  check(partonSent.length > 0, "upstream envelopes sent over the socket", `${partonSent.length} frames (attach + envelopes)`)
+  check(
+    binaryDown > 0 && textDown === 0,
+    "downstream is opaque binary (the marker tunnel)",
+    `${binaryDown} binary / ${textDown} text frames`,
+  )
+  check(
+    partonSent.length > 0,
+    "upstream envelopes sent over the socket",
+    `${partonSent.length} frames (attach + envelopes)`,
+  )
 
   // ── 3 & 4. Stream + upstream — scroll into fresh territory ──
   const scrollStart = Date.now()
   const sentBefore = partonSent.length
   await page.$eval(scroller, (el) => el.scrollBy(3072, 1600))
-  const pos = await page.$eval(scroller, (el) => ({ x: el.scrollLeft, y: el.scrollTop, w: el.clientWidth, h: el.clientHeight }))
+  const pos = await page.$eval(scroller, (el) => ({
+    x: el.scrollLeft,
+    y: el.scrollTop,
+    w: el.clientWidth,
+    h: el.clientHeight,
+  }))
   const cx = Math.floor((pos.x + pos.w / 2) / 512) - 32
   const cy = Math.floor((pos.y + pos.h / 2) / 512) - 32
   const centerId = `chunk-${cx},${cy}`
   let streamedMs = null
   try {
-    streamedMs = await until(async () => (await page.$(`[data-testid="${centerId}"][data-loaded]`)) !== null, 10000, "")
+    streamedMs = await until(
+      async () => (await page.$(`[data-testid="${centerId}"][data-loaded]`)) !== null,
+      10000,
+      "",
+    )
   } catch {}
   await page.waitForTimeout(1000)
-  check(streamedMs !== null, `scroll streams centre ${centerId} in over the socket`, streamedMs !== null ? `${streamedMs}ms` : "never loaded")
+  check(
+    streamedMs !== null,
+    `scroll streams centre ${centerId} in over the socket`,
+    streamedMs !== null ? `${streamedMs}ms` : "never loaded",
+  )
   const binaryDuringScroll = partonRecv.filter((r) => r.binary && r.t >= scrollStart).length
-  check(binaryDuringScroll > 0, "flipped-in chunks stream down as binary frames", `${binaryDuringScroll} frames during scroll`)
+  check(
+    binaryDuringScroll > 0,
+    "flipped-in chunks stream down as binary frames",
+    `${binaryDuringScroll} frames during scroll`,
+  )
   const visibleFrames = partonSent.slice(sentBefore).filter((s) => {
     try {
       return JSON.parse(s.text).frames?.some((f) => f.kind === "visible")
@@ -177,16 +227,31 @@ try {
       return false
     }
   })
-  check(visibleFrames.length > 0, "upstream visibility frames delivered over the socket", `${visibleFrames.length} visible envelope(s)`)
+  check(
+    visibleFrames.length > 0,
+    "upstream visibility frames delivered over the socket",
+    `${visibleFrames.length} visible envelope(s)`,
+  )
   const soak = await (async () => {
     const before = await readPulses()
     await page.waitForTimeout(5000)
     const after = await readPulses()
     const ids = Object.keys(before)
-    return { sampled: ids.length, moved: ids.filter((id) => after[id] !== undefined && after[id] !== before[id]).length }
+    return {
+      sampled: ids.length,
+      moved: ids.filter((id) => after[id] !== undefined && after[id] !== before[id]).length,
+    }
   })()
-  check(soak.sampled > 0 && soak.moved >= 1, "pulses advance (live lanes over the socket)", `${soak.moved}/${soak.sampled} in 5s`)
-  check(posts.live === 0 && posts.channel === 0, "still zero fetch-endpoint POSTs after streaming", `live=${posts.live} channel=${posts.channel}`)
+  check(
+    soak.sampled > 0 && soak.moved >= 1,
+    "pulses advance (live lanes over the socket)",
+    `${soak.moved}/${soak.sampled} in 5s`,
+  )
+  check(
+    posts.live === 0 && posts.channel === 0,
+    "still zero fetch-endpoint POSTs after streaming",
+    `live=${posts.live} channel=${posts.channel}`,
+  )
 
   // ── 5. HMR co-existence (dev only) ──
   if (MODE === "dev") {
@@ -195,7 +260,10 @@ try {
     writeFileSync(CSS, `${original}\n/* validate-ws hmr ${Date.now()} */\n`)
     try {
       await until(
-        () => hmrFrames.slice(hmrBefore).some((f) => /"type":"(update|full-reload)"|css-update|rsc:update/.test(f.text)),
+        () =>
+          hmrFrames
+            .slice(hmrBefore)
+            .some((f) => /"type":"(update|full-reload)"|css-update|rsc:update/.test(f.text)),
         6000,
         "hmr update",
       )
@@ -220,7 +288,11 @@ try {
   const t0 = Date.now()
   const health = await fetch(BASE)
   const healthMs = Date.now() - t0
-  check(health.ok && healthMs < 3000, "server responsive after socket churn", `doc fetch ${healthMs}ms`)
+  check(
+    health.ok && healthMs < 3000,
+    "server responsive after socket churn",
+    `doc fetch ${healthMs}ms`,
+  )
 
   check(pageErrors.length === 0, "no page errors", pageErrors.slice(0, 3).join(" | "))
   check(netFails.length === 0, "no failed client requests", netFails.slice(0, 4).join(" | "))

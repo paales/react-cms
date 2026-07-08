@@ -3,7 +3,11 @@ import { createRoot, hydrateRoot } from "react-dom/client"
 // eslint-disable-next-line import/no-unresolved -- browser export of the SSR runtime
 import { renderToReadableStream } from "react-dom/server.browser"
 import { beforeEach, describe, expect, it } from "vitest"
-import { _visibleSetIds, _sweepEmptyVisibilityObservers, VisibilityObserver } from "../visibility.tsx"
+import {
+  _visibleSetIds,
+  _sweepEmptyVisibilityObservers,
+  VisibilityObserver,
+} from "../visibility.tsx"
 
 /**
  * Late-materializing content under a cullable boundary — the
@@ -90,7 +94,7 @@ describe("visibility observer over late-materializing content", () => {
     let reported = false
     for (let i = 0; i < 20 && !reported; i++) {
       await new Promise((r) => requestAnimationFrame(() => r(null)))
-      reported = ((_visibleSetIds() ?? []).join(",")).includes("late-parton")
+      reported = (_visibleSetIds() ?? []).join(",").includes("late-parton")
     }
     expect(reported).toBe(true)
 
@@ -142,7 +146,7 @@ describe("visibility observer over late-materializing content", () => {
     let reported = false
     for (let i = 0; i < 20 && !reported; i++) {
       await new Promise((r) => requestAnimationFrame(() => r(null)))
-      reported = ((_visibleSetIds() ?? []).join(",")).includes("hydrated-parton")
+      reported = (_visibleSetIds() ?? []).join(",").includes("hydrated-parton")
     }
     expect(reported).toBe(true)
 

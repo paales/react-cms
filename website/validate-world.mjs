@@ -86,20 +86,29 @@ const timings = []
 const timing = (label, ms) => timings.push([label, ms])
 
 try {
-  await until(async () => {
-    try {
-      return (await fetch(BASE)).ok
-    } catch {
-      return false
-    }
-  }, 30000, "server up")
+  await until(
+    async () => {
+      try {
+        return (await fetch(BASE)).ok
+      } catch {
+        return false
+      }
+    },
+    30000,
+    "server up",
+  )
 
   const browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   const netFails = []
   const pageErrors = []
-  page.on("response", (r) => { if (r.status() >= 400) netFails.push(`${r.status()} ${r.url().slice(0, 120)}`) })
-  page.on("requestfailed", (r) => { if (!r.failure()?.errorText.includes("ERR_ABORTED")) netFails.push(`FAILED ${r.failure()?.errorText} ${r.url().slice(0, 100)}`) })
+  page.on("response", (r) => {
+    if (r.status() >= 400) netFails.push(`${r.status()} ${r.url().slice(0, 120)}`)
+  })
+  page.on("requestfailed", (r) => {
+    if (!r.failure()?.errorText.includes("ERR_ABORTED"))
+      netFails.push(`FAILED ${r.failure()?.errorText} ${r.url().slice(0, 100)}`)
+  })
   page.on("pageerror", (e) => pageErrors.push(e.message.slice(0, 200)))
 
   // Live-stream byte accounting: decoded bytes per data event on any
@@ -140,7 +149,9 @@ try {
   const changedCounts = (i0) =>
     channelPosts.slice(i0).flatMap((p) => {
       try {
-        return JSON.parse(p.post).frames.filter((f) => f.kind === "visible").map((f) => f.changed.length)
+        return JSON.parse(p.post)
+          .frames.filter((f) => f.kind === "visible")
+          .map((f) => f.changed.length)
       } catch {
         return []
       }
@@ -170,7 +181,12 @@ try {
     }
   }
   const scrollPos = () =>
-    page.$eval(scroller, (el) => ({ x: el.scrollLeft, y: el.scrollTop, w: el.clientWidth, h: el.clientHeight }))
+    page.$eval(scroller, (el) => ({
+      x: el.scrollLeft,
+      y: el.scrollTop,
+      w: el.clientWidth,
+      h: el.clientHeight,
+    }))
   const centerChunkId = async () => {
     const p = await scrollPos()
     const cx = Math.floor((p.x + p.w / 2) / 512) - 32
@@ -183,9 +199,17 @@ try {
     const id = await centerChunkId()
     let ms = null
     try {
-      ms = await until(async () => (await page.$(`[data-testid="${id}"][data-loaded]`)) !== null, 10000, "")
+      ms = await until(
+        async () => (await page.$(`[data-testid="${id}"][data-loaded]`)) !== null,
+        10000,
+        "",
+      )
     } catch {}
-    check(ms !== null, `${label}: center ${id} streams in`, ms !== null ? `${ms}ms` : "never loaded")
+    check(
+      ms !== null,
+      `${label}: center ${id} streams in`,
+      ms !== null ? `${ms}ms` : "never loaded",
+    )
     if (ms !== null) timing(`stream-in ${label}`, ms)
     return ms
   }
@@ -220,12 +244,22 @@ try {
       ? `${liveFires[0].method} ${liveFires[0].post.replace(/"cached":\[[^\]]*\]/, '"cached":[…]').slice(0, 140)}`
       : "no live fire",
   )
-  const errCards = await page.$$eval("[data-partial-error], .partial-error", (els) => els.length).catch(() => 0)
+  const errCards = await page
+    .$$eval("[data-partial-error], .partial-error", (els) => els.length)
+    .catch(() => 0)
   check(errCards === 0, "no error cards after pulse soak", `${errCards} cards`)
   const soak = await pulsesAdvance(6000)
-  check(soak.moved >= 3, "origin pulses advance while resting", `${soak.moved}/${soak.sampled} advanced in 6s`)
+  check(
+    soak.moved >= 3,
+    "origin pulses advance while resting",
+    `${soak.moved}/${soak.sampled} advanced in 6s`,
+  )
   const soakBytes = liveBytesSince(bootStart)
-  check(soakBytes < 1_500_000, "live stream lean during pulse soak", `${Math.round(soakBytes / 1024)}KB (budget 1500KB)`)
+  check(
+    soakBytes < 1_500_000,
+    "live stream lean during pulse soak",
+    `${Math.round(soakBytes / 1024)}KB (budget 1500KB)`,
+  )
   timing("soak live bytes", soakBytes)
 
   // ── 2. Directions — one viewport-ish step each way, content must chase ──
@@ -250,7 +284,11 @@ try {
   // POST alone; a one-envelope-per-frame cadence lands in the
   // hundreds across four stream-ins and fails loudly.
   const dirPosts = channelPosts.length - dirPostsStart
-  check(dirPosts <= 24, "scroll-burst beacons at wave cadence", `${dirPosts} channel POSTs across 4 stops (budget 24)`)
+  check(
+    dirPosts <= 24,
+    "scroll-burst beacons at wave cadence",
+    `${dirPosts} channel POSTs across 4 stops (budget 24)`,
+  )
   // The stagger's point: flips of already-mounted observers batch, so
   // statements carry MULTI-ID changed arrays instead of one id each.
   const dirChanged = changedCounts(dirPostsStart)
@@ -261,7 +299,11 @@ try {
     `changed sizes: [${dirChanged.join(",")}]`,
   )
   const dir = await pulsesAdvance(6000)
-  check(dir.sampled > 0 && dir.moved >= 1, "pulses live at post-directions position", `${dir.moved}/${dir.sampled} advanced in 6s`)
+  check(
+    dir.sampled > 0 && dir.moved >= 1,
+    "pulses live at post-directions position",
+    `${dir.moved}/${dir.sampled} advanced in 6s`,
+  )
 
   // ── 2b. Warm path — sustained velocity must project chunk warming ──
   // A smooth 1280px/s diagonal scroll (64px per 50ms step) keeps real
@@ -270,7 +312,10 @@ try {
   // projected statement. Zero lines means the telemetry→session→
   // projection pipeline never engaged.
   const warmLineCount = () =>
-    serverLog.join("").split("\n").filter((l) => l.includes("[world] warm")).length
+    serverLog
+      .join("")
+      .split("\n")
+      .filter((l) => l.includes("[world] warm")).length
   const warmLinesBefore = warmLineCount()
   const warmPostsStart = channelPosts.length
   for (let i = 0; i < 40; i++) {
@@ -280,12 +325,24 @@ try {
   const warmCenter = await centerChunkId()
   let warmMs = null
   try {
-    warmMs = await until(async () => (await page.$(`[data-testid="${warmCenter}"][data-loaded]`)) !== null, 10000, "")
+    warmMs = await until(
+      async () => (await page.$(`[data-testid="${warmCenter}"][data-loaded]`)) !== null,
+      10000,
+      "",
+    )
   } catch {}
-  check(warmMs !== null, `warm path: center ${warmCenter} loaded at stop`, warmMs !== null ? `${warmMs}ms` : "never loaded")
+  check(
+    warmMs !== null,
+    `warm path: center ${warmCenter} loaded at stop`,
+    warmMs !== null ? `${warmMs}ms` : "never loaded",
+  )
   if (warmMs !== null) timing("stream-in warm-path stop", warmMs)
   const warmProjected = warmLineCount() - warmLinesBefore
-  check(warmProjected > 0, "velocity scroll projects chunk warming", `${warmProjected} projection(s) logged`)
+  check(
+    warmProjected > 0,
+    "velocity scroll projects chunk warming",
+    `${warmProjected} projection(s) logged`,
+  )
   // Sustained-scroll beacon ceiling. At this velocity (1280px/s
   // diagonal) the count is dominated by SERIALIZED LANE COMMITS, not
   // scroll geometry: each committing lane re-measures its subtree in
@@ -299,7 +356,11 @@ try {
   // fails loudly while commit-bound bursts (~40 measured) pass.
   // Ceiling 64 = measured ~40 + 50% headroom.
   const warmPosts = channelPosts.length - warmPostsStart
-  check(warmPosts <= 64, "sustained-scroll beacons below frame cadence", `${warmPosts} channel POSTs over the 1280px/s scroll (ceiling 64)`)
+  check(
+    warmPosts <= 64,
+    "sustained-scroll beacons below frame cadence",
+    `${warmPosts} channel POSTs over the 1280px/s scroll (ceiling 64)`,
+  )
 
   // ── 2c. Slow scroll — a few px per frame, the cadence a human
   //        mouse-wheel produces ──
@@ -323,7 +384,11 @@ try {
   // flips ~16ms apart plus measurement-only trailers) lands well
   // past this.
   const slowPosts = channelPosts.length - slowPostsStart
-  check(slowPosts <= 12, "slow scroll beacons at crossing cadence", `${slowPosts} channel POSTs over a 1024px two-column crawl (budget 12)`)
+  check(
+    slowPosts <= 12,
+    "slow scroll beacons at crossing cadence",
+    `${slowPosts} channel POSTs over a 1024px two-column crawl (budget 12)`,
+  )
   const slowChanged = changedCounts(slowPostsStart)
   check(
     Math.max(0, ...slowChanged) >= 2,
@@ -344,13 +409,19 @@ try {
   )
 
   // ── 3b. Refresh at origin — the frozen-world regression ──
-  await page.$eval(scroller, (el) => { el.scrollTo(16384 - el.clientWidth / 2 + 256, 16384 - el.clientHeight / 2 + 256) })
+  await page.$eval(scroller, (el) => {
+    el.scrollTo(16384 - el.clientWidth / 2 + 256, 16384 - el.clientHeight / 2 + 256)
+  })
   await page.waitForTimeout(1500)
   await page.reload()
   await page.waitForSelector('[data-testid="chunk-0,0"]', { timeout: 15000 })
   await page.waitForTimeout(2500)
   const r2 = await pulsesAdvance(6000)
-  check(r2.sampled > 0 && r2.moved >= 3, "pulses advance after refresh at origin", `${r2.moved}/${r2.sampled} advanced in 6s`)
+  check(
+    r2.sampled > 0 && r2.moved >= 3,
+    "pulses advance after refresh at origin",
+    `${r2.moved}/${r2.sampled} advanced in 6s`,
+  )
 
   // ── 4. Stress — fast continuous scrolling, like a real user ──
   for (let i = 0; i < 100; i++) {
@@ -359,8 +430,15 @@ try {
   }
   await page.waitForTimeout(4000)
   const pos = await scrollPos()
-  const stressLoaded = await page.$$eval("[data-testid^='chunk-'][data-loaded]", (els) => els.length)
-  check(stressLoaded > 0, "cells load after 40000px stress scroll", `${stressLoaded} loaded at y=${pos.y}`)
+  const stressLoaded = await page.$$eval(
+    "[data-testid^='chunk-'][data-loaded]",
+    (els) => els.length,
+  )
+  check(
+    stressLoaded > 0,
+    "cells load after 40000px stress scroll",
+    `${stressLoaded} loaded at y=${pos.y}`,
+  )
   const stressCenter = await centerChunkId()
   check(
     (await page.$(`[data-testid="${stressCenter}"][data-loaded]`)) !== null,
@@ -379,7 +457,8 @@ try {
         for (const n of m.addedNodes ?? []) {
           if (n.nodeType === 1 && n.classList?.contains("chunk__light--red")) window.__redFlashes++
         }
-        if (m.type === "attributes" && m.target.classList?.contains("chunk__light--red")) window.__redFlashes++
+        if (m.type === "attributes" && m.target.classList?.contains("chunk__light--red"))
+          window.__redFlashes++
       }
     })
     mo.observe(document.querySelector('[data-testid="world-scroller"]'), {
@@ -392,7 +471,11 @@ try {
   const quietStart = Date.now()
   await page.waitForTimeout(6000)
   const quietBytes = liveBytesSince(quietStart)
-  check(quietBytes < 600_000, "parked chunks stay off the live stream", `${Math.round(quietBytes / 1024)}KB over 6s (budget 600KB)`)
+  check(
+    quietBytes < 600_000,
+    "parked chunks stay off the live stream",
+    `${Math.round(quietBytes / 1024)}KB over 6s (budget 600KB)`,
+  )
   timing("quiet-window live bytes", quietBytes)
   // Acks are passengers: at rest — no flips, no telemetry — the only
   // envelopes the page may DRIVE are threshold acks, one per
@@ -404,26 +487,43 @@ try {
   // pulse neighborhood = 4. An ack-only POST per commit batch (the
   // per-advance defect) lands in the tens and fails this.
   const quietPosts = channelPosts.filter((p) => p.t >= quietStart).length
-  check(quietPosts <= 4, "upstream beacons at threshold cadence in quiet window", `${quietPosts} channel POSTs over 6s (budget 4)`)
+  check(
+    quietPosts <= 4,
+    "upstream beacons at threshold cadence in quiet window",
+    `${quietPosts} channel POSTs over 6s (budget 4)`,
+  )
   const redFlashes = await page.evaluate(() => window.__redFlashes)
   check(redFlashes === 0, "no red mount-flashes at rest", `${redFlashes} in 6s`)
   const rest = await pulsesAdvance(5000)
-  check(rest.sampled === 0 || rest.moved >= 1, "pulses still live at rest position", `${rest.moved}/${rest.sampled}`)
+  check(
+    rest.sampled === 0 || rest.moved >= 1,
+    "pulses still live at rest position",
+    `${rest.moved}/${rest.sampled}`,
+  )
 
   // ── 6. Server health after churn (three refreshes = three torn live
   //       connections; zombies would peg the event loop) ──
   const t0 = Date.now()
   const health = await fetch(BASE)
   const healthMs = Date.now() - t0
-  check(health.ok && healthMs < 3000, "server responsive after connection churn", `doc fetch ${healthMs}ms`)
+  check(
+    health.ok && healthMs < 3000,
+    "server responsive after connection churn",
+    `doc fetch ${healthMs}ms`,
+  )
   timing("post-churn doc fetch", healthMs)
   let cpu = null
   try {
-    const pids = execSync(`lsof -ti :${PORT}`, { encoding: "utf8" }).trim().split("\n").filter(Boolean)
+    const pids = execSync(`lsof -ti :${PORT}`, { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .filter(Boolean)
     await new Promise((r) => setTimeout(r, 2000))
     cpu = Math.max(
       ...execSync(`ps -o pcpu= -p ${pids.join(",")}`, { encoding: "utf8" })
-        .trim().split("\n").map((l) => Number.parseFloat(l.replace(",", "."))),
+        .trim()
+        .split("\n")
+        .map((l) => Number.parseFloat(l.replace(",", "."))),
     )
     check(cpu < 60, "server CPU settled (no zombie connections)", `${cpu}%`)
   } catch (e) {
@@ -437,7 +537,9 @@ try {
 
   console.log("\ntimings:")
   for (const [label, ms] of timings) {
-    console.log(`  ${label.padEnd(28)} ${typeof ms === "number" && label.includes("bytes") ? `${Math.round(ms / 1024)}KB` : `${ms}ms`}`)
+    console.log(
+      `  ${label.padEnd(28)} ${typeof ms === "number" && label.includes("bytes") ? `${Math.round(ms / 1024)}KB` : `${ms}ms`}`,
+    )
   }
 } finally {
   // Kill the whole tree — the yarn wrapper's children (vite) must die too.
@@ -448,7 +550,11 @@ try {
   }
 }
 
-const errLines = serverLog.join("").split("\n").filter((l) => /error|Error|ERR/.test(l)).slice(0, 8)
+const errLines = serverLog
+  .join("")
+  .split("\n")
+  .filter((l) => /error|Error|ERR/.test(l))
+  .slice(0, 8)
 if (errLines.length) console.log("server log errors:\n " + errLines.join("\n "))
 console.log(failures === 0 ? "\nALL GREEN" : `\n${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

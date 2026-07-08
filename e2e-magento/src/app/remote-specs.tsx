@@ -32,11 +32,10 @@ export const MagentoGreeting = parton(
           Rendered at <code>{ts}</code>
         </div>
         <div style={{ fontSize: "0.8em", opacity: 0.7, marginTop: "0.25rem" }}>
-          This is a SEPARATE Node process. The host app at port 5173 fetched these
-          Flight bytes from{" "}
-          <code>http://localhost:5181/__remote/magento-greeting</code>, rewrote any
-          module references to absolute URLs on this origin, decoded the result,
-          and stitched it into its outer response.
+          This is a SEPARATE Node process. The host app at port 5173 fetched these Flight bytes from{" "}
+          <code>http://localhost:5181/__remote/magento-greeting</code>, rewrote any module
+          references to absolute URLs on this origin, decoded the result, and stitched it into its
+          outer response.
         </div>
       </div>
     )
@@ -77,10 +76,9 @@ export const MagentoCheckoutStep = parton(
           <code data-testid="magento-checkout-current">{currentStep}</code>
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.75em", opacity: 0.7 }}>
-          Driven by the frame URL's <code>?step=</code> param. The host's
-          `&lt;Frame name="checkout"&gt;` scopes this URL — client buttons
-          inside navigate the frame, this parton re-renders with the new
-          step, and `&lt;RemoteFrame&gt;` re-fetches.
+          Driven by the frame URL's <code>?step=</code> param. The host's `&lt;Frame
+          name="checkout"&gt;` scopes this URL — client buttons inside navigate the frame, this
+          parton re-renders with the new step, and `&lt;RemoteFrame&gt;` re-fetches.
         </div>
       </div>
     )
@@ -100,8 +98,7 @@ export const MagentoPaymentSummary = parton(
     const cap = getCapability()
     const cartId = String(cap.cart_id ?? "<missing>")
     const currency = String(cap.currency ?? "USD")
-    const total =
-      typeof cap.total === "number" ? cap.total : Number(cap.total ?? 0)
+    const total = typeof cap.total === "number" ? cap.total : Number(cap.total ?? 0)
     return (
       <div
         data-testid="magento-payment-summary"
@@ -121,9 +118,8 @@ export const MagentoPaymentSummary = parton(
           </code>
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.75em", opacity: 0.7 }}>
-          These values came from the host via the{" "}
-          <code>x-parton-capability</code> header. The remote has no other
-          access to the host's request context — its own cookies/session/
+          These values came from the host via the <code>x-parton-capability</code> header. The
+          remote has no other access to the host's request context — its own cookies/session/
           headers belong to the fetch, not the host page.
         </div>
       </div>
@@ -139,9 +135,7 @@ export const MagentoPaymentSummary = parton(
  *  different content). The render embeds the tick as
  *  `data-tick=` so e2e tests can assert it strictly changes. */
 export const MagentoStockTicker = parton(
-  async function MagentoStockTickerRender(
-    { tick }: { tick: number } & RenderArgs,
-  ) {
+  async function MagentoStockTickerRender({ tick }: { tick: number } & RenderArgs) {
     await delay(700)
     const tickers = [
       { sym: "PTON", price: 42.17 + Math.random() * 4 },
@@ -193,7 +187,7 @@ export const MagentoStockTicker = parton(
 export const MagentoCartSummary = parton(
   async function MagentoCartSummaryRender(_: RenderArgs) {
     await delay(50)
-    const subtotal = 89.94 + (Math.random() * 2)
+    const subtotal = 89.94 + Math.random() * 2
     return (
       <div
         data-testid="magento-cart-summary"
@@ -211,13 +205,11 @@ export const MagentoCartSummary = parton(
         <strong>Cart subtotal</strong> · ${subtotal.toFixed(2)}
         <div style={{ marginTop: "0.25rem", fontSize: "0.75em", opacity: 0.7 }}>
           Nested addressable parton inside the stock ticker. Host can refetch{" "}
-          <code>magento:cart-summary</code> independently — the framework's
-          commit-defer mechanism guarantees the snapshot lands in the host's
-          registry before the response goes out.
+          <code>magento:cart-summary</code> independently — the framework's commit-defer mechanism
+          guarantees the snapshot lands in the host's registry before the response goes out.
         </div>
       </div>
     )
   },
   { selector: "cart-summary" },
 )
-

@@ -17,14 +17,14 @@ export const CULLED_KEY_SUFFIX = "~cull"
 
 /** The culled-state twin of a base matchKey / variant key. */
 export function culledKey(base: string): string {
-	return `${base}${CULLED_KEY_SUFFIX}`
+  return `${base}${CULLED_KEY_SUFFIX}`
 }
 
 export function isCulledKey(key: string): boolean {
-	return key.endsWith(CULLED_KEY_SUFFIX)
+  return key.endsWith(CULLED_KEY_SUFFIX)
 }
 
 /** Strip the culled suffix — identity for base keys. */
 export function baseKey(key: string): string {
-	return isCulledKey(key) ? key.slice(0, -CULLED_KEY_SUFFIX.length) : key
+  return isCulledKey(key) ? key.slice(0, -CULLED_KEY_SUFFIX.length) : key
 }

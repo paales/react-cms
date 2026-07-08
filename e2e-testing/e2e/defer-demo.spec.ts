@@ -46,7 +46,10 @@ test.describe("Partial defer demo", () => {
     const hits = dispatches.filter(
       (c) => c.partials != null && c.partials.split(",").includes("manual"),
     )
-    expect(hits.length, "expected exactly one refetch dispatch for `manual`").toBeGreaterThanOrEqual(1)
+    expect(
+      hits.length,
+      "expected exactly one refetch dispatch for `manual`",
+    ).toBeGreaterThanOrEqual(1)
   })
 
   test("client nav STREAMS: shell reveals, then async content arrives (no tear)", async ({

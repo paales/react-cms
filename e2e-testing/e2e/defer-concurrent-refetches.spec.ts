@@ -1,4 +1,10 @@
-import { clearCaches, test, expect, recordPartialDispatches, waitForPageInteractive } from "./fixtures"
+import {
+  clearCaches,
+  test,
+  expect,
+  recordPartialDispatches,
+  waitForPageInteractive,
+} from "./fixtures"
 
 /**
  * /defer-demo § 6 — concurrent refetch behavior.
@@ -36,7 +42,9 @@ test.describe("concurrent refetches", () => {
       .not.toBe(before)
   })
 
-  test("a streaming refetch's milestones settle promptly — the button doesn't hang loading", async ({ page }) => {
+  test("a streaming refetch's milestones settle promptly — the button doesn't hang loading", async ({
+    page,
+  }) => {
     // `refresh-concurrent-a` fires `reload({selector, streaming: true})`.
     // `streaming` is a CLIENT commit-mode switch (progressive reveal).
     // The fire's `finished` resolves at the covering segment's settle
@@ -125,9 +133,7 @@ test.describe("concurrent refetches", () => {
     // union of uncovered forces, so across the dispatch log all three
     // ids appear (however many envelopes carried them).
     console.log(`dispatches after concurrent clicks:`, JSON.stringify(rscCalls))
-    const statedIds = new Set(
-      rscCalls.flatMap((c) => c.partials?.split(",").filter(Boolean) ?? []),
-    )
+    const statedIds = new Set(rscCalls.flatMap((c) => c.partials?.split(",").filter(Boolean) ?? []))
     for (const id of ["concurrent-a", "concurrent-b", "concurrent-c"]) {
       expect([...statedIds], `expected ${id} to be stated`).toContainEqual(
         expect.stringContaining(id),
@@ -165,7 +171,6 @@ test.describe("concurrent refetches", () => {
       overlaps,
       `render intervals must overlap somewhere (parallel handling); intervals: ${JSON.stringify(intervals)}`,
     ).toBe(true)
-
   })
 
   test("rapid-fire refetches against the SAME id: last completion wins", async ({ page }) => {

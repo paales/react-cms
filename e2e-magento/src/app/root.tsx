@@ -17,8 +17,7 @@ export function Root() {
           <main>
             <h1>e2e-magento</h1>
             <p>
-              Empty showcase scaffold. Real Magento integration lands here as
-              partials are added.
+              Empty showcase scaffold. Real Magento integration lands here as partials are added.
             </p>
           </main>
         </body>

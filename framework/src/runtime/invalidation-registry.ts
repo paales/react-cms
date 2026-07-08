@@ -176,8 +176,7 @@ export function encodeArgsForSelector(args: Record<string, unknown>): string {
   for (const k of keys) {
     const v = args[k]
     if (v === undefined) continue
-    const encodedValue =
-      typeof v === "string" ? v : `${TYPE_TAG}${JSON.stringify(v)}`
+    const encodedValue = typeof v === "string" ? v : `${TYPE_TAG}${JSON.stringify(v)}`
     parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(encodedValue)}`)
   }
   return parts.join("&")

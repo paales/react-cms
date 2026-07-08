@@ -103,9 +103,9 @@ describe("deriveTemplate", () => {
     const [placeholderNode, lazyNode] = derived as ReactNode[]
     // The wrapper became a placeholder…
     expect(isValidElement(placeholderNode)).toBe(true)
-    expect(((placeholderNode as ReactElement).props as Record<string, unknown>)["data-partial-id"]).toBe(
-      "hero",
-    )
+    expect(
+      ((placeholderNode as ReactElement).props as Record<string, unknown>)["data-partial-id"],
+    ).toBe("hero")
     // …while the pending lazy is the ORIGINAL node, untouched, so
     // React's native Suspense machinery resolves it.
     expect(lazyNode).toBe(pendingChunk)

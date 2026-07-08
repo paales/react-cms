@@ -325,7 +325,6 @@ function enqueue(
   })
 }
 
-
 /**
  * Drain the queue one batch at a time, serially. While a batch is
  * in flight (`inflight === true`), new enqueues just push into the

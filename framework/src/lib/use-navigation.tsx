@@ -128,10 +128,7 @@ function containsSelfInSelector(s: string | string[] | undefined): boolean {
   return s.split(/\s+/).some((t) => t === SELF_TOKEN)
 }
 
-function replaceSelfInSelector(
-  s: string | string[],
-  id: string,
-): string | string[] {
+function replaceSelfInSelector(s: string | string[], id: string): string | string[] {
   if (Array.isArray(s)) return s.map((t) => (t === SELF_TOKEN ? id : t))
   return s
     .split(/\s+/)
@@ -146,9 +143,7 @@ function resolveSelfInReloadOptions(
   if (!options) return options
   if (!containsSelfInSelector(options.selector)) return options
   if (!ambientId) {
-    throw new Error(
-      `"${SELF_TOKEN}" used outside a partial — no enclosing partial id is available`,
-    )
+    throw new Error(`"${SELF_TOKEN}" used outside a partial — no enclosing partial id is available`)
   }
   return { ...options, selector: replaceSelfInSelector(options.selector!, ambientId) }
 }
@@ -160,9 +155,7 @@ function resolveSelfInNavigateOptions(
   if (!options) return options
   if (!containsSelfInSelector(options.selector)) return options
   if (!ambientId) {
-    throw new Error(
-      `"${SELF_TOKEN}" used outside a partial — no enclosing partial id is available`,
-    )
+    throw new Error(`"${SELF_TOKEN}" used outside a partial — no enclosing partial id is available`)
   }
   return { ...options, selector: replaceSelfInSelector(options.selector!, ambientId) }
 }
@@ -207,10 +200,7 @@ const INITIAL_PROGRESS_STATE: InternalProgressState = {
 function classifyMilestoneError(err: unknown): NavigationError | null {
   if (err instanceof Error && err.name === "AbortError") return null
   if (err instanceof NavigationError) return err
-  return toNavigationError(
-    err,
-    typeof window !== "undefined" ? window.location.href : "?",
-  )
+  return toNavigationError(err, typeof window !== "undefined" ? window.location.href : "?")
 }
 
 /**
@@ -224,10 +214,7 @@ function rejectedMilestones(err: unknown): NavigationMilestones {
   const wrapped =
     err instanceof NavigationError
       ? err
-      : toNavigationError(
-          err,
-          typeof window !== "undefined" ? window.location.href : "?",
-        )
+      : toNavigationError(err, typeof window !== "undefined" ? window.location.href : "?")
   const m: NavigationMilestones = {
     committed: Promise.reject(wrapped),
     streaming: Promise.reject(wrapped),
@@ -364,9 +351,7 @@ function attachMilestoneWatchers(
   const onRejection = (err: unknown) => {
     const navErr = classifyMilestoneError(err)
     setState((s) =>
-      s.fireId !== myFireId
-        ? s
-        : { ...s, finished: true, error: s.error ?? navErr },
+      s.fireId !== myFireId ? s : { ...s, finished: true, error: s.error ?? navErr },
     )
   }
   milestones.committed.then(onSuccess("committed"), onRejection)
@@ -426,10 +411,7 @@ function doPreload(target: NavigateTarget, frameName: string | null): Promise<vo
   const parsed = new URL(url, window.location.origin)
   if (parsed.origin !== window.location.origin) return Promise.resolve()
   // Warming the page you're on states nothing new.
-  if (
-    parsed.pathname + parsed.search ===
-    window.location.pathname + window.location.search
-  ) {
+  if (parsed.pathname + parsed.search === window.location.pathname + window.location.search) {
     return Promise.resolve()
   }
   if (_channelIsDegraded()) {

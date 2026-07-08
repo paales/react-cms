@@ -126,10 +126,7 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
       matchKey: "mk-abc",
       emittedFp: "fp-xyz",
     })
-    const wrapped = wrapStreamWithSnapshotTrailer(
-      source,
-      () => new Map([["demo", snap]]),
-    )
+    const wrapped = wrapStreamWithSnapshotTrailer(source, () => new Map([["demo", snap]]))
     const bytes = await readAll(wrapped)
     const { flightBytes, snapshots } = parseSnapshotTrailer(bytes)
     expect(new TextDecoder().decode(flightBytes)).toBe(sourceText)
@@ -142,7 +139,7 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
   })
 
   it("flight bytes split cleanly from the trailer at the \\xFF byte", async () => {
-    const source = makeStream('xyz\n')
+    const source = makeStream("xyz\n")
     const wrapped = wrapStreamWithSnapshotTrailer(source, () => new Map())
     const bytes = await readAll(wrapped)
     const { flightBytes, snapshots } = parseSnapshotTrailer(bytes)
@@ -200,4 +197,3 @@ describe("wrapStreamWithSnapshotTrailer + parseSnapshotTrailer", () => {
     expect(snapshots!.b.labels).toEqual(["b", "shared"])
   })
 })
-

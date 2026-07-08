@@ -9,11 +9,7 @@ import {
   serializeRow,
   type FlightRow,
 } from "../flight-rewrite.ts"
-import {
-  consumePayload,
-  flightToString,
-  renderServerToFlight,
-} from "../../test/rsc-server.ts"
+import { consumePayload, flightToString, renderServerToFlight } from "../../test/rsc-server.ts"
 
 const ENC = new TextEncoder()
 
@@ -107,9 +103,9 @@ describe("rewriteFlightStream", () => {
   })
 
   it("handles chunks with multiple rows", async () => {
-    const source = stringStream('0:1\n1:2\n2:3\n')
+    const source = stringStream("0:1\n1:2\n2:3\n")
     const rewritten = rewriteFlightStream(source, passthroughRewriter)
-    expect(await new Response(rewritten).text()).toBe('0:1\n1:2\n2:3\n')
+    expect(await new Response(rewritten).text()).toBe("0:1\n1:2\n2:3\n")
   })
 
   it("passthrough of a real render is byte-identical to the input", async () => {
@@ -143,9 +139,8 @@ describe("rewriteFlightStream", () => {
   })
 
   it("rewriter can drop a row by returning null", async () => {
-    const rewritten = rewriteFlightStream(
-      stringStream('0:"keep"\n1:"drop"\n2:"keep"\n'),
-      (row) => (row.id === "1" ? null : row),
+    const rewritten = rewriteFlightStream(stringStream('0:"keep"\n1:"drop"\n2:"keep"\n'), (row) =>
+      row.id === "1" ? null : row,
     )
     expect(await new Response(rewritten).text()).toBe('0:"keep"\n2:"keep"\n')
   })
@@ -258,7 +253,7 @@ describe("moduleRefRewriter", () => {
 
   it("tolerates malformed I row data (passes through)", async () => {
     const rw = moduleRefRewriter(() => "SHOULD-NOT-APPLY")
-    const input = '1:I[malformed\n'
+    const input = "1:I[malformed\n"
     const out = await new Response(rewriteFlightStream(stringStream(input), rw)).text()
     expect(out).toBe(input)
   })

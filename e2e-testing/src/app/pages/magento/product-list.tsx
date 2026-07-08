@@ -135,11 +135,7 @@ function ProductCard({ product }: { product: ProductItem }) {
           <Suspense
             fallback={<LivePriceFallback sku={sku} basePrice={price} currency={currency} />}
           >
-            <LivePricePartial
-              sku={sku}
-              basePrice={price}
-              currency={currency}
-            />
+            <LivePricePartial sku={sku} basePrice={price} currency={currency} />
           </Suspense>
         )}
         <div className="mt-2">{sku && <AddToCartButton sku={sku} />}</div>

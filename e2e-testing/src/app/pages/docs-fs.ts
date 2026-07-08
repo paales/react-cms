@@ -92,7 +92,13 @@ export function resolveDocPath(filepath: string): ResolvedDoc | null {
   const root = docsRoot()
   const abs = resolve(root, filepath)
   if (abs !== root && !abs.startsWith(root + sep)) return null
-  const rel = abs === root ? "" : abs.slice(root.length + 1).split(sep).join("/")
+  const rel =
+    abs === root
+      ? ""
+      : abs
+          .slice(root.length + 1)
+          .split(sep)
+          .join("/")
   return { abs, rel, ext: extname(abs).toLowerCase() }
 }
 

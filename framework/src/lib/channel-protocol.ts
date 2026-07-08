@@ -42,7 +42,7 @@
 /** POST target for channel envelopes. Framework-owned, handled by
  *  `createRscHandler` before any app routing — inside a lightweight
  *  request scope (see [[connection-session]]'s `handleChannelPost`). */
-export const CHANNEL_ENDPOINT = "/__parton/channel";
+export const CHANNEL_ENDPOINT = "/__parton/channel"
 
 /** POST target for the ATTACH — the connection's opening statement.
  *  The dedicated path IS the dispatch signal: a POST here carries the
@@ -50,7 +50,7 @@ export const CHANNEL_ENDPOINT = "/__parton/channel";
  *  segmented stream. The server builds the connection's request state
  *  from the statement's `url` (same-origin-validated); no page URL
  *  ever carries transport params for it. */
-export const ATTACH_ENDPOINT = "/__parton/live";
+export const ATTACH_ENDPOINT = "/__parton/live"
 
 /** WebSocket upgrade path for the full-duplex transport (the opt-in
  *  WebSocket transport — [[channel-transport]]). ONE socket carries
@@ -58,7 +58,7 @@ export const ATTACH_ENDPOINT = "/__parton/live";
  *  JSON text messages, the SAME `\xFF`-marker downstream byte stream
  *  rides down as binary messages (an OPAQUE TUNNEL — no reframing).
  *  The channel semantics are transport-agnostic; only the pipe swaps. */
-export const CHANNEL_WS_ENDPOINT = "/__parton/ws";
+export const CHANNEL_WS_ENDPOINT = "/__parton/ws"
 
 /** WebTransport (HTTP/3) path for the full-duplex transport (the opt-in
  *  WebTransport transport — [[channel-transport]]). ONE bidirectional
@@ -71,7 +71,7 @@ export const CHANNEL_WS_ENDPOINT = "/__parton/ws";
  *  reframing). WebTransport requires HTTP/3, which Vite dev/preview does
  *  not serve; a standalone QUIC listener drives `createWebTransportServer`
  *  ([[channel-server]]). */
-export const CHANNEL_WT_ENDPOINT = "/__parton/wt";
+export const CHANNEL_WT_ENDPOINT = "/__parton/wt"
 
 /** Max delivery seqs a connection may have in flight past the client's
  *  cumulative ack before the driver stops opening lanes — the server's
@@ -81,7 +81,7 @@ export const CHANNEL_WT_ENDPOINT = "/__parton/wt";
  *  [[channel-client]], half this window) must free the gate well
  *  before it fills, so the number the cadence derives from and the
  *  number the gate enforces are one constant. */
-export const UNACKED_DELIVERY_WINDOW = 64;
+export const UNACKED_DELIVERY_WINDOW = 64
 
 /**
  * The attach statement — the full client statement presented when a
@@ -126,16 +126,16 @@ export const UNACKED_DELIVERY_WINDOW = 64;
  *     statement (the attach subsumes the URL timeline).
  */
 export interface AttachStatement {
-	url: string;
-	cached: readonly string[];
-	since: { epoch: string; ts: number } | null;
-	visible: readonly string[] | null;
-	/** Optional on the wire (absent = 0 — a client stating no upstream
-	 *  watermark); the decoder always normalizes it in. */
-	applied?: number;
-	/** Optional on the wire; entries MUST carry a frame path (window
-	 *  intent folds into `url` — a window-scoped entry is malformed). */
-	frames?: UrlFrame[];
+  url: string
+  cached: readonly string[]
+  since: { epoch: string; ts: number } | null
+  visible: readonly string[] | null
+  /** Optional on the wire (absent = 0 — a client stating no upstream
+   *  watermark); the decoder always normalizes it in. */
+  applied?: number
+  /** Optional on the wire; entries MUST carry a frame path (window
+   *  intent folds into `url` — a window-scoped entry is malformed). */
+  frames?: UrlFrame[]
 }
 
 /**
@@ -146,58 +146,52 @@ export interface AttachStatement {
  * stay indifferent to a newer client's statement.
  */
 export function decodeAttachStatement(value: unknown): AttachStatement | null {
-	if (value === null || typeof value !== "object") return null;
-	const v = value as Record<string, unknown>;
-	if (typeof v.url !== "string" || v.url.length === 0) return null;
-	if (!isStringArray(v.cached)) return null;
-	let since: AttachStatement["since"] = null;
-	if (v.since !== null && v.since !== undefined) {
-		if (typeof v.since !== "object") return null;
-		const s = v.since as Record<string, unknown>;
-		if (typeof s.epoch !== "string" || s.epoch.length === 0) return null;
-		if (typeof s.ts !== "number" || !Number.isFinite(s.ts) || s.ts < 0)
-			return null;
-		since = { epoch: s.epoch, ts: s.ts };
-	}
-	let visible: AttachStatement["visible"] = null;
-	if (v.visible !== null && v.visible !== undefined) {
-		if (!isStringArray(v.visible)) return null;
-		visible = v.visible;
-	}
-	// Absent `applied` normalizes to 0 — a client from before the ack
-	// package states no upstream watermark, and 0 is exactly that.
-	let applied = 0;
-	if (v.applied !== null && v.applied !== undefined) {
-		if (
-			typeof v.applied !== "number" ||
-			!Number.isFinite(v.applied) ||
-			v.applied < 0
-		)
-			return null;
-		applied = v.applied;
-	}
-	// Attach-with-intent: frame-scoped url statements riding the attach
-	// they triggered. Window intent has no place here — the statement's
-	// `url` IS the window statement — so a frame-less entry is malformed.
-	let frames: UrlFrame[] | undefined;
-	if (v.frames !== null && v.frames !== undefined) {
-		if (!Array.isArray(v.frames)) return null;
-		frames = [];
-		for (const raw of v.frames) {
-			if (raw === null || typeof raw !== "object") return null;
-			const decoded = decodeUrlFrameShape(raw as Record<string, unknown>);
-			if (decoded === null || decoded.frame === undefined) return null;
-			frames.push(decoded);
-		}
-	}
-	return {
-		url: v.url,
-		cached: v.cached,
-		since,
-		visible,
-		applied,
-		...(frames !== undefined && frames.length > 0 ? { frames } : {}),
-	};
+  if (value === null || typeof value !== "object") return null
+  const v = value as Record<string, unknown>
+  if (typeof v.url !== "string" || v.url.length === 0) return null
+  if (!isStringArray(v.cached)) return null
+  let since: AttachStatement["since"] = null
+  if (v.since !== null && v.since !== undefined) {
+    if (typeof v.since !== "object") return null
+    const s = v.since as Record<string, unknown>
+    if (typeof s.epoch !== "string" || s.epoch.length === 0) return null
+    if (typeof s.ts !== "number" || !Number.isFinite(s.ts) || s.ts < 0) return null
+    since = { epoch: s.epoch, ts: s.ts }
+  }
+  let visible: AttachStatement["visible"] = null
+  if (v.visible !== null && v.visible !== undefined) {
+    if (!isStringArray(v.visible)) return null
+    visible = v.visible
+  }
+  // Absent `applied` normalizes to 0 — a client from before the ack
+  // package states no upstream watermark, and 0 is exactly that.
+  let applied = 0
+  if (v.applied !== null && v.applied !== undefined) {
+    if (typeof v.applied !== "number" || !Number.isFinite(v.applied) || v.applied < 0) return null
+    applied = v.applied
+  }
+  // Attach-with-intent: frame-scoped url statements riding the attach
+  // they triggered. Window intent has no place here — the statement's
+  // `url` IS the window statement — so a frame-less entry is malformed.
+  let frames: UrlFrame[] | undefined
+  if (v.frames !== null && v.frames !== undefined) {
+    if (!Array.isArray(v.frames)) return null
+    frames = []
+    for (const raw of v.frames) {
+      if (raw === null || typeof raw !== "object") return null
+      const decoded = decodeUrlFrameShape(raw as Record<string, unknown>)
+      if (decoded === null || decoded.frame === undefined) return null
+      frames.push(decoded)
+    }
+  }
+  return {
+    url: v.url,
+    cached: v.cached,
+    since,
+    visible,
+    applied,
+    ...(frames !== undefined && frames.length > 0 ? { frames } : {}),
+  }
 }
 
 /**
@@ -210,18 +204,18 @@ export function decodeAttachStatement(value: unknown): AttachStatement | null {
  * (in-view flips before cull-outs) so the visible world's lanes lead.
  */
 export interface VisibleFrame {
-	kind: "visible";
-	/** Parton ids whose in/out state flipped since the last statement. */
-	changed: string[];
-	/** The complete visible set as of this frame. Replaces the
-	 *  connection's set wholesale (no incremental merge). */
-	visible: string[];
-	/** The client's CURRENT cached tokens (`id:matchKey:fp`) for the
-	 *  `changed` ids — its actual holdings at flip time, which the
-	 *  driver swaps into the connection's cached override before a
-	 *  direct flip's lane renders. An EMPTY array is a statement ("I
-	 *  hold nothing"); an ABSENT field makes no holdings statement. */
-	cached?: string[];
+  kind: "visible"
+  /** Parton ids whose in/out state flipped since the last statement. */
+  changed: string[]
+  /** The complete visible set as of this frame. Replaces the
+   *  connection's set wholesale (no incremental merge). */
+  visible: string[]
+  /** The client's CURRENT cached tokens (`id:matchKey:fp`) for the
+   *  `changed` ids — its actual holdings at flip time, which the
+   *  driver swaps into the connection's cached override before a
+   *  direct flip's lane renders. An EMPTY array is a statement ("I
+   *  hold nothing"); an ABSENT field makes no holdings statement. */
+  cached?: string[]
 }
 
 /**
@@ -232,7 +226,7 @@ export interface VisibleFrame {
  * drive loop, and closes the session.
  */
 export interface DetachFrame {
-	kind: "detach";
+  kind: "detach"
 }
 
 /**
@@ -260,9 +254,9 @@ export interface DetachFrame {
  * knows which arrivals its live navigation point superseded.
  */
 export interface AckFrame {
-	kind: "ack";
-	delivered: number;
-	dropped?: number[];
+  kind: "ack"
+  delivered: number
+  dropped?: number[]
 }
 
 /**
@@ -283,10 +277,10 @@ export interface AckFrame {
  * and telemetry is context, not a dependency.
  */
 export interface TelemetryFrame {
-	kind: "telemetry";
-	viewport: { w: number; h: number };
-	scroll: { x: number; y: number; vx: number; vy: number };
-	at: number;
+  kind: "telemetry"
+  viewport: { w: number; h: number }
+  scroll: { x: number; y: number; vx: number; vy: number }
+  at: number
 }
 
 /**
@@ -327,11 +321,11 @@ export interface TelemetryFrame {
  * [[fp-trailer-marker]]'s `seq` entry).
  */
 export interface UrlFrame {
-	kind: "url";
-	url: string;
-	intent: "push" | "replace" | "silent";
-	streaming?: boolean;
-	frame?: string[];
+  kind: "url"
+  url: string
+  intent: "push" | "replace" | "silent"
+  streaming?: boolean
+  frame?: string[]
 }
 
 /**
@@ -345,8 +339,8 @@ export interface UrlFrame {
  * render).
  */
 export interface CancelFrame {
-	kind: "cancel";
-	scope: string;
+  kind: "cancel"
+  scope: string
 }
 
 /**
@@ -363,8 +357,8 @@ export interface CancelFrame {
  * becomes a render's request state.
  */
 export interface WarmFrame {
-	kind: "warm";
-	url: string;
+  kind: "warm"
+  url: string
 }
 
 /**
@@ -385,11 +379,11 @@ export interface WarmFrame {
  * is redundant.
  */
 export interface CookieFrame {
-	kind: "cookie";
-	name: string;
-	/** The new value as it appears in the `Cookie` header (URL-encoded,
-	 *  the wire form `parseCookies` returns); `null` is a delete. */
-	value: string | null;
+  kind: "cookie"
+  name: string
+  /** The new value as it appears in the `Cookie` header (URL-encoded,
+   *  the wire form `parseCookies` returns); `null` is a delete. */
+  value: string | null
 }
 
 /** The frame kinds shipped today. The grammar is open: an envelope may
@@ -397,33 +391,33 @@ export interface CookieFrame {
  *  rather than erroring, the same extensibility rule the downstream
  *  marker grammar follows. */
 export type ChannelFrame =
-	| VisibleFrame
-	| DetachFrame
-	| AckFrame
-	| TelemetryFrame
-	| UrlFrame
-	| CancelFrame
-	| WarmFrame
-	| CookieFrame;
+  | VisibleFrame
+  | DetachFrame
+  | AckFrame
+  | TelemetryFrame
+  | UrlFrame
+  | CancelFrame
+  | WarmFrame
+  | CookieFrame
 
 export interface ChannelEnvelope {
-	/** The live connection this envelope addresses. An explicit token,
-	 *  never inferred: an envelope for a connection the server doesn't
-	 *  hold gets a `404`, the transport's fall-back-to-discrete
-	 *  signal. */
-	connection: string;
-	/** PAGE-LIFETIME monotonic envelope sequence — minted by the client
-	 *  transport and never restarted at establishment, so retransmitted
-	 *  reliable envelopes keep their original seqs across reattaches and
-	 *  the downstream `applied` marker names one unambiguous timeline.
-	 *  The server applies a `visible` frame's snapshot only from
-	 *  envelopes at or past the last applied seq, so two in-flight POSTs
-	 *  can't commit an older set over a newer one; per-id flip
-	 *  statements order by seq independently (a stale envelope's flips
-	 *  still queue — see [[connection-session]]). */
-	seq: number;
-	/** Frames, ordered within the envelope. */
-	frames: ChannelFrame[];
+  /** The live connection this envelope addresses. An explicit token,
+   *  never inferred: an envelope for a connection the server doesn't
+   *  hold gets a `404`, the transport's fall-back-to-discrete
+   *  signal. */
+  connection: string
+  /** PAGE-LIFETIME monotonic envelope sequence — minted by the client
+   *  transport and never restarted at establishment, so retransmitted
+   *  reliable envelopes keep their original seqs across reattaches and
+   *  the downstream `applied` marker names one unambiguous timeline.
+   *  The server applies a `visible` frame's snapshot only from
+   *  envelopes at or past the last applied seq, so two in-flight POSTs
+   *  can't commit an older set over a newer one; per-id flip
+   *  statements order by seq independently (a stale envelope's flips
+   *  still queue — see [[connection-session]]). */
+  seq: number
+  /** Frames, ordered within the envelope. */
+  frames: ChannelFrame[]
 }
 
 /**
@@ -435,107 +429,101 @@ export interface ChannelEnvelope {
  * indifferent to a newer client's frames.
  */
 export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
-	if (value === null || typeof value !== "object") return null;
-	const v = value as Record<string, unknown>;
-	if (typeof v.connection !== "string" || v.connection.length === 0)
-		return null;
-	if (typeof v.seq !== "number" || !Number.isFinite(v.seq)) return null;
-	if (!Array.isArray(v.frames)) return null;
-	const frames: ChannelFrame[] = [];
-	for (const raw of v.frames) {
-		if (raw === null || typeof raw !== "object") return null;
-		const f = raw as Record<string, unknown>;
-		if (typeof f.kind !== "string") return null;
-		if (f.kind === "visible") {
-			if (!isStringArray(f.changed) || !isStringArray(f.visible)) return null;
-			if (f.cached !== undefined && !isStringArray(f.cached)) return null;
-			frames.push({
-				kind: "visible",
-				changed: f.changed,
-				visible: f.visible,
-				cached: f.cached,
-			});
-			continue;
-		}
-		if (f.kind === "detach") {
-			frames.push({ kind: "detach" });
-			continue;
-		}
-		if (f.kind === "ack") {
-			if (
-				typeof f.delivered !== "number" ||
-				!Number.isFinite(f.delivered) ||
-				f.delivered < 0
-			)
-				return null;
-			// `dropped` is optional; when present it must be an array of
-			// non-negative finite numbers — a malformed one is a protocol
-			// violation like any known-kind field's (the envelope 400s).
-			let dropped: number[] | undefined;
-			if (f.dropped !== undefined && f.dropped !== null) {
-				if (!Array.isArray(f.dropped)) return null;
-				for (const d of f.dropped) {
-					if (typeof d !== "number" || !Number.isFinite(d) || d < 0)
-						return null;
-				}
-				dropped = f.dropped as number[];
-			}
-			frames.push({
-				kind: "ack",
-				delivered: f.delivered,
-				...(dropped !== undefined && dropped.length > 0 ? { dropped } : {}),
-			});
-			continue;
-		}
-		if (f.kind === "telemetry") {
-			// Strict-known: a malformed telemetry frame is a protocol
-			// violation like any known kind's — lossy class means droppable
-			// in transit, never sloppily decoded.
-			const viewport = decodeFiniteRecord(f.viewport, ["w", "h"]);
-			const scroll = decodeFiniteRecord(f.scroll, ["x", "y", "vx", "vy"]);
-			if (viewport === null || scroll === null) return null;
-			if (typeof f.at !== "number" || !Number.isFinite(f.at)) return null;
-			frames.push({
-				kind: "telemetry",
-				viewport: viewport as TelemetryFrame["viewport"],
-				scroll: scroll as TelemetryFrame["scroll"],
-				at: f.at,
-			});
-			continue;
-		}
-		if (f.kind === "url") {
-			// Strict-known: a malformed url frame is a protocol violation.
-			// Same-origin validation needs the request and lives with the
-			// endpoint (`handleChannelPost`) — the decoder checks shape only.
-			const decoded = decodeUrlFrameShape(f);
-			if (decoded === null) return null;
-			frames.push(decoded);
-			continue;
-		}
-		if (f.kind === "cancel") {
-			// Strict-known: a malformed cancel frame is a protocol violation.
-			if (typeof f.scope !== "string" || f.scope.length === 0) return null;
-			frames.push({ kind: "cancel", scope: f.scope });
-			continue;
-		}
-		if (f.kind === "warm") {
-			// Strict-known: a malformed warm frame is a protocol violation.
-			// Same-origin validation lives with the endpoint, like `url`.
-			if (typeof f.url !== "string" || f.url.length === 0) return null;
-			frames.push({ kind: "warm", url: f.url });
-			continue;
-		}
-		if (f.kind === "cookie") {
-			// Strict-known: a malformed cookie frame is a protocol violation.
-			// `value` is required — a string set or an explicit `null` delete.
-			if (typeof f.name !== "string" || f.name.length === 0) return null;
-			if (f.value !== null && typeof f.value !== "string") return null;
-			frames.push({ kind: "cookie", name: f.name, value: f.value });
-			continue;
-		}
-		// Unknown kind — skipped, never an error.
-	}
-	return { connection: v.connection, seq: v.seq, frames };
+  if (value === null || typeof value !== "object") return null
+  const v = value as Record<string, unknown>
+  if (typeof v.connection !== "string" || v.connection.length === 0) return null
+  if (typeof v.seq !== "number" || !Number.isFinite(v.seq)) return null
+  if (!Array.isArray(v.frames)) return null
+  const frames: ChannelFrame[] = []
+  for (const raw of v.frames) {
+    if (raw === null || typeof raw !== "object") return null
+    const f = raw as Record<string, unknown>
+    if (typeof f.kind !== "string") return null
+    if (f.kind === "visible") {
+      if (!isStringArray(f.changed) || !isStringArray(f.visible)) return null
+      if (f.cached !== undefined && !isStringArray(f.cached)) return null
+      frames.push({
+        kind: "visible",
+        changed: f.changed,
+        visible: f.visible,
+        cached: f.cached,
+      })
+      continue
+    }
+    if (f.kind === "detach") {
+      frames.push({ kind: "detach" })
+      continue
+    }
+    if (f.kind === "ack") {
+      if (typeof f.delivered !== "number" || !Number.isFinite(f.delivered) || f.delivered < 0)
+        return null
+      // `dropped` is optional; when present it must be an array of
+      // non-negative finite numbers — a malformed one is a protocol
+      // violation like any known-kind field's (the envelope 400s).
+      let dropped: number[] | undefined
+      if (f.dropped !== undefined && f.dropped !== null) {
+        if (!Array.isArray(f.dropped)) return null
+        for (const d of f.dropped) {
+          if (typeof d !== "number" || !Number.isFinite(d) || d < 0) return null
+        }
+        dropped = f.dropped as number[]
+      }
+      frames.push({
+        kind: "ack",
+        delivered: f.delivered,
+        ...(dropped !== undefined && dropped.length > 0 ? { dropped } : {}),
+      })
+      continue
+    }
+    if (f.kind === "telemetry") {
+      // Strict-known: a malformed telemetry frame is a protocol
+      // violation like any known kind's — lossy class means droppable
+      // in transit, never sloppily decoded.
+      const viewport = decodeFiniteRecord(f.viewport, ["w", "h"])
+      const scroll = decodeFiniteRecord(f.scroll, ["x", "y", "vx", "vy"])
+      if (viewport === null || scroll === null) return null
+      if (typeof f.at !== "number" || !Number.isFinite(f.at)) return null
+      frames.push({
+        kind: "telemetry",
+        viewport: viewport as TelemetryFrame["viewport"],
+        scroll: scroll as TelemetryFrame["scroll"],
+        at: f.at,
+      })
+      continue
+    }
+    if (f.kind === "url") {
+      // Strict-known: a malformed url frame is a protocol violation.
+      // Same-origin validation needs the request and lives with the
+      // endpoint (`handleChannelPost`) — the decoder checks shape only.
+      const decoded = decodeUrlFrameShape(f)
+      if (decoded === null) return null
+      frames.push(decoded)
+      continue
+    }
+    if (f.kind === "cancel") {
+      // Strict-known: a malformed cancel frame is a protocol violation.
+      if (typeof f.scope !== "string" || f.scope.length === 0) return null
+      frames.push({ kind: "cancel", scope: f.scope })
+      continue
+    }
+    if (f.kind === "warm") {
+      // Strict-known: a malformed warm frame is a protocol violation.
+      // Same-origin validation lives with the endpoint, like `url`.
+      if (typeof f.url !== "string" || f.url.length === 0) return null
+      frames.push({ kind: "warm", url: f.url })
+      continue
+    }
+    if (f.kind === "cookie") {
+      // Strict-known: a malformed cookie frame is a protocol violation.
+      // `value` is required — a string set or an explicit `null` delete.
+      if (typeof f.name !== "string" || f.name.length === 0) return null
+      if (f.value !== null && typeof f.value !== "string") return null
+      frames.push({ kind: "cookie", name: f.name, value: f.value })
+      continue
+    }
+    // Unknown kind — skipped, never an error.
+  }
+  return { connection: v.connection, seq: v.seq, frames }
 }
 
 /** Decode the `url`-frame field shape (`kind` already established, or
@@ -543,26 +531,25 @@ export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
  *  malformed. Frame scope, when present, is a non-empty path of
  *  non-empty segment names. */
 function decodeUrlFrameShape(f: Record<string, unknown>): UrlFrame | null {
-	if (typeof f.url !== "string" || f.url.length === 0) return null;
-	if (f.intent !== "push" && f.intent !== "replace" && f.intent !== "silent")
-		return null;
-	let framePath: string[] | undefined;
-	if (f.frame !== undefined && f.frame !== null) {
-		if (!isStringArray(f.frame) || f.frame.length === 0) return null;
-		if (f.frame.some((s) => s.length === 0)) return null;
-		framePath = f.frame;
-	}
-	return {
-		kind: "url",
-		url: f.url,
-		intent: f.intent,
-		...(f.streaming === true ? { streaming: true } : {}),
-		...(framePath ? { frame: framePath } : {}),
-	};
+  if (typeof f.url !== "string" || f.url.length === 0) return null
+  if (f.intent !== "push" && f.intent !== "replace" && f.intent !== "silent") return null
+  let framePath: string[] | undefined
+  if (f.frame !== undefined && f.frame !== null) {
+    if (!isStringArray(f.frame) || f.frame.length === 0) return null
+    if (f.frame.some((s) => s.length === 0)) return null
+    framePath = f.frame
+  }
+  return {
+    kind: "url",
+    url: f.url,
+    intent: f.intent,
+    ...(f.streaming === true ? { streaming: true } : {}),
+    ...(framePath ? { frame: framePath } : {}),
+  }
 }
 
 function isStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every((x) => typeof x === "string");
+  return Array.isArray(value) && value.every((x) => typeof x === "string")
 }
 
 /** Decode an object whose named keys must all be finite numbers.
@@ -570,16 +557,16 @@ function isStringArray(value: unknown): value is string[] {
  *  non-finite. Unknown extra keys are ignored — the statement grows by
  *  adding fields. */
 function decodeFiniteRecord(
-	value: unknown,
-	keys: readonly string[],
+  value: unknown,
+  keys: readonly string[],
 ): Record<string, number> | null {
-	if (value === null || typeof value !== "object") return null;
-	const v = value as Record<string, unknown>;
-	const out: Record<string, number> = {};
-	for (const key of keys) {
-		const n = v[key];
-		if (typeof n !== "number" || !Number.isFinite(n)) return null;
-		out[key] = n;
-	}
-	return out;
+  if (value === null || typeof value !== "object") return null
+  const v = value as Record<string, unknown>
+  const out: Record<string, number> = {}
+  for (const key of keys) {
+    const n = v[key]
+    if (typeof n !== "number" || !Number.isFinite(n)) return null
+    out[key] = n
+  }
+  return out
 }

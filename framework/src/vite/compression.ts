@@ -45,11 +45,7 @@
  *     must pass through untransformed).
  */
 
-import {
-  createBrotliCompress,
-  createGzip,
-  constants as zlib,
-} from "node:zlib"
+import { createBrotliCompress, createGzip, constants as zlib } from "node:zlib"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Plugin } from "vite"
 
@@ -148,7 +144,11 @@ function appendHeader(
   return { ...headers, [name]: value }
 }
 
-function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void): void {
+function middleware(
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: (err?: unknown) => void,
+): void {
   if (req.method === "HEAD") return next()
 
   const encoding = pickEncoding(req.headers["accept-encoding"])
@@ -170,7 +170,8 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
   const origEnd = res.end.bind(res)
   const origWriteHead = res.writeHead.bind(res)
 
-  let compressor: ReturnType<typeof createBrotliCompress> | ReturnType<typeof createGzip> | null = null
+  let compressor: ReturnType<typeof createBrotliCompress> | ReturnType<typeof createGzip> | null =
+    null
   let decided = false
 
   function shouldCompress(
@@ -241,17 +242,11 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
     if (decided) return
     decided = true
     const ct = res.getHeader("content-type")
-    const ctStr =
-      ct == null
-        ? undefined
-        : Array.isArray(ct)
-          ? String(ct[0])
-          : String(ct)
+    const ctStr = ct == null ? undefined : Array.isArray(ct) ? String(ct[0]) : String(ct)
     const lenHeader = res.getHeader("content-length")
     let len: number | undefined
     if (lenHeader != null) {
-      const n =
-        typeof lenHeader === "number" ? lenHeader : parseInt(String(lenHeader), 10)
+      const n = typeof lenHeader === "number" ? lenHeader : parseInt(String(lenHeader), 10)
       if (!Number.isNaN(n)) len = n
     }
     const cc = res.getHeader("cache-control")
@@ -289,12 +284,7 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
     const fromArg = inspectHeaders(headers)
     const fromSet = (() => {
       const ct = res.getHeader("content-type")
-      const ctStr =
-        ct == null
-          ? undefined
-          : Array.isArray(ct)
-            ? String(ct[0])
-            : String(ct)
+      const ctStr = ct == null ? undefined : Array.isArray(ct) ? String(ct[0]) : String(ct)
       const len = res.getHeader("content-length")
       let lenN: number | undefined
       if (len != null) {
@@ -318,7 +308,8 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
     }
     let nextHeaders = removeHeader(headers, "content-length")
     nextHeaders = appendHeader(nextHeaders, "content-encoding", encoding!)
-    const existingVary = readHeader(nextHeaders, "vary") ?? (res.getHeader("vary") as string | undefined)
+    const existingVary =
+      readHeader(nextHeaders, "vary") ?? (res.getHeader("vary") as string | undefined)
     if (!existingVary) nextHeaders = appendHeader(nextHeaders, "vary", "Accept-Encoding")
     else if (!/accept-encoding/i.test(existingVary)) {
       nextHeaders = removeHeader(nextHeaders, "vary")
@@ -334,7 +325,8 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
     if (!compressor) {
       return (origWrite as (...a: unknown[]) => boolean)(chunk, encodingOrCb, cb)
     }
-    const writeEncoding = typeof encodingOrCb === "string" ? (encodingOrCb as BufferEncoding) : undefined
+    const writeEncoding =
+      typeof encodingOrCb === "string" ? (encodingOrCb as BufferEncoding) : undefined
     const writeCb =
       typeof encodingOrCb === "function"
         ? (encodingOrCb as () => void)
@@ -342,15 +334,14 @@ function middleware(req: IncomingMessage, res: ServerResponse, next: (err?: unkn
           ? (cb as () => void)
           : undefined
     const buf =
-      typeof chunk === "string"
-        ? Buffer.from(chunk, writeEncoding)
-        : (chunk as Buffer | Uint8Array)
+      typeof chunk === "string" ? Buffer.from(chunk, writeEncoding) : (chunk as Buffer | Uint8Array)
     const ok = compressor.write(buf)
-    const flushOp =
-      encoding === "br" ? zlib.BROTLI_OPERATION_FLUSH : zlib.Z_SYNC_FLUSH
-    ;(compressor as unknown as {
-      flush(op: number, cb: () => void): void
-    }).flush(flushOp, () => {
+    const flushOp = encoding === "br" ? zlib.BROTLI_OPERATION_FLUSH : zlib.Z_SYNC_FLUSH
+    ;(
+      compressor as unknown as {
+        flush(op: number, cb: () => void): void
+      }
+    ).flush(flushOp, () => {
       if (writeCb) writeCb()
     })
     return ok

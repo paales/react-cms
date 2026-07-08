@@ -110,10 +110,7 @@ let renderErrorSeq = 0
  * phases share one id) and the SSR pass skips re-logging the stack the
  * RSC pass already logged.
  */
-export function reportServerRenderError(
-  phase: "rsc" | "ssr",
-  error: unknown,
-): string | undefined {
+export function reportServerRenderError(phase: "rsc" | "ssr", error: unknown): string | undefined {
   if (isExpectedRenderError(error)) return undefined
   // A propagated digest counts only if NON-EMPTY. React stamps some
   // errors with `digest: ""` (empty) before they reach this phase;
@@ -121,9 +118,7 @@ export function reportServerRenderError(
   // AND skipped the re-log — the `digest: ''` with no message. An empty
   // digest is no digest: mint a real one and log.
   const incoming =
-    typeof error === "object" && error !== null
-      ? (error as { digest?: unknown }).digest
-      : undefined
+    typeof error === "object" && error !== null ? (error as { digest?: unknown }).digest : undefined
   const propagated = typeof incoming === "string" && incoming.length > 0 ? incoming : undefined
   const digest =
     propagated ?? `render-${Date.now().toString(36)}-${(renderErrorSeq++).toString(36)}`

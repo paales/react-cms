@@ -157,9 +157,7 @@ describe("row framing", () => {
 
   it("literal newlines in strings stay JSON-escaped — a raw 0x0a only terminates rows", async () => {
     const { text, rows } = await renderRows(<div title={"line1\nline2"}>multiline</div>)
-    expect(text, "an in-string newline must arrive as the two bytes \\n").toContain(
-      "line1\\nline2",
-    )
+    expect(text, "an in-string newline must arrive as the two bytes \\n").toContain("line1\\nline2")
     const root = rows.find((r) => r.id === "0")!
     const el = jsonData(root) as unknown[]
     expect((el[3] as { title: string }).title).toBe("line1\nline2")
@@ -299,7 +297,10 @@ describe("reference grammar", () => {
   it("a promise value serializes as $@<id> with the resolution arriving as its own row", async () => {
     const payload = { p: Promise.resolve("later"), el: <div /> }
     const text = await flightToString(renderServerToFlight(payload as unknown as ReactNode))
-    const rows = text.split("\n").filter((l) => l.length > 0).map(parseRow)
+    const rows = text
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map(parseRow)
     const root = jsonData(rows.find((r) => r.id === "0")!) as { p: string }
     const m = /^\$@([0-9a-f]+)$/.exec(root.p)
     expect(m, `a promise must cross as a $@<hex> ref, got: ${root.p}`).not.toBeNull()
@@ -309,9 +310,7 @@ describe("reference grammar", () => {
 
   it("a repeated object dedups to a ref with a :deref path into the first occurrence", async () => {
     const shared = { deep: { price: 42 } }
-    const { rows } = await renderRows(
-      <div data-b={shared as never} data-c={shared as never} />,
-    )
+    const { rows } = await renderRows(<div data-b={shared as never} data-c={shared as never} />)
     const el = jsonData(rows.find((r) => r.id === "0")!) as unknown[]
     const props = el[3] as Record<string, unknown>
     expect(props["data-b"]).toEqual(shared)
@@ -333,9 +332,10 @@ describe("reference grammar", () => {
     for (const row of rows) collectRefIds(jsonData(row), referenced)
     expect(referenced.size).toBeGreaterThan(0)
     for (const id of referenced) {
-      expect(ids.has(id), `ref to row ${id} dangles — reachability GC would drop live content`).toBe(
-        true,
-      )
+      expect(
+        ids.has(id),
+        `ref to row ${id} dangles — reachability GC would drop live content`,
+      ).toBe(true)
     }
   })
 

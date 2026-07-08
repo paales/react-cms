@@ -27,11 +27,7 @@ import {
   type SpecExtraProps,
 } from "../lib/partial.tsx"
 import { getCurrentParton } from "../lib/current-parton.ts"
-import {
-  createCmsReadSurface,
-  registerSlotBlockMeta,
-  type CmsReadSurface,
-} from "./cms-runtime.ts"
+import { createCmsReadSurface, registerSlotBlockMeta, type CmsReadSurface } from "./cms-runtime.ts"
 import { getRequest } from "./context.ts"
 
 /** Scope passed into `schema` callbacks. CMS reads live here;
@@ -60,8 +56,7 @@ export type BlockOptions<V, S> = PartialOptions<V> & {
 const STRIP_SUFFIXES = ["Render", "Page", "Block", "Partial", "Component"]
 
 function autoDerivedId(Render: (...args: never[]) => unknown): string {
-  const raw =
-    (Render as { displayName?: string; name?: string }).displayName ?? Render.name ?? ""
+  const raw = (Render as { displayName?: string; name?: string }).displayName ?? Render.name ?? ""
   let stem = raw
   for (const suf of STRIP_SUFFIXES) {
     if (stem.endsWith(suf) && stem.length > suf.length) {
@@ -160,7 +155,10 @@ export function block<
     typeof opts.selector === "string"
       ? opts.selector.trim().split(/\s+/).filter(Boolean)
       : Array.isArray(opts.selector)
-        ? opts.selector.map(String).map((t) => t.trim()).filter(Boolean)
+        ? opts.selector
+            .map(String)
+            .map((t) => t.trim())
+            .filter(Boolean)
         : []
   const userLabels = rawTokens
     .map((t) => (t.startsWith("#") || t.startsWith(".") ? t.slice(1) : t))

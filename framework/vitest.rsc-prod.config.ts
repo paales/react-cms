@@ -27,8 +27,6 @@ export default {
     ...rscConfig.test,
     name: "rsc-prod",
     dir: REPO_ROOT,
-    include: [
-      "{framework,cms,copies,e2e-testing,e2e-magento}/**/*.rsc-prod.test.?(c|m)[jt]s?(x)",
-    ],
+    include: ["{framework,cms,copies,e2e-testing,e2e-magento}/**/*.rsc-prod.test.?(c|m)[jt]s?(x)"],
   },
 }

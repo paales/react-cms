@@ -41,10 +41,15 @@ describe("pattern registration dedup (HMR re-execution)", () => {
     // Simulate HMR: the spec module executes twice, running the
     // constructor with the identical options both times.
     const defineSpec = () =>
-      parton(function HmrSpecRender() { return null }, {
-        match: "/hmr/:id",
-        selector: "route-key-hmr-spec",
-      })
+      parton(
+        function HmrSpecRender() {
+          return null
+        },
+        {
+          match: "/hmr/:id",
+          selector: "route-key-hmr-spec",
+        },
+      )
 
     defineSpec()
     expect(getRegisteredMatchPatterns()).toHaveLength(1)
@@ -55,10 +60,15 @@ describe("pattern registration dedup (HMR re-execution)", () => {
 
   it("routeKeys stay stable across a re-registration", () => {
     const defineSpec = () =>
-      parton(function HmrStableRender() { return null }, {
-        match: "/hmr-stable/:id",
-        selector: "route-key-hmr-stable",
-      })
+      parton(
+        function HmrStableRender() {
+          return null
+        },
+        {
+          match: "/hmr-stable/:id",
+          selector: "route-key-hmr-stable",
+        },
+      )
 
     defineSpec()
     const before = computeRouteKey("http://t/hmr-stable/1")
@@ -70,26 +80,46 @@ describe("pattern registration dedup (HMR re-execution)", () => {
   })
 
   it("two specs sharing one pattern contribute a single signature", () => {
-    parton(function SharedARender() { return null }, {
-      match: "/shared/:id",
-      selector: "route-key-shared-a",
-    })
-    parton(function SharedBRender() { return null }, {
-      match: "/shared/:id",
-      selector: "route-key-shared-b",
-    })
+    parton(
+      function SharedARender() {
+        return null
+      },
+      {
+        match: "/shared/:id",
+        selector: "route-key-shared-a",
+      },
+    )
+    parton(
+      function SharedBRender() {
+        return null
+      },
+      {
+        match: "/shared/:id",
+        selector: "route-key-shared-b",
+      },
+    )
     expect(getRegisteredMatchPatterns()).toHaveLength(1)
   })
 
   it("distinct patterns register side by side and split routeKeys", () => {
-    parton(function DistinctARender() { return null }, {
-      match: "/distinct-a/:id",
-      selector: "route-key-distinct-a",
-    })
-    parton(function DistinctBRender() { return null }, {
-      match: "/distinct-b/:id",
-      selector: "route-key-distinct-b",
-    })
+    parton(
+      function DistinctARender() {
+        return null
+      },
+      {
+        match: "/distinct-a/:id",
+        selector: "route-key-distinct-a",
+      },
+    )
+    parton(
+      function DistinctBRender() {
+        return null
+      },
+      {
+        match: "/distinct-b/:id",
+        selector: "route-key-distinct-b",
+      },
+    )
     expect(getRegisteredMatchPatterns()).toHaveLength(2)
     expect(computeRouteKey("http://t/distinct-a/1")).not.toBe(
       computeRouteKey("http://t/distinct-b/1"),
@@ -99,10 +129,15 @@ describe("pattern registration dedup (HMR re-execution)", () => {
 
 describe("route identity — the URL base", () => {
   it("same page collapses to one routeKey across query changes", () => {
-    parton(function PathOnlyRender() { return null }, {
-      match: "/p/:slug",
-      selector: "route-key-path-only",
-    })
+    parton(
+      function PathOnlyRender() {
+        return null
+      },
+      {
+        match: "/p/:slug",
+        selector: "route-key-path-only",
+      },
+    )
     // Per-segment streaming URLs differ only in framework query params
     // (`?cached=…`) — same base, same routeKey, one cache entry.
     const first = computeRouteKey("http://t/p/pikachu")
@@ -111,14 +146,24 @@ describe("route identity — the URL base", () => {
   })
 
   it("a search-bearing pattern never splits its page's bucket", () => {
-    parton(function MixedPathRender() { return null }, {
-      match: "/search{/*}?",
-      selector: "route-key-mixed-path",
-    })
-    parton(function SearchMatchRender() { return null }, {
-      match: { search: "*q=:query" },
-      selector: "route-key-search-match",
-    })
+    parton(
+      function MixedPathRender() {
+        return null
+      },
+      {
+        match: "/search{/*}?",
+        selector: "route-key-mixed-path",
+      },
+    )
+    parton(
+      function SearchMatchRender() {
+        return null
+      },
+      {
+        match: { search: "*q=:query" },
+        selector: "route-key-search-match",
+      },
+    )
     // The typing session: /search → ?q=p → ?q=po. Every shape must
     // land in the SAME bucket so refetches find the page's snapshots
     // and hints — the warm-fp lockstep the search overlay relies on.
@@ -131,14 +176,24 @@ describe("route identity — the URL base", () => {
 
   it("routeKey is a pure function of the URL, not of arrival order", () => {
     const define = () => {
-      parton(function OrderPathRender() { return null }, {
-        match: "/order{/*}?",
-        selector: "route-key-order-path",
-      })
-      parton(function OrderSearchRender() { return null }, {
-        match: { search: "*q=:query" },
-        selector: "route-key-order-search",
-      })
+      parton(
+        function OrderPathRender() {
+          return null
+        },
+        {
+          match: "/order{/*}?",
+          selector: "route-key-order-path",
+        },
+      )
+      parton(
+        function OrderSearchRender() {
+          return null
+        },
+        {
+          match: { search: "*q=:query" },
+          selector: "route-key-order-search",
+        },
+      )
     }
     // Arrival order A: bare page first (the cold-load-then-type flow).
     define()
@@ -155,10 +210,15 @@ describe("route identity — the URL base", () => {
   })
 
   it("host is part of the base — hostname patterns split per host", () => {
-    parton(function HostRender() { return null }, {
-      match: { hostname: "shop.example", pathname: "/p/:slug" },
-      selector: "route-key-host",
-    })
+    parton(
+      function HostRender() {
+        return null
+      },
+      {
+        match: { hostname: "shop.example", pathname: "/p/:slug" },
+        selector: "route-key-host",
+      },
+    )
     const shop = computeRouteKey("http://shop.example/p/x")
     const other = computeRouteKey("http://other.example/p/x")
     expect(shop).not.toBe("__no-pattern")

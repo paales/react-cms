@@ -56,13 +56,7 @@ function Nodes({ nodes }: { nodes: DocTreeNode[] }) {
   )
 }
 
-export function DocsSidebar({
-  tree,
-  currentPath,
-}: {
-  tree: DocTreeNode[]
-  currentPath: string
-}) {
+export function DocsSidebar({ tree, currentPath }: { tree: DocTreeNode[]; currentPath: string }) {
   // Expand the folders on the path to the current file so the tree
   // opens to where you are; everything else starts collapsed.
   const expanded = new Set<string>()

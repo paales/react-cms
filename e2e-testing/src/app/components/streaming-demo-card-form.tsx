@@ -70,10 +70,7 @@ export function CardForm({
   // microtask batch as the input write (one POST, all three cells) or a
   // 50 ms setTimeout (two POSTs).
   const fireCvc = (nextName: string, nextNumber: string): void => {
-    const cvcValue = computeCvc(
-      transformName(nextName),
-      extractNumberDigits(nextNumber),
-    )
+    const cvcValue = computeCvc(transformName(nextName), extractNumberDigits(nextNumber))
     // Deterministic alternation (pure — no Math.random in the
     // render-reachable path) between the same-batch and staggered POST
     // paths the defer specs exercise.
@@ -101,8 +98,8 @@ export function CardForm({
         />
         <span>
           Simulate server-side per-batch latency (trimodal: 0–30 / 100–200 / 400–500 ms). Off:
-          batches commit instantly. The toggle itself is a cell, so flipping it broadcasts to
-          every open tab.
+          batches commit instantly. The toggle itself is a cell, so flipping it broadcasts to every
+          open tab.
         </span>
       </label>
       <label className="flex items-start gap-2 text-xs leading-snug">

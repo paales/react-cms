@@ -62,16 +62,14 @@ test.describe("notFound + redirect", () => {
       ;(window as unknown as { __realmMarker?: number }).__realmMarker = 42
     })
     await page.evaluate(() => {
-      ;(
-        window as unknown as { navigation: { navigate: (u: string) => void } }
-      ).navigation.navigate("/redirect-demo")
+      ;(window as unknown as { navigation: { navigate: (u: string) => void } }).navigation.navigate(
+        "/redirect-demo",
+      )
     })
     await page.waitForURL("**/cache-demo", { timeout: 15000 })
     expect(new URL(page.url()).pathname).toBe("/cache-demo")
     expect(
-      await page.evaluate(
-        () => (window as unknown as { __realmMarker?: number }).__realmMarker,
-      ),
+      await page.evaluate(() => (window as unknown as { __realmMarker?: number }).__realmMarker),
     ).toBe(42)
   })
 })

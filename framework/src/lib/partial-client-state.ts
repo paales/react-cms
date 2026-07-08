@@ -18,8 +18,8 @@
  *     frame-URL cache.
  */
 
-import type { ReactNode } from "react";
-import type { FpUpdatesPayload } from "./fp-trailer-marker.ts";
+import type { ReactNode } from "react"
+import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
 
 // ─── Partial cache + fingerprints ─────────────────────────────────
 
@@ -52,53 +52,53 @@ import type { FpUpdatesPayload } from "./fp-trailer-marker.ts";
  * For a future LRU layer over the variant pool, see
  * `docs/notes/IDEAS.md` (Keepalive follow-ups).
  */
-export type PartialCache = Map<string, Map<string, ReactNode>>;
+export type PartialCache = Map<string, Map<string, ReactNode>>
 
-const _currentPagePartials: PartialCache = new Map();
-const _currentPageFingerprints = new Map<string, Map<string, Set<string>>>();
+const _currentPagePartials: PartialCache = new Map()
+const _currentPageFingerprints = new Map<string, Map<string, Set<string>>>()
 
 /** The one live `PartialCache` instance backing the current page. */
 export function getCurrentPagePartials(): PartialCache {
-	return _currentPagePartials;
+  return _currentPagePartials
 }
 
 export function cacheLookup(
-	cache: PartialCache,
-	id: string,
-	matchKey: string,
+  cache: PartialCache,
+  id: string,
+  matchKey: string,
 ): ReactNode | undefined {
-	return cache.get(id)?.get(matchKey);
+  return cache.get(id)?.get(matchKey)
 }
 
 export function cacheStore(
-	cache: PartialCache,
-	id: string,
-	matchKey: string,
-	node: ReactNode,
+  cache: PartialCache,
+  id: string,
+  matchKey: string,
+  node: ReactNode,
 ): void {
-	let inner = cache.get(id);
-	if (!inner) {
-		inner = new Map();
-		cache.set(id, inner);
-	}
-	const replacing = inner.has(matchKey);
-	inner.set(matchKey, node);
-	// Overwriting a cache slot invalidates any fingerprint that
-	// referred to the old content. Without this, fps from prior
-	// navs accumulate in `_currentPageFingerprints[id][matchKey]`
-	// and travel back to the server in `?cached=`; the next visit
-	// can fp-skip against a stale entry while the cache slot points
-	// at fresh content, and `substituteNested` lands the wrong
-	// subtree (or the right one for the wrong URL). Same matchKey
-	// with different request-read values share a slot by design — the
-	// fingerprint set must shrink to "what the current slot
-	// actually represents", which is exactly the fp that
-	// `registerClientPartial` is about to write after this call.
-	// Cold→warm trailer adds for the same render still land
-	// additively after the walk completes.
-	if (replacing) {
-		_currentPageFingerprints.get(id)?.delete(matchKey);
-	}
+  let inner = cache.get(id)
+  if (!inner) {
+    inner = new Map()
+    cache.set(id, inner)
+  }
+  const replacing = inner.has(matchKey)
+  inner.set(matchKey, node)
+  // Overwriting a cache slot invalidates any fingerprint that
+  // referred to the old content. Without this, fps from prior
+  // navs accumulate in `_currentPageFingerprints[id][matchKey]`
+  // and travel back to the server in `?cached=`; the next visit
+  // can fp-skip against a stale entry while the cache slot points
+  // at fresh content, and `substituteNested` lands the wrong
+  // subtree (or the right one for the wrong URL). Same matchKey
+  // with different request-read values share a slot by design — the
+  // fingerprint set must shrink to "what the current slot
+  // actually represents", which is exactly the fp that
+  // `registerClientPartial` is about to write after this call.
+  // Cold→warm trailer adds for the same render still land
+  // additively after the walk completes.
+  if (replacing) {
+    _currentPageFingerprints.get(id)?.delete(matchKey)
+  }
 }
 
 /**
@@ -119,7 +119,7 @@ export function cacheStore(
  *  emit a fresh pair per segment. Keeping the LATEST few is
  *  enough for the cold/warm fp-skip on the next nav; older fps
  *  for the same variant are stale and only bloat `?cached=`. */
-export const FP_CAP_PER_VARIANT = 4;
+export const FP_CAP_PER_VARIANT = 4
 
 /** Cap on `?cached=` manifest ENTRIES advertised to the server —
  *  the URL form only. The client's local fp cache is unbounded within
@@ -132,7 +132,7 @@ export const FP_CAP_PER_VARIANT = 4;
  *  registering again. The attach BODY manifest
  *  (`getAllCachedPartialTokens`) has no request line to protect and
  *  carries everything. */
-export const CACHED_MANIFEST_CAP = 96;
+export const CACHED_MANIFEST_CAP = 96
 
 /** Cap on distinct ids retained in the client maps. A long journey
  *  across a cullable field accumulates entries for every parton ever
@@ -154,7 +154,7 @@ export const CACHED_MANIFEST_CAP = 96;
  *  The HEAVY budget — parked subtree DOM and fibers — is
  *  `CULL_PARK_CAP` in `cull-park.ts`, whose content eviction is what
  *  makes a parked id leave the live tree and become evictable here. */
-export const CLIENT_POOL_CAP = 512;
+export const CLIENT_POOL_CAP = 512
 
 /**
  * Listener for ids leaving the client maps entirely — fired by
@@ -167,10 +167,10 @@ export const CLIENT_POOL_CAP = 512;
  * can unmount one slot's observer in a different pass than it mounts
  * the other's.
  */
-let _onIdPruned: ((id: string) => void) | null = null;
+let _onIdPruned: ((id: string) => void) | null = null
 
 export function _setIdPrunedListener(fn: (id: string) => void): void {
-	_onIdPruned = fn;
+  _onIdPruned = fn
 }
 
 /** Ids referenced by the current template's rendered tree — the
@@ -178,17 +178,17 @@ export function _setIdPrunedListener(fn: (id: string) => void): void {
  *  placeholder-reference structure only changes on payload commits,
  *  so between commits this is exactly the set of ids whose cache
  *  entries a template re-render may need to substitute. */
-let _liveTreeIds: ReadonlySet<string> = new Set();
+let _liveTreeIds: ReadonlySet<string> = new Set()
 
 function evictOldest(): void {
-	if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return;
-	for (const id of [..._currentPageFingerprints.keys()]) {
-		if (_liveTreeIds.has(id)) continue;
-		_currentPageFingerprints.delete(id);
-		_currentPagePartials.delete(id);
-		_onIdPruned?.(id);
-		if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return;
-	}
+  if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return
+  for (const id of [..._currentPageFingerprints.keys()]) {
+    if (_liveTreeIds.has(id)) continue
+    _currentPageFingerprints.delete(id)
+    _currentPagePartials.delete(id)
+    _onIdPruned?.(id)
+    if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return
+  }
 }
 
 /**
@@ -203,44 +203,40 @@ function evictOldest(): void {
  * subtree. No-op for unknown ids.
  */
 export function touchClientPartial(id: string): void {
-	const inner = _currentPageFingerprints.get(id);
-	if (!inner) return;
-	_currentPageFingerprints.delete(id);
-	_currentPageFingerprints.set(id, inner);
+  const inner = _currentPageFingerprints.get(id)
+  if (!inner) return
+  _currentPageFingerprints.delete(id)
+  _currentPageFingerprints.set(id, inner)
 }
 
-export function registerClientPartial(
-	id: string,
-	matchKey: string,
-	fingerprint: string,
-): void {
-	let inner = _currentPageFingerprints.get(id);
-	if (!inner) {
-		inner = new Map();
-		_currentPageFingerprints.set(id, inner);
-	} else {
-		// Re-insert at the tail so map order tracks registration
-		// recency — `getCachedPartialIds` walks newest-first when
-		// capping the manifest.
-		_currentPageFingerprints.delete(id);
-		_currentPageFingerprints.set(id, inner);
-	}
-	let set = inner.get(matchKey);
-	if (!set) {
-		set = new Set();
-		inner.set(matchKey, set);
-	}
-	if (set.has(fingerprint)) return;
-	set.add(fingerprint);
-	evictOldest();
-	// Evict the oldest entries (insertion order) once the cap is
-	// reached. Without this, a live partial that re-renders every
-	// segment would inflate `?cached=` unboundedly.
-	while (set.size > FP_CAP_PER_VARIANT) {
-		const oldest = set.values().next().value;
-		if (oldest === undefined) break;
-		set.delete(oldest);
-	}
+export function registerClientPartial(id: string, matchKey: string, fingerprint: string): void {
+  let inner = _currentPageFingerprints.get(id)
+  if (!inner) {
+    inner = new Map()
+    _currentPageFingerprints.set(id, inner)
+  } else {
+    // Re-insert at the tail so map order tracks registration
+    // recency — `getCachedPartialIds` walks newest-first when
+    // capping the manifest.
+    _currentPageFingerprints.delete(id)
+    _currentPageFingerprints.set(id, inner)
+  }
+  let set = inner.get(matchKey)
+  if (!set) {
+    set = new Set()
+    inner.set(matchKey, set)
+  }
+  if (set.has(fingerprint)) return
+  set.add(fingerprint)
+  evictOldest()
+  // Evict the oldest entries (insertion order) once the cap is
+  // reached. Without this, a live partial that re-renders every
+  // segment would inflate `?cached=` unboundedly.
+  while (set.size > FP_CAP_PER_VARIANT) {
+    const oldest = set.values().next().value
+    if (oldest === undefined) break
+    set.delete(oldest)
+  }
 }
 
 /**
@@ -253,28 +249,28 @@ export function registerClientPartial(
  * `lib/fp-trailer-marker.ts` for the wire sentinel + payload shape.
  */
 export function _applyFpUpdates(updates: FpUpdatesPayload): void {
-	for (const [id, { from, to }] of Object.entries(updates)) {
-		const inner = _currentPageFingerprints.get(id);
-		if (!inner) continue;
-		// Alias the warm fp `to` onto the variant slot whose set still
-		// holds the cold fp `from` — matched by CONTENT. The trailer is
-		// async: it lands after its response's body committed, by which
-		// point a concurrent refetch for a DIFFERENT query against the same
-		// stable `(id, matchKey)` may have overwritten the slot — and
-		// cleared its fp-set (see `cacheStore`). Anchoring on `from` means
-		// such a superseded trailer finds no slot and is dropped, so the
-		// advertised fp-set stays in lockstep with the node the slot
-		// actually holds — the invariant that makes every server fp-skip
-		// restore the content the server matched it against. `from` folds in
-		// matchKey, so it pins exactly one slot. registerClientPartial
-		// enforces the per-variant fp cap.
-		for (const [mk, set] of inner) {
-			if (set.has(from)) {
-				registerClientPartial(id, mk, to);
-				break;
-			}
-		}
-	}
+  for (const [id, { from, to }] of Object.entries(updates)) {
+    const inner = _currentPageFingerprints.get(id)
+    if (!inner) continue
+    // Alias the warm fp `to` onto the variant slot whose set still
+    // holds the cold fp `from` — matched by CONTENT. The trailer is
+    // async: it lands after its response's body committed, by which
+    // point a concurrent refetch for a DIFFERENT query against the same
+    // stable `(id, matchKey)` may have overwritten the slot — and
+    // cleared its fp-set (see `cacheStore`). Anchoring on `from` means
+    // such a superseded trailer finds no slot and is dropped, so the
+    // advertised fp-set stays in lockstep with the node the slot
+    // actually holds — the invariant that makes every server fp-skip
+    // restore the content the server matched it against. `from` folds in
+    // matchKey, so it pins exactly one slot. registerClientPartial
+    // enforces the per-variant fp cap.
+    for (const [mk, set] of inner) {
+      if (set.has(from)) {
+        registerClientPartial(id, mk, to)
+        break
+      }
+    }
+  }
 }
 
 /**
@@ -289,10 +285,10 @@ export function _applyFpUpdates(updates: FpUpdatesPayload): void {
  * own cap, so the priority block can never starve the recency walk
  * entirely.
  */
-let _manifestPriorityIds: (() => readonly string[]) | null = null;
+let _manifestPriorityIds: (() => readonly string[]) | null = null
 
 export function _setManifestPriorityIds(fn: () => readonly string[]): void {
-	_manifestPriorityIds = fn;
+  _manifestPriorityIds = fn
 }
 
 /**
@@ -314,36 +310,36 @@ export function _setManifestPriorityIds(fn: () => readonly string[]): void {
  * applies uniformly across the entire tree.
  */
 export function getCachedPartialIds(): string[] {
-	const out: string[] = [];
-	const emitted = new Set<string>();
-	const emitId = (id: string): boolean => {
-		const byMatchKey = _currentPageFingerprints.get(id);
-		if (!byMatchKey) return true;
-		for (const [matchKey, fps] of byMatchKey) {
-			for (const fp of fps) {
-				out.push(`${id}:${matchKey}:${fp}`);
-				if (out.length >= CACHED_MANIFEST_CAP) return false;
-			}
-		}
-		return true;
-	};
-	// Priority block first: parked-by-culling ids (see
-	// `_setManifestPriorityIds`) must keep advertising their variants
-	// or their parked state is unrestorable.
-	for (const id of _manifestPriorityIds?.() ?? []) {
-		if (emitted.has(id)) continue;
-		emitted.add(id);
-		if (!emitId(id)) return out;
-	}
-	// Insertion order tracks registration recency (re-registration
-	// re-inserts) — walk newest-first and stop at the manifest cap.
-	const ids = [...(_currentPageFingerprints.keys())].reverse();
-	for (const id of ids) {
-		if (emitted.has(id)) continue;
-		emitted.add(id);
-		if (!emitId(id)) return out;
-	}
-	return out;
+  const out: string[] = []
+  const emitted = new Set<string>()
+  const emitId = (id: string): boolean => {
+    const byMatchKey = _currentPageFingerprints.get(id)
+    if (!byMatchKey) return true
+    for (const [matchKey, fps] of byMatchKey) {
+      for (const fp of fps) {
+        out.push(`${id}:${matchKey}:${fp}`)
+        if (out.length >= CACHED_MANIFEST_CAP) return false
+      }
+    }
+    return true
+  }
+  // Priority block first: parked-by-culling ids (see
+  // `_setManifestPriorityIds`) must keep advertising their variants
+  // or their parked state is unrestorable.
+  for (const id of _manifestPriorityIds?.() ?? []) {
+    if (emitted.has(id)) continue
+    emitted.add(id)
+    if (!emitId(id)) return out
+  }
+  // Insertion order tracks registration recency (re-registration
+  // re-inserts) — walk newest-first and stop at the manifest cap.
+  const ids = [..._currentPageFingerprints.keys()].reverse()
+  for (const id of ids) {
+    if (emitted.has(id)) continue
+    emitted.add(id)
+    if (!emitId(id)) return out
+  }
+  return out
 }
 
 /**
@@ -358,13 +354,13 @@ export function getCachedPartialIds(): string[] {
  * hold.
  */
 export function getAllCachedPartialTokens(): string[] {
-	const out: string[] = [];
-	for (const [id, byMatchKey] of _currentPageFingerprints) {
-		for (const [matchKey, fps] of byMatchKey) {
-			for (const fp of fps) out.push(`${id}:${matchKey}:${fp}`);
-		}
-	}
-	return out;
+  const out: string[] = []
+  for (const [id, byMatchKey] of _currentPageFingerprints) {
+    for (const [matchKey, fps] of byMatchKey) {
+      for (const fp of fps) out.push(`${id}:${matchKey}:${fp}`)
+    }
+  }
+  return out
 }
 
 /**
@@ -375,15 +371,15 @@ export function getAllCachedPartialTokens(): string[] {
  * can't confirm content the client already dropped.
  */
 export function cachedTokensFor(ids: readonly string[]): string[] {
-	const out: string[] = [];
-	for (const id of ids) {
-		const byMatchKey = _currentPageFingerprints.get(id);
-		if (!byMatchKey) continue;
-		for (const [matchKey, fps] of byMatchKey) {
-			for (const fp of fps) out.push(`${id}:${matchKey}:${fp}`);
-		}
-	}
-	return out;
+  const out: string[] = []
+  for (const id of ids) {
+    const byMatchKey = _currentPageFingerprints.get(id)
+    if (!byMatchKey) continue
+    for (const [matchKey, fps] of byMatchKey) {
+      for (const fp of fps) out.push(`${id}:${matchKey}:${fp}`)
+    }
+  }
+  return out
 }
 
 /**
@@ -397,36 +393,36 @@ export function cachedTokensFor(ids: readonly string[]): string[] {
  * anywhere drops.
  */
 export function pruneToLive(live: Map<string, Set<string>>): void {
-	// Record the live id set for the pool-cap eviction guard: these are
-	// the ids the committed template can re-substitute at any re-render,
-	// so `evictOldest` must not destroy them.
-	_liveTreeIds = new Set(live.keys());
-	const before = new Set<string>([
-		..._currentPagePartials.keys(),
-		..._currentPageFingerprints.keys(),
-	]);
-	for (const map of [_currentPagePartials, _currentPageFingerprints]) {
-		for (const [id, byMatchKey] of map) {
-			const liveMks = live.get(id);
-			if (!liveMks) {
-				map.delete(id);
-				continue;
-			}
-			for (const mk of [...byMatchKey.keys()]) {
-				if (!liveMks.has(mk)) byMatchKey.delete(mk);
-			}
-			if (byMatchKey.size === 0) map.delete(id);
-		}
-	}
-	// Page-membership teardown: an id that left BOTH maps is off the
-	// page — no commit references it rendered, skipped, or parked.
-	if (_onIdPruned) {
-		for (const id of before) {
-			if (!_currentPageFingerprints.has(id) && !_currentPagePartials.has(id)) {
-				_onIdPruned(id);
-			}
-		}
-	}
+  // Record the live id set for the pool-cap eviction guard: these are
+  // the ids the committed template can re-substitute at any re-render,
+  // so `evictOldest` must not destroy them.
+  _liveTreeIds = new Set(live.keys())
+  const before = new Set<string>([
+    ..._currentPagePartials.keys(),
+    ..._currentPageFingerprints.keys(),
+  ])
+  for (const map of [_currentPagePartials, _currentPageFingerprints]) {
+    for (const [id, byMatchKey] of map) {
+      const liveMks = live.get(id)
+      if (!liveMks) {
+        map.delete(id)
+        continue
+      }
+      for (const mk of [...byMatchKey.keys()]) {
+        if (!liveMks.has(mk)) byMatchKey.delete(mk)
+      }
+      if (byMatchKey.size === 0) map.delete(id)
+    }
+  }
+  // Page-membership teardown: an id that left BOTH maps is off the
+  // page — no commit references it rendered, skipped, or parked.
+  if (_onIdPruned) {
+    for (const id of before) {
+      if (!_currentPageFingerprints.has(id) && !_currentPagePartials.has(id)) {
+        _onIdPruned(id)
+      }
+    }
+  }
 }
 
 /**
@@ -440,8 +436,8 @@ export function pruneToLive(live: Map<string, Set<string>>): void {
  * pre-parking behavior.
  */
 export function evictCulledContent(id: string): void {
-	_currentPagePartials.delete(id);
-	_currentPageFingerprints.delete(id);
+  _currentPagePartials.delete(id)
+  _currentPageFingerprints.delete(id)
 }
 
 // ─── Lane commits ─────────────────────────────────────────────────
@@ -455,17 +451,17 @@ export function evictCulledContent(id: string): void {
  * `substituteNested` then swap the fresh subtree in place. See
  * `_commitPartonLane` in `partial-cache.ts`.
  */
-const _laneCommitSubscribers = new Set<() => void>();
+const _laneCommitSubscribers = new Set<() => void>()
 
 export function subscribeLaneCommits(cb: () => void): () => void {
-	_laneCommitSubscribers.add(cb);
-	return () => {
-		_laneCommitSubscribers.delete(cb);
-	};
+  _laneCommitSubscribers.add(cb)
+  return () => {
+    _laneCommitSubscribers.delete(cb)
+  }
 }
 
 export function notifyLaneCommit(): void {
-	for (const cb of [..._laneCommitSubscribers]) cb();
+  for (const cb of [..._laneCommitSubscribers]) cb()
 }
 
 // ─── Live catch-up anchor ─────────────────────────────────────────
@@ -481,16 +477,16 @@ export function notifyLaneCommit(): void {
  * lanes past the anchor with no client-side timeline to re-anchor on,
  * so it falls back to the full initial segment.
  */
-let _liveCatchupAnchor: { epoch: string; ts: number } | null = null;
+let _liveCatchupAnchor: { epoch: string; ts: number } | null = null
 
 export function _setLiveCatchupAnchor(anchor: { epoch: string; ts: number }): void {
-	_liveCatchupAnchor = anchor;
+  _liveCatchupAnchor = anchor
 }
 
 export function _takeLiveCatchupAnchor(): { epoch: string; ts: number } | null {
-	const anchor = _liveCatchupAnchor;
-	_liveCatchupAnchor = null;
-	return anchor;
+  const anchor = _liveCatchupAnchor
+  _liveCatchupAnchor = null
+  return anchor
 }
 
 // ─── Live connection id ───────────────────────────────────────────
@@ -505,14 +501,14 @@ export function _takeLiveCatchupAnchor(): { epoch: string; ts: number } | null {
  * transport: id in hand → frames on channel envelopes addressed to
  * the open connection; `null` → their discrete fallback.
  */
-let _liveConnectionId: string | null = null;
+let _liveConnectionId: string | null = null
 
 export function _setLiveConnectionId(id: string | null): void {
-	_liveConnectionId = id;
+  _liveConnectionId = id
 }
 
 export function _getLiveConnectionId(): string | null {
-	return _liveConnectionId;
+  return _liveConnectionId
 }
 
 // ─── Structural template ──────────────────────────────────────────
@@ -527,7 +523,7 @@ export function _getLiveConnectionId(): string | null {
  * Keyed by route (pathname + search). Same-URL refetches reuse the
  * cached template; different-URL navigations re-derive.
  */
-let _template: ReactNode = null;
+let _template: ReactNode = null
 
 /**
  * The page `_template` was derived for — the pathname only. The
@@ -540,27 +536,27 @@ let _template: ReactNode = null;
  * new page still has a Flight chunk in flight would re-render this STALE
  * prior-page template — the page sticks on the one you just left.
  */
-let _templateRoute: string | null = null;
+let _templateRoute: string | null = null
 
 /** Page key for `_template`: the pathname. Same-page query/state changes
  *  reuse the template (the `match`-driven structure is unchanged); only a
  *  pathname change re-derives. Client-only (reads `window.location`);
  *  callers are past the SSR `typeof document` guard. */
 export function templateRouteKey(): string {
-	return new URL(window.location.href).pathname;
+  return new URL(window.location.href).pathname
 }
 
 export function getTemplate(): ReactNode {
-	return _template;
+  return _template
 }
 
 export function getTemplateRoute(): string | null {
-	return _templateRoute;
+  return _templateRoute
 }
 
 export function setTemplate(template: ReactNode, route: string): void {
-	_template = template;
-	_templateRoute = route;
+  _template = template
+  _templateRoute = route
 }
 
 // ─── Frame URLs ───────────────────────────────────────────────────
@@ -572,16 +568,16 @@ export function setTemplate(template: ReactNode, route: string): void {
  * return a synchronous value without a server round-trip. The server
  * session is authoritative — this is a UX cache.
  */
-const _frameUrls = new Map<string, string>();
+const _frameUrls = new Map<string, string>()
 
 export function getFrameUrl(key: string): string | undefined {
-	return _frameUrls.get(key);
+  return _frameUrls.get(key)
 }
 
 export function setFrameUrl(key: string, url: string): void {
-	_frameUrls.set(key, url);
+  _frameUrls.set(key, url)
 }
 
 export function hasFrameUrl(key: string): boolean {
-	return _frameUrls.has(key);
+  return _frameUrls.has(key)
 }

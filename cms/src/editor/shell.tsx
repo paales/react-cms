@@ -86,7 +86,6 @@ const saveCmsFields = _saveCmsFields
 // no effect.
 const EDITOR_RESERVED_PARAMS = ["editor", "select", "config", "tabs"] as const
 
-
 type Palette = "light" | "dark"
 type Attachment = "floating" | "docked"
 type Device = "desktop" | "tablet" | "mobile"
@@ -447,10 +446,12 @@ export const EditorTreePartial = parton(
       </div>
     )
   },
-  { selector: "#cms-edit-tree",
+  {
+    selector: "#cms-edit-tree",
     // Editor chrome is always authoritative — never served from the
     // client's fp cache (its links embed the full URL).
-    fpSkip: false },
+    fpSkip: false,
+  },
 )
 
 // ─── Settings pane (left panel — Settings tab) ─────────────────────────
@@ -635,10 +636,12 @@ export const EditorFieldPanelPartial = parton(
       </div>
     )
   },
-  { selector: "#cms-edit-fields",
+  {
+    selector: "#cms-edit-fields",
     // Editor chrome is always authoritative — never served from the
     // client's fp cache (its links embed the full URL).
-    fpSkip: false },
+    fpSkip: false,
+  },
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────

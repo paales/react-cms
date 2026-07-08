@@ -17,9 +17,7 @@ import { stableStringify } from "../stable-stringify.ts"
 describe("stableStringify", () => {
   it("is independent of object key order", () => {
     expect(stableStringify({ a: 1, b: 2 })).toBe(stableStringify({ b: 2, a: 1 }))
-    expect(stableStringify({ x: { a: 1, b: 2 } })).toBe(
-      stableStringify({ x: { b: 2, a: 1 } }),
-    )
+    expect(stableStringify({ x: { a: 1, b: 2 } })).toBe(stableStringify({ x: { b: 2, a: 1 } }))
   })
 
   it("preserves array order", () => {

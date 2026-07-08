@@ -12,8 +12,8 @@ export const ChatNotesPage = parton(
         <title>Chat Notes — streaming demo</title>
         <h1 className="mb-4 text-2xl font-semibold">Chat — streaming the notes/ directory</h1>
         <p className="mb-3 leading-relaxed text-muted-foreground">
-          The box in the bottom-right streams one markdown file from notes/, character by
-          character, through a bounded recursive Piece server component.
+          The box in the bottom-right streams one markdown file from notes/, character by character,
+          through a bounded recursive Piece server component.
         </p>
       </main>
     )

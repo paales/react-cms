@@ -36,9 +36,9 @@
  */
 
 import {
-	_setIdPrunedListener,
-	_setManifestPriorityIds,
-	evictCulledContent,
+  _setIdPrunedListener,
+  _setManifestPriorityIds,
+  evictCulledContent,
 } from "./partial-client-state.ts"
 
 /** Max parked-by-culling subtrees kept alive. Most-recently-culled
@@ -96,38 +96,38 @@ _setManifestPriorityIds(() => [..._parked.keys()].reverse())
 const _subscribers = new Set<() => void>()
 
 function notify(): void {
-	for (const cb of [..._subscribers]) cb()
+  for (const cb of [..._subscribers]) cb()
 }
 
 /** Subscribe to any cull-state change (reported flips, generation
  *  bumps). `CullSlot`'s useSyncExternalStore subscription. */
 export function subscribeCullState(cb: () => void): () => void {
-	_subscribers.add(cb)
-	return () => {
-		_subscribers.delete(cb)
-	}
+  _subscribers.add(cb)
+  return () => {
+    _subscribers.delete(cb)
+  }
 }
 
 /** Per-id snapshot for useSyncExternalStore — a stable string so an
  *  unrelated id's change doesn't re-render this slot. */
 export function cullStateSnapshot(id: string): string {
-	const r = _reported.get(id)
-	return `${r === undefined ? "u" : r ? "1" : "0"}|${_generation.get(id) ?? 0}`
+  const r = _reported.get(id)
+  return `${r === undefined ? "u" : r ? "1" : "0"}|${_generation.get(id) ?? 0}`
 }
 
 export function reportedVisibility(id: string): boolean | undefined {
-	return _reported.get(id)
+  return _reported.get(id)
 }
 
 /** Whether `cullStateGone` evicted the id's reported state and no
  *  fresh content has stored since — the prime path's cold token (see
  *  `_reportEvicted` above). */
 export function reportedStateEvicted(id: string): boolean {
-	return _reportEvicted.has(id)
+  return _reportEvicted.has(id)
 }
 
 export function contentGeneration(id: string): number {
-	return _generation.get(id) ?? 0
+  return _generation.get(id) ?? 0
 }
 
 /**
@@ -136,23 +136,23 @@ export function contentGeneration(id: string): number {
  * (cull-out enters + touches, cull-in leaves) and evicts past the cap.
  */
 export function reportCullState(id: string, isInView: boolean): void {
-	_reported.set(id, isInView)
-	if (isInView) {
-		_parked.delete(id)
-	} else {
-		// Re-insert so map order tracks cull recency.
-		_parked.delete(id)
-		_parked.set(id, true)
-		_parkedSince.add(id)
-		while (_parked.size > CULL_PARK_CAP) {
-			const oldest = _parked.keys().next().value
-			if (oldest === undefined) break
-			_parked.delete(oldest)
-			_parkedSince.delete(oldest)
-			evictCulledContent(oldest)
-		}
-	}
-	notify()
+  _reported.set(id, isInView)
+  if (isInView) {
+    _parked.delete(id)
+  } else {
+    // Re-insert so map order tracks cull recency.
+    _parked.delete(id)
+    _parked.set(id, true)
+    _parkedSince.add(id)
+    while (_parked.size > CULL_PARK_CAP) {
+      const oldest = _parked.keys().next().value
+      if (oldest === undefined) break
+      _parked.delete(oldest)
+      _parkedSince.delete(oldest)
+      evictCulledContent(oldest)
+    }
+  }
+  notify()
 }
 
 /** The id left the client maps — the merge layer's prune dropped its
@@ -170,10 +170,10 @@ export function reportCullState(id: string, isInView: boolean): void {
  *  notifying from each would nest commit chains past React's
  *  update-depth limit. */
 export function cullStateGone(id: string): void {
-	_reported.delete(id)
-	_parked.delete(id)
-	_parkedSince.delete(id)
-	_reportEvicted.add(id)
+  _reported.delete(id)
+  _parked.delete(id)
+  _parkedSince.delete(id)
+  _reportEvicted.add(id)
 }
 
 _setIdPrunedListener(cullStateGone)
@@ -191,12 +191,12 @@ _setIdPrunedListener(cullStateGone)
  * here would be an update-during-render.
  */
 export function contentSlotStored(id: string): void {
-	// Fresh content retires the eviction tombstone: from this store on,
-	// the id's emissions are current evidence and priming may trust them.
-	_reportEvicted.delete(id)
-	if (!_parkedSince.has(id)) return
-	_parkedSince.delete(id)
-	_generation.set(id, (_generation.get(id) ?? 0) + 1)
+  // Fresh content retires the eviction tombstone: from this store on,
+  // the id's emissions are current evidence and priming may trust them.
+  _reportEvicted.delete(id)
+  if (!_parkedSince.has(id)) return
+  _parkedSince.delete(id)
+  _generation.set(id, (_generation.get(id) ?? 0) + 1)
 }
 
 /** A commit carried the server's CONFIRMATION placeholder for `id`'s
@@ -206,25 +206,25 @@ export function contentSlotStored(id: string): void {
  *  Rides the same commit walk as `contentSlotStored`, so the two
  *  outcomes of a culling revalidation can't race each other. */
 export function contentSlotConfirmed(id: string): void {
-	_parkedSince.delete(id)
+  _parkedSince.delete(id)
 }
 
 /** Test/HMR hook — reset every map. */
 export function _resetCullPark(): void {
-	_reported.clear()
-	_reportEvicted.clear()
-	_parked.clear()
-	_parkedSince.clear()
-	_generation.clear()
+  _reported.clear()
+  _reportEvicted.clear()
+  _parked.clear()
+  _parkedSince.clear()
+  _generation.clear()
 }
 
 /** Introspection for tests: the parked LRU's current order. */
 export function _parkedIds(): string[] {
-	return [..._parked.keys()]
+  return [..._parked.keys()]
 }
 
 export function _isParkedSince(id: string): boolean {
-	return _parkedSince.has(id)
+  return _parkedSince.has(id)
 }
 
 // ─── Observer refcount ────────────────────────────────────────────
@@ -244,27 +244,27 @@ const _observerCount = new Map<string, number>()
  *  and opens with a measured `?visible=` seed; a page without
  *  observers has nothing to measure and fires immediately. */
 export function _anyCullObservers(): boolean {
-	for (const n of _observerCount.values()) if (n > 0) return true
-	return false
+  for (const n of _observerCount.values()) if (n > 0) return true
+  return false
 }
 
 export function registerCullObserver(id: string, onGone: (id: string) => void): () => void {
-	_observerCount.set(id, (_observerCount.get(id) ?? 0) + 1)
-	let released = false
-	return () => {
-		if (released) return
-		released = true
-		const n = (_observerCount.get(id) ?? 1) - 1
-		if (n > 0) {
-			_observerCount.set(id, n)
-			return
-		}
-		_observerCount.set(id, 0)
-		queueMicrotask(() => {
-			if ((_observerCount.get(id) ?? 0) === 0) {
-				_observerCount.delete(id)
-				onGone(id)
-			}
-		})
-	}
+  _observerCount.set(id, (_observerCount.get(id) ?? 0) + 1)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const n = (_observerCount.get(id) ?? 1) - 1
+    if (n > 0) {
+      _observerCount.set(id, n)
+      return
+    }
+    _observerCount.set(id, 0)
+    queueMicrotask(() => {
+      if ((_observerCount.get(id) ?? 0) === 0) {
+        _observerCount.delete(id)
+        onGone(id)
+      }
+    })
+  }
 }

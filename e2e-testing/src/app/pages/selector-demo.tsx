@@ -4,10 +4,7 @@
  */
 
 import { parton, type RenderArgs } from "@parton/framework"
-import {
-  ProductReloadProbe,
-  SelectorRefetchButton,
-} from "../components/selector-demo-controls.tsx"
+import { ProductReloadProbe, SelectorRefetchButton } from "../components/selector-demo-controls.tsx"
 import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/components/ui/card"
 
 function ServerTime({ label }: { label: string }) {

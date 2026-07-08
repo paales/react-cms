@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client"
 import { beforeEach, describe, expect, it } from "vitest"
 import { PartialsClient } from "../partial-client.tsx"
 import { PartialErrorBoundary } from "../partial-error-boundary.tsx"
-
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 /**
@@ -30,7 +29,12 @@ import { PartialErrorBoundary } from "../partial-error-boundary.tsx"
 // carrying its id, the way `partial.tsx` emits one.
 function fresh(id: string, content: ReactNode): ReactNode {
   return (
-    <PartialErrorBoundary key={id} partialId={id} partialFingerprint={`fp_${id}`} partialMatchKey="">
+    <PartialErrorBoundary
+      key={id}
+      partialId={id}
+      partialFingerprint={`fp_${id}`}
+      partialMatchKey=""
+    >
       {content}
     </PartialErrorBoundary>
   )
@@ -107,10 +111,9 @@ describe("cross-route nav to a still-streaming page", () => {
     // The nav must be substituted from cache — not left as a bare hidden
     // placeholder (which renders nothing: the "nav disappears until the
     // heartbeat" bug).
-    expect(
-      html,
-      "fp-skipped chrome was not substituted on a cross-route streaming nav",
-    ).toContain('data-testid="the-nav"')
+    expect(html, "fp-skipped chrome was not substituted on a cross-route streaming nav").toContain(
+      'data-testid="the-nav"',
+    )
 
     // …while the new page's still-pending content resolves natively via
     // Suspense (its fallback shows), not blanked.

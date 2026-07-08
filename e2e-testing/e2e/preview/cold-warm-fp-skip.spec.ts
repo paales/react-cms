@@ -66,7 +66,10 @@ test("re-visit to /magento fp-skips on the second visit (prod build)", async ({ 
   await page.waitForSelector("[data-testid=product-grid]", { timeout: 15000 })
 
   const magentoResponses = rscResponses.filter((r) => r.url.includes("/magento_.rsc"))
-  expect(magentoResponses.length, "expected at least 2 /magento_.rsc responses").toBeGreaterThanOrEqual(2)
+  expect(
+    magentoResponses.length,
+    "expected at least 2 /magento_.rsc responses",
+  ).toBeGreaterThanOrEqual(2)
 
   const coldNav = magentoResponses[0]
   const returnNav = magentoResponses[1]

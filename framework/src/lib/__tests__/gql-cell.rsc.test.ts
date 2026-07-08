@@ -32,31 +32,53 @@ afterEach(() => {
 
 describe("gqlCell — doc mode", () => {
   it("derives a kebab-case id from the operation name", () => {
-    const doc = graphql(`query PokemonHero($id: Int!) { foo }`)
+    const doc = graphql(`
+      query PokemonHero($id: Int!) {
+        foo
+      }
+    `)
     const cell = gqlCell(fakeClient(null), doc)
     expect(cell.id).toBe("pokemon-hero")
     expect(getCellById("pokemon-hero")).toBe(cell)
   })
 
   it("namespaces the id with a prefix", () => {
-    const doc = graphql(`query Products($pageSize: Int!) { foo }`)
+    const doc = graphql(`
+      query Products($pageSize: Int!) {
+        foo
+      }
+    `)
     const cell = gqlCell(fakeClient(null), doc, { prefix: "magento" })
     expect(cell.id).toBe("magento.products")
   })
 
   it("honours an explicit id override", () => {
-    const doc = graphql(`query Whatever { foo }`)
+    const doc =
+      graphql(`
+        query Whatever {
+          foo
+        }
+      `)
     const cell = gqlCell(fakeClient(null), doc, { id: "custom.id" })
     expect(cell.id).toBe("custom.id")
   })
 
   it("throws on an anonymous operation with no explicit id", () => {
-    const doc = graphql(`query { foo }`)
+    const doc =
+      graphql(`
+        query {
+          foo
+        }
+      `)
     expect(() => gqlCell(fakeClient(null), doc)).toThrow(/anonymous operation/)
   })
 
   it("runs the query via the client when the loader fires", async () => {
-    const doc = graphql(`query PokemonStats($id: Int!) { foo }`)
+    const doc = graphql(`
+      query PokemonStats($id: Int!) {
+        foo
+      }
+    `)
     const client = fakeClient({ ok: true })
     const cell = gqlCell(client, doc)
     const out = await cell.load!({ id: 7 })

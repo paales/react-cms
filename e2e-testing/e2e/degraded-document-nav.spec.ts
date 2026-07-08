@@ -37,9 +37,7 @@ test("blocked channel POSTs degrade the page; links become document loads", asyn
   // The first committed delivery drives the first ack flush; its
   // envelope fails — sticky page degrade, stamped as the explicit
   // `data-parton-degraded` marker.
-  await page
-    .locator("html[data-parton-degraded]")
-    .waitFor({ state: "attached", timeout: 15000 })
+  await page.locator("html[data-parton-degraded]").waitFor({ state: "attached", timeout: 15000 })
 
   await page.evaluate(() => {
     ;(window as unknown as { __realmMarker?: number }).__realmMarker = 42
@@ -50,10 +48,7 @@ test("blocked channel POSTs degrade the page; links become document loads", asyn
   await page.getByRole("link", { name: /Defer Demo/ }).click()
   await expect
     .poll(
-      () =>
-        page.evaluate(
-          () => (window as unknown as { __realmMarker?: number }).__realmMarker,
-        ),
+      () => page.evaluate(() => (window as unknown as { __realmMarker?: number }).__realmMarker),
       { timeout: 20000 },
     )
     .toBeUndefined()
@@ -81,10 +76,7 @@ test("an attach that never establishes under an interaction completes it as a do
   await page.getByRole("link", { name: /Defer Demo/ }).click()
   await expect
     .poll(
-      () =>
-        page.evaluate(
-          () => (window as unknown as { __realmMarker?: number }).__realmMarker,
-        ),
+      () => page.evaluate(() => (window as unknown as { __realmMarker?: number }).__realmMarker),
       { timeout: 20000 },
     )
     .toBeUndefined()

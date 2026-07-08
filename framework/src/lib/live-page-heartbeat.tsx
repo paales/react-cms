@@ -10,11 +10,7 @@ import {
 } from "./channel-client.ts"
 import { _anyCullObservers } from "./cull-park.ts"
 import { _takeLiveCatchupAnchor } from "./partial-client-state.ts"
-import {
-  _onFirstMeasurement,
-  _visibilityMeasured,
-  _visibleSetIds,
-} from "./visibility.tsx"
+import { _onFirstMeasurement, _visibilityMeasured, _visibleSetIds } from "./visibility.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
 
 /** Default interval between periodic re-fires. While a streaming
@@ -122,9 +118,7 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
       // A later successful attach lifts the mode and restores channel
       // navigation (`_channelConnectionClosed` clears it on establish /
       // delivered ack).
-      const attach = (
-        window as Window & { __rsc_live_attach?: AttachTransport }
-      ).__rsc_live_attach
+      const attach = (window as Window & { __rsc_live_attach?: AttachTransport }).__rsc_live_attach
       if (!attach) return
       // A page with mounted viewport observers ALWAYS measures (the
       // IntersectionObserver fires an initial callback per target), so

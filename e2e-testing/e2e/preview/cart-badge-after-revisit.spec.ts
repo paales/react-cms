@@ -43,8 +43,5 @@ test("cart-badge updates after Add to Cart on re-visit (prod)", async ({ page })
   const html1 = await page.content()
   const after = html1.match(/min-w-\[18px\][^>]*>(\d+)</)?.[1] ?? "(unknown)"
   console.log(`cart badge after: ${after}`)
-  expect(
-    after,
-    `cart badge stayed at "${before}" after Add to Cart in prod build`,
-  ).not.toBe(before)
+  expect(after, `cart badge stayed at "${before}" after Add to Cart in prod build`).not.toBe(before)
 })

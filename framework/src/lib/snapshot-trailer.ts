@@ -93,9 +93,7 @@ export function deserializeSnapshot(ser: SerializedSnapshot): PartialSnapshot {
  * Uint8Array containing the marker + JSON body, ready to enqueue.
  * Exported so test fixtures can construct fake wire bytes.
  */
-export function buildSnapshotTrailer(
-  snapshots: Map<string, PartialSnapshot>,
-): Uint8Array {
+export function buildSnapshotTrailer(snapshots: Map<string, PartialSnapshot>): Uint8Array {
   const serializable: Record<string, SerializedSnapshot> = {}
   for (const [id, snap] of snapshots) {
     serializable[id] = serializeSnapshot(snap)
@@ -168,9 +166,10 @@ export function parseSnapshotTrailer(bytes: Uint8Array): SplitBuffer {
   const bodyEnd = bodyStart + parsed.length
   if (bytes.length < bodyEnd) return { flightBytes, snapshots: null }
   try {
-    const raw = JSON.parse(
-      new TextDecoder().decode(bytes.subarray(bodyStart, bodyEnd)),
-    ) as Record<string, SerializedSnapshot>
+    const raw = JSON.parse(new TextDecoder().decode(bytes.subarray(bodyStart, bodyEnd))) as Record<
+      string,
+      SerializedSnapshot
+    >
     const out: Record<string, PartialSnapshot> = {}
     for (const [id, ser] of Object.entries(raw)) {
       out[id] = deserializeSnapshot(ser)

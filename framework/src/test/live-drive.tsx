@@ -66,8 +66,7 @@ export async function withLiveDrive(
     headers: { "x-test-scope": scope, ...init?.headers },
   })
   await runWithRequestAsync(request, async () => {
-    const attach: Omit<AttachStatement, "url"> & { url?: string } =
-      init?.attach ?? bareAttach()
+    const attach: Omit<AttachStatement, "url"> & { url?: string } = init?.attach ?? bareAttach()
     const stated = new URL(attach.url ?? url, "http://localhost")
     bindAttachStatement({
       ...attach,

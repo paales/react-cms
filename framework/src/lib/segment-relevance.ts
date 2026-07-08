@@ -13,11 +13,11 @@
  */
 
 import {
-	_selectorMatchesSurface,
-	type ParsedSelector,
-	queryMatchingTs,
-} from "../runtime/invalidation-registry.ts";
-import type { PartialSnapshot } from "./partial-registry.ts";
+  _selectorMatchesSurface,
+  type ParsedSelector,
+  queryMatchingTs,
+} from "../runtime/invalidation-registry.ts"
+import type { PartialSnapshot } from "./partial-registry.ts"
 
 /**
  * True iff some bump with `ts > sinceTs` matches any of these
@@ -28,13 +28,13 @@ import type { PartialSnapshot } from "./partial-registry.ts";
  * (another viewer's cart) or to an unrendered label returns `false`.
  */
 export function _routeHasMatchingBump(
-	snapshots: ReadonlyMap<string, PartialSnapshot>,
-	sinceTs: number,
+  snapshots: ReadonlyMap<string, PartialSnapshot>,
+  sinceTs: number,
 ): boolean {
-	for (const [, snap] of snapshots) {
-		if (snapshotHasMatchingBump(snap, sinceTs)) return true;
-	}
-	return false;
+  for (const [, snap] of snapshots) {
+    if (snapshotHasMatchingBump(snap, sinceTs)) return true
+  }
+  return false
 }
 
 /**
@@ -45,14 +45,14 @@ export function _routeHasMatchingBump(
  * only the partons it actually constrains.
  */
 export function _routeMatchingBumpIds(
-	snapshots: ReadonlyMap<string, PartialSnapshot>,
-	sinceTs: number,
+  snapshots: ReadonlyMap<string, PartialSnapshot>,
+  sinceTs: number,
 ): string[] {
-	const ids: string[] = [];
-	for (const [id, snap] of snapshots) {
-		if (snapshotHasMatchingBump(snap, sinceTs)) ids.push(id);
-	}
-	return escalateToLaneCarriers(ids, snapshots);
+  const ids: string[] = []
+  for (const [id, snap] of snapshots) {
+    if (snapshotHasMatchingBump(snap, sinceTs)) ids.push(id)
+  }
+  return escalateToLaneCarriers(ids, snapshots)
 }
 
 /**
@@ -69,18 +69,18 @@ export function _routeMatchingBumpIds(
  * can carry the update — the caller drops it).
  */
 function laneCarrierFor(
-	id: string,
-	snapshots: ReadonlyMap<string, PartialSnapshot>,
+  id: string,
+  snapshots: ReadonlyMap<string, PartialSnapshot>,
 ): string | null {
-	const snap = snapshots.get(id);
-	if (!snap) return null;
-	if (snap.emittedFp) return id;
-	for (let i = snap.parentPath.length - 1; i >= 0; i--) {
-		const ancestorId = snap.parentPath[i];
-		if (ancestorId === id) continue;
-		if (snapshots.get(ancestorId)?.emittedFp) return ancestorId;
-	}
-	return null;
+  const snap = snapshots.get(id)
+  if (!snap) return null
+  if (snap.emittedFp) return id
+  for (let i = snap.parentPath.length - 1; i >= 0; i--) {
+    const ancestorId = snap.parentPath[i]
+    if (ancestorId === id) continue
+    if (snapshots.get(ancestorId)?.emittedFp) return ancestorId
+  }
+  return null
 }
 
 /** Map matched ids to their lane carriers (`laneCarrierFor`), dropping
@@ -89,18 +89,18 @@ function laneCarrierFor(
  *  one render re-renders them all. First-occurrence order is preserved
  *  (delivery order for the driver's lane pass). */
 function escalateToLaneCarriers(
-	matched: Iterable<string>,
-	snapshots: ReadonlyMap<string, PartialSnapshot>,
+  matched: Iterable<string>,
+  snapshots: ReadonlyMap<string, PartialSnapshot>,
 ): string[] {
-	const carriers: string[] = [];
-	const seen = new Set<string>();
-	for (const id of matched) {
-		const carrier = laneCarrierFor(id, snapshots);
-		if (carrier === null || seen.has(carrier)) continue;
-		seen.add(carrier);
-		carriers.push(carrier);
-	}
-	return carriers;
+  const carriers: string[] = []
+  const seen = new Set<string>()
+  for (const id of matched) {
+    const carrier = laneCarrierFor(id, snapshots)
+    if (carrier === null || seen.has(carrier)) continue
+    seen.add(carrier)
+    carriers.push(carrier)
+  }
+  return carriers
 }
 
 /**
@@ -111,21 +111,19 @@ function escalateToLaneCarriers(
  * invalidation transaction, before the commit wakes any driver.
  */
 export function _routeMatchingSelectorIds(
-	snapshots: ReadonlyMap<string, PartialSnapshot>,
-	selectors: readonly ParsedSelector[],
+  snapshots: ReadonlyMap<string, PartialSnapshot>,
+  selectors: readonly ParsedSelector[],
 ): string[] {
-	if (selectors.length === 0) return [];
-	const ids: string[] = [];
-	for (const [id, snap] of snapshots) {
-		const surface = constraintSurface(snap);
-		const hit = selectors.some(
-			(s) =>
-				snap.labels.includes(s.name) &&
-				_selectorMatchesSurface(s.constraints, surface),
-		);
-		if (hit) ids.push(id);
-	}
-	return escalateToLaneCarriers(ids, snapshots);
+  if (selectors.length === 0) return []
+  const ids: string[] = []
+  for (const [id, snap] of snapshots) {
+    const surface = constraintSurface(snap)
+    const hit = selectors.some(
+      (s) => snap.labels.includes(s.name) && _selectorMatchesSurface(s.constraints, surface),
+    )
+    if (hit) ids.push(id)
+  }
+  return escalateToLaneCarriers(ids, snapshots)
 }
 
 /**
@@ -144,42 +142,39 @@ export function _routeMatchingSelectorIds(
  * every peer connection.
  */
 export function _routeMatchingCookieIds(
-	snapshots: ReadonlyMap<string, PartialSnapshot>,
-	changed: ReadonlySet<string>,
+  snapshots: ReadonlyMap<string, PartialSnapshot>,
+  changed: ReadonlySet<string>,
 ): string[] {
-	if (changed.size === 0) return [];
-	const ids: string[] = [];
-	for (const [id, snap] of snapshots) {
-		const deps = snap.deps;
-		if (!deps) continue;
-		for (const name of changed) {
-			if (deps.has(`cookie:${name}`)) {
-				ids.push(id);
-				break;
-			}
-		}
-	}
-	return ids;
+  if (changed.size === 0) return []
+  const ids: string[] = []
+  for (const [id, snap] of snapshots) {
+    const deps = snap.deps
+    if (!deps) continue
+    for (const name of changed) {
+      if (deps.has(`cookie:${name}`)) {
+        ids.push(id)
+        break
+      }
+    }
+  }
+  return ids
 }
 
 function constraintSurface(snap: PartialSnapshot): Record<string, unknown> {
-	let varyInputs: Record<string, unknown> | null = null;
-	if (snap.varyKey) {
-		try {
-			varyInputs = JSON.parse(snap.varyKey) as Record<string, unknown>;
-		} catch {
-			varyInputs = null;
-		}
-	}
-	return {
-		...(varyInputs ?? {}),
-		...(snap.constraintArgs ?? {}),
-	};
+  let varyInputs: Record<string, unknown> | null = null
+  if (snap.varyKey) {
+    try {
+      varyInputs = JSON.parse(snap.varyKey) as Record<string, unknown>
+    } catch {
+      varyInputs = null
+    }
+  }
+  return {
+    ...(varyInputs ?? {}),
+    ...(snap.constraintArgs ?? {}),
+  }
 }
 
-function snapshotHasMatchingBump(
-	snap: PartialSnapshot,
-	sinceTs: number,
-): boolean {
-	return queryMatchingTs(snap.labels, constraintSurface(snap)) > sinceTs;
+function snapshotHasMatchingBump(snap: PartialSnapshot, sinceTs: number): boolean {
+  return queryMatchingTs(snap.labels, constraintSurface(snap)) > sinceTs
 }

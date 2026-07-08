@@ -114,9 +114,7 @@ export function StackedDrawer({
   // Per-direction sizing so left/right drawers stay narrow and
   // top/bottom drawers stay centered.
   const sizeClass =
-    direction === "left" || direction === "right"
-      ? "w-full sm:max-w-md"
-      : "mx-auto max-w-2xl"
+    direction === "left" || direction === "right" ? "w-full sm:max-w-md" : "mx-auto max-w-2xl"
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange} direction={direction}>

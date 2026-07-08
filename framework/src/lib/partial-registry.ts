@@ -352,10 +352,7 @@ let registrationSeq = 0
 /** Freshness guard for canonical variant writes: keep the stored
  *  snapshot when it carries a NEWER registration than the incoming
  *  one. See `PartialSnapshot._seq`. */
-function isStale(
-  existing: PartialSnapshot | undefined,
-  incoming: PartialSnapshot,
-): boolean {
+function isStale(existing: PartialSnapshot | undefined, incoming: PartialSnapshot): boolean {
   return (
     existing !== undefined &&
     existing._seq !== undefined &&

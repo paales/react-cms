@@ -102,8 +102,8 @@ const HeaderBar = parton(function HeaderBarRender() {
         Header (uncached, always fresh) rendered at <code>{new Date().toISOString()}</code>
       </p>
       <p className="mt-2 text-xs text-muted-foreground">
-        First visit cold-renders + populates cache. Reload to exercise the slow hit path —
-        inner Suspense boundaries should resolve incrementally as bytes arrive.
+        First visit cold-renders + populates cache. Reload to exercise the slow hit path — inner
+        Suspense boundaries should resolve incrementally as bytes arrive.
       </p>
     </header>
   )
@@ -112,9 +112,9 @@ const HeaderBar = parton(function HeaderBarRender() {
 const FooterBar = parton(function FooterBarRender() {
   return (
     <footer className="mt-6 text-xs text-muted-foreground" data-testid="footer-bar">
-      Footer (uncached) rendered at <code>{new Date().toISOString()}</code>. If this
-      timestamp matches the header's, the outer Flight encoder streamed AROUND the cache
-      wrapper. If it's noticeably later, the outer render blocked on cache resolution.
+      Footer (uncached) rendered at <code>{new Date().toISOString()}</code>. If this timestamp
+      matches the header's, the outer Flight encoder streamed AROUND the cache wrapper. If it's
+      noticeably later, the outer render blocked on cache resolution.
     </footer>
   )
 })

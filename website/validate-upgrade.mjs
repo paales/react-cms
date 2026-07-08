@@ -73,13 +73,17 @@ const check = (ok, label, detail = "") => {
 }
 
 try {
-  await until(async () => {
-    try {
-      return (await fetch(BASE)).ok
-    } catch {
-      return false
-    }
-  }, 30000, "server up")
+  await until(
+    async () => {
+      try {
+        return (await fetch(BASE)).ok
+      } catch {
+        return false
+      }
+    },
+    30000,
+    "server up",
+  )
 
   const browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
@@ -112,7 +116,9 @@ try {
     ws.on("framesent", (f) => {
       if (typeof f.payload === "string") rec.sent.push({ t: Date.now(), text: f.payload })
     })
-    ws.on("close", () => { rec.closed = true })
+    ws.on("close", () => {
+      rec.closed = true
+    })
   })
   /** The HELD live socket after the switch: open, receiving binary. */
   const heldSocket = () => sockets.find((s) => !s.closed && s.recv.some((r) => r.binary))
@@ -143,7 +149,11 @@ try {
     "origin content",
   )
   const firstLiveAt = postsLive[0]?.t ?? null
-  check(firstLiveAt !== null, "boot attaches over fetch (POST /__parton/live)", `${postsLive.length} live POST(s)`)
+  check(
+    firstLiveAt !== null,
+    "boot attaches over fetch (POST /__parton/live)",
+    `${postsLive.length} live POST(s)`,
+  )
   check(true, "origin content delivered over fetch", `${bootMs}ms`)
   check(
     firstWsOpenAt === null || (firstLiveAt !== null && firstLiveAt <= firstWsOpenAt),
@@ -164,13 +174,25 @@ try {
       "",
     )
   } catch {}
-  check(upgradeMs !== null, "connection upgrades to a HELD /__parton/ws socket", upgradeMs !== null ? `${upgradeMs}ms after boot` : "never upgraded")
+  check(
+    upgradeMs !== null,
+    "connection upgrades to a HELD /__parton/ws socket",
+    upgradeMs !== null ? `${upgradeMs}ms after boot` : "never upgraded",
+  )
   const held = heldSocket()
   const probeClosed = sockets.some((s) => s.closed && s.recv.some((r) => r.binary))
-  check(probeClosed, "the throwaway probe socket confirmed and closed", `${sockets.length} socket(s) total`)
+  check(
+    probeClosed,
+    "the throwaway probe socket confirmed and closed",
+    `${sockets.length} socket(s) total`,
+  )
   const binaryDown = held ? held.recv.filter((r) => r.binary).length : 0
   const textDown = held ? held.recv.filter((r) => !r.binary).length : 0
-  check(binaryDown > 0 && textDown === 0, "held socket downstream is opaque binary (the marker tunnel)", `${binaryDown} binary / ${textDown} text`)
+  check(
+    binaryDown > 0 && textDown === 0,
+    "held socket downstream is opaque binary (the marker tunnel)",
+    `${binaryDown} binary / ${textDown} text`,
+  )
 
   // Let the handover fully settle, then snapshot: from here NOTHING may
   // ride a fetch endpoint (every statement is on the socket).
@@ -181,18 +203,37 @@ try {
   // ── 3. Rides the socket — scroll into fresh territory AFTER the switch ──
   const scrollStart = Date.now()
   await page.$eval(scroller, (el) => el.scrollBy(3072, 1600))
-  const pos = await page.$eval(scroller, (el) => ({ x: el.scrollLeft, y: el.scrollTop, w: el.clientWidth, h: el.clientHeight }))
+  const pos = await page.$eval(scroller, (el) => ({
+    x: el.scrollLeft,
+    y: el.scrollTop,
+    w: el.clientWidth,
+    h: el.clientHeight,
+  }))
   const cx = Math.floor((pos.x + pos.w / 2) / 512) - 32
   const cy = Math.floor((pos.y + pos.h / 2) / 512) - 32
   const centerId = `chunk-${cx},${cy}`
   let streamedMs = null
   try {
-    streamedMs = await until(async () => (await page.$(`[data-testid="${centerId}"][data-loaded]`)) !== null, 10000, "")
+    streamedMs = await until(
+      async () => (await page.$(`[data-testid="${centerId}"][data-loaded]`)) !== null,
+      10000,
+      "",
+    )
   } catch {}
   await page.waitForTimeout(1000)
-  check(streamedMs !== null, `scroll streams centre ${centerId} in over the socket`, streamedMs !== null ? `${streamedMs}ms` : "never loaded")
-  const binaryDuringScroll = sockets.flatMap((s) => s.recv).filter((r) => r.binary && r.t >= scrollStart).length
-  check(binaryDuringScroll > 0, "flipped-in chunks stream down as binary frames (culling intact)", `${binaryDuringScroll} frames during scroll`)
+  check(
+    streamedMs !== null,
+    `scroll streams centre ${centerId} in over the socket`,
+    streamedMs !== null ? `${streamedMs}ms` : "never loaded",
+  )
+  const binaryDuringScroll = sockets
+    .flatMap((s) => s.recv)
+    .filter((r) => r.binary && r.t >= scrollStart).length
+  check(
+    binaryDuringScroll > 0,
+    "flipped-in chunks stream down as binary frames (culling intact)",
+    `${binaryDuringScroll} frames during scroll`,
+  )
   const visibleFrames = sockets
     .flatMap((s) => s.sent)
     .filter((s) => s.t >= scrollStart)
@@ -203,28 +244,51 @@ try {
         return false
       }
     })
-  check(visibleFrames.length > 0, "upstream visibility flips ride UP the socket", `${visibleFrames.length} visible envelope(s)`)
+  check(
+    visibleFrames.length > 0,
+    "upstream visibility flips ride UP the socket",
+    `${visibleFrames.length} visible envelope(s)`,
+  )
   const liveAfter = postsLive.length - liveAtSwitch
   const channelAfter = postsChannel.length - channelAtSwitch
   check(liveAfter === 0, "no further POST /__parton/live after the upgrade", `${liveAfter} new`)
-  check(channelAfter === 0, "no further POST /__parton/channel after the upgrade (envelopes on WS)", `${channelAfter} new`)
+  check(
+    channelAfter === 0,
+    "no further POST /__parton/channel after the upgrade (envelopes on WS)",
+    `${channelAfter} new`,
+  )
   const soak = await (async () => {
     const before = await readPulses()
     await page.waitForTimeout(5000)
     const after = await readPulses()
     const ids = Object.keys(before)
-    return { sampled: ids.length, moved: ids.filter((id) => after[id] !== undefined && after[id] !== before[id]).length }
+    return {
+      sampled: ids.length,
+      moved: ids.filter((id) => after[id] !== undefined && after[id] !== before[id]).length,
+    }
   })()
-  check(soak.sampled > 0 && soak.moved >= 1, "pulses advance (live lanes over the socket)", `${soak.moved}/${soak.sampled} in 5s`)
-  check(postsLive.length - liveAtSwitch === 0 && postsChannel.length - channelAtSwitch === 0, "still zero fetch-endpoint POSTs after streaming", `live=${postsLive.length - liveAtSwitch} channel=${postsChannel.length - channelAtSwitch}`)
+  check(
+    soak.sampled > 0 && soak.moved >= 1,
+    "pulses advance (live lanes over the socket)",
+    `${soak.moved}/${soak.sampled} in 5s`,
+  )
+  check(
+    postsLive.length - liveAtSwitch === 0 && postsChannel.length - channelAtSwitch === 0,
+    "still zero fetch-endpoint POSTs after streaming",
+    `live=${postsLive.length - liveAtSwitch} channel=${postsChannel.length - channelAtSwitch}`,
+  )
 
   // ── 4. No tear ──
-  const errCards = await page.$$eval("[data-partial-error], .partial-error", (els) => els.length).catch(() => 0)
+  const errCards = await page
+    .$$eval("[data-partial-error], .partial-error", (els) => els.length)
+    .catch(() => 0)
   check(errCards === 0, "no error cards across the switch", `${errCards} cards`)
   check(pageErrors.length === 0, "no page errors", pageErrors.slice(0, 3).join(" | "))
   check(netFails.length === 0, "no failed client requests", netFails.slice(0, 4).join(" | "))
 
-  console.log(`\nboot→origin ${bootMs}ms · upgrade ${upgradeMs}ms after boot · ${sockets.length} ws socket(s)`)
+  console.log(
+    `\nboot→origin ${bootMs}ms · upgrade ${upgradeMs}ms after boot · ${sockets.length} ws socket(s)`,
+  )
   await browser.close()
 } finally {
   try {
@@ -234,7 +298,11 @@ try {
   }
 }
 
-const errLines = serverLog.join("").split("\n").filter((l) => /error|Error|ERR/.test(l)).slice(0, 6)
+const errLines = serverLog
+  .join("")
+  .split("\n")
+  .filter((l) => /error|Error|ERR/.test(l))
+  .slice(0, 6)
 if (errLines.length) console.log("server log errors:\n " + errLines.join("\n "))
 console.log(failures === 0 ? "\nALL GREEN" : `\n${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

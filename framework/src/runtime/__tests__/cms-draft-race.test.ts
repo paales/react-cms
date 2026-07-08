@@ -98,9 +98,7 @@ describe("writeDraftNode — concurrent writes", () => {
 
     const ids = Array.from({ length: 8 }, (_, i) => `n${i}`)
     await Promise.all(
-      ids.map((id) =>
-        writeDraftNode(id, { id, configs: [{ match: {}, fields: { v: id } }] }),
-      ),
+      ids.map((id) => writeDraftNode(id, { id, configs: [{ match: {}, fields: { v: id } }] })),
     )
 
     const final = await getCmsStorage().loadDraft()

@@ -16,12 +16,7 @@
  * next nav.
  */
 import { describe, expect, it } from "vitest"
-import {
-  _setConnectionSession,
-  parseCookies,
-  runWithRequestAsync,
-  setCookie,
-} from "../context.ts"
+import { _setConnectionSession, parseCookies, runWithRequestAsync, setCookie } from "../context.ts"
 
 describe("parseCookies", () => {
   it("reads cookies from request headers", async () => {

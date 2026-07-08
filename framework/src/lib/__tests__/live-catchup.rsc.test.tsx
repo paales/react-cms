@@ -70,8 +70,7 @@ function Page(): ReactNode {
  *  triple the client's fingerprint maps advertise. */
 function tokensOf(flight: string): Map<string, string> {
   const out = new Map<string, string>()
-  const re =
-    /"partialId":"([^"]+)","partialFingerprint":"([^"]+)","partialMatchKey":"([^"]+)"/g
+  const re = /"partialId":"([^"]+)","partialFingerprint":"([^"]+)","partialMatchKey":"([^"]+)"/g
   let m: RegExpExecArray | null
   while ((m = re.exec(flight)) !== null) out.set(m[1], `${m[1]}:${m[3]}:${m[2]}`)
   return out

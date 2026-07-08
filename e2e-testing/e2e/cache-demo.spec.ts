@@ -53,10 +53,7 @@ test("cache hit serves stored subtree without re-running the server component", 
   expect(fourthCount).toBe(firstCount)
 })
 
-test("partial refetch targeting a cached partial skips server work", async ({
-  page,
-  request,
-}) => {
+test("partial refetch targeting a cached partial skips server work", async ({ page, request }) => {
   // Seed the cache.
   const seed = await request.get("/cache-demo?flavor=vanilla-c")
   const beforeCount = extractRenderCount(await seed.text())

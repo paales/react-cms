@@ -28,12 +28,12 @@ import {
   type NavigateTarget,
   type NavigationMilestones,
 } from "../runtime/navigation-api.ts"
-import { _channelCookieChange, _channelFrameNavigate, _channelIsDegraded } from "./channel-client.ts"
 import {
-  getFrameUrl,
-  hasFrameUrl,
-  setFrameUrl,
-} from "./partial-client-state.ts"
+  _channelCookieChange,
+  _channelFrameNavigate,
+  _channelIsDegraded,
+} from "./channel-client.ts"
+import { getFrameUrl, hasFrameUrl, setFrameUrl } from "./partial-client-state.ts"
 import {
   enqueueRefetch,
   makeSilentInfo,
@@ -63,9 +63,7 @@ export const FrameNameContext = createContext<readonly string[]>(
  *  so `currentEntry.url` is correct on the first server paint, before the
  *  browser Navigation API exists. The live handle supersedes it after
  *  hydration. */
-export const FrameUrlContext = createContext<ReadonlyMap<string, string>>(
-  new Map<string, string>(),
-)
+export const FrameUrlContext = createContext<ReadonlyMap<string, string>>(new Map<string, string>())
 
 /** Dotted canonical name for a frame path. */
 export function joinFramePath(path: readonly string[]): string {
@@ -564,10 +562,7 @@ function projectEntryForFrame(
 // undefined. Return a stub that type-checks with no-op behavior — any
 // actual invocation only happens on the client after hydration.
 
-function nullImperativeNavigation(
-  name: string | null,
-  url?: string | null,
-): ImperativeNavigation {
+function nullImperativeNavigation(name: string | null, url?: string | null): ImperativeNavigation {
   const stubEntry = null as unknown as NavigationHistoryEntry
   // On the server (and pre-hydration) there is no browser Navigation
   // API, but a Flight-borne URL still lets `currentEntry.url` resolve
@@ -804,9 +799,7 @@ export function buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeN
     }
   }
 
-  const windowReload = (
-    options?: FrameworkReloadOptions,
-  ): NavigationMilestones => {
+  const windowReload = (options?: FrameworkReloadOptions): NavigationMilestones => {
     const parsed = parseOptionsSelector(options)
     const m = makeMilestoneDeferreds()
 
@@ -821,8 +814,7 @@ export function buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeN
     // Only a bare `reload()` (no selector, no streaming) falls through
     // to `nav.reload()` — that's the user-facing "reload this URL"
     // command and IS supposed to do a real browser reload.
-    const wantsInPlace =
-      parsed.labels.length > 0 || options?.streaming === true
+    const wantsInPlace = parsed.labels.length > 0 || options?.streaming === true
     if (wantsInPlace) {
       m.committed.resolve(nav.currentEntry!)
       void (async () => {
@@ -952,8 +944,7 @@ export function buildFrameHandle(
     // browser entry commits (the snapshot is baked into
     // `nav.navigate`); the auto path applies synchronously.
     runFrameTreeWrite(() => {
-      const priorState =
-        (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
+      const priorState = (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
       const priorNode = _readFrameNode(priorState, path)
       // Prior URL for this frame — prefer the entry snapshot, fall back
       // to the module-level cache for first nav before FrameNameProvider
@@ -1041,9 +1032,7 @@ export function buildFrameHandle(
     }
   }
 
-  const frameReload = (
-    options?: FrameworkReloadOptions,
-  ): NavigationMilestones => {
+  const frameReload = (options?: FrameworkReloadOptions): NavigationMilestones => {
     const url = getFrameUrl(key)
     const m = makeMilestoneDeferreds()
     const entry = nav.currentEntry!
@@ -1091,8 +1080,7 @@ export function buildFrameHandle(
     committed.promise.catch(() => {})
     finished.promise.catch(() => {})
     runFrameTreeWrite(() => {
-      const priorState =
-        (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
+      const priorState = (nav.currentEntry?.getState() as Record<string, unknown> | null) ?? {}
       const priorNode = _readFrameNode(priorState, path)
       const history = priorNode?.__frameHistory ?? emptyHistoryEntry()
       const currentUrl = priorNode?.url ?? getFrameUrl(key) ?? null

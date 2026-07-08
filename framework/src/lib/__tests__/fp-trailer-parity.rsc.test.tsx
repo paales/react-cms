@@ -26,11 +26,7 @@ import { splitAtFpTrailer } from "../fp-trailer-split.ts"
 import { runWithRequestAsync, _captureCommitHandle } from "../../runtime/context.ts"
 import { renderServerToFlight } from "../../test/rsc-server.ts"
 import { localCell } from "../cell.ts"
-import {
-  MemoryCellStorage,
-  setCellStorage,
-  _resetCellStorage,
-} from "../../runtime/cell-storage.ts"
+import { MemoryCellStorage, setCellStorage, _resetCellStorage } from "../../runtime/cell-storage.ts"
 import { _clearInvalidationRegistry } from "../../runtime/invalidation-registry.ts"
 
 // ─── Round-trip harness ─────────────────────────────────────────────
@@ -102,20 +98,14 @@ async function assertParity(
   if (predicted !== undefined) {
     // The trailer shipped a warm fp for this id — it MUST match what
     // the server recomputes live on the warm visit.
-    expect(
-      predicted,
-      `trailer "to" fp for "${id}" diverges from the live warm fp`,
-    ).toBe(liveWarmFp)
+    expect(predicted, `trailer "to" fp for "${id}" diverges from the live warm fp`).toBe(liveWarmFp)
   } else {
     // No trailer entry → the cold body fp already equalled the warm
     // fp (no drift). Then the cold body fp must itself equal the live
     // warm fp — otherwise the client never learns the warm fp and the
     // next nav mismatches.
     const coldBodyFp = fpById(cold.bodyText).get(id)
-    expect(
-      coldBodyFp,
-      `no trailer entry for "${id}" yet cold fp ≠ live warm fp`,
-    ).toBe(liveWarmFp)
+    expect(coldBodyFp, `no trailer entry for "${id}" yet cold fp ≠ live warm fp`).toBe(liveWarmFp)
   }
 }
 

@@ -12,10 +12,7 @@
 import { atomic } from "@parton/framework"
 import { cardCvc, cardName, failChance, saves } from "./forms-demo-state.ts"
 
-export async function saveCard(args: {
-  cardName?: string
-  cardCvc?: string
-}): Promise<void> {
+export async function saveCard(args: { cardName?: string; cardCvc?: string }): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 400))
   await atomic(async () => {
     if (failChance.peek() > 0 && Math.random() < failChance.peek()) {

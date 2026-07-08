@@ -3,17 +3,16 @@
  */
 
 import { describe, expect, it } from "vitest"
-import {
-  parseMultipartStream,
-  parseMultipartResponse,
-  type DeferChunk,
-} from "../multipart.ts"
+import { parseMultipartStream, parseMultipartResponse, type DeferChunk } from "../multipart.ts"
 
 const enc = new TextEncoder()
 
 /** Build a multipart/mixed Response. `sliceAt` splits the body into N-byte
  *  stream chunks so we exercise parts arriving across multiple reads. */
-function multipartResponse(jsonParts: string[], opts?: { boundary?: string; sliceAt?: number }): Response {
+function multipartResponse(
+  jsonParts: string[],
+  opts?: { boundary?: string; sliceAt?: number },
+): Response {
   const boundary = opts?.boundary ?? "-"
   const body =
     jsonParts
@@ -68,7 +67,10 @@ describe("parseMultipartStream", () => {
     const res = multipartResponse(
       [
         JSON.stringify({ data: { product: { id: 1 } }, hasNext: true }),
-        JSON.stringify({ incremental: [{ data: { price: 42 }, path: ["product"] }], hasNext: false }),
+        JSON.stringify({
+          incremental: [{ data: { price: 42 }, path: ["product"] }],
+          hasNext: false,
+        }),
       ],
       { sliceAt: 7 }, // tiny slices: parts span many reads
     )
@@ -89,18 +91,23 @@ describe("parseMultipartResponse — buffered merge", () => {
       JSON.stringify({ data: { product: { id: 1, name: "Widget" } }, hasNext: true }),
       JSON.stringify({ incremental: [{ data: { price: 42 }, path: ["product"] }], hasNext: false }),
     ])
-    const merged = await parseMultipartResponse<{ product: { id: number; name: string; price: number } }>(
-      res,
-    )
+    const merged = await parseMultipartResponse<{
+      product: { id: number; name: string; price: number }
+    }>(res)
     expect(merged).toEqual({ product: { id: 1, name: "Widget", price: 42 } })
   })
 
   it("merges patches at a nested array path", async () => {
     const res = multipartResponse([
       JSON.stringify({ data: { items: [{ id: "a" }, { id: "b" }] }, hasNext: true }),
-      JSON.stringify({ incremental: [{ data: { detail: "x" }, path: ["items", 1] }], hasNext: false }),
+      JSON.stringify({
+        incremental: [{ data: { detail: "x" }, path: ["items", 1] }],
+        hasNext: false,
+      }),
     ])
-    const merged = await parseMultipartResponse<{ items: Array<{ id: string; detail?: string }> }>(res)
+    const merged = await parseMultipartResponse<{ items: Array<{ id: string; detail?: string }> }>(
+      res,
+    )
     expect(merged.items).toEqual([{ id: "a" }, { id: "b", detail: "x" }])
   })
 })

@@ -83,7 +83,9 @@ test("single keystroke in search dispatches exactly one RSC call", async ({ page
   await page.waitForTimeout(3000)
 
   // Report what we saw (helps diagnose failures).
-  console.log(`\n=== dispatches during keystroke (rsc=${rscCalls.length}, channel=${urlStatements.length}) ===`)
+  console.log(
+    `\n=== dispatches during keystroke (rsc=${rscCalls.length}, channel=${urlStatements.length}) ===`,
+  )
   for (const c of rscCalls) {
     console.log(`  [${c.time}ms] rsc partials=${c.partials} tags=${c.tags} url=${c.url}`)
   }
@@ -103,10 +105,7 @@ test("single keystroke in search dispatches exactly one RSC call", async ({ page
     ...urlStatements.filter((s) => s.partials !== null && s.partials !== "search-results"),
   ]
 
-  expect(
-    stageDispatches.length,
-    "expected exactly one dispatch for the search stages",
-  ).toBe(1)
+  expect(stageDispatches.length, "expected exactly one dispatch for the search stages").toBe(1)
   expect(
     otherDispatches,
     `expected no unrelated dispatches; got: ${JSON.stringify(otherDispatches)}`,

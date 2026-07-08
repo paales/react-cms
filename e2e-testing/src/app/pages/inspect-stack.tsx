@@ -24,11 +24,7 @@ import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { buttonVariants } from "@parton/copies/components/ui/button"
 import { cn } from "@parton/copies/lib/utils"
-import {
-  DrawerBackLink,
-  DrawerScrollArea,
-  StackedDrawer,
-} from "../components/stacked-drawer.tsx"
+import { DrawerBackLink, DrawerScrollArea, StackedDrawer } from "../components/stacked-drawer.tsx"
 import { extractSprite } from "./pokemon.tsx"
 
 const GRID_LIMIT = 24
@@ -179,9 +175,9 @@ export const InspectBasePage = parton(
         <p className="mb-4 max-w-prose text-sm text-muted-foreground">
           Click <strong>Inspect</strong> on any card. Drawer 1 (Pokémon) slides in from the{" "}
           <strong>left</strong>. Inside it, "View Moves" opens drawer 2 from the{" "}
-          <strong>right</strong>. Inside drawer 2, clicking a move navigates <em>within the same
-          drawer</em> to the move's detail page — no third drawer chrome. Each step pushes a real
-          URL. Try{" "}
+          <strong>right</strong>. Inside drawer 2, clicking a move navigates{" "}
+          <em>within the same drawer</em> to the move's detail page — no third drawer chrome. Each
+          step pushes a real URL. Try{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em]">/inspect/p/25/moves</code>{" "}
           or{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 text-[0.85em]">
@@ -392,9 +388,7 @@ const MoveDetailContent = parton(
         />
         <header>
           <div className="text-xs text-muted-foreground">Move #{move.id}</div>
-          <div className="text-2xl font-semibold capitalize">
-            {move.name.replace(/-/g, " ")}
-          </div>
+          <div className="text-2xl font-semibold capitalize">{move.name.replace(/-/g, " ")}</div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <TypeBadge type={move.pokemon_v2_type?.name || "default"} />
             {move.pokemon_v2_movedamageclass?.name ? (
@@ -460,10 +454,7 @@ export const InspectDrawer2 = parton(
 // ─── Drawer 3 — move detail (own overlay, stacked on the list) ──────────
 
 export const InspectDrawer3 = parton(
-  function InspectDrawer3Render({
-    id,
-    moveId,
-  }: { id: string; moveId: string } & RenderArgs) {
+  function InspectDrawer3Render({ id, moveId }: { id: string; moveId: string } & RenderArgs) {
     // Move detail — its own overlay above the moves list. Closing
     // navigates back to `/moves`, which unmatches and parks it.
     return (

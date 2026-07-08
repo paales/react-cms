@@ -63,13 +63,7 @@ export function deriveTemplate(node: ReactNode): ReactNode {
     if (!id) return node
     const mk = getPartialMatchKey(node) ?? ""
     return (
-      <i
-        key={`${id}|${mk}`}
-        hidden
-        data-partial
-        data-partial-id={id}
-        data-partial-match={mk}
-      />
+      <i key={`${id}|${mk}`} hidden data-partial data-partial-id={id} data-partial-match={mk} />
     )
   }
   if (isPlaceholder(node)) {
@@ -81,13 +75,7 @@ export function deriveTemplate(node: ReactNode): ReactNode {
     if (!id) return node
     const mk = getPlaceholderMatchKey(node) ?? ""
     return (
-      <i
-        key={`${id}|${mk}`}
-        hidden
-        data-partial
-        data-partial-id={id}
-        data-partial-match={mk}
-      />
+      <i key={`${id}|${mk}`} hidden data-partial data-partial-id={id} data-partial-match={mk} />
     )
   }
 

@@ -13,10 +13,7 @@ import {
   _resetCellStorage,
   getCellStorage,
 } from "../../runtime/cell-storage.ts"
-import {
-  _clearInvalidationRegistry,
-  refreshSelector,
-} from "../../runtime/invalidation-registry.ts"
+import { _clearInvalidationRegistry, refreshSelector } from "../../runtime/invalidation-registry.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 
 async function flightAt(url: string, node: React.ReactNode): Promise<string> {

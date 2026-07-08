@@ -13,7 +13,11 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { _routeHasMatchingBump } from "../segment-relevance.ts"
 import type { PartialSnapshot } from "../partial-registry.ts"
-import { _clearInvalidationRegistry, _currentTs, refreshSelector } from "../../runtime/invalidation-registry.ts"
+import {
+  _clearInvalidationRegistry,
+  _currentTs,
+  refreshSelector,
+} from "../../runtime/invalidation-registry.ts"
 
 function snap(
   labels: string[],

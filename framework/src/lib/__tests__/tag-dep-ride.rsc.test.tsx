@@ -17,10 +17,7 @@ import { describe, expect, it, beforeEach } from "vitest"
 import { computeRouteKey, parton, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { runWithRequestAsync } from "../../runtime/context.ts"
-import {
-  _clearInvalidationRegistry,
-  refreshSelector,
-} from "../../runtime/invalidation-registry.ts"
+import { _clearInvalidationRegistry, refreshSelector } from "../../runtime/invalidation-registry.ts"
 import { clearRegistry, enterRequestRegistry, lookupPartial } from "../partial-registry.ts"
 import { evalDepKeys, searchParam } from "../server-hooks.ts"
 import { tag } from "../current-parton.ts"

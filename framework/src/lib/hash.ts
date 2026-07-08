@@ -44,4 +44,3 @@ function fmix32(h: number): number {
   h = (h ^ (h >>> 16)) >>> 0
   return h
 }
-

@@ -209,7 +209,10 @@ async function doAction(page, rng, hist) {
     return { kind, key, typedIntoSearch: true }
   }
   if (kind === "searchOpen") {
-    await urlSearchBtn.first().click({ timeout: 2000 }).catch(() => {})
+    await urlSearchBtn
+      .first()
+      .click({ timeout: 2000 })
+      .catch(() => {})
     return { kind }
   }
   if (kind === "link" && links.length) {
@@ -298,8 +301,8 @@ async function dumpArtifacts(page, result) {
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, "report.json"), JSON.stringify(result, null, 2))
   await page.screenshot({ path: path.join(dir, "screenshot.png"), fullPage: true }).catch(() => {})
-  await fs
-    .promises.writeFile(path.join(dir, "page.html"), await page.content().catch(() => ""))
+  await fs.promises
+    .writeFile(path.join(dir, "page.html"), await page.content().catch(() => ""))
     .catch(() => {})
   console.log(`   ↳ artifacts: ${path.relative(process.cwd(), dir)}`)
 }

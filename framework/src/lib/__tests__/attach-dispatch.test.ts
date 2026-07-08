@@ -15,14 +15,8 @@
  */
 
 import { describe, expect, it } from "vitest"
-import {
-  type AttachStatement,
-  decodeAttachStatement,
-} from "../channel-protocol.ts"
-import {
-  createRscRenderRequest,
-  parseRenderRequest,
-} from "../../runtime/request.tsx"
+import { type AttachStatement, decodeAttachStatement } from "../channel-protocol.ts"
+import { createRscRenderRequest, parseRenderRequest } from "../../runtime/request.tsx"
 
 const statement: AttachStatement = {
   url: "/page?q=a",
@@ -34,9 +28,7 @@ const statement: AttachStatement = {
 
 describe("decodeAttachStatement", () => {
   it("decodes the full statement", () => {
-    expect(decodeAttachStatement(JSON.parse(JSON.stringify(statement)))).toEqual(
-      statement,
-    )
+    expect(decodeAttachStatement(JSON.parse(JSON.stringify(statement)))).toEqual(statement)
   })
 
   it("normalizes absent since/visible to null and absent applied to 0", () => {
@@ -51,12 +43,8 @@ describe("decodeAttachStatement", () => {
 
   it("keeps the empty-array/null distinction on visible", () => {
     // [] is a measurement ("nothing in view"); null is no statement.
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], visible: [] })?.visible,
-    ).toEqual([])
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], visible: null })?.visible,
-    ).toBeNull()
+    expect(decodeAttachStatement({ url: "/p", cached: [], visible: [] })?.visible).toEqual([])
+    expect(decodeAttachStatement({ url: "/p", cached: [], visible: null })?.visible).toBeNull()
   })
 
   it("decodes attach-with-intent frames — frame-scoped url statements", () => {
@@ -69,9 +57,7 @@ describe("decodeAttachStatement", () => {
       { kind: "url", url: "/cart/open", intent: "silent", frame: ["cart"] },
     ])
     // An empty frames array decodes as no intent at all.
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], frames: [] })?.frames,
-    ).toBeUndefined()
+    expect(decodeAttachStatement({ url: "/p", cached: [], frames: [] })?.frames).toBeUndefined()
   })
 
   it("rejects window-scoped frames entries — the url field IS the window statement", () => {
@@ -85,9 +71,13 @@ describe("decodeAttachStatement", () => {
   })
 
   it("ignores unknown fields — the statement grows by adding them", () => {
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], ack: 7, telemetry: { w: 1 } }),
-    ).toEqual({ url: "/p", cached: [], since: null, visible: null, applied: 0 })
+    expect(decodeAttachStatement({ url: "/p", cached: [], ack: 7, telemetry: { w: 1 } })).toEqual({
+      url: "/p",
+      cached: [],
+      since: null,
+      visible: null,
+      applied: 0,
+    })
   })
 
   it("rejects malformed known fields", () => {
@@ -100,9 +90,7 @@ describe("decodeAttachStatement", () => {
     expect(decodeAttachStatement({ url: "/p", cached: "a,b" })).toBeNull()
     expect(decodeAttachStatement({ url: "/p", cached: [1] })).toBeNull()
     expect(decodeAttachStatement({ url: "/p", cached: [], since: "e1:42" })).toBeNull()
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], since: { epoch: "", ts: 1 } }),
-    ).toBeNull()
+    expect(decodeAttachStatement({ url: "/p", cached: [], since: { epoch: "", ts: 1 } })).toBeNull()
     expect(
       decodeAttachStatement({
         url: "/p",
@@ -118,13 +106,9 @@ describe("decodeAttachStatement", () => {
     // violations, not extensibility.
     expect(decodeAttachStatement({ url: "/p", cached: [], applied: "3" })).toBeNull()
     expect(decodeAttachStatement({ url: "/p", cached: [], applied: -1 })).toBeNull()
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], applied: Number.NaN }),
-    ).toBeNull()
+    expect(decodeAttachStatement({ url: "/p", cached: [], applied: Number.NaN })).toBeNull()
     // `frames` entries are KNOWN — malformed shapes are violations.
-    expect(
-      decodeAttachStatement({ url: "/p", cached: [], frames: [{}] }),
-    ).toBeNull()
+    expect(decodeAttachStatement({ url: "/p", cached: [], frames: [{}] })).toBeNull()
     expect(
       decodeAttachStatement({
         url: "/p",
@@ -156,9 +140,7 @@ describe("parseRenderRequest — the one _.rsc request kind", () => {
   })
 
   it("a _.rsc GET is not a render request — documents are the only GETs", () => {
-    const parsed = parseRenderRequest(
-      new Request("http://localhost/page_.rsc"),
-    )
+    const parsed = parseRenderRequest(new Request("http://localhost/page_.rsc"))
     expect(parsed.isRsc).toBe(false)
     expect(parsed.isAction).toBe(false)
     // The URL is not de-postfixed: nothing routes it as a page.

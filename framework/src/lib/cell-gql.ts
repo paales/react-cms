@@ -29,19 +29,8 @@
  * runs (preferences, drafts) use `localCell`.
  */
 
-import type {
-  TadaDocumentNode,
-  GraphQLTadaAPI,
-  ResultOf,
-  VariablesOf,
-  FragmentOf,
-} from "gql.tada"
-import {
-  buildEphemeralCell,
-  type BoundCell,
-  type CellInterface,
-  type CellArgs,
-} from "./cell.ts"
+import type { TadaDocumentNode, GraphQLTadaAPI, ResultOf, VariablesOf, FragmentOf } from "gql.tada"
+import { buildEphemeralCell, type BoundCell, type CellInterface, type CellArgs } from "./cell.ts"
 
 /**
  * Minimal GraphQL client contract. Both `graphql-request` and a
@@ -63,8 +52,10 @@ export interface GqlClient {
  * document's inferred variables, so `.with(args)` is typed — no override
  * needed, the base method picks up `TVars`.
  */
-export interface GqlCell<TResult, TVars extends Record<string, unknown>>
-  extends CellInterface<TResult | null, TVars> {}
+export interface GqlCell<TResult, TVars extends Record<string, unknown>> extends CellInterface<
+  TResult | null,
+  TVars
+> {}
 
 // ─── id derivation ────────────────────────────────────────────────────
 
@@ -80,9 +71,8 @@ function kebabCase(name: string): string {
 function operationNameOf(
   doc: TadaDocumentNode<unknown, Record<string, unknown>>,
 ): string | undefined {
-  const def = (
-    doc as { definitions?: ReadonlyArray<{ name?: { value?: string } }> }
-  ).definitions?.[0]
+  const def = (doc as { definitions?: ReadonlyArray<{ name?: { value?: string } }> })
+    .definitions?.[0]
   return def?.name?.value
 }
 
@@ -264,10 +254,7 @@ export function gqlCellBuilder<Schema extends SchemaLike, Config extends ConfigL
 
   function fragment<const In extends string>(source: In, opts?: BundleFragmentOpts) {
     const doc = config.graphql(source)
-    return fragmentCell(
-      doc,
-      opts as FragmentCellOpts<ResultOf<typeof doc>, ResultOf<typeof doc>>,
-    )
+    return fragmentCell(doc, opts as FragmentCellOpts<ResultOf<typeof doc>, ResultOf<typeof doc>>)
   }
 
   return { query, fragment }
@@ -341,8 +328,7 @@ export function fragmentCell<F extends TadaDocumentNode<any, any, any>, V = Resu
   const fragName = fragmentNameOf(doc)
   if (!fragName) {
     throw new Error(
-      "fragmentCell: expected a named fragment document " +
-        "(`fragment Name on Type { ... }`).",
+      "fragmentCell: expected a named fragment document " + "(`fragment Name on Type { ... }`).",
     )
   }
   const id = opts?.id ?? kebabCase(fragName)
@@ -414,9 +400,7 @@ function fragmentNameOf(doc: unknown): string | undefined {
 function fragmentSelectsId(doc: unknown): boolean {
   const def = (doc as { definitions?: ReadonlyArray<any> }).definitions?.[0]
   const selections: ReadonlyArray<any> = def?.selectionSet?.selections ?? []
-  return selections.some(
-    (s) => s.kind === "Field" && s.name?.value === "id" && !s.selectionSet,
-  )
+  return selections.some((s) => s.kind === "Field" && s.name?.value === "id" && !s.selectionSet)
 }
 
 function hasDeferDirective(directives: ReadonlyArray<any> | undefined): boolean {
@@ -559,7 +543,10 @@ function rewriteResultToCells(
  *  result with the matching cell's `BoundCell<V>` (forwardable), leaving
  *  everything else untouched. Distributes over union members so a
  *  nullable spread element (`Member | null`) keeps its `null`. */
-type FragMatch<T, Cells extends readonly unknown[]> = Cells extends readonly [infer C, ...infer Rest]
+type FragMatch<T, Cells extends readonly unknown[]> = Cells extends readonly [
+  infer C,
+  ...infer Rest,
+]
   ? C extends FragmentCell<infer V, infer F>
     ? [T] extends [FragmentOf<F>]
       ? BoundCell<V | null>

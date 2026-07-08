@@ -228,11 +228,7 @@ export const MenuFramePartial = parton(
             <span>Menu is closed.</span>
             <FrameNavigateButton url="/menu/about" label="About" testId="menu-about-btn" />
             <FrameNavigateButton url="/menu/settings" label="Settings" testId="menu-settings-btn" />
-            <FrameNavigateButton
-              url="/menu/slow"
-              label="Slow (streaming)"
-              testId="menu-slow-btn"
-            />
+            <FrameNavigateButton url="/menu/slow" label="Slow (streaming)" testId="menu-slow-btn" />
           </div>
         )
       case "about":
@@ -266,11 +262,7 @@ export const MenuFramePartial = parton(
             <h3 className="mb-2 text-base font-semibold">Slow menu view (streaming)</h3>
             <MenuSlowInnerPartial />
             <div className="mt-3">
-              <FrameNavigateButton
-                url="/menu/closed"
-                label="Close"
-                testId="menu-close-from-slow"
-              />
+              <FrameNavigateButton url="/menu/closed" label="Close" testId="menu-close-from-slow" />
             </div>
           </div>
         )

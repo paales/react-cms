@@ -317,7 +317,9 @@ async function renderMissAndStore(
   bodyParent: PartialCtx,
 ): Promise<{ liveTree: ReactNode }> {
   const { store } = state()
-  const stream = renderToReadableStream(<ParentContext value={bodyParent}>{children}</ParentContext>)
+  const stream = renderToReadableStream(
+    <ParentContext value={bodyParent}>{children}</ParentContext>,
+  )
   const [userBranch, storageBranch] = stream.tee()
 
   // Storage: buffer the rendered bytes, strip holes, capture snapshots.

@@ -74,9 +74,7 @@ export default defineProject({
     // because the orchestrating root vitest.config.ts is one level up).
     // Listing each workspace dir explicitly avoids the `../<pkg>/` form.
     dir: REPO_ROOT,
-    include: [
-      "{framework,cms,copies,e2e-testing,e2e-magento}/**/*.rsc.test.?(c|m)[jt]s?(x)",
-    ],
+    include: ["{framework,cms,copies,e2e-testing,e2e-magento}/**/*.rsc.test.?(c|m)[jt]s?(x)"],
     environment: "node",
     // Force-inline React + the vendored Flight runtime so Vite's
     // resolver (with our `react-server` condition) handles them.

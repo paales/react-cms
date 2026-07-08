@@ -71,9 +71,7 @@ test("nav with warm client cache streams placeholders for unchanged partials", a
 
   // Fetch a cold DOCUMENT of the page (no manifest) for scale — the
   // server renders everything fresh there.
-  const coldResponse = await page.request.get(
-    `${new URL(page.url()).origin}/pokemon/1`,
-  )
+  const coldResponse = await page.request.get(`${new URL(page.url()).origin}/pokemon/1`)
   const coldSize = (await coldResponse.body()).byteLength
   console.log(`cold document (no cache): ${coldSize} bytes`)
 

@@ -51,9 +51,7 @@ describe("flight-graph spliceHoles — id-block collisions (Fault B)", () => {
     const renderHole = (h: { partialId: string }) => {
       if (h.partialId === "hole:a") {
         // internal id 0x100005 references content "AAA"
-        return bytesOf(
-          `100005:"AAA"\n` + `0:["$","span",null,{"children":"$100005"}]\n`,
-        )
+        return bytesOf(`100005:"AAA"\n` + `0:["$","span",null,{"children":"$100005"}]\n`)
       }
       // internal id 5 references content "BBB"
       return bytesOf(`5:"BBB"\n` + `0:["$","span",null,{"children":"$5"}]\n`)
@@ -61,9 +59,7 @@ describe("flight-graph spliceHoles — id-block collisions (Fault B)", () => {
 
     const scaffoldBytes = ENC.encode(scaffold)
     const meta = scaffoldMeta(scaffoldBytes)
-    const out = DEC.decode(
-      await toBytes(spliceHoles(bytesOf(scaffold), holes, meta, renderHole)),
-    )
+    const out = DEC.decode(await toBytes(spliceHoles(bytesOf(scaffold), holes, meta, renderHole)))
     const rows = out.split("\n").filter((r) => r.length > 0)
 
     // Each emitted row id must be unique — no two model rows collide.

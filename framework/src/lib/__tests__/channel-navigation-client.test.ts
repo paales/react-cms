@@ -31,25 +31,25 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
-	_channelConnectionClosed,
-	_channelDeliveryCommittable,
-	_channelEstablished,
-	_channelIsDegraded,
-	_channelNavAvailable,
-	_channelNavigate,
-	_channelNavPoint,
-	_channelNavPrefersStreaming,
-	_channelNavPrefersTransition,
-	_channelNavSegmentCommitted,
-	_channelNavSegmentSettled,
-	_channelNavSubsumedByAttach,
-	_channelWireEntry,
-	_laneDeliveryCommitted,
-	_registerAttachRequester,
-	_registerLiveStreamAbort,
-	_resetChannelClient,
-	_serverUrlPushApplies,
-	scheduleChannelFlush,
+  _channelConnectionClosed,
+  _channelDeliveryCommittable,
+  _channelEstablished,
+  _channelIsDegraded,
+  _channelNavAvailable,
+  _channelNavigate,
+  _channelNavPoint,
+  _channelNavPrefersStreaming,
+  _channelNavPrefersTransition,
+  _channelNavSegmentCommitted,
+  _channelNavSegmentSettled,
+  _channelNavSubsumedByAttach,
+  _channelWireEntry,
+  _laneDeliveryCommitted,
+  _registerAttachRequester,
+  _registerLiveStreamAbort,
+  _resetChannelClient,
+  _serverUrlPushApplies,
+  scheduleChannelFlush,
 } from "../channel-client.ts"
 import type { ChannelEnvelope } from "../channel-protocol.ts"
 import { _getLiveConnectionId } from "../partial-client-state.ts"
@@ -57,44 +57,42 @@ import { enqueueRefetch } from "../refetch.ts"
 
 let rafQueue: FrameRequestCallback[] = []
 function raf(): void {
-	const queue = rafQueue
-	rafQueue = []
-	for (const cb of queue) cb(0)
+  const queue = rafQueue
+  rafQueue = []
+  for (const cb of queue) cb(0)
 }
 
 let fetchCalls: Array<{ url: string; init: RequestInit }> = []
 let fetchResults: Array<{ status: number } | Error> = []
 async function settle(): Promise<void> {
-	for (let i = 0; i < 8; i++) await Promise.resolve()
+  for (let i = 0; i < 8; i++) await Promise.resolve()
 }
 
 function sentEnvelopes(): ChannelEnvelope[] {
-	return fetchCalls.map(
-		(c) => JSON.parse(String(c.init.body)) as ChannelEnvelope,
-	)
+  return fetchCalls.map((c) => JSON.parse(String(c.init.body)) as ChannelEnvelope)
 }
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
 
 async function flushOnce(): Promise<void> {
-	scheduleChannelFlush()
-	raf()
-	await settle()
+  scheduleChannelFlush()
+  raf()
+  await settle()
 }
 
 /** Track a promise's settlement without consuming rejections. */
 function probe(p: Promise<void>): { done: () => boolean; failed: () => boolean } {
-	let done = false
-	let failed = false
-	p.then(
-		() => {
-			done = true
-		},
-		() => {
-			failed = true
-		},
-	)
-	return { done: () => done, failed: () => failed }
+  let done = false
+  let failed = false
+  p.then(
+    () => {
+      done = true
+    },
+    () => {
+      failed = true
+    },
+  )
+  return { done: () => done, failed: () => failed }
 }
 
 /** Drive the channel to document-nav mode via a RUN of first-ack
@@ -102,448 +100,443 @@ function probe(p: Promise<void>): { done: () => boolean; failed: () => boolean }
  *  establishes and delivers, but its first ack can never land). A single
  *  failure re-establishes, so the fallback needs the whole run. */
 async function fallToDocumentNav(): Promise<void> {
-	_registerLiveStreamAbort(() => {})
-	_registerAttachRequester(() => {})
-	for (let i = 1; i <= 3; i++) {
-		_channelEstablished(`deg${i}`)
-		_channelWireEntry("seq", enc("p\n1 0"))
-		_laneDeliveryCommitted("p")
-		fetchResults.push(new Error("blocked"))
-		await flushOnce()
-		_channelConnectionClosed({ aborted: true })
-	}
-	if (!_channelIsDegraded()) throw new Error("expected document-nav mode")
+  _registerLiveStreamAbort(() => {})
+  _registerAttachRequester(() => {})
+  for (let i = 1; i <= 3; i++) {
+    _channelEstablished(`deg${i}`)
+    _channelWireEntry("seq", enc("p\n1 0"))
+    _laneDeliveryCommitted("p")
+    fetchResults.push(new Error("blocked"))
+    await flushOnce()
+    _channelConnectionClosed({ aborted: true })
+  }
+  if (!_channelIsDegraded()) throw new Error("expected document-nav mode")
 }
 
 beforeEach(() => {
-	_resetChannelClient()
-	rafQueue = []
-	fetchCalls = []
-	fetchResults = []
-	vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-		rafQueue.push(cb)
-		return rafQueue.length
-	})
-	vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
-		fetchCalls.push({ url, init })
-		const result = fetchResults.shift() ?? { status: 204 }
-		if (result instanceof Error) return Promise.reject(result)
-		return Promise.resolve(result as Response)
-	})
+  _resetChannelClient()
+  rafQueue = []
+  fetchCalls = []
+  fetchResults = []
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    rafQueue.push(cb)
+    return rafQueue.length
+  })
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+    fetchCalls.push({ url, init })
+    const result = fetchResults.shift() ?? { status: 204 }
+    if (result instanceof Error) return Promise.reject(result)
+    return Promise.resolve(result as Response)
+  })
 })
 
 afterEach(() => {
-	_resetChannelClient()
-	vi.unstubAllGlobals()
+  _resetChannelClient()
+  vi.unstubAllGlobals()
 })
 
 describe("the navigation point + the url frame", () => {
-	it("reserves the next envelope seq at statement time and ships one url frame", async () => {
-		_channelEstablished("c1")
-		expect(_channelNavPoint()).toBe(0)
-		const routed = _channelNavigate({ url: "/b?x=1", intent: "push" })
-		expect(routed).not.toBeNull()
-		// The point advances at CLICK time — before any flush — so a
-		// pre-navigation delivery landing in the reservation window is
-		// already droppable.
-		expect(_channelNavPoint()).toBe(1)
-		raf()
-		await settle()
-		expect(sentEnvelopes()).toHaveLength(1)
-		expect(sentEnvelopes()[0].seq).toBe(1)
-		expect(sentEnvelopes()[0].frames).toContainEqual({
-			kind: "url",
-			url: "/b?x=1",
-			intent: "push",
-		})
-	})
+  it("reserves the next envelope seq at statement time and ships one url frame", async () => {
+    _channelEstablished("c1")
+    expect(_channelNavPoint()).toBe(0)
+    const routed = _channelNavigate({ url: "/b?x=1", intent: "push" })
+    expect(routed).not.toBeNull()
+    // The point advances at CLICK time — before any flush — so a
+    // pre-navigation delivery landing in the reservation window is
+    // already droppable.
+    expect(_channelNavPoint()).toBe(1)
+    raf()
+    await settle()
+    expect(sentEnvelopes()).toHaveLength(1)
+    expect(sentEnvelopes()[0].seq).toBe(1)
+    expect(sentEnvelopes()[0].frames).toContainEqual({
+      kind: "url",
+      url: "/b?x=1",
+      intent: "push",
+    })
+  })
 
-	it("newest statement wins pre-flush — one frame ships, both records ride it", async () => {
-		_channelEstablished("c1")
-		const first = _channelNavigate({ url: "/b", intent: "push" })
-		const second = _channelNavigate({ url: "/c", intent: "push" })
-		if (!first || !second) throw new Error("expected channel routing")
-		expect(_channelNavPoint()).toBe(1)
-		raf()
-		await settle()
-		const urlFrames = sentEnvelopes()[0].frames.filter((f) => f.kind === "url")
-		expect(urlFrames).toEqual([{ kind: "url", url: "/c", intent: "push" }])
+  it("newest statement wins pre-flush — one frame ships, both records ride it", async () => {
+    _channelEstablished("c1")
+    const first = _channelNavigate({ url: "/b", intent: "push" })
+    const second = _channelNavigate({ url: "/c", intent: "push" })
+    if (!first || !second) throw new Error("expected channel routing")
+    expect(_channelNavPoint()).toBe(1)
+    raf()
+    await settle()
+    const urlFrames = sentEnvelopes()[0].frames.filter((f) => f.kind === "url")
+    expect(urlFrames).toEqual([{ kind: "url", url: "/c", intent: "push" }])
 
-		// The covering segment (as-of the shared navigation point)
-		// resolves BOTH fires — its content is the newest URL's render.
-		const p1 = probe(first.finished)
-		const p2 = probe(second.finished)
-		_channelNavSegmentCommitted(1)
-		_channelNavSegmentSettled(1)
-		await settle()
-		expect(p1.done()).toBe(true)
-		expect(p2.done()).toBe(true)
-	})
+    // The covering segment (as-of the shared navigation point)
+    // resolves BOTH fires — its content is the newest URL's render.
+    const p1 = probe(first.finished)
+    const p2 = probe(second.finished)
+    _channelNavSegmentCommitted(1)
+    _channelNavSegmentSettled(1)
+    await settle()
+    expect(p1.done()).toBe(true)
+    expect(p2.done()).toBe(true)
+  })
 
-	it("with no connection the statement latches and requests an immediate attach", () => {
-		const requested: number[] = []
-		_registerAttachRequester(() => requested.push(1))
-		expect(_channelNavAvailable()).toBe(false)
-		const routed = _channelNavigate({ url: "/b", intent: "push" })
-		// First interaction never waits — it rides the attach it just
-		// triggered (milestones resolve off that attach's covering
-		// segment, exercised in the subsume claims below).
-		expect(routed).not.toBeNull()
-		expect(requested).toHaveLength(1)
-	})
+  it("with no connection the statement latches and requests an immediate attach", () => {
+    const requested: number[] = []
+    _registerAttachRequester(() => requested.push(1))
+    expect(_channelNavAvailable()).toBe(false)
+    const routed = _channelNavigate({ url: "/b", intent: "push" })
+    // First interaction never waits — it rides the attach it just
+    // triggered (milestones resolve off that attach's covering
+    // segment, exercised in the subsume claims below).
+    expect(routed).not.toBeNull()
+    expect(requested).toHaveLength(1)
+  })
 
-	it("returns null in document-nav mode — the document-navigation cue", async () => {
-		await fallToDocumentNav()
-		expect(_channelNavAvailable()).toBe(false)
-		expect(_channelNavigate({ url: "/b", intent: "push" })).toBeNull()
-	})
+  it("returns null in document-nav mode — the document-navigation cue", async () => {
+    await fallToDocumentNav()
+    expect(_channelNavAvailable()).toBe(false)
+    expect(_channelNavigate({ url: "/b", intent: "push" })).toBeNull()
+  })
 })
 
 describe("reliable class + the attach subsume", () => {
-	it("buffers the url frame, prunes on applied, retransmits an unpruned survivor", async () => {
-		_channelEstablished("c1")
-		_channelNavigate({ url: "/b", intent: "push", record: false })
-		await flushOnce()
-		expect(sentEnvelopes()).toHaveLength(1)
+  it("buffers the url frame, prunes on applied, retransmits an unpruned survivor", async () => {
+    _channelEstablished("c1")
+    _channelNavigate({ url: "/b", intent: "push", record: false })
+    await flushOnce()
+    expect(sentEnvelopes()).toHaveLength(1)
 
-		// No applied marker heard — the survivor retransmits at the next
-		// establishment with its ORIGINAL page-lifetime seq.
-		_channelEstablished("c2")
-		raf()
-		await settle()
-		expect(sentEnvelopes()).toHaveLength(2)
-		expect(sentEnvelopes()[1]).toMatchObject({ connection: "c2", seq: 1 })
-		expect(sentEnvelopes()[1].frames).toEqual([
-			{ kind: "url", url: "/b", intent: "push" },
-		])
+    // No applied marker heard — the survivor retransmits at the next
+    // establishment with its ORIGINAL page-lifetime seq.
+    _channelEstablished("c2")
+    raf()
+    await settle()
+    expect(sentEnvelopes()).toHaveLength(2)
+    expect(sentEnvelopes()[1]).toMatchObject({ connection: "c2", seq: 1 })
+    expect(sentEnvelopes()[1].frames).toEqual([{ kind: "url", url: "/b", intent: "push" }])
 
-		// The applied marker covers it — nothing left to retransmit.
-		_channelWireEntry("applied", enc("1"))
-		_channelEstablished("c3")
-		raf()
-		await settle()
-		expect(sentEnvelopes()).toHaveLength(2)
-	})
+    // The applied marker covers it — nothing left to retransmit.
+    _channelWireEntry("applied", enc("1"))
+    _channelEstablished("c3")
+    raf()
+    await settle()
+    expect(sentEnvelopes()).toHaveLength(2)
+  })
 
-	it("the attach subsumes: the pending statement folds into the intent, records re-anchor at 0", async () => {
-		_channelEstablished("c1")
-		const fire = _channelNavigate({ url: "/b?__force=cart", intent: "silent" })
-		if (!fire) throw new Error("expected channel routing")
-		expect(_channelNavPoint()).toBe(1)
+  it("the attach subsumes: the pending statement folds into the intent, records re-anchor at 0", async () => {
+    _channelEstablished("c1")
+    const fire = _channelNavigate({ url: "/b?__force=cart", intent: "silent" })
+    if (!fire) throw new Error("expected channel routing")
+    expect(_channelNavPoint()).toBe(1)
 
-		const intent = _channelNavSubsumedByAttach()
-		expect(intent.url).toBe("/b?__force=cart")
-		expect(intent.frames).toEqual([])
-		expect(_channelNavPoint()).toBe(0)
+    const intent = _channelNavSubsumedByAttach()
+    expect(intent.url).toBe("/b?__force=cart")
+    expect(intent.frames).toEqual([])
+    expect(_channelNavPoint()).toBe(0)
 
-		// The attach's first covering segment — as-of 0 — resolves the
-		// re-anchored record: the statement's content IS that render.
-		const finished = probe(fire.finished)
-		_channelNavSegmentCommitted(0)
-		_channelNavSegmentSettled(0)
-		await settle()
-		expect(finished.done()).toBe(true)
+    // The attach's first covering segment — as-of 0 — resolves the
+    // re-anchored record: the statement's content IS that render.
+    const finished = probe(fire.finished)
+    _channelNavSegmentCommitted(0)
+    _channelNavSegmentSettled(0)
+    await settle()
+    expect(finished.done()).toBe(true)
 
-		// Establishment after the attach: no retransmit — the statement
-		// already rode the attach's own body.
-		_channelEstablished("c2")
-		raf()
-		await settle()
-		expect(sentEnvelopes()).toHaveLength(0)
-	})
+    // Establishment after the attach: no retransmit — the statement
+    // already rode the attach's own body.
+    _channelEstablished("c2")
+    raf()
+    await settle()
+    expect(sentEnvelopes()).toHaveLength(0)
+  })
 
-	it("a statement latched pre-establishment flushes on the fresh connection", async () => {
-		_registerAttachRequester(() => {})
-		// Latches (no connection) — the attach it requested is presumed
-		// in flight; the statement was NOT subsumed (it landed after the
-		// fire), so establishment flushes it as a url frame.
-		_channelNavigate({ url: "/late", intent: "push", record: false })
-		expect(sentEnvelopes()).toHaveLength(0)
-		_channelEstablished("c1")
-		raf()
-		await settle()
-		const urlFrames = sentEnvelopes()
-			.flatMap((e) => e.frames)
-			.filter((f) => f.kind === "url")
-		expect(urlFrames).toEqual([{ kind: "url", url: "/late", intent: "push" }])
-	})
+  it("a statement latched pre-establishment flushes on the fresh connection", async () => {
+    _registerAttachRequester(() => {})
+    // Latches (no connection) — the attach it requested is presumed
+    // in flight; the statement was NOT subsumed (it landed after the
+    // fire), so establishment flushes it as a url frame.
+    _channelNavigate({ url: "/late", intent: "push", record: false })
+    expect(sentEnvelopes()).toHaveLength(0)
+    _channelEstablished("c1")
+    raf()
+    await settle()
+    const urlFrames = sentEnvelopes()
+      .flatMap((e) => e.frames)
+      .filter((f) => f.kind === "url")
+    expect(urlFrames).toEqual([{ kind: "url", url: "/late", intent: "push" }])
+  })
 })
 
 describe("the as-of guards", () => {
-	it("drops deliveries rendered before the navigation point", () => {
-		_channelEstablished("c1")
-		expect(_channelDeliveryCommittable(0)).toBe(true)
-		_channelNavigate({ url: "/b", intent: "push", record: false })
-		expect(_channelDeliveryCommittable(0)).toBe(false)
-		expect(_channelDeliveryCommittable(1)).toBe(true)
-	})
+  it("drops deliveries rendered before the navigation point", () => {
+    _channelEstablished("c1")
+    expect(_channelDeliveryCommittable(0)).toBe(true)
+    _channelNavigate({ url: "/b", intent: "push", record: false })
+    expect(_channelDeliveryCommittable(0)).toBe(false)
+    expect(_channelDeliveryCommittable(1)).toBe(true)
+  })
 
-	it("server url pushes are client-wins in both directions", () => {
-		_channelEstablished("c1")
-		// No navigation stated: every push applies (an uncorrelated
-		// caller applies unconditionally).
-		expect(_serverUrlPushApplies(undefined)).toBe(true)
-		expect(_serverUrlPushApplies(0)).toBe(true)
-		_channelNavigate({ url: "/b", intent: "push", record: false })
-		// Rendered before the client's statement → a stale suggestion.
-		expect(_serverUrlPushApplies(0)).toBe(false)
-		// Rendered as-of (or after) it → the server saw the navigation;
-		// its push stands.
-		expect(_serverUrlPushApplies(1)).toBe(true)
-	})
+  it("server url pushes are client-wins in both directions", () => {
+    _channelEstablished("c1")
+    // No navigation stated: every push applies (an uncorrelated
+    // caller applies unconditionally).
+    expect(_serverUrlPushApplies(undefined)).toBe(true)
+    expect(_serverUrlPushApplies(0)).toBe(true)
+    _channelNavigate({ url: "/b", intent: "push", record: false })
+    // Rendered before the client's statement → a stale suggestion.
+    expect(_serverUrlPushApplies(0)).toBe(false)
+    // Rendered as-of (or after) it → the server saw the navigation;
+    // its push stands.
+    expect(_serverUrlPushApplies(1)).toBe(true)
+  })
 })
 
 describe("milestones ride the covering segment", () => {
-	it("commit resolves streaming (and decides the commit mode); settle resolves finished", async () => {
-		_channelEstablished("c1")
-		const routed = _channelNavigate({
-			url: "/b",
-			intent: "push",
-			streaming: false,
-		})
-		if (!routed) throw new Error("expected channel routing")
-		const streaming = probe(routed.streaming)
-		const finished = probe(routed.finished)
+  it("commit resolves streaming (and decides the commit mode); settle resolves finished", async () => {
+    _channelEstablished("c1")
+    const routed = _channelNavigate({
+      url: "/b",
+      intent: "push",
+      streaming: false,
+    })
+    if (!routed) throw new Error("expected channel routing")
+    const streaming = probe(routed.streaming)
+    const finished = probe(routed.finished)
 
-		// A non-covering segment (as-of 0 — pre-navigation) is not ours.
-		_channelNavSegmentCommitted(0)
-		await settle()
-		expect(streaming.done()).toBe(false)
+    // A non-covering segment (as-of 0 — pre-navigation) is not ours.
+    _channelNavSegmentCommitted(0)
+    await settle()
+    expect(streaming.done()).toBe(false)
 
-		// The covering commit: an atomic-swap caller makes the segment a
-		// transition commit.
-		expect(_channelNavPrefersTransition(1)).toBe(true)
-		_channelNavSegmentCommitted(1)
-		await settle()
-		expect(streaming.done()).toBe(true)
-		expect(finished.done()).toBe(false)
+    // The covering commit: an atomic-swap caller makes the segment a
+    // transition commit.
+    expect(_channelNavPrefersTransition(1)).toBe(true)
+    _channelNavSegmentCommitted(1)
+    await settle()
+    expect(streaming.done()).toBe(true)
+    expect(finished.done()).toBe(false)
 
-		_channelNavSegmentSettled(1)
-		await settle()
-		expect(finished.done()).toBe(true)
-		// Retired records no longer shape commit modes.
-		expect(_channelNavPrefersTransition(1)).toBe(false)
-	})
+    _channelNavSegmentSettled(1)
+    await settle()
+    expect(finished.done()).toBe(true)
+    // Retired records no longer shape commit modes.
+    expect(_channelNavPrefersTransition(1)).toBe(false)
+  })
 
-	it("a progressive caller leaves the live stream's raw commit in place", () => {
-		_channelEstablished("c1")
-		const routed = _channelNavigate({
-			url: "/b",
-			intent: "push",
-			streaming: true,
-		})
-		if (!routed) throw new Error("expected channel routing")
-		expect(_channelNavPrefersTransition(1)).toBe(false)
-		_channelNavSegmentCommitted(1)
-		_channelNavSegmentSettled(1)
-	})
+  it("a progressive caller leaves the live stream's raw commit in place", () => {
+    _channelEstablished("c1")
+    const routed = _channelNavigate({
+      url: "/b",
+      intent: "push",
+      streaming: true,
+    })
+    if (!routed) throw new Error("expected channel routing")
+    expect(_channelNavPrefersTransition(1)).toBe(false)
+    _channelNavSegmentCommitted(1)
+    _channelNavSegmentSettled(1)
+  })
 
-	it("a superseded on-mount force never drags the next window nav into a transition", async () => {
-		_channelEstablished("c1")
-		// A streaming window navigation (navPoint 1).
-		const nav1 = _channelNavigate({
-			url: "/defer-demo",
-			intent: "push",
-			streaming: true,
-		})
-		raf()
-		await settle()
-		// The destination's on-mount `defer` fires a same-page atomic force
-		// (`streaming: false`, navPoint 2). Its covering whole-tree segment is
-		// deferred behind the streaming nav's drain — so navigating away before
-		// that drain leaves this record pending, never covered by a segment.
-		const force = _channelNavigate({
-			url: "/defer-demo?__force=x",
-			intent: "silent",
-			streaming: false,
-		})
-		raf()
-		await settle()
-		// The genuine navigation AWAY — another streaming window nav (navPoint 3).
-		const nav2 = _channelNavigate({ url: "/", intent: "push", streaming: true })
-		raf()
-		await settle()
-		if (!nav1 || !force || !nav2) throw new Error("expected channel routing")
+  it("a superseded on-mount force never drags the next window nav into a transition", async () => {
+    _channelEstablished("c1")
+    // A streaming window navigation (navPoint 1).
+    const nav1 = _channelNavigate({
+      url: "/defer-demo",
+      intent: "push",
+      streaming: true,
+    })
+    raf()
+    await settle()
+    // The destination's on-mount `defer` fires a same-page atomic force
+    // (`streaming: false`, navPoint 2). Its covering whole-tree segment is
+    // deferred behind the streaming nav's drain — so navigating away before
+    // that drain leaves this record pending, never covered by a segment.
+    const force = _channelNavigate({
+      url: "/defer-demo?__force=x",
+      intent: "silent",
+      streaming: false,
+    })
+    raf()
+    await settle()
+    // The genuine navigation AWAY — another streaming window nav (navPoint 3).
+    const nav2 = _channelNavigate({ url: "/", intent: "push", streaming: true })
+    raf()
+    await settle()
+    if (!nav1 || !force || !nav2) throw new Error("expected channel routing")
 
-		// The nav-away's covering segment (as-of 3) commits PROGRESSIVELY: it
-		// is a `streaming: true` window navigation. The lingering atomic force
-		// (navPoint 2, still unsettled) must NOT drag it into a withholding
-		// transition — the NEWEST navigation at or below the as-of decides, and
-		// that is the streaming nav. The two commit-mode reads stay complements.
-		expect(_channelNavPrefersTransition(3)).toBe(false)
-		expect(_channelNavPrefersStreaming(3)).toBe(true)
+    // The nav-away's covering segment (as-of 3) commits PROGRESSIVELY: it
+    // is a `streaming: true` window navigation. The lingering atomic force
+    // (navPoint 2, still unsettled) must NOT drag it into a withholding
+    // transition — the NEWEST navigation at or below the as-of decides, and
+    // that is the streaming nav. The two commit-mode reads stay complements.
+    expect(_channelNavPrefersTransition(3)).toBe(false)
+    expect(_channelNavPrefersStreaming(3)).toBe(true)
 
-		// A segment as-of the force's OWN point still reads atomic — there the
-		// force is the newest statement, so its content swaps without a flash.
-		expect(_channelNavPrefersTransition(2)).toBe(true)
-		expect(_channelNavPrefersStreaming(2)).toBe(false)
-	})
+    // A segment as-of the force's OWN point still reads atomic — there the
+    // force is the newest statement, so its content swaps without a flash.
+    expect(_channelNavPrefersTransition(2)).toBe(true)
+    expect(_channelNavPrefersStreaming(2)).toBe(false)
+  })
 
-	it("an aborted signal rejects the record with AbortError", async () => {
-		_channelEstablished("c1")
-		const controller = new AbortController()
-		const routed = _channelNavigate({
-			url: "/b",
-			intent: "push",
-			signal: controller.signal,
-		})
-		if (!routed) throw new Error("expected channel routing")
-		const finished = probe(routed.finished)
-		controller.abort()
-		await settle()
-		expect(finished.failed()).toBe(true)
-	})
+  it("an aborted signal rejects the record with AbortError", async () => {
+    _channelEstablished("c1")
+    const controller = new AbortController()
+    const routed = _channelNavigate({
+      url: "/b",
+      intent: "push",
+      signal: controller.signal,
+    })
+    if (!routed) throw new Error("expected channel routing")
+    const finished = probe(routed.finished)
+    controller.abort()
+    await settle()
+    expect(finished.failed()).toBe(true)
+  })
 })
 
 describe("connection loss under pending navigations", () => {
-	it("a failed url envelope aborts the held stream; the close arbitration re-attaches", async () => {
-		const aborts: number[] = []
-		const attaches: number[] = []
-		_registerLiveStreamAbort(() => aborts.push(1))
-		_registerAttachRequester(() => attaches.push(1))
-		_channelEstablished("c1")
-		const fire = _channelNavigate({ url: "/c?q=1", intent: "push" })
-		if (!fire) throw new Error("expected channel routing")
-		fetchResults.push({ status: 404 })
-		await flushOnce()
-		// The stream still renders the state the page left — pulled down;
-		// the heartbeat's settle re-attaches with the statement folded in.
-		expect(_getLiveConnectionId()).toBeNull()
-		expect(aborts).toHaveLength(1)
-		_channelConnectionClosed({ aborted: true })
-		expect(attaches).toHaveLength(1)
-		// The statement was already consumed into the failed envelope —
-		// the client's location (which the attach states) is authoritative
-		// for it, so the subsume folds no URL and retires the buffered
-		// frame; the re-anchored record resolves off the attach's first
-		// covering segment.
-		const intent = _channelNavSubsumedByAttach()
-		expect(intent.url).toBeNull()
-		const finished = probe(fire.finished)
-		_channelNavSegmentCommitted(0)
-		_channelNavSegmentSettled(0)
-		await settle()
-		expect(finished.done()).toBe(true)
-	})
+  it("a failed url envelope aborts the held stream; the close arbitration re-attaches", async () => {
+    const aborts: number[] = []
+    const attaches: number[] = []
+    _registerLiveStreamAbort(() => aborts.push(1))
+    _registerAttachRequester(() => attaches.push(1))
+    _channelEstablished("c1")
+    const fire = _channelNavigate({ url: "/c?q=1", intent: "push" })
+    if (!fire) throw new Error("expected channel routing")
+    fetchResults.push({ status: 404 })
+    await flushOnce()
+    // The stream still renders the state the page left — pulled down;
+    // the heartbeat's settle re-attaches with the statement folded in.
+    expect(_getLiveConnectionId()).toBeNull()
+    expect(aborts).toHaveLength(1)
+    _channelConnectionClosed({ aborted: true })
+    expect(attaches).toHaveLength(1)
+    // The statement was already consumed into the failed envelope —
+    // the client's location (which the attach states) is authoritative
+    // for it, so the subsume folds no URL and retires the buffered
+    // frame; the re-anchored record resolves off the attach's first
+    // covering segment.
+    const intent = _channelNavSubsumedByAttach()
+    expect(intent.url).toBeNull()
+    const finished = probe(fire.finished)
+    _channelNavSegmentCommitted(0)
+    _channelNavSegmentSettled(0)
+    await settle()
+    expect(finished.done()).toBe(true)
+  })
 
-	it("a single attach non-establishment re-attaches; the record latches and rides it", async () => {
-		const attaches: number[] = []
-		_registerAttachRequester(() => attaches.push(1))
-		const fire = _channelNavigate({ url: "/b", intent: "push" })
-		if (!fire) throw new Error("expected channel routing")
-		expect(attaches).toHaveLength(1) // the statement's own triggered attach
-		// The triggered attach settles with NO establishment (not our own
-		// abort). Under the bound this is a transient — re-attach, NOT a
-		// degrade; the record LATCHES and rides the next attach.
-		_channelConnectionClosed({ aborted: false })
-		expect(_channelIsDegraded()).toBe(false)
-		expect(attaches).toHaveLength(2) // backoff attempt 1 is immediate
-		const intent = _channelNavSubsumedByAttach()
-		expect(intent.url).toBe("/b")
-		const finished = probe(fire.finished)
-		_channelNavSegmentCommitted(0)
-		_channelNavSegmentSettled(0)
-		await settle()
-		expect(finished.done()).toBe(true)
-	})
+  it("a single attach non-establishment re-attaches; the record latches and rides it", async () => {
+    const attaches: number[] = []
+    _registerAttachRequester(() => attaches.push(1))
+    const fire = _channelNavigate({ url: "/b", intent: "push" })
+    if (!fire) throw new Error("expected channel routing")
+    expect(attaches).toHaveLength(1) // the statement's own triggered attach
+    // The triggered attach settles with NO establishment (not our own
+    // abort). Under the bound this is a transient — re-attach, NOT a
+    // degrade; the record LATCHES and rides the next attach.
+    _channelConnectionClosed({ aborted: false })
+    expect(_channelIsDegraded()).toBe(false)
+    expect(attaches).toHaveLength(2) // backoff attempt 1 is immediate
+    const intent = _channelNavSubsumedByAttach()
+    expect(intent.url).toBe("/b")
+    const finished = probe(fire.finished)
+    _channelNavSegmentCommitted(0)
+    _channelNavSegmentSettled(0)
+    await settle()
+    expect(finished.done()).toBe(true)
+  })
 
-	it("a RUN of attach non-establishments under an interaction falls to document-nav mode", async () => {
-		_registerAttachRequester(() => {})
-		const fire = _channelNavigate({ url: "/b", intent: "push" })
-		if (!fire) throw new Error("expected channel routing")
-		const finished = probe(fire.finished)
-		// Each triggered attach settles without establishing (a blocked
-		// `/__parton/live`). The record rides each re-attach until the run
-		// crosses the bound and completes it as a document navigation.
-		_channelConnectionClosed({ aborted: false })
-		expect(_channelIsDegraded()).toBe(false)
-		_channelConnectionClosed({ aborted: false })
-		expect(_channelIsDegraded()).toBe(false)
-		_channelConnectionClosed({ aborted: false })
-		expect(_channelIsDegraded()).toBe(true)
-		expect(_channelNavigate({ url: "/c", intent: "push" })).toBeNull()
-		// The record completes as a document navigation (no Navigation API
-		// in this environment — it settles as a no-op either way).
-		await settle()
-		expect(finished.done()).toBe(true)
-	})
+  it("a RUN of attach non-establishments under an interaction falls to document-nav mode", async () => {
+    _registerAttachRequester(() => {})
+    const fire = _channelNavigate({ url: "/b", intent: "push" })
+    if (!fire) throw new Error("expected channel routing")
+    const finished = probe(fire.finished)
+    // Each triggered attach settles without establishing (a blocked
+    // `/__parton/live`). The record rides each re-attach until the run
+    // crosses the bound and completes it as a document navigation.
+    _channelConnectionClosed({ aborted: false })
+    expect(_channelIsDegraded()).toBe(false)
+    _channelConnectionClosed({ aborted: false })
+    expect(_channelIsDegraded()).toBe(false)
+    _channelConnectionClosed({ aborted: false })
+    expect(_channelIsDegraded()).toBe(true)
+    expect(_channelNavigate({ url: "/c", intent: "push" })).toBeNull()
+    // The record completes as a document navigation (no Navigation API
+    // in this environment — it settles as a no-op either way).
+    await settle()
+    expect(finished.done()).toBe(true)
+  })
 })
 
 describe("the refetch dispatcher", () => {
-	it("states a selector batch as a ?__force= url statement", async () => {
-		_channelEstablished("c1")
-		const fire = enqueueRefetch({
-			labels: ["cart"],
-			streaming: false,
-		})
-		await settle()
-		raf()
-		await settle()
-		const urlFrames = sentEnvelopes()
-			.flatMap((e) => e.frames)
-			.filter((f) => f.kind === "url")
-		expect(urlFrames).toHaveLength(1)
-		if (urlFrames[0].kind !== "url") throw new Error("unreachable")
-		const stated = new URL(urlFrames[0].url, "http://localhost")
-		expect(stated.searchParams.get("__force")).toBe("cart")
-		expect(urlFrames[0].intent).toBe("silent")
-		// The milestones ride the covering segment.
-		const finished = probe(fire.finished)
-		_channelNavSegmentCommitted(_channelNavPoint())
-		_channelNavSegmentSettled(_channelNavPoint())
-		await settle()
-		expect(finished.done()).toBe(true)
-	})
+  it("states a selector batch as a ?__force= url statement", async () => {
+    _channelEstablished("c1")
+    const fire = enqueueRefetch({
+      labels: ["cart"],
+      streaming: false,
+    })
+    await settle()
+    raf()
+    await settle()
+    const urlFrames = sentEnvelopes()
+      .flatMap((e) => e.frames)
+      .filter((f) => f.kind === "url")
+    expect(urlFrames).toHaveLength(1)
+    if (urlFrames[0].kind !== "url") throw new Error("unreachable")
+    const stated = new URL(urlFrames[0].url, "http://localhost")
+    expect(stated.searchParams.get("__force")).toBe("cart")
+    expect(urlFrames[0].intent).toBe("silent")
+    // The milestones ride the covering segment.
+    const finished = probe(fire.finished)
+    _channelNavSegmentCommitted(_channelNavPoint())
+    _channelNavSegmentSettled(_channelNavPoint())
+    await settle()
+    expect(finished.done()).toBe(true)
+  })
 
-	it("a statement superseding an uncovered batch restates its targets — the union", async () => {
-		_channelEstablished("c1")
-		const first = enqueueRefetch({ labels: ["cart"], streaming: false })
-		await settle()
-		// The second batch flushes while the first is uncovered — the
-		// transport keeps one pending url frame (newest wins), so the
-		// newer statement must carry BOTH forces.
-		const second = enqueueRefetch({ labels: ["price"], streaming: false })
-		await settle()
-		raf()
-		await settle()
-		const urlFrames = sentEnvelopes()
-			.flatMap((e) => e.frames)
-			.filter((f) => f.kind === "url")
-		const last = urlFrames[urlFrames.length - 1]
-		if (last.kind !== "url") throw new Error("unreachable")
-		const force =
-			new URL(last.url, "http://localhost").searchParams.get("__force") ?? ""
-		expect(force.split(",")).toContain("cart")
-		expect(force.split(",")).toContain("price")
-		// The covering segment settles both; the restatement duty retires.
-		const p1 = probe(first.finished)
-		const p2 = probe(second.finished)
-		_channelNavSegmentCommitted(_channelNavPoint())
-		_channelNavSegmentSettled(_channelNavPoint())
-		await settle()
-		expect(p1.done()).toBe(true)
-		expect(p2.done()).toBe(true)
-		// A batch AFTER the settle restates nothing stale.
-		enqueueRefetch({ labels: ["badge"], streaming: false })
-		await settle()
-		raf()
-		await settle()
-		const later = sentEnvelopes()
-			.flatMap((e) => e.frames)
-			.filter((f) => f.kind === "url")
-			.at(-1)
-		if (later?.kind !== "url") throw new Error("unreachable")
-		expect(
-			new URL(later.url, "http://localhost").searchParams.get("__force"),
-		).toBe("badge")
-	})
+  it("a statement superseding an uncovered batch restates its targets — the union", async () => {
+    _channelEstablished("c1")
+    const first = enqueueRefetch({ labels: ["cart"], streaming: false })
+    await settle()
+    // The second batch flushes while the first is uncovered — the
+    // transport keeps one pending url frame (newest wins), so the
+    // newer statement must carry BOTH forces.
+    const second = enqueueRefetch({ labels: ["price"], streaming: false })
+    await settle()
+    raf()
+    await settle()
+    const urlFrames = sentEnvelopes()
+      .flatMap((e) => e.frames)
+      .filter((f) => f.kind === "url")
+    const last = urlFrames[urlFrames.length - 1]
+    if (last.kind !== "url") throw new Error("unreachable")
+    const force = new URL(last.url, "http://localhost").searchParams.get("__force") ?? ""
+    expect(force.split(",")).toContain("cart")
+    expect(force.split(",")).toContain("price")
+    // The covering segment settles both; the restatement duty retires.
+    const p1 = probe(first.finished)
+    const p2 = probe(second.finished)
+    _channelNavSegmentCommitted(_channelNavPoint())
+    _channelNavSegmentSettled(_channelNavPoint())
+    await settle()
+    expect(p1.done()).toBe(true)
+    expect(p2.done()).toBe(true)
+    // A batch AFTER the settle restates nothing stale.
+    enqueueRefetch({ labels: ["badge"], streaming: false })
+    await settle()
+    raf()
+    await settle()
+    const later = sentEnvelopes()
+      .flatMap((e) => e.frames)
+      .filter((f) => f.kind === "url")
+      .at(-1)
+    if (later?.kind !== "url") throw new Error("unreachable")
+    expect(new URL(later.url, "http://localhost").searchParams.get("__force")).toBe("badge")
+  })
 
-	it("resolves as a no-op in document-nav mode — document loads are its renders", async () => {
-		await fallToDocumentNav()
-		expect(_channelNavAvailable()).toBe(false)
-		const fire = enqueueRefetch({ labels: ["cart"], streaming: false })
-		const finished = probe(fire.finished)
-		await settle()
-		expect(finished.done()).toBe(true)
-	})
+  it("resolves as a no-op in document-nav mode — document loads are its renders", async () => {
+    await fallToDocumentNav()
+    expect(_channelNavAvailable()).toBe(false)
+    const fire = enqueueRefetch({ labels: ["cart"], streaming: false })
+    const finished = probe(fire.finished)
+    await settle()
+    expect(finished.done()).toBe(true)
+  })
 })

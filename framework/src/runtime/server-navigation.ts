@@ -65,9 +65,7 @@ export function getServerNavigation(scope?: string | null): ServerNavigation {
     navigate(target, options) {
       const currentUrl = getRequest().url
       const resolved =
-        target instanceof URL
-          ? target.toString()
-          : new URL(String(target), currentUrl).toString()
+        target instanceof URL ? target.toString() : new URL(String(target), currentUrl).toString()
       // Mutate the request URL so subsequent renders in this
       // connection see the new URL. Header preservation keeps cookies
       // and session attribution intact.

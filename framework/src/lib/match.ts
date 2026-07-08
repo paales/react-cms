@@ -97,11 +97,7 @@ export interface CompiledMatch {
  *  swallow them into the named param — splitting variant identity by
  *  transport noise, minting a phantom variant that supersedes (and
  *  hides) the real one on the client. */
-export const TRANSPORT_PARAMS = [
-  "cached",
-  "__frame",
-  "__frameUrl",
-] as const
+export const TRANSPORT_PARAMS = ["cached", "__frame", "__frameUrl"] as const
 
 /** The request URL as the app sees it — transport params stripped. */
 function appUrl(url: string): URL {
@@ -179,8 +175,7 @@ export function compileMatch(pattern: MatchPattern): CompiledMatch {
   if (init.password !== undefined) urlPatternInit.password = init.password
   if (init.baseURL !== undefined) urlPatternInit.baseURL = init.baseURL
 
-  const urlPattern =
-    Object.keys(urlPatternInit).length > 0 ? new URLPattern(urlPatternInit) : null
+  const urlPattern = Object.keys(urlPatternInit).length > 0 ? new URLPattern(urlPatternInit) : null
 
   const searchParams = init.searchParams
   const cookies = init.cookies
@@ -201,9 +196,7 @@ export function compileMatch(pattern: MatchPattern): CompiledMatch {
     if (!record) continue
     for (const key of Object.keys(record).sort()) {
       const t = record[key]
-      signatureParts.push(
-        `${label}.${key}=${typeof t === "function" ? `fn:${t.toString()}` : t}`,
-      )
+      signatureParts.push(`${label}.${key}=${typeof t === "function" ? `fn:${t.toString()}` : t}`)
     }
   }
 
@@ -235,9 +228,7 @@ export function compileMatch(pattern: MatchPattern): CompiledMatch {
       if (headers) {
         for (const [name, test] of Object.entries(headers)) {
           const lower = name.toLowerCase()
-          const value = lower.startsWith("x-parton-")
-            ? null
-            : request.headers.get(lower)
+          const value = lower.startsWith("x-parton-") ? null : request.headers.get(lower)
           if (!testValue(test, value)) return NO_MATCH
         }
       }

@@ -77,7 +77,7 @@ describe("substituteNested — skipKey self-reference", () => {
     // Walk terminated (no stack overflow) and the self-placeholder
     // survived untouched alongside the body.
     expect(markup).toContain('data-testid="hero-body"')
-    expect(markup).toContain("data-partial-id=\"hero\"")
+    expect(markup).toContain('data-partial-id="hero"')
   })
 
   it("still resolves a SAME-id placeholder for a different matchKey", () => {
@@ -137,13 +137,7 @@ describe("substituteNested — descend through unchanged wrappers", () => {
     // (fresh === node), so the walk must descend INTO it — otherwise a
     // refetch that only updated the nested partial never reaches the
     // rendered tree.
-    const outer = wrapper(
-      "outer",
-      "",
-      <section>
-        {placeholder("inner", "")}
-      </section>,
-    )
+    const outer = wrapper("outer", "", <section>{placeholder("inner", "")}</section>)
     const freshInner = wrapper("inner", "", <div data-testid="inner-fresh" />)
     const cache = makeCache([
       ["outer", "", outer],

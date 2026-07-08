@@ -19,11 +19,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { parton, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { localCell, type ResolvedCell } from "../cell.ts"
-import {
-  MemoryCellStorage,
-  setCellStorage,
-  _resetCellStorage,
-} from "../../runtime/cell-storage.ts"
+import { MemoryCellStorage, setCellStorage, _resetCellStorage } from "../../runtime/cell-storage.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { clearRegistry } from "../partial-registry.ts"
 import { notFound } from "../../runtime/errors.ts"

@@ -14,17 +14,10 @@ import { computeRouteKey, parton, PartialRoot, type RenderArgs } from "../partia
 import { localCell } from "../cell.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { runWithRequestAsync } from "../../runtime/context.ts"
-import {
-  _clearInvalidationRegistry,
-  _currentTs,
-} from "../../runtime/invalidation-registry.ts"
+import { _clearInvalidationRegistry, _currentTs } from "../../runtime/invalidation-registry.ts"
 import { atomic } from "../cell.ts"
 import { clearRegistry, enterRequestRegistry, lookupPartial } from "../partial-registry.ts"
-import {
-  MemoryCellStorage,
-  setCellStorage,
-  _resetCellStorage,
-} from "../../runtime/cell-storage.ts"
+import { MemoryCellStorage, setCellStorage, _resetCellStorage } from "../../runtime/cell-storage.ts"
 
 const counter = localCell({ id: "resolve-counter", shape: "number", initial: 0 })
 const flavor = localCell({
@@ -68,9 +61,7 @@ describe("handle.resolve() — in-body cells", () => {
       return lookupPartial("cell-resolve")
     })
     expect(snap).toBeDefined()
-    expect([...(snap!.deps ?? [])].some((d) => d.startsWith("cell:resolve-counter"))).toBe(
-      true,
-    )
+    expect([...(snap!.deps ?? [])].some((d) => d.startsWith("cell:resolve-counter"))).toBe(true)
     expect(snap!.labels).toContain("cell:resolve-counter")
   })
 

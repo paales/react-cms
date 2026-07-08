@@ -45,27 +45,29 @@ await page.evaluate(() => window.__setTweak && window.__setTweak({ attachment: "
 await page.waitForTimeout(400)
 await shot("03-floating")
 
-await page.evaluate(() =>
-  window.__setTweak && window.__setTweak({ palette: "dark", surface: "translucent" }),
+await page.evaluate(
+  () => window.__setTweak && window.__setTweak({ palette: "dark", surface: "translucent" }),
 )
 await page.waitForTimeout(400)
 await shot("04-dark-translucent")
 
-await page.evaluate(() =>
-  window.__setTweak &&
-  window.__setTweak({ palette: "inspector", surface: "translucent", attachment: "docked" }),
+await page.evaluate(
+  () =>
+    window.__setTweak &&
+    window.__setTweak({ palette: "inspector", surface: "translucent", attachment: "docked" }),
 )
 await page.waitForTimeout(400)
 await shot("05-blur-docked")
 
-await page.evaluate(() =>
-  window.__setTweak &&
-  window.__setTweak({
-    palette: "inspector",
-    surface: "light",
-    attachment: "docked",
-    treeStyle: "plain",
-  }),
+await page.evaluate(
+  () =>
+    window.__setTweak &&
+    window.__setTweak({
+      palette: "inspector",
+      surface: "light",
+      attachment: "docked",
+      treeStyle: "plain",
+    }),
 )
 await page.waitForTimeout(400)
 await page.locator('text="Home page"').first().click()

@@ -31,10 +31,7 @@ export function WorldScroller({ children }: { children: ReactNode }) {
     if (!scroller) return
 
     if (!("scrollInitialTarget" in document.documentElement.style)) {
-      scroller.scrollTo(
-        CENTER_PX - scroller.clientWidth / 2,
-        CENTER_PX - scroller.clientHeight / 2,
-      )
+      scroller.scrollTo(CENTER_PX - scroller.clientWidth / 2, CENTER_PX - scroller.clientHeight / 2)
     }
 
     // ── Telemetry — position + velocity from consecutive scroll events ──

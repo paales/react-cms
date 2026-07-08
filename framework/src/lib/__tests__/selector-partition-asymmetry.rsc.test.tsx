@@ -72,10 +72,7 @@ describe("selector ↔ partition-key type agreement", () => {
       { selector: "asym-line", match: "/c" },
     )
 
-    const before = await flightAt(
-      "http://t/c",
-      <Line item={line.with({ uid: "123" })} />,
-    )
+    const before = await flightAt("http://t/c", <Line item={line.with({ uid: "123" })} />)
     const fpBefore = before.match(/partialFingerprint":"([0-9a-f]+)/)![1]
 
     // A write lands in the NUMBER partition (distinct storage slot —
@@ -84,10 +81,7 @@ describe("selector ↔ partition-key type agreement", () => {
     // path's emitter) for `{uid: 123}` (number).
     refreshSelector(buildCellSelector("test.asym.line", { uid: 123 }))
 
-    const after = await flightAt(
-      "http://t/c",
-      <Line item={line.with({ uid: "123" })} />,
-    )
+    const after = await flightAt("http://t/c", <Line item={line.with({ uid: "123" })} />)
     const fpAfter = after.match(/partialFingerprint":"([0-9a-f]+)/)![1]
 
     // The string placement's storage slot didn't change, so its

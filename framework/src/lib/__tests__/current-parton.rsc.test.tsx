@@ -11,11 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest"
-import {
-  flightToString,
-  renderServerToFlight,
-  renderWithRequest,
-} from "../../test/rsc-server.ts"
+import { flightToString, renderServerToFlight, renderWithRequest } from "../../test/rsc-server.ts"
 import { parton, type RenderArgs } from "../partial.tsx"
 import { getCurrentParton } from "../current-parton.ts"
 

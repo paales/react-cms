@@ -545,16 +545,11 @@ export async function runSoakScenario(
     }
 
     const sortedWall = [...wallUs].sort((a, b) => a - b)
-    const wallMean =
-      wallUs.length > 0 ? wallUs.reduce((s, x) => s + x, 0) / wallUs.length : 0
+    const wallMean = wallUs.length > 0 ? wallUs.reduce((s, x) => s + x, 0) / wallUs.length : 0
     const cpuMean =
-      cpuUsPerTick.length > 0
-        ? cpuUsPerTick.reduce((s, x) => s + x, 0) / cpuUsPerTick.length
-        : 0
+      cpuUsPerTick.length > 0 ? cpuUsPerTick.reduce((s, x) => s + x, 0) / cpuUsPerTick.length : 0
     const bytesMean =
-      bytesPerTick.length > 0
-        ? bytesPerTick.reduce((s, x) => s + x, 0) / bytesPerTick.length
-        : 0
+      bytesPerTick.length > 0 ? bytesPerTick.reduce((s, x) => s + x, 0) / bytesPerTick.length : 0
 
     return {
       name,

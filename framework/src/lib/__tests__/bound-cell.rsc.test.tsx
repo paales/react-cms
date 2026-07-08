@@ -14,10 +14,7 @@ import {
   _resetCellStorage,
   getCellStorage,
 } from "../../runtime/cell-storage.ts"
-import {
-  _clearInvalidationRegistry,
-  refreshSelector,
-} from "../../runtime/invalidation-registry.ts"
+import { _clearInvalidationRegistry, refreshSelector } from "../../runtime/invalidation-registry.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 
 async function flightAt(url: string, node: React.ReactNode): Promise<string> {
@@ -73,10 +70,7 @@ describe("cell.with(args) — bound cells", () => {
       { match: "/cart" },
     )
 
-    const out = await flightAt(
-      "http://t/cart",
-      <Line item={cartItem.with({ itemId: "A" })} />,
-    )
+    const out = await flightAt("http://t/cart", <Line item={cartItem.with({ itemId: "A" })} />)
     expect(out).toContain('"children":3')
   })
 
@@ -98,10 +92,7 @@ describe("cell.with(args) — bound cells", () => {
       },
       { match: "/r" },
     )
-    const out = await flightAt(
-      "http://t/r",
-      <Page data={remote.with({ id: "42" })} />,
-    )
+    const out = await flightAt("http://t/r", <Page data={remote.with({ id: "42" })} />)
     expect(out).toContain('"children":"loaded-42"')
     expect(loadCalls).toBe(1)
 
@@ -128,28 +119,16 @@ describe("partition-scoped invalidation", () => {
       { selector: "cart-line", match: "/c" },
     )
 
-    const aBefore = await flightAt(
-      "http://t/c",
-      <Line item={cartItem.with({ itemId: "A" })} />,
-    )
-    const bBefore = await flightAt(
-      "http://t/c",
-      <Line item={cartItem.with({ itemId: "B" })} />,
-    )
+    const aBefore = await flightAt("http://t/c", <Line item={cartItem.with({ itemId: "A" })} />)
+    const bBefore = await flightAt("http://t/c", <Line item={cartItem.with({ itemId: "B" })} />)
     const fpABefore = aBefore.match(/partialFingerprint":"([0-9a-f]+)/)![1]
     const fpBBefore = bBefore.match(/partialFingerprint":"([0-9a-f]+)/)![1]
 
     // Fire partition-scoped invalidation for A only.
     refreshSelector("cell:test.partition.line?itemId=A")
 
-    const aAfter = await flightAt(
-      "http://t/c",
-      <Line item={cartItem.with({ itemId: "A" })} />,
-    )
-    const bAfter = await flightAt(
-      "http://t/c",
-      <Line item={cartItem.with({ itemId: "B" })} />,
-    )
+    const aAfter = await flightAt("http://t/c", <Line item={cartItem.with({ itemId: "A" })} />)
+    const bAfter = await flightAt("http://t/c", <Line item={cartItem.with({ itemId: "B" })} />)
     const fpAAfter = aAfter.match(/partialFingerprint":"([0-9a-f]+)/)![1]
     const fpBAfter = bAfter.match(/partialFingerprint":"([0-9a-f]+)/)![1]
 
@@ -171,10 +150,7 @@ describe("partition-scoped invalidation", () => {
     )
 
     // Initial render — A is empty, returns default null.
-    const before = await flightAt(
-      "http://t/c",
-      <Line item={cartItem.with({ itemId: "A" })} />,
-    )
+    const before = await flightAt("http://t/c", <Line item={cartItem.with({ itemId: "A" })} />)
     expect(before).toContain('"children":"—"')
 
     // Write through the bound cell.
@@ -185,10 +161,7 @@ describe("partition-scoped invalidation", () => {
     expect(readCell("test.partition.set", { itemId: "A" })).toEqual({ qty: 7 })
 
     // Next render reads it back.
-    const after = await flightAt(
-      "http://t/c",
-      <Line item={cartItem.with({ itemId: "A" })} />,
-    )
+    const after = await flightAt("http://t/c", <Line item={cartItem.with({ itemId: "A" })} />)
     expect(after).toContain('"children":7')
 
     // Other partition (B) is untouched.
@@ -220,19 +193,13 @@ describe("constraint surface merges vary + bound args", () => {
 
     // Two placements: same itemId, different catId. Their fp differ
     // because the match param catId is in the constraint surface.
-    const a = await flightAt(
-      "http://t/m/1",
-      <Mixed item={item.with({ itemId: "A" })} />,
-    )
+    const a = await flightAt("http://t/m/1", <Mixed item={item.with({ itemId: "A" })} />)
     const fpA = a.match(/partialFingerprint":"([0-9a-f]+)/)![1]
 
     // Selector with itemId constraint — both placements should match
     // (both bound to itemId=A).
     refreshSelector("cell:test.constraints.item?itemId=A")
-    const aAfter = await flightAt(
-      "http://t/m/1",
-      <Mixed item={item.with({ itemId: "A" })} />,
-    )
+    const aAfter = await flightAt("http://t/m/1", <Mixed item={item.with({ itemId: "A" })} />)
     const fpAAfter = aAfter.match(/partialFingerprint":"([0-9a-f]+)/)![1]
     expect(fpAAfter).not.toEqual(fpA)
   })
@@ -252,10 +219,7 @@ describe("BoundCell.hydrate — write storage without firing signal", () => {
       { selector: "hydrate-line", match: "/h" },
     )
 
-    const before = await flightAt(
-      "http://t/h",
-      <Line item={item.with({ id: "A" })} />,
-    )
+    const before = await flightAt("http://t/h", <Line item={item.with({ id: "A" })} />)
     const fpBefore = before.match(/partialFingerprint":"([0-9a-f]+)/)![1]
 
     // Hydrate at the partition — sync, no signal.
@@ -267,10 +231,7 @@ describe("BoundCell.hydrate — write storage without firing signal", () => {
     // refreshSelector was called. Value folds into fp via
     // `schema=<cellHashes>` — same fp dedup as for any other prop-
     // bound cell.
-    const after = await flightAt(
-      "http://t/h",
-      <Line item={item.with({ id: "A" })} />,
-    )
+    const after = await flightAt("http://t/h", <Line item={item.with({ id: "A" })} />)
     expect(after).toContain('"children":5')
     const fpAfter = after.match(/partialFingerprint":"([0-9a-f]+)/)![1]
     expect(fpAfter).not.toEqual(fpBefore)

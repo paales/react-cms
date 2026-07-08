@@ -423,10 +423,7 @@ export async function _clearCmsDraft(): Promise<void> {
 
 // ─── Resolver ──────────────────────────────────────────────────────────
 
-export function resolveCmsFields(
-  id: string,
-  request: Request,
-): Record<string, unknown> | null {
+export function resolveCmsFields(id: string, request: Request): Record<string, unknown> | null {
   const node = lookupCmsNode(id, request)
   if (!node) return null
   return mergeMatchingConfigs(node.configs, request)
@@ -469,9 +466,7 @@ export function cmsFingerprintContribution(id: string, request: Request): string
 // set at render; every fold re-reads the CURRENT hash here (committed
 // store + the requester's draft overlay), so a CMS edit moves the fp
 // with no lag and per-author drafts fold per request.
-registerDepKind("cms", (contentKey, request) =>
-  cmsFingerprintContribution(contentKey, request),
-)
+registerDepKind("cms", (contentKey, request) => cmsFingerprintContribution(contentKey, request))
 
 function contributionForNode(node: CmsNode, request: Request, ancestors: Set<string>): string {
   const fields = mergeMatchingConfigs(node.configs, request)
@@ -612,10 +607,7 @@ const EMPTY_IMAGE = Object.freeze({ src: "", alt: "" })
  * are descendants under it. Optional only because the prerender's
  * tracking surface doesn't have a real one.
  */
-export function createCmsReadSurface(
-  id: string | undefined,
-  request: Request,
-): CmsReadSurface {
+export function createCmsReadSurface(id: string | undefined, request: Request): CmsReadSurface {
   let resolved: Record<string, unknown> | null | undefined
   const resolve = (): Record<string, unknown> | null => {
     if (resolved !== undefined) return resolved

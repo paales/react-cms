@@ -115,9 +115,7 @@ describe("match over the request", () => {
     expect(await flightAt("http://t/list?pages=2", tree)).not.toContain("page-three-body")
     expect(await flightAt("http://t/list?pages=3", tree)).toContain("page-three-body")
     // Order independence: other params before/after don't matter.
-    expect(await flightAt("http://t/list?q=x&pages=7&y=1", tree)).toContain(
-      "page-three-body",
-    )
+    expect(await flightAt("http://t/list?q=x&pages=7&y=1", tree)).toContain("page-three-body")
   })
 
   it("a predicate miss parks the client's cached variant", async () => {
@@ -129,10 +127,7 @@ describe("match over the request", () => {
     const open = await flightAt("http://t/list?pages=3", tree)
     const fp = fpById(open, "mr-page-3")
     expect(fp).toBeDefined()
-    const parked = await flightAt(
-      `http://t/list?pages=1&cached=mr-page-3:${ROOT_MK}:${fp}`,
-      tree,
-    )
+    const parked = await flightAt(`http://t/list?pages=1&cached=mr-page-3:${ROOT_MK}:${fp}`, tree)
     expect(parked).not.toContain("page-three-body")
     expect(parked).toContain('"data-partial-id":"mr-page-3"')
   })
@@ -150,9 +145,7 @@ describe("match over the request", () => {
     // would see the overlay — the gate deliberately does not.)
     expect(await flightAt("http://t/beta", tree)).not.toContain("beta-panel-body")
     // The next request carries the cookie → the gate opens.
-    expect(await flightAt("http://t/beta", tree, { cookie: "beta=1" })).toContain(
-      "beta-panel-body",
-    )
+    expect(await flightAt("http://t/beta", tree, { cookie: "beta=1" })).toContain("beta-panel-body")
   })
 
   it("headers gates work; x-parton-* stays invisible", async () => {
@@ -162,9 +155,9 @@ describe("match over the request", () => {
       </PartialRoot>
     )
     expect(await flightAt("http://t/bot", bots)).not.toContain("bot-banner-body")
-    expect(
-      await flightAt("http://t/bot", bots, { "user-agent": "GoogleBot/2.1" }),
-    ).toContain("bot-banner-body")
+    expect(await flightAt("http://t/bot", bots, { "user-agent": "GoogleBot/2.1" })).toContain(
+      "bot-banner-body",
+    )
 
     const invis = (
       <PartialRoot>
@@ -172,9 +165,9 @@ describe("match over the request", () => {
       </PartialRoot>
     )
     // Even when the header is present on the wire, the gate sees null.
-    expect(
-      await flightAt("http://t/invis", invis, { "x-parton-render": "1" }),
-    ).toContain("invisible-header-body")
+    expect(await flightAt("http://t/invis", invis, { "x-parton-render": "1" })).toContain(
+      "invisible-header-body",
+    )
   })
 
   it("named params flow from the string half alongside predicate fields", async () => {
@@ -198,17 +191,11 @@ describe("match over the request", () => {
     const fp = fpById(r1, "mr-page-3")
     // Same request with the fp cached → skip (declared gates are
     // request-reproducible; no cold-record decline).
-    const skipped = await flightAt(
-      `http://t/list?pages=3&cached=mr-page-3:${ROOT_MK}:${fp}`,
-      tree,
-    )
+    const skipped = await flightAt(`http://t/list?pages=3&cached=mr-page-3:${ROOT_MK}:${fp}`, tree)
     expect(skipped).not.toContain("page-three-body")
     // Flip below the threshold with the same cached fp → parked, then
     // back above → renders again.
-    const reopened = await flightAt(
-      `http://t/list?pages=5&cached=mr-page-3:${ROOT_MK}:${fp}`,
-      tree,
-    )
+    const reopened = await flightAt(`http://t/list?pages=5&cached=mr-page-3:${ROOT_MK}:${fp}`, tree)
     expect(reopened).not.toContain("page-three-body") // fp still matches → skip
   })
 })

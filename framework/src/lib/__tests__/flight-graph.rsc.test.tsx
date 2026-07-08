@@ -133,9 +133,7 @@ describe("flight-graph spliceHoles (synthetic rows)", () => {
 
     const scaffoldBytes = ENC.encode(scaffold)
     const meta = scaffoldMeta(scaffoldBytes)
-    const out = DEC.decode(
-      await toBytes(spliceHoles(bytesOf(scaffold), holes, meta, renderHole)),
-    )
+    const out = DEC.decode(await toBytes(spliceHoles(bytesOf(scaffold), holes, meta, renderHole)))
     const rows = out.split("\n").filter((r) => r.length > 0)
 
     // Seam preserved: scaffold's $L1 / $L2 still point at ids 1 / 2,

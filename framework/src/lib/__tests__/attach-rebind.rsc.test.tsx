@@ -15,11 +15,7 @@ import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { runWithRequestAsync } from "../../runtime/context.ts"
 import { _clearInvalidationRegistry } from "../../runtime/invalidation-registry.ts"
-import {
-  drainPayloadSegment,
-  freshLiveScope,
-  withLiveDrive,
-} from "../../test/live-drive.tsx"
+import { drainPayloadSegment, freshLiveScope, withLiveDrive } from "../../test/live-drive.tsx"
 import { CHANNEL_ENDPOINT } from "../channel-protocol.ts"
 import { handleChannelPost } from "../connection-session.ts"
 import { PartialRoot, parton, type RenderArgs } from "../partial.tsx"
@@ -64,9 +60,7 @@ async function postEnvelope(
     },
     body: JSON.stringify({ connection, seq, frames: [] }),
   })
-  const { result } = await runWithRequestAsync(request, () =>
-    handleChannelPost(request),
-  )
+  const { result } = await runWithRequestAsync(request, () => handleChannelPost(request))
   return result.status
 }
 

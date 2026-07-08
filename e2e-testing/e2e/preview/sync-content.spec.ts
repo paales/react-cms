@@ -57,10 +57,9 @@ test("hero text rendered in SSR HTML on /cms-demo (sync)", async ({ request }) =
   // on the next `<p>`. Both must appear as inline SSR HTML, not as
   // FLIGHT_DATA-only content. The `[^<]*` clamp prevents the regex
   // from straddling other tags.
-  expect(
-    body,
-    "hero <h1> missing from SSR HTML — content shipped only via FLIGHT_DATA",
-  ).toMatch(/data-testid="cms-demo-hero-headline"[^>]*>[^<]*Welcome to the CMS demo</)
+  expect(body, "hero <h1> missing from SSR HTML — content shipped only via FLIGHT_DATA").toMatch(
+    /data-testid="cms-demo-hero-headline"[^>]*>[^<]*Welcome to the CMS demo</,
+  )
 
   expect(body, "hero subhead missing from SSR HTML").toMatch(
     /<p[^>]*>Every field on this page is read through accessor-tracked calls\./,

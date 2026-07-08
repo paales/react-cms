@@ -69,69 +69,62 @@
  *     is never a failure signal.
  */
 
+import { type ChannelFrame, UNACKED_DELIVERY_WINDOW, type UrlFrame } from "./channel-protocol.ts"
+import { getChannelTransport } from "./channel-transport.ts"
 import {
-	type ChannelFrame,
-	UNACKED_DELIVERY_WINDOW,
-	type UrlFrame,
-} from "./channel-protocol.ts";
-import { getChannelTransport } from "./channel-transport.ts";
-import {
-	TAG_CONNECTION_ID,
-	TAG_DELIVERY_SEQ,
-	TAG_MUX_LIVE,
-	TAG_SEQ_VOID,
-	TAG_UPSTREAM_APPLIED,
-} from "./fp-trailer-marker.ts";
-import { getNavigation } from "../runtime/navigation-api.ts";
-import {
-	_getLiveConnectionId,
-	_setLiveConnectionId,
-} from "./partial-client-state.ts";
+  TAG_CONNECTION_ID,
+  TAG_DELIVERY_SEQ,
+  TAG_MUX_LIVE,
+  TAG_SEQ_VOID,
+  TAG_UPSTREAM_APPLIED,
+} from "./fp-trailer-marker.ts"
+import { getNavigation } from "../runtime/navigation-api.ts"
+import { _getLiveConnectionId, _setLiveConnectionId } from "./partial-client-state.ts"
 
 /** A source of upstream frames (the visibility controller is the
  *  first). Registered once at module scope; consulted on every
  *  envelope flush. */
 export interface ChannelProducer {
-	/** Contribute the producer's frames to the envelope being assembled
-	 *  — one frame for most producers; an ordered array where one
-	 *  statement is several frames (the frame-navigation producer's
-	 *  cancel-then-url pair). `connection` is the open connection's id,
-	 *  or `null` when none is established — the producer keeps its
-	 *  statements pending (or drops them, lossy class) and returns
-	 *  `null`. Called only when an envelope can
-	 *  actually fire (never while one is in flight), so the frames'
-	 *  content is always the producer's latest state. */
-	collect(connection: string | null): ChannelFrame | ChannelFrame[] | null;
-	/** The envelope carrying this producer's frame was not applied —
-	 *  connection gone (`404`-equivalent) or the POST never reached the
-	 *  server. The transport has already cleared the published id; the
-	 *  producer re-owns the frame's statements, which pend for the next
-	 *  establishment. Never called for a `reliable` producer's frames —
-	 *  the transport's retransmit buffer owns their redelivery. */
-	deliveryFailed(frame: ChannelFrame): void;
-	/** Declares this producer's frames RELIABLE-class: they must reach
-	 *  the server even across a torn connection, so the transport
-	 *  buffers them (keyed by envelope seq) until the downstream
-	 *  `applied` marker proves application, and retransmits survivors
-	 *  at the next establishment. Application idempotence is the frame
-	 *  kind's own contract (seq-ordered statement semantics). Absent /
-	 *  false: loss-tolerant — a failed envelope hands the frame back
-	 *  via `deliveryFailed`. */
-	reliable?: boolean;
+  /** Contribute the producer's frames to the envelope being assembled
+   *  — one frame for most producers; an ordered array where one
+   *  statement is several frames (the frame-navigation producer's
+   *  cancel-then-url pair). `connection` is the open connection's id,
+   *  or `null` when none is established — the producer keeps its
+   *  statements pending (or drops them, lossy class) and returns
+   *  `null`. Called only when an envelope can
+   *  actually fire (never while one is in flight), so the frames'
+   *  content is always the producer's latest state. */
+  collect(connection: string | null): ChannelFrame | ChannelFrame[] | null
+  /** The envelope carrying this producer's frame was not applied —
+   *  connection gone (`404`-equivalent) or the POST never reached the
+   *  server. The transport has already cleared the published id; the
+   *  producer re-owns the frame's statements, which pend for the next
+   *  establishment. Never called for a `reliable` producer's frames —
+   *  the transport's retransmit buffer owns their redelivery. */
+  deliveryFailed(frame: ChannelFrame): void
+  /** Declares this producer's frames RELIABLE-class: they must reach
+   *  the server even across a torn connection, so the transport
+   *  buffers them (keyed by envelope seq) until the downstream
+   *  `applied` marker proves application, and retransmits survivors
+   *  at the next establishment. Application idempotence is the frame
+   *  kind's own contract (seq-ordered statement semantics). Absent /
+   *  false: loss-tolerant — a failed envelope hands the frame back
+   *  via `deliveryFailed`. */
+  reliable?: boolean
 }
 
-const producers = new Set<ChannelProducer>();
-const establishListeners = new Set<(connection: string) => void>();
+const producers = new Set<ChannelProducer>()
+const establishListeners = new Set<(connection: string) => void>()
 
 export function registerChannelProducer(producer: ChannelProducer): void {
-	producers.add(producer);
+  producers.add(producer)
 }
 
 /** Run `cb` with the connection id every time a live connection is
  *  established — producers arm connection-scoped work here (e.g. the
  *  visibility controller's full-set sync at first measurement). */
 export function onChannelEstablished(cb: (connection: string) => void): void {
-	establishListeners.add(cb);
+  establishListeners.add(cb)
 }
 
 // PAGE-LIFETIME monotonic envelope seq — never restarted at
@@ -139,10 +132,10 @@ export function onChannelEstablished(cb: (connection: string) => void): void {
 // original seqs across reattaches and the server's `applied` marker
 // names one unambiguous timeline (seeded per attach from
 // `_channelAppliedWatermark`).
-let envelopeSeq = 0;
-let rafScheduled = false;
-let inFlight = false;
-let reflushPending = false;
+let envelopeSeq = 0
+let rafScheduled = false
+let inFlight = false
+let reflushPending = false
 
 // ─── Delivery tracking (per established connection) ─────────────────
 //
@@ -165,10 +158,10 @@ let reflushPending = false;
  *  statement seq whose consume spawned the lane (the frame fire's
  *  milestone correlation). */
 export interface WireDelivery {
-	seq: number;
-	asOf: number;
-	live?: boolean;
-	nav?: number;
+  seq: number
+  asOf: number
+  live?: boolean
+  nav?: number
 }
 
 /** Per-parton FIFO of lane deliveries read off the wire (`seq`
@@ -177,32 +170,29 @@ export interface WireDelivery {
  *  commit in arrival order (the browser entry chains them), so the
  *  queue head always names the delivery of the payload being
  *  committed. */
-const pendingLaneSeqs = new Map<string, WireDelivery[]>();
+const pendingLaneSeqs = new Map<string, WireDelivery[]>()
 /** One-shot wakes for a producer announcement landing on an open lane
  *  body — the lane handler races the trailer against this while it
  *  waits to learn whether the body is a producer stream. Disposal is
  *  explicit (the handler releases its waiter when the race settles),
  *  never a reaction on a promise that outlives the race. */
-const laneProducerWaiters = new Map<string, Set<() => void>>();
+const laneProducerWaiters = new Map<string, Set<() => void>>()
 
 /** Register a one-shot wake for `partonId`'s next producer
  *  announcement. Returns the disposer. */
-export function _onLaneProducerAnnounce(
-	partonId: string,
-	wake: () => void,
-): () => void {
-	let waiters = laneProducerWaiters.get(partonId);
-	if (!waiters) {
-		waiters = new Set();
-		laneProducerWaiters.set(partonId, waiters);
-	}
-	waiters.add(wake);
-	return () => {
-		const set = laneProducerWaiters.get(partonId);
-		if (!set) return;
-		set.delete(wake);
-		if (set.size === 0) laneProducerWaiters.delete(partonId);
-	};
+export function _onLaneProducerAnnounce(partonId: string, wake: () => void): () => void {
+  let waiters = laneProducerWaiters.get(partonId)
+  if (!waiters) {
+    waiters = new Set()
+    laneProducerWaiters.set(partonId, waiters)
+  }
+  waiters.add(wake)
+  return () => {
+    const set = laneProducerWaiters.get(partonId)
+    if (!set) return
+    set.delete(wake)
+    if (set.size === 0) laneProducerWaiters.delete(partonId)
+  }
 }
 
 // ─── Action consequence gates ────────────────────────────────────────
@@ -221,12 +211,12 @@ export function _onLaneProducerAnnounce(
 // whole-tree render is the catch-up — over-fetch, never frozen).
 
 interface ConsequenceGate {
-	max: number;
-	resolve: () => void;
-	promise: Promise<void>;
+  max: number
+  resolve: () => void
+  promise: Promise<void>
 }
 
-const consequenceGates = new Set<ConsequenceGate>();
+const consequenceGates = new Set<ConsequenceGate>()
 
 /** Register an action response's consequence seqs. Called by the
  *  action transport (the browser entry's server callback) the moment
@@ -234,17 +224,17 @@ const consequenceGates = new Set<ConsequenceGate>();
  *  returned promise resolves, so an overlay awaiting the write can
  *  always observe its own gate. */
 export function _registerActionConsequences(seqs: readonly number[]): void {
-	if (seqs.length === 0) return;
-	const max = Math.max(...seqs);
-	// The inverse ordering race: the consequence lane committed before
-	// the POST resolved — the watermark already covers it, no gate.
-	if (deliveredWatermark >= max) return;
-	let resolve!: () => void;
-	const promise = new Promise<void>((res) => {
-		resolve = res;
-	});
-	const gate: ConsequenceGate = { max, resolve, promise };
-	consequenceGates.add(gate);
+  if (seqs.length === 0) return
+  const max = Math.max(...seqs)
+  // The inverse ordering race: the consequence lane committed before
+  // the POST resolved — the watermark already covers it, no gate.
+  if (deliveredWatermark >= max) return
+  let resolve!: () => void
+  const promise = new Promise<void>((res) => {
+    resolve = res
+  })
+  const gate: ConsequenceGate = { max, resolve, promise }
+  consequenceGates.add(gate)
 }
 
 /** Every outstanding consequence gate as one promise — the overlay's
@@ -252,32 +242,30 @@ export function _registerActionConsequences(seqs: readonly number[]): void {
  *  immediately when nothing is outstanding (no channel, no
  *  reservations): unchanged behavior. */
 export function _awaitActionConsequences(): Promise<void> {
-	if (consequenceGates.size === 0) return Promise.resolve();
-	return Promise.all([...consequenceGates].map((g) => g.promise)).then(
-		() => undefined,
-	);
+  if (consequenceGates.size === 0) return Promise.resolve()
+  return Promise.all([...consequenceGates].map((g) => g.promise)).then(() => undefined)
 }
 
 function sweepConsequenceGates(): void {
-	if (consequenceGates.size === 0) return;
-	for (const gate of [...consequenceGates]) {
-		if (deliveredWatermark >= gate.max) {
-			consequenceGates.delete(gate);
-			gate.resolve();
-		}
-	}
+  if (consequenceGates.size === 0) return
+  for (const gate of [...consequenceGates]) {
+    if (deliveredWatermark >= gate.max) {
+      consequenceGates.delete(gate)
+      gate.resolve()
+    }
+  }
 }
 
 function releaseAllConsequenceGates(): void {
-	for (const gate of [...consequenceGates]) gate.resolve();
-	consequenceGates.clear();
+  for (const gate of [...consequenceGates]) gate.resolve()
+  consequenceGates.clear()
 }
 /** Highest contiguously committed delivery seq — the ack value. */
-let deliveredWatermark = 0;
+let deliveredWatermark = 0
 /** Committed seqs past a gap in the contiguous frontier. */
-const deliveredOutOfOrder = new Set<number>();
+const deliveredOutOfOrder = new Set<number>()
 /** The watermark value last carried on a collected ack frame. */
-let lastAckCollected = 0;
+let lastAckCollected = 0
 /** Unacked-commit count at which the transport DRIVES a flush for the
  *  ack's own sake — half the server's backpressure window, so a client
  *  under sustained lane traffic acks once per threshold crossing and
@@ -288,12 +276,12 @@ let lastAckCollected = 0;
  *  section) and no consumer of the ack needs per-commit resolution:
  *  the mirror's hot layer is the OPTIMISTIC skip-set, and the window
  *  only needs freeing well before it fills. */
-const ACK_FLUSH_THRESHOLD = UNACKED_DELIVERY_WINDOW / 2;
+const ACK_FLUSH_THRESHOLD = UNACKED_DELIVERY_WINDOW / 2
 /** An ack frame for the CURRENT connection has been delivered (its
  *  envelope answered 204). Until it has, an ack-carrying envelope's
  *  failure means the connection never acked once — the degrade
  *  signal. */
-let ackDeliveredOnConnection = false;
+let ackDeliveredOnConnection = false
 /** As-of-dropped delivery seqs awaiting report to the server: the
  *  client received these deliveries but did NOT hold them — the content
  *  rendered as-of a navigation point it had already left, so its as-of
@@ -302,7 +290,7 @@ let ackDeliveredOnConnection = false;
  *  the window), but the server must not treat it as a holding: the ack
  *  producer reports the seqs within the acked range so the server evicts
  *  their optimistic mirror promotions. Reset per connection. */
-const asOfDroppedSeqs = new Set<number>();
+const asOfDroppedSeqs = new Set<number>()
 
 // ─── Reliable-class buffer + upstream watermark ──────────────────────
 
@@ -310,14 +298,14 @@ const asOfDroppedSeqs = new Set<number>();
  *  the envelope seq that carried them (ascending). Only frames from
  *  `reliable: true` producers enter; loss-tolerant co-riders of the
  *  same envelope self-heal and must not replay. */
-let retransmitBuffer: Array<{ seq: number; frames: ChannelFrame[] }> = [];
+let retransmitBuffer: Array<{ seq: number; frames: ChannelFrame[] }> = []
 /** Highest upstream envelope seq the server has stated applied (the
  *  downstream `applied` marker) — what prunes the buffer and what the
  *  next attach statement presents as its `applied` watermark. */
-let appliedWatermark = 0;
+let appliedWatermark = 0
 /** Establishment found survivors in the buffer — the next flush sends
  *  them (original seqs, in order) before collecting producers. */
-let retransmitPending = false;
+let retransmitPending = false
 
 // ─── Bounded re-establishment + document-nav fallback ────────────────
 //
@@ -337,31 +325,31 @@ let retransmitPending = false;
 
 /** Consecutive attach-establishment failures — reset the moment an
  *  attach establishes. */
-let establishFailures = 0;
+let establishFailures = 0
 /** Consecutive first-ack-delivery failures — reset the moment an ack
  *  envelope lands (the full duplex is proven). */
-let firstAckFailures = 0;
+let firstAckFailures = 0
 /** A run of EITHER counter past this falls to document-nav mode. Small:
  *  one transient stumble must re-establish, a genuinely blocked path
  *  must fall back promptly. */
-const CHANNEL_FAILURE_LIMIT = 3;
+const CHANNEL_FAILURE_LIMIT = 3
 /** The flush that failed carried this connection's FIRST ack — read by
  *  the close arbitration (which the same flush triggers by pulling the
  *  stream down) to count it as a first-ack failure, not a benign abort. */
-let firstAckFailedThisConnection = false;
+let firstAckFailedThisConnection = false
 
 /** The channel has fallen to the document-nav fallback: enough
  *  consecutive failures of either signature to conclude the transport is
  *  blocked. RECOVERABLE — a proven-working connection clears it. The
  *  navigate listener stands down while it holds; the heartbeat keeps
  *  probing so recovery can happen. */
-let documentNavMode = false;
+let documentNavMode = false
 
 /** Whether the channel is in document-nav fallback mode — the navigate
  *  listener's cue to stand down (links become document loads). Not
  *  sticky: cleared by a proven-working connection. */
 export function _channelIsDegraded(): boolean {
-	return documentNavMode;
+  return documentNavMode
 }
 
 /** Recompute the fallback state from the two failure counters and sync
@@ -370,22 +358,20 @@ export function _channelIsDegraded(): boolean {
  *  either signature. Leaving: a counter reset dropped both below the
  *  limit — the channel works again, channel navigation resumes. */
 function refreshDocumentNavMode(): void {
-	const fallback =
-		establishFailures >= CHANNEL_FAILURE_LIMIT ||
-		firstAckFailures >= CHANNEL_FAILURE_LIMIT;
-	if (fallback === documentNavMode) return;
-	documentNavMode = fallback;
-	if (typeof document !== "undefined") {
-		if (fallback)
-			document.documentElement.setAttribute("data-parton-degraded", "");
-		else document.documentElement.removeAttribute("data-parton-degraded");
-	}
+  const fallback =
+    establishFailures >= CHANNEL_FAILURE_LIMIT || firstAckFailures >= CHANNEL_FAILURE_LIMIT
+  if (fallback === documentNavMode) return
+  documentNavMode = fallback
+  if (typeof document !== "undefined") {
+    if (fallback) document.documentElement.setAttribute("data-parton-degraded", "")
+    else document.documentElement.removeAttribute("data-parton-degraded")
+  }
 }
 
 /** The upstream-applied watermark last heard from the server — the
  *  attach statement's `applied` field (see [[channel-protocol]]). */
 export function _channelAppliedWatermark(): number {
-	return appliedWatermark;
+  return appliedWatermark
 }
 
 // ─── Window navigation over the channel ──────────────────────────────
@@ -435,53 +421,53 @@ export function _channelAppliedWatermark(): number {
  *  name === "AbortError"` check recognizes across realms (a
  *  DOMException is not an Error subclass in every environment). */
 function abortError(): Error {
-	const err = new Error("navigation superseded");
-	err.name = "AbortError";
-	return err;
+  const err = new Error("navigation superseded")
+  err.name = "AbortError"
+  return err
 }
 
 interface PendingNavRecord {
-	/** The navigation point this record's statement set — a committed
-	 *  segment rendered as-of ≥ this resolves the record. */
-	navSeq: number;
-	/** The stated URL (path + search, may carry a `?__force=` overlay)
-	 *  — what the attach subsume folds into the statement's `url`. */
-	url: string;
-	/** The caller's commit-mode wish (`streaming: true` = progressive /
-	 *  raw). A covering segment commits in transition mode when any
-	 *  covered record asked for it. */
-	streaming: boolean;
-	streamingResolved: boolean;
-	settled: boolean;
-	resolveStreaming: () => void;
-	rejectStreaming: (err: unknown) => void;
-	resolveFinished: () => void;
-	rejectFinished: (err: unknown) => void;
+  /** The navigation point this record's statement set — a committed
+   *  segment rendered as-of ≥ this resolves the record. */
+  navSeq: number
+  /** The stated URL (path + search, may carry a `?__force=` overlay)
+   *  — what the attach subsume folds into the statement's `url`. */
+  url: string
+  /** The caller's commit-mode wish (`streaming: true` = progressive /
+   *  raw). A covering segment commits in transition mode when any
+   *  covered record asked for it. */
+  streaming: boolean
+  streamingResolved: boolean
+  settled: boolean
+  resolveStreaming: () => void
+  rejectStreaming: (err: unknown) => void
+  resolveFinished: () => void
+  rejectFinished: (err: unknown) => void
 }
 
-let navPoint = 0;
-let pendingNavFrame: UrlFrame | null = null;
-let pendingNavRecords: PendingNavRecord[] = [];
+let navPoint = 0
+let pendingNavFrame: UrlFrame | null = null
+let pendingNavRecords: PendingNavRecord[] = []
 /** One-shot claim the navigate-event listener sets when it routes a
  *  window navigation through the channel — the heartbeat's deferred
  *  abort check consumes it and keeps the stream (the navigation rides
  *  it; tearing it would strand the nav segment). Explicit
  *  producer-written signal, set synchronously during the event
  *  dispatch, read in the same task's microtask. */
-let windowNavClaim = false;
+let windowNavClaim = false
 /** The heartbeat's registered live-stream aborter — the escape hatch
  *  the envelope-failure path pulls (`_channelAbortLiveStream`) so the
  *  stream reopens on the current state instead of idling on the old
  *  one for the keepalive. */
-let liveStreamAbort: (() => void) | null = null;
+let liveStreamAbort: (() => void) | null = null
 /** The heartbeat's registered attach requester — how a pre-establishment
  *  statement triggers the attach it will ride (`_requestAttachNow`).
  *  `null` when no heartbeat owns the page (a custom bootstrap without
  *  one): statements latch and ride whatever establishment ever comes. */
-let attachRequester: (() => void) | null = null;
+let attachRequester: (() => void) | null = null
 /** The current attach fire established a connection — the degrade
  *  arbitration's real signal, reset at each `_channelConnectionClosed`. */
-let establishedSinceClose = false;
+let establishedSinceClose = false
 
 /** Whether window navigations / selector refetches ride the channel
  *  as immediate statements right now: a connection is established and
@@ -489,11 +475,11 @@ let establishedSinceClose = false;
  *  (attach-with-intent); only DEGRADED pages answer `null` from the
  *  navigate fns — the caller's cue for a document navigation. */
 export function _channelNavAvailable(): boolean {
-	return !documentNavMode && _getLiveConnectionId() !== null;
+  return !documentNavMode && _getLiveConnectionId() !== null
 }
 
 export function _registerAttachRequester(requester: (() => void) | null): void {
-	attachRequester = requester;
+  attachRequester = requester
 }
 
 /** Request an immediate attach fire (the pre-establishment statement's
@@ -501,9 +487,9 @@ export function _registerAttachRequester(requester: (() => void) | null): void {
  *  ride the attach it just triggered; `false` when no heartbeat owns
  *  the page (the statement stays latched for whatever comes). */
 export function _requestAttachNow(): boolean {
-	if (attachRequester === null) return false;
-	attachRequester();
-	return true;
+  if (attachRequester === null) return false
+  attachRequester()
+  return true
 }
 
 /** Schedule a re-attach after a transient failure: immediate on the
@@ -513,48 +499,46 @@ export function _requestAttachNow(): boolean {
  *  interval is the (paced) recovery probe — so this never becomes a
  *  tight loop. `fire()` is idempotent (a stream in flight makes it a
  *  no-op), so a stray timer can never double-attach. */
-let reattachTimer: ReturnType<typeof setTimeout> | null = null;
-const RECONNECT_BASE_MS = 250;
-const RECONNECT_CAP_MS = 10_000;
+let reattachTimer: ReturnType<typeof setTimeout> | null = null
+const RECONNECT_BASE_MS = 250
+const RECONNECT_CAP_MS = 10_000
 function scheduleReattach(): void {
-	if (reattachTimer !== null) return;
-	const attempt = Math.max(establishFailures, firstAckFailures);
-	const delay =
-		attempt <= 1
-			? 0
-			: Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 2), RECONNECT_CAP_MS);
-	if (delay === 0 || typeof setTimeout === "undefined") {
-		_requestAttachNow();
-		return;
-	}
-	reattachTimer = setTimeout(() => {
-		reattachTimer = null;
-		_requestAttachNow();
-	}, delay);
+  if (reattachTimer !== null) return
+  const attempt = Math.max(establishFailures, firstAckFailures)
+  const delay =
+    attempt <= 1 ? 0 : Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 2), RECONNECT_CAP_MS)
+  if (delay === 0 || typeof setTimeout === "undefined") {
+    _requestAttachNow()
+    return
+  }
+  reattachTimer = setTimeout(() => {
+    reattachTimer = null
+    _requestAttachNow()
+  }, delay)
 }
 
 /** The client's navigation point — the envelope seq of its latest url
  *  statement on the open connection (`0` = none since attach). */
 export function _channelNavPoint(): number {
-	return navPoint;
+  return navPoint
 }
 
 export function _channelClaimWindowNav(): void {
-	windowNavClaim = true;
+  windowNavClaim = true
 }
 
 export function _channelConsumeWindowNavClaim(): boolean {
-	const claimed = windowNavClaim;
-	windowNavClaim = false;
-	return claimed;
+  const claimed = windowNavClaim
+  windowNavClaim = false
+  return claimed
 }
 
 export function _registerLiveStreamAbort(abort: (() => void) | null): void {
-	liveStreamAbort = abort;
+  liveStreamAbort = abort
 }
 
 export function _channelAbortLiveStream(): void {
-	liveStreamAbort?.();
+  liveStreamAbort?.()
 }
 
 /** Set by `_channelRequestReattach` — the NEXT connection close re-fires
@@ -563,7 +547,7 @@ export function _channelAbortLiveStream(): void {
  *  re-establish on the just-installed transport, so nothing else would
  *  trigger the settle's re-fire. One-shot, consumed in
  *  `_channelConnectionClosed`. */
-let reattachOnClose = false;
+let reattachOnClose = false
 
 /**
  * The transport-upgrade handover: drop the held connection and
@@ -577,8 +561,8 @@ let reattachOnClose = false;
  * re-attach, only its trigger is new.
  */
 export function _channelRequestReattach(): void {
-	reattachOnClose = true;
-	_channelAbortLiveStream();
+  reattachOnClose = true
+  _channelAbortLiveStream()
 }
 
 // ─── Cookie changes over the channel ─────────────────────────────────
@@ -594,7 +578,7 @@ export function _channelRequestReattach(): void {
 // `_channelNavSubsumedByAttach`).
 
 /** Unsent cookie deltas, newest value per name (`null` = delete). */
-let pendingCookies = new Map<string, string | null>();
+let pendingCookies = new Map<string, string | null>()
 
 /**
  * State one-or-more client cookie changes on the channel — the tear's
@@ -606,14 +590,12 @@ let pendingCookies = new Map<string, string | null>();
  * — exactly what the raw `Cookie` header would carry — so the overlay
  * and a later reattach's header agree.
  */
-export function _channelCookieChange(
-	changes: Record<string, string | null>,
-): void {
-	if (_getLiveConnectionId() === null) return;
-	for (const name of Object.keys(changes)) {
-		pendingCookies.set(name, changes[name]);
-	}
-	scheduleChannelFlush();
+export function _channelCookieChange(changes: Record<string, string | null>): void {
+  if (_getLiveConnectionId() === null) return
+  for (const name of Object.keys(changes)) {
+    pendingCookies.set(name, changes[name])
+  }
+  scheduleChannelFlush()
 }
 
 /** The cookie producer — RELIABLE class. One frame per changed name;
@@ -621,22 +603,22 @@ export function _channelCookieChange(
  *  connection, though the subsume retires them — the attach header
  *  restates the jar). */
 const cookieProducer: ChannelProducer = {
-	reliable: true,
-	collect(connection: string | null): ChannelFrame[] | null {
-		if (pendingCookies.size === 0 || connection === null) return null;
-		const frames: ChannelFrame[] = [];
-		for (const [name, value] of pendingCookies) {
-			frames.push({ kind: "cookie", name, value });
-		}
-		pendingCookies.clear();
-		return frames;
-	},
-	deliveryFailed(): void {
-		// Reliable class — the retransmit buffer owns redelivery; a torn
-		// connection reattaches and the attach's Cookie header restates
-		// the jar.
-	},
-};
+  reliable: true,
+  collect(connection: string | null): ChannelFrame[] | null {
+    if (pendingCookies.size === 0 || connection === null) return null
+    const frames: ChannelFrame[] = []
+    for (const [name, value] of pendingCookies) {
+      frames.push({ kind: "cookie", name, value })
+    }
+    pendingCookies.clear()
+    return frames
+  },
+  deliveryFailed(): void {
+    // Reliable class — the retransmit buffer owns redelivery; a torn
+    // connection reattaches and the attach's Cookie header restates
+    // the jar.
+  },
+}
 
 /** A server-initiated url push (a `url` trailer) applies only when the
  *  client hasn't navigated past the state the push was rendered as-of:
@@ -646,7 +628,7 @@ const cookieProducer: ChannelProducer = {
  *  it issued itself); `undefined` — a caller with no correlation —
  *  applies unconditionally. */
 export function _serverUrlPushApplies(asOf: number | undefined): boolean {
-	return asOf === undefined || asOf >= navPoint;
+  return asOf === undefined || asOf >= navPoint
 }
 
 /** The as-of commit guard for seq'd deliveries on the live stream —
@@ -655,7 +637,7 @@ export function _serverUrlPushApplies(asOf: number | undefined): boolean {
  *  navigation unloads the page, so no cross-page staleness class
  *  exists beyond this. */
 export function _channelDeliveryCommittable(asOf: number): boolean {
-	return asOf >= navPoint;
+  return asOf >= navPoint
 }
 
 /**
@@ -669,76 +651,76 @@ export function _channelDeliveryCommittable(asOf: number): boolean {
  * sync — no milestones to keep).
  */
 export function _channelNavigate(init: {
-	url: string;
-	intent: UrlFrame["intent"];
-	streaming?: boolean;
-	signal?: AbortSignal;
-	record?: boolean;
+  url: string
+  intent: UrlFrame["intent"]
+  streaming?: boolean
+  signal?: AbortSignal
+  record?: boolean
 }): { streaming: Promise<void>; finished: Promise<void> } | null {
-	if (documentNavMode) return null;
-	// Reserve the statement's envelope seq: flushes serialize and only
-	// collect-flushes mint, so the next envelope is exactly
-	// `envelopeSeq + 1` — and the navigation point must advance NOW
-	// (click time), before any flush, or a pre-nav delivery landing in
-	// the reservation window would still commit.
-	navPoint = envelopeSeq + 1;
-	pendingNavFrame = {
-		kind: "url",
-		url: init.url,
-		intent: init.intent,
-		...(init.streaming === true ? { streaming: true } : {}),
-	};
-	if (_getLiveConnectionId() !== null) {
-		scheduleChannelFlush();
-	} else if (!_requestAttachNow()) {
-		// No heartbeat owns the page — the statement stays latched for
-		// whatever establishment ever comes; the fire itself is a no-op.
-		return { streaming: Promise.resolve(), finished: Promise.resolve() };
-	}
-	if (init.record === false) return { streaming: Promise.resolve(), finished: Promise.resolve() };
-	let resolveStreaming!: () => void;
-	let rejectStreaming!: (err: unknown) => void;
-	let resolveFinished!: () => void;
-	let rejectFinished!: (err: unknown) => void;
-	const streaming = new Promise<void>((res, rej) => {
-		resolveStreaming = res;
-		rejectStreaming = rej;
-	});
-	const finished = new Promise<void>((res, rej) => {
-		resolveFinished = res;
-		rejectFinished = rej;
-	});
-	streaming.catch(() => {});
-	finished.catch(() => {});
-	const record: PendingNavRecord = {
-		navSeq: navPoint,
-		url: init.url,
-		streaming: init.streaming === true,
-		streamingResolved: false,
-		settled: false,
-		resolveStreaming,
-		rejectStreaming,
-		resolveFinished,
-		rejectFinished,
-	};
-	pendingNavRecords.push(record);
-	// Remember the commit-mode wish for this navigation point — the forced
-	// lanes it spawns commit after the covering segment retires the
-	// record, so the wish must outlive it.
-	navStreamingByPoint.set(record.navSeq, record.streaming);
-	if (init.signal) {
-		const onAbort = (): void => {
-			if (record.settled) return;
-			record.settled = true;
-			pendingNavRecords = pendingNavRecords.filter((r) => r !== record);
-			const err = abortError();
-			if (!record.streamingResolved) record.rejectStreaming(err);
-			record.rejectFinished(err);
-		};
-		if (init.signal.aborted) onAbort();
-		else init.signal.addEventListener("abort", onAbort, { once: true });
-	}
-	return { streaming, finished };
+  if (documentNavMode) return null
+  // Reserve the statement's envelope seq: flushes serialize and only
+  // collect-flushes mint, so the next envelope is exactly
+  // `envelopeSeq + 1` — and the navigation point must advance NOW
+  // (click time), before any flush, or a pre-nav delivery landing in
+  // the reservation window would still commit.
+  navPoint = envelopeSeq + 1
+  pendingNavFrame = {
+    kind: "url",
+    url: init.url,
+    intent: init.intent,
+    ...(init.streaming === true ? { streaming: true } : {}),
+  }
+  if (_getLiveConnectionId() !== null) {
+    scheduleChannelFlush()
+  } else if (!_requestAttachNow()) {
+    // No heartbeat owns the page — the statement stays latched for
+    // whatever establishment ever comes; the fire itself is a no-op.
+    return { streaming: Promise.resolve(), finished: Promise.resolve() }
+  }
+  if (init.record === false) return { streaming: Promise.resolve(), finished: Promise.resolve() }
+  let resolveStreaming!: () => void
+  let rejectStreaming!: (err: unknown) => void
+  let resolveFinished!: () => void
+  let rejectFinished!: (err: unknown) => void
+  const streaming = new Promise<void>((res, rej) => {
+    resolveStreaming = res
+    rejectStreaming = rej
+  })
+  const finished = new Promise<void>((res, rej) => {
+    resolveFinished = res
+    rejectFinished = rej
+  })
+  streaming.catch(() => {})
+  finished.catch(() => {})
+  const record: PendingNavRecord = {
+    navSeq: navPoint,
+    url: init.url,
+    streaming: init.streaming === true,
+    streamingResolved: false,
+    settled: false,
+    resolveStreaming,
+    rejectStreaming,
+    resolveFinished,
+    rejectFinished,
+  }
+  pendingNavRecords.push(record)
+  // Remember the commit-mode wish for this navigation point — the forced
+  // lanes it spawns commit after the covering segment retires the
+  // record, so the wish must outlive it.
+  navStreamingByPoint.set(record.navSeq, record.streaming)
+  if (init.signal) {
+    const onAbort = (): void => {
+      if (record.settled) return
+      record.settled = true
+      pendingNavRecords = pendingNavRecords.filter((r) => r !== record)
+      const err = abortError()
+      if (!record.streamingResolved) record.rejectStreaming(err)
+      record.rejectFinished(err)
+    }
+    if (init.signal.aborted) onAbort()
+    else init.signal.addEventListener("abort", onAbort, { once: true })
+  }
+  return { streaming, finished }
 }
 
 /** The commit-mode wish per navigation point, kept for the connection's
@@ -746,22 +728,22 @@ export function _channelNavigate(init: {
  *  forced lanes commit AFTER the covering whole-tree segment settles —
  *  which retires the record — so the lane handler needs the wish to
  *  outlive the record. Reset per connection. */
-const navStreamingByPoint = new Map<number, boolean>();
+const navStreamingByPoint = new Map<number, boolean>()
 
 /** True when the newest navigation at or below `asOf` asked for
  *  STREAMING (progressive) commit — the signal a forced lane consults
  *  to flash its body's Suspense fallbacks (matching the segment path)
  *  instead of swapping atomically. Persists past the record's settle. */
 export function _channelNavPrefersStreaming(asOf: number): boolean {
-	let bestSeq = -1;
-	let streaming = false;
-	for (const [seq, wish] of navStreamingByPoint) {
-		if (seq <= asOf && seq > bestSeq) {
-			bestSeq = seq;
-			streaming = wish;
-		}
-	}
-	return bestSeq >= 0 && streaming;
+  let bestSeq = -1
+  let streaming = false
+  for (const [seq, wish] of navStreamingByPoint) {
+    if (seq <= asOf && seq > bestSeq) {
+      bestSeq = seq
+      streaming = wish
+    }
+  }
+  return bestSeq >= 0 && streaming
 }
 
 /** True when a covering commit should land as a TRANSITION (atomic
@@ -780,15 +762,15 @@ export function _channelNavPrefersStreaming(asOf: number): boolean {
  *  longer shapes a later segment's mode. No covered navigation → the
  *  live stream's default raw commit. */
 export function _channelNavPrefersTransition(asOf: number): boolean {
-	let bestSeq = -1;
-	let streaming = true;
-	for (const record of pendingNavRecords) {
-		if (record.settled) continue;
-		if (record.navSeq > asOf || record.navSeq <= bestSeq) continue;
-		bestSeq = record.navSeq;
-		streaming = record.streaming;
-	}
-	return bestSeq >= 0 && !streaming;
+  let bestSeq = -1
+  let streaming = true
+  for (const record of pendingNavRecords) {
+    if (record.settled) continue
+    if (record.navSeq > asOf || record.navSeq <= bestSeq) continue
+    bestSeq = record.navSeq
+    streaming = record.streaming
+  }
+  return bestSeq >= 0 && !streaming
 }
 
 /** A payload segment rendered as-of `asOf` COMMITTED on the live
@@ -798,66 +780,66 @@ export function _channelNavPrefersTransition(asOf: number): boolean {
  *  a whole-tree segment covers frame records too: its render read the
  *  consumed session frame URLs. */
 export function _channelNavSegmentCommitted(asOf: number): void {
-	for (const record of pendingNavRecords) {
-		if (record.settled || record.streamingResolved) continue;
-		if (record.navSeq > asOf) continue;
-		record.streamingResolved = true;
-		record.resolveStreaming();
-	}
-	for (const record of pendingFrameNavRecords) {
-		if (record.settled || record.streamingResolved) continue;
-		if (record.seq > asOf) continue;
-		record.streamingResolved = true;
-		record.resolveStreaming();
-	}
+  for (const record of pendingNavRecords) {
+    if (record.settled || record.streamingResolved) continue
+    if (record.navSeq > asOf) continue
+    record.streamingResolved = true
+    record.resolveStreaming()
+  }
+  for (const record of pendingFrameNavRecords) {
+    if (record.settled || record.streamingResolved) continue
+    if (record.seq > asOf) continue
+    record.streamingResolved = true
+    record.resolveStreaming()
+  }
 }
 
 /** A covering payload segment SETTLED (its trailers resolved — the
  *  render fully drained) — resolve `finished` and retire the records. */
 export function _channelNavSegmentSettled(asOf: number): void {
-	const remaining: PendingNavRecord[] = [];
-	for (const record of pendingNavRecords) {
-		if (record.settled) continue;
-		if (record.navSeq > asOf) {
-			remaining.push(record);
-			continue;
-		}
-		record.settled = true;
-		if (!record.streamingResolved) {
-			record.streamingResolved = true;
-			record.resolveStreaming();
-		}
-		record.resolveFinished();
-	}
-	pendingNavRecords = remaining;
-	const remainingFrames: PendingFrameNavRecord[] = [];
-	for (const record of pendingFrameNavRecords) {
-		if (record.settled) continue;
-		if (record.seq > asOf) {
-			remainingFrames.push(record);
-			continue;
-		}
-		record.settled = true;
-		if (!record.streamingResolved) {
-			record.streamingResolved = true;
-			record.resolveStreaming();
-		}
-		record.resolveFinished();
-	}
-	pendingFrameNavRecords = remainingFrames;
-	pruneFrameSeqKeys();
+  const remaining: PendingNavRecord[] = []
+  for (const record of pendingNavRecords) {
+    if (record.settled) continue
+    if (record.navSeq > asOf) {
+      remaining.push(record)
+      continue
+    }
+    record.settled = true
+    if (!record.streamingResolved) {
+      record.streamingResolved = true
+      record.resolveStreaming()
+    }
+    record.resolveFinished()
+  }
+  pendingNavRecords = remaining
+  const remainingFrames: PendingFrameNavRecord[] = []
+  for (const record of pendingFrameNavRecords) {
+    if (record.settled) continue
+    if (record.seq > asOf) {
+      remainingFrames.push(record)
+      continue
+    }
+    record.settled = true
+    if (!record.streamingResolved) {
+      record.streamingResolved = true
+      record.resolveStreaming()
+    }
+    record.resolveFinished()
+  }
+  pendingFrameNavRecords = remainingFrames
+  pruneFrameSeqKeys()
 }
 
 /** The folded intent an attach fire carries — what
  *  `_channelNavSubsumedByAttach` hands the attach transport. */
 export interface AttachIntent {
-	/** The pending window statement's URL (with its one-shot `__force`
-	 *  overlay), or `null` when no statement is pending — the attach
-	 *  states the current location. */
-	url: string | null;
-	/** Pending FRAME statements, newest per key — the statement's
-	 *  `frames` field. */
-	frames: UrlFrame[];
+  /** The pending window statement's URL (with its one-shot `__force`
+   *  overlay), or `null` when no statement is pending — the attach
+   *  states the current location. */
+  url: string | null
+  /** Pending FRAME statements, newest per key — the statement's
+   *  `frames` field. */
+  frames: UrlFrame[]
 }
 
 /**
@@ -876,40 +858,35 @@ export interface AttachIntent {
  * before the POST.
  */
 export function _channelNavSubsumedByAttach(): AttachIntent {
-	navPoint = 0;
-	const url = pendingNavFrame?.url ?? null;
-	pendingNavFrame = null;
-	const frames = [...pendingFrameFrames.values()];
-	pendingFrameFrames.clear();
-	// Cancel co-riders are moot: the superseded renders died with the
-	// connection the attach replaces.
-	pendingCancelScopes.clear();
-	// Cookie deltas are restated by the attach's own `Cookie` header
-	// (document.cookie is already written), so a pending or buffered one
-	// is redundant — retire it.
-	pendingCookies.clear();
-	if (retransmitBuffer.length > 0) {
-		retransmitBuffer = retransmitBuffer
-			.map((entry) => ({
-				seq: entry.seq,
-				frames: entry.frames.filter(
-					(f) =>
-						f.kind !== "url" && f.kind !== "cancel" && f.kind !== "cookie",
-				),
-			}))
-			.filter((entry) => entry.frames.length > 0);
-	}
-	// Re-anchor pending records at the fresh timeline's origin: the
-	// attach carries their statements (the url field / the frames
-	// intent), so its first covering segment — as-of 0 — resolves them.
-	pendingNavRecords = pendingNavRecords.map((r) =>
-		r.settled ? r : { ...r, navSeq: 0 },
-	);
-	pendingFrameNavRecords = pendingFrameNavRecords.map((r) =>
-		r.settled ? r : { ...r, seq: 0 },
-	);
-	frameSeqKeys.clear();
-	return { url, frames };
+  navPoint = 0
+  const url = pendingNavFrame?.url ?? null
+  pendingNavFrame = null
+  const frames = [...pendingFrameFrames.values()]
+  pendingFrameFrames.clear()
+  // Cancel co-riders are moot: the superseded renders died with the
+  // connection the attach replaces.
+  pendingCancelScopes.clear()
+  // Cookie deltas are restated by the attach's own `Cookie` header
+  // (document.cookie is already written), so a pending or buffered one
+  // is redundant — retire it.
+  pendingCookies.clear()
+  if (retransmitBuffer.length > 0) {
+    retransmitBuffer = retransmitBuffer
+      .map((entry) => ({
+        seq: entry.seq,
+        frames: entry.frames.filter(
+          (f) => f.kind !== "url" && f.kind !== "cancel" && f.kind !== "cookie",
+        ),
+      }))
+      .filter((entry) => entry.frames.length > 0)
+  }
+  // Re-anchor pending records at the fresh timeline's origin: the
+  // attach carries their statements (the url field / the frames
+  // intent), so its first covering segment — as-of 0 — resolves them.
+  pendingNavRecords = pendingNavRecords.map((r) => (r.settled ? r : { ...r, navSeq: 0 }))
+  pendingFrameNavRecords = pendingFrameNavRecords.map((r) => (r.settled ? r : { ...r, seq: 0 }))
+  frameSeqKeys.clear()
+  return { url, frames }
 }
 
 /** The url producer — RELIABLE class (see the module header). One
@@ -917,18 +894,18 @@ export function _channelNavSubsumedByAttach(): AttachIntent {
  *  connection — keeps the statement latched: it rides the next attach
  *  (the subsume folds it into the statement's `url`). */
 const urlProducer: ChannelProducer = {
-	reliable: true,
-	collect(connection: string | null): ChannelFrame | null {
-		if (pendingNavFrame === null || connection === null) return null;
-		const frame = pendingNavFrame;
-		pendingNavFrame = null;
-		return frame;
-	},
-	deliveryFailed(): void {
-		// Reliable class — the retransmit buffer owns redelivery; the
-		// pending-record recovery rides the connection-loss paths.
-	},
-};
+  reliable: true,
+  collect(connection: string | null): ChannelFrame | null {
+    if (pendingNavFrame === null || connection === null) return null
+    const frame = pendingNavFrame
+    pendingNavFrame = null
+    return frame
+  },
+  deliveryFailed(): void {
+    // Reliable class — the retransmit buffer owns redelivery; the
+    // pending-record recovery rides the connection-loss paths.
+  },
+}
 
 // ─── Frame navigation over the channel ───────────────────────────────
 //
@@ -947,36 +924,36 @@ const urlProducer: ChannelProducer = {
 // navigation's `__frame`/`__frameUrl` params.
 
 interface PendingFrameNavRecord {
-	/** Dotted frame key — the statement's scope. */
-	key: string;
-	/** Top-level frame name — the cancel scope. */
-	topLabel: string;
-	/** The statement's envelope seq — a covering lane flagged
-	 *  `nav >= seq` (same key) or a whole-tree segment with
-	 *  `asOf >= seq` resolves the record. */
-	seq: number;
-	/** The stated frame URL — what a degraded document navigation
-	 *  carries as its `__frameUrl` param. */
-	url: string;
-	streaming: boolean;
-	streamingResolved: boolean;
-	settled: boolean;
-	resolveStreaming: () => void;
-	rejectStreaming: (err: unknown) => void;
-	resolveFinished: () => void;
-	rejectFinished: (err: unknown) => void;
+  /** Dotted frame key — the statement's scope. */
+  key: string
+  /** Top-level frame name — the cancel scope. */
+  topLabel: string
+  /** The statement's envelope seq — a covering lane flagged
+   *  `nav >= seq` (same key) or a whole-tree segment with
+   *  `asOf >= seq` resolves the record. */
+  seq: number
+  /** The stated frame URL — what a degraded document navigation
+   *  carries as its `__frameUrl` param. */
+  url: string
+  streaming: boolean
+  streamingResolved: boolean
+  settled: boolean
+  resolveStreaming: () => void
+  rejectStreaming: (err: unknown) => void
+  resolveFinished: () => void
+  rejectFinished: (err: unknown) => void
 }
 
 /** Unsent frame statements, newest per frame key. */
-let pendingFrameFrames = new Map<string, UrlFrame>();
+let pendingFrameFrames = new Map<string, UrlFrame>()
 /** Cancel co-riders for the next flush — scopes whose in-flight
  *  render a newer statement supersedes. Emitted BEFORE the url frames
  *  in the producer's contribution (cancel-then-url in one envelope). */
-let pendingCancelScopes = new Set<string>();
-let pendingFrameNavRecords: PendingFrameNavRecord[] = [];
+let pendingCancelScopes = new Set<string>()
+let pendingFrameNavRecords: PendingFrameNavRecord[] = []
 /** Statement seq → frame key, for the covering-lane correlation (the
  *  wire flag carries only the seq). Pruned as records retire. */
-const frameSeqKeys = new Map<number, string>();
+const frameSeqKeys = new Map<number, string>()
 
 /**
  * State a frame navigation on the channel. Returns the fire's
@@ -987,132 +964,130 @@ const frameSeqKeys = new Map<number, string>();
  * subsume ships it as the statement's `frames` intent.
  */
 export function _channelFrameNavigate(init: {
-	path: readonly string[];
-	url: string;
-	intent: UrlFrame["intent"];
-	streaming?: boolean;
-	signal?: AbortSignal;
+  path: readonly string[]
+  url: string
+  intent: UrlFrame["intent"]
+  streaming?: boolean
+  signal?: AbortSignal
 }): { streaming: Promise<void>; finished: Promise<void> } | null {
-	if (documentNavMode) return null;
-	const key = init.path.join(".");
-	const topLabel = init.path[0];
-	// Reserve the statement's envelope seq — flushes serialize and only
-	// collect-flushes mint, so the next envelope is exactly
-	// `envelopeSeq + 1`. Statements batched into the same flush share
-	// the seq; each record still correlates through its own key.
-	const seq = envelopeSeq + 1;
-	// A prior unsettled statement for this frame is superseded — its
-	// in-flight render on the server is moot. The cancel rides the SAME
-	// envelope, ahead of the url frame.
-	if (pendingFrameNavRecords.some((r) => r.key === key && !r.settled)) {
-		pendingCancelScopes.add(topLabel);
-	}
-	pendingFrameFrames.set(key, {
-		kind: "url",
-		url: init.url,
-		intent: init.intent,
-		frame: [...init.path],
-	});
-	frameSeqKeys.set(seq, key);
-	let latchedOnly = false;
-	if (_getLiveConnectionId() !== null) {
-		scheduleChannelFlush();
-	} else if (!_requestAttachNow()) {
-		latchedOnly = true;
-	}
-	if (latchedOnly) {
-		return { streaming: Promise.resolve(), finished: Promise.resolve() };
-	}
-	let resolveStreaming!: () => void;
-	let rejectStreaming!: (err: unknown) => void;
-	let resolveFinished!: () => void;
-	let rejectFinished!: (err: unknown) => void;
-	const streaming = new Promise<void>((res, rej) => {
-		resolveStreaming = res;
-		rejectStreaming = rej;
-	});
-	const finished = new Promise<void>((res, rej) => {
-		resolveFinished = res;
-		rejectFinished = rej;
-	});
-	streaming.catch(() => {});
-	finished.catch(() => {});
-	const record: PendingFrameNavRecord = {
-		key,
-		topLabel,
-		seq,
-		url: init.url,
-		streaming: init.streaming === true,
-		streamingResolved: false,
-		settled: false,
-		resolveStreaming,
-		rejectStreaming,
-		resolveFinished,
-		rejectFinished,
-	};
-	pendingFrameNavRecords.push(record);
-	if (init.signal) {
-		const onAbort = (): void => {
-			if (record.settled) return;
-			record.settled = true;
-			pendingFrameNavRecords = pendingFrameNavRecords.filter(
-				(r) => r !== record,
-			);
-			pruneFrameSeqKeys();
-			const err = abortError();
-			if (!record.streamingResolved) record.rejectStreaming(err);
-			record.rejectFinished(err);
-		};
-		if (init.signal.aborted) onAbort();
-		else init.signal.addEventListener("abort", onAbort, { once: true });
-	}
-	return { streaming, finished };
+  if (documentNavMode) return null
+  const key = init.path.join(".")
+  const topLabel = init.path[0]
+  // Reserve the statement's envelope seq — flushes serialize and only
+  // collect-flushes mint, so the next envelope is exactly
+  // `envelopeSeq + 1`. Statements batched into the same flush share
+  // the seq; each record still correlates through its own key.
+  const seq = envelopeSeq + 1
+  // A prior unsettled statement for this frame is superseded — its
+  // in-flight render on the server is moot. The cancel rides the SAME
+  // envelope, ahead of the url frame.
+  if (pendingFrameNavRecords.some((r) => r.key === key && !r.settled)) {
+    pendingCancelScopes.add(topLabel)
+  }
+  pendingFrameFrames.set(key, {
+    kind: "url",
+    url: init.url,
+    intent: init.intent,
+    frame: [...init.path],
+  })
+  frameSeqKeys.set(seq, key)
+  let latchedOnly = false
+  if (_getLiveConnectionId() !== null) {
+    scheduleChannelFlush()
+  } else if (!_requestAttachNow()) {
+    latchedOnly = true
+  }
+  if (latchedOnly) {
+    return { streaming: Promise.resolve(), finished: Promise.resolve() }
+  }
+  let resolveStreaming!: () => void
+  let rejectStreaming!: (err: unknown) => void
+  let resolveFinished!: () => void
+  let rejectFinished!: (err: unknown) => void
+  const streaming = new Promise<void>((res, rej) => {
+    resolveStreaming = res
+    rejectStreaming = rej
+  })
+  const finished = new Promise<void>((res, rej) => {
+    resolveFinished = res
+    rejectFinished = rej
+  })
+  streaming.catch(() => {})
+  finished.catch(() => {})
+  const record: PendingFrameNavRecord = {
+    key,
+    topLabel,
+    seq,
+    url: init.url,
+    streaming: init.streaming === true,
+    streamingResolved: false,
+    settled: false,
+    resolveStreaming,
+    rejectStreaming,
+    resolveFinished,
+    rejectFinished,
+  }
+  pendingFrameNavRecords.push(record)
+  if (init.signal) {
+    const onAbort = (): void => {
+      if (record.settled) return
+      record.settled = true
+      pendingFrameNavRecords = pendingFrameNavRecords.filter((r) => r !== record)
+      pruneFrameSeqKeys()
+      const err = abortError()
+      if (!record.streamingResolved) record.rejectStreaming(err)
+      record.rejectFinished(err)
+    }
+    if (init.signal.aborted) onAbort()
+    else init.signal.addEventListener("abort", onAbort, { once: true })
+  }
+  return { streaming, finished }
 }
 
 function pruneFrameSeqKeys(): void {
-	for (const [seq, key] of [...frameSeqKeys]) {
-		if (!pendingFrameNavRecords.some((r) => r.key === key && r.seq <= seq)) {
-			frameSeqKeys.delete(seq);
-		}
-	}
+  for (const [seq, key] of [...frameSeqKeys]) {
+    if (!pendingFrameNavRecords.some((r) => r.key === key && r.seq <= seq)) {
+      frameSeqKeys.delete(seq)
+    }
+  }
 }
 
 /** A lane flagged `nav=<navSeq>` COMMITTED — the covering render for
  *  its statement's frame. Resolve `streaming` for every record of
  *  that frame the statement covers. */
 export function _channelFrameLaneCommitted(navSeq: number): void {
-	const key = frameSeqKeys.get(navSeq);
-	if (key === undefined) return;
-	for (const record of pendingFrameNavRecords) {
-		if (record.settled || record.streamingResolved) continue;
-		if (record.key !== key || record.seq > navSeq) continue;
-		record.streamingResolved = true;
-		record.resolveStreaming();
-	}
+  const key = frameSeqKeys.get(navSeq)
+  if (key === undefined) return
+  for (const record of pendingFrameNavRecords) {
+    if (record.settled || record.streamingResolved) continue
+    if (record.key !== key || record.seq > navSeq) continue
+    record.streamingResolved = true
+    record.resolveStreaming()
+  }
 }
 
 /** A `nav=<navSeq>`-flagged lane SETTLED (its body closed and its fp
  *  trailer applied) — resolve `finished` and retire the covered
  *  records. */
 export function _channelFrameLaneSettled(navSeq: number): void {
-	const key = frameSeqKeys.get(navSeq);
-	if (key === undefined) return;
-	const remaining: PendingFrameNavRecord[] = [];
-	for (const record of pendingFrameNavRecords) {
-		if (record.settled) continue;
-		if (record.key !== key || record.seq > navSeq) {
-			remaining.push(record);
-			continue;
-		}
-		record.settled = true;
-		if (!record.streamingResolved) {
-			record.streamingResolved = true;
-			record.resolveStreaming();
-		}
-		record.resolveFinished();
-	}
-	pendingFrameNavRecords = remaining;
-	pruneFrameSeqKeys();
+  const key = frameSeqKeys.get(navSeq)
+  if (key === undefined) return
+  const remaining: PendingFrameNavRecord[] = []
+  for (const record of pendingFrameNavRecords) {
+    if (record.settled) continue
+    if (record.key !== key || record.seq > navSeq) {
+      remaining.push(record)
+      continue
+    }
+    record.settled = true
+    if (!record.streamingResolved) {
+      record.streamingResolved = true
+      record.resolveStreaming()
+    }
+    record.resolveFinished()
+  }
+  pendingFrameNavRecords = remaining
+  pruneFrameSeqKeys()
 }
 
 /** The frame-navigation producer — RELIABLE class. One url frame per
@@ -1121,26 +1096,26 @@ export function _channelFrameLaneSettled(navSeq: number): void {
  *  `collect(null)` keeps every pending statement latched — it rides
  *  the next attach as the statement's `frames` intent. */
 const frameNavProducer: ChannelProducer = {
-	reliable: true,
-	collect(connection: string | null): ChannelFrame[] | null {
-		if (pendingFrameFrames.size === 0 && pendingCancelScopes.size === 0) {
-			return null;
-		}
-		if (connection === null) return null;
-		const frames: ChannelFrame[] = [];
-		for (const scope of pendingCancelScopes) {
-			frames.push({ kind: "cancel", scope });
-		}
-		pendingCancelScopes.clear();
-		for (const frame of pendingFrameFrames.values()) frames.push(frame);
-		pendingFrameFrames.clear();
-		return frames;
-	},
-	deliveryFailed(): void {
-		// Reliable class — the retransmit buffer owns redelivery; the
-		// pending-record recovery rides the connection-loss paths.
-	},
-};
+  reliable: true,
+  collect(connection: string | null): ChannelFrame[] | null {
+    if (pendingFrameFrames.size === 0 && pendingCancelScopes.size === 0) {
+      return null
+    }
+    if (connection === null) return null
+    const frames: ChannelFrame[] = []
+    for (const scope of pendingCancelScopes) {
+      frames.push({ kind: "cancel", scope })
+    }
+    pendingCancelScopes.clear()
+    for (const frame of pendingFrameFrames.values()) frames.push(frame)
+    pendingFrameFrames.clear()
+    return frames
+  },
+  deliveryFailed(): void {
+    // Reliable class — the retransmit buffer owns redelivery; the
+    // pending-record recovery rides the connection-loss paths.
+  },
+}
 
 /**
  * Complete the pending interaction records as ONE document navigation
@@ -1152,39 +1127,39 @@ const frameNavProducer: ChannelProducer = {
  * is their completion.
  */
 function documentNavForPendingRecords(): void {
-	const windowRecords = pendingNavRecords;
-	const frameRecords = pendingFrameNavRecords;
-	pendingNavRecords = [];
-	pendingFrameNavRecords = [];
-	frameSeqKeys.clear();
-	pendingNavFrame = null;
-	pendingFrameFrames.clear();
-	pendingCancelScopes.clear();
-	if (typeof window !== "undefined") {
-		const latestWindow = windowRecords.filter((r) => !r.settled).at(-1);
-		const target = new URL(
-			latestWindow?.url ?? window.location.pathname + window.location.search,
-			window.location.origin,
-		);
-		target.searchParams.delete("__force");
-		const latestByKey = new Map<string, PendingFrameNavRecord>();
-		for (const r of frameRecords) {
-			if (!r.settled) latestByKey.set(r.key, r);
-		}
-		for (const [key, r] of latestByKey) {
-			target.searchParams.append("__frame", key);
-			target.searchParams.append("__frameUrl", r.url);
-		}
-		// Degraded is already set, so the navigate listener stands down
-		// and the browser performs a full document load.
-		getNavigation()?.navigate(target.href, { history: "replace" });
-	}
-	for (const r of [...windowRecords, ...frameRecords]) {
-		if (r.settled) continue;
-		r.settled = true;
-		if (!r.streamingResolved) r.resolveStreaming();
-		r.resolveFinished();
-	}
+  const windowRecords = pendingNavRecords
+  const frameRecords = pendingFrameNavRecords
+  pendingNavRecords = []
+  pendingFrameNavRecords = []
+  frameSeqKeys.clear()
+  pendingNavFrame = null
+  pendingFrameFrames.clear()
+  pendingCancelScopes.clear()
+  if (typeof window !== "undefined") {
+    const latestWindow = windowRecords.filter((r) => !r.settled).at(-1)
+    const target = new URL(
+      latestWindow?.url ?? window.location.pathname + window.location.search,
+      window.location.origin,
+    )
+    target.searchParams.delete("__force")
+    const latestByKey = new Map<string, PendingFrameNavRecord>()
+    for (const r of frameRecords) {
+      if (!r.settled) latestByKey.set(r.key, r)
+    }
+    for (const [key, r] of latestByKey) {
+      target.searchParams.append("__frame", key)
+      target.searchParams.append("__frameUrl", r.url)
+    }
+    // Degraded is already set, so the navigate listener stands down
+    // and the browser performs a full document load.
+    getNavigation()?.navigate(target.href, { history: "replace" })
+  }
+  for (const r of [...windowRecords, ...frameRecords]) {
+    if (r.settled) continue
+    r.settled = true
+    if (!r.streamingResolved) r.resolveStreaming()
+    r.resolveFinished()
+  }
 }
 
 /**
@@ -1209,77 +1184,77 @@ function documentNavForPendingRecords(): void {
  * the segment's trailer map.
  */
 export function _channelWireEntry(tag: string, body: Uint8Array): void {
-	if (tag === TAG_DELIVERY_SEQ || tag === TAG_MUX_LIVE) {
-		const text = new TextDecoder().decode(body);
-		const nl = text.indexOf("\n");
-		if (nl < 0) return; // segment form — fetch-local, see above
-		const partonId = text.slice(0, nl);
-		const delivery = parseDeliveryBody(text.slice(nl + 1));
-		if (delivery === null) return;
-		if (tag === TAG_MUX_LIVE) delivery.live = true;
-		let queue = pendingLaneSeqs.get(partonId);
-		if (!queue) {
-			queue = [];
-			pendingLaneSeqs.set(partonId, queue);
-		}
-		queue.push(delivery);
-		// A producer announcement arrives MID-BODY — wake the lane
-		// handler that is already decoding this parton so it can switch
-		// to the progressive commit path instead of waiting for a drain
-		// that only comes at producer resolve.
-		if (tag === TAG_MUX_LIVE) {
-			const waiters = laneProducerWaiters.get(partonId);
-			if (waiters) {
-				laneProducerWaiters.delete(partonId);
-				for (const wake of [...waiters]) wake();
-			}
-		}
-		return;
-	}
-	if (tag === TAG_SEQ_VOID) {
-		// Assigned-but-never-emitted delivery seqs (an action's
-		// consequence reservation whose lane was skipped) — count each
-		// PROCESSED so the contiguous watermark passes them and the
-		// consequence gates they anchored release.
-		const text = new TextDecoder().decode(body);
-		for (const token of text.split(" ")) {
-			const seq = Number(token);
-			if (Number.isFinite(seq) && seq > 0) commitDelivery(seq);
-		}
-		return;
-	}
-	if (tag === TAG_UPSTREAM_APPLIED) {
-		const applied = Number(new TextDecoder().decode(body));
-		if (!Number.isFinite(applied) || applied <= appliedWatermark) return;
-		appliedWatermark = applied;
-		if (retransmitBuffer.length > 0) {
-			retransmitBuffer = retransmitBuffer.filter((e) => e.seq > applied);
-		}
-		return;
-	}
-	if (tag !== TAG_CONNECTION_ID) return;
-	_channelEstablished(new TextDecoder().decode(body));
+  if (tag === TAG_DELIVERY_SEQ || tag === TAG_MUX_LIVE) {
+    const text = new TextDecoder().decode(body)
+    const nl = text.indexOf("\n")
+    if (nl < 0) return // segment form — fetch-local, see above
+    const partonId = text.slice(0, nl)
+    const delivery = parseDeliveryBody(text.slice(nl + 1))
+    if (delivery === null) return
+    if (tag === TAG_MUX_LIVE) delivery.live = true
+    let queue = pendingLaneSeqs.get(partonId)
+    if (!queue) {
+      queue = []
+      pendingLaneSeqs.set(partonId, queue)
+    }
+    queue.push(delivery)
+    // A producer announcement arrives MID-BODY — wake the lane
+    // handler that is already decoding this parton so it can switch
+    // to the progressive commit path instead of waiting for a drain
+    // that only comes at producer resolve.
+    if (tag === TAG_MUX_LIVE) {
+      const waiters = laneProducerWaiters.get(partonId)
+      if (waiters) {
+        laneProducerWaiters.delete(partonId)
+        for (const wake of [...waiters]) wake()
+      }
+    }
+    return
+  }
+  if (tag === TAG_SEQ_VOID) {
+    // Assigned-but-never-emitted delivery seqs (an action's
+    // consequence reservation whose lane was skipped) — count each
+    // PROCESSED so the contiguous watermark passes them and the
+    // consequence gates they anchored release.
+    const text = new TextDecoder().decode(body)
+    for (const token of text.split(" ")) {
+      const seq = Number(token)
+      if (Number.isFinite(seq) && seq > 0) commitDelivery(seq)
+    }
+    return
+  }
+  if (tag === TAG_UPSTREAM_APPLIED) {
+    const applied = Number(new TextDecoder().decode(body))
+    if (!Number.isFinite(applied) || applied <= appliedWatermark) return
+    appliedWatermark = applied
+    if (retransmitBuffer.length > 0) {
+      retransmitBuffer = retransmitBuffer.filter((e) => e.seq > applied)
+    }
+    return
+  }
+  if (tag !== TAG_CONNECTION_ID) return
+  _channelEstablished(new TextDecoder().decode(body))
 }
 
 /** Parse a `<seq> <asof>[ nav=<n>]` delivery body. `null` when
  *  malformed. Unknown trailing tokens are ignored — the body grows by
  *  adding flags. */
 function parseDeliveryBody(text: string): WireDelivery | null {
-	const tokens = text.split(" ").filter(Boolean);
-	const seq = Number(tokens[0]);
-	if (!Number.isFinite(seq)) return null;
-	const asOfRaw = tokens.length > 1 ? Number(tokens[1]) : 0;
-	const delivery: WireDelivery = {
-		seq,
-		asOf: Number.isFinite(asOfRaw) ? asOfRaw : 0,
-	};
-	for (const token of tokens.slice(2)) {
-		if (token.startsWith("nav=")) {
-			const nav = Number(token.slice(4));
-			if (Number.isFinite(nav)) delivery.nav = nav;
-		}
-	}
-	return delivery;
+  const tokens = text.split(" ").filter(Boolean)
+  const seq = Number(tokens[0])
+  if (!Number.isFinite(seq)) return null
+  const asOfRaw = tokens.length > 1 ? Number(tokens[1]) : 0
+  const delivery: WireDelivery = {
+    seq,
+    asOf: Number.isFinite(asOfRaw) ? asOfRaw : 0,
+  }
+  for (const token of tokens.slice(2)) {
+    if (token.startsWith("nav=")) {
+      const nav = Number(token.slice(4))
+      if (Number.isFinite(nav)) delivery.nav = nav
+    }
+  }
+  return delivery
 }
 
 /** Parse a payload segment's delivery off a wire entry — the segment
@@ -1287,14 +1262,11 @@ function parseDeliveryBody(text: string): WireDelivery | null {
  *  for every other entry. The browser entry keeps the value FETCH-LOCAL
  *  and records it via `_segmentDeliveryCommitted` when the segment's
  *  payload commits (or consumes it via the stale-drop paths). */
-export function _segmentDelivery(
-	tag: string,
-	body: Uint8Array,
-): WireDelivery | null {
-	if (tag !== TAG_DELIVERY_SEQ) return null;
-	const text = new TextDecoder().decode(body);
-	if (text.includes("\n")) return null; // lane form — queued above
-	return parseDeliveryBody(text);
+export function _segmentDelivery(tag: string, body: Uint8Array): WireDelivery | null {
+  if (tag !== TAG_DELIVERY_SEQ) return null
+  const text = new TextDecoder().decode(body)
+  if (text.includes("\n")) return null // lane form — queued above
+  return parseDeliveryBody(text)
 }
 
 /** Record a committed delivery. A contiguous-frontier advance leaves
@@ -1306,28 +1278,25 @@ export function _segmentDelivery(
  *  both sides' degrade machinery times — and the unacked count
  *  crossing `ACK_FLUSH_THRESHOLD`. */
 function commitDelivery(seq: number): void {
-	if (seq <= deliveredWatermark) return;
-	if (seq === deliveredWatermark + 1) {
-		deliveredWatermark = seq;
-		while (deliveredOutOfOrder.delete(deliveredWatermark + 1)) {
-			deliveredWatermark += 1;
-		}
-		sweepConsequenceGates();
-		if (
-			lastAckCollected === 0 ||
-			deliveredWatermark - lastAckCollected >= ACK_FLUSH_THRESHOLD
-		) {
-			scheduleChannelFlush();
-		}
-		return;
-	}
-	deliveredOutOfOrder.add(seq);
+  if (seq <= deliveredWatermark) return
+  if (seq === deliveredWatermark + 1) {
+    deliveredWatermark = seq
+    while (deliveredOutOfOrder.delete(deliveredWatermark + 1)) {
+      deliveredWatermark += 1
+    }
+    sweepConsequenceGates()
+    if (lastAckCollected === 0 || deliveredWatermark - lastAckCollected >= ACK_FLUSH_THRESHOLD) {
+      scheduleChannelFlush()
+    }
+    return
+  }
+  deliveredOutOfOrder.add(seq)
 }
 
 /** A payload segment on the live stream committed — record the seq its
  *  `seq` entry announced (the browser entry held it fetch-locally). */
 export function _segmentDeliveryCommitted(seq: number): void {
-	commitDelivery(seq);
+  commitDelivery(seq)
 }
 
 /** Peek the delivery the NEXT commit for `partonId` would consume —
@@ -1335,15 +1304,15 @@ export function _segmentDeliveryCommitted(seq: number): void {
  *  `seq` entry precedes the lane's `muxend`, so it is queued by then).
  *  `null` when the lane carried no delivery (no session). */
 export function _lanePendingDelivery(partonId: string): WireDelivery | null {
-	return pendingLaneSeqs.get(partonId)?.[0] ?? null;
+  return pendingLaneSeqs.get(partonId)?.[0] ?? null
 }
 
 /** A lane payload for `partonId` committed — consume the queue head
  *  minted when its `seq` entry was read. No-op when no seq is queued
  *  (a stream without deliveries: no session, or an older server). */
 export function _laneDeliveryCommitted(partonId: string): void {
-	const delivery = consumeLaneDelivery(partonId);
-	if (delivery !== null) commitDelivery(delivery.seq);
+  const delivery = consumeLaneDelivery(partonId)
+  if (delivery !== null) commitDelivery(delivery.seq)
 }
 
 /** A lane payload for `partonId` was decoded but NOT committed (stale
@@ -1353,7 +1322,7 @@ export function _laneDeliveryCommitted(partonId: string): void {
  *  the drop as held. Only for streams whose life ends with the drop;
  *  a drop on a CONTINUING stream is the as-of drop below. */
 export function _laneDeliveryDropped(partonId: string): void {
-	consumeLaneDelivery(partonId);
+  consumeLaneDelivery(partonId)
 }
 
 /** A lane payload for `partonId` was dropped by the AS-OF guard — it
@@ -1366,15 +1335,15 @@ export function _laneDeliveryDropped(partonId: string): void {
  *  is NOT reported (it self-heals on reattach) — hence the two calls at
  *  the drop site rather than a fold here. */
 export function _laneDeliveryDroppedStale(partonId: string): void {
-	const delivery = consumeLaneDelivery(partonId);
-	if (delivery !== null) commitDelivery(delivery.seq);
+  const delivery = consumeLaneDelivery(partonId)
+  if (delivery !== null) commitDelivery(delivery.seq)
 }
 
 function consumeLaneDelivery(partonId: string): WireDelivery | null {
-	const queue = pendingLaneSeqs.get(partonId);
-	const delivery = queue?.shift() ?? null;
-	if (queue !== undefined && queue.length === 0) pendingLaneSeqs.delete(partonId);
-	return delivery;
+  const queue = pendingLaneSeqs.get(partonId)
+  const delivery = queue?.shift() ?? null
+  if (queue !== undefined && queue.length === 0) pendingLaneSeqs.delete(partonId)
+  return delivery
 }
 
 /** A payload segment was dropped by the as-of guard (or arrived torn
@@ -1384,7 +1353,7 @@ function consumeLaneDelivery(partonId: string): WireDelivery | null {
  *  mirror promotions; a torn-supersede drop is not (the server aborted
  *  that render — it promoted nothing to evict). */
 export function _segmentDeliveryDroppedStale(seq: number): void {
-	commitDelivery(seq);
+  commitDelivery(seq)
 }
 
 /** Report a delivery the AS-OF guard dropped on a CONTINUING stream —
@@ -1396,14 +1365,14 @@ export function _segmentDeliveryDroppedStale(seq: number): void {
  *  on the reattach's whole-tree render). Schedules a flush so the report
  *  rides promptly rather than waiting for the next passenger. */
 export function _reportAsOfDrop(seq: number): void {
-	asOfDroppedSeqs.add(seq);
-	scheduleChannelFlush();
+  asOfDroppedSeqs.add(seq)
+  scheduleChannelFlush()
 }
 
 // ─── Warm intent (preload) ───────────────────────────────────────────
 
 /** The single pending warm target — newest-wins (the latest hover). */
-let pendingWarm: string | null = null;
+let pendingWarm: string | null = null
 
 /**
  * State a warm intent: the client expects to visit `url`
@@ -1413,29 +1382,29 @@ let pendingWarm: string | null = null;
  * envelope drops it too. Returns whether the statement was taken.
  */
 export function _channelWarm(url: string): boolean {
-	if (documentNavMode || _getLiveConnectionId() === null) return false;
-	pendingWarm = url;
-	scheduleChannelFlush();
-	return true;
+  if (documentNavMode || _getLiveConnectionId() === null) return false
+  pendingWarm = url
+  scheduleChannelFlush()
+  return true
 }
 
 /** The warm producer — LOSSY class, the telemetry contract: one
  *  pending statement, newest-wins, dropped at every failure point. */
 const warmProducer: ChannelProducer = {
-	collect(connection: string | null): ChannelFrame | null {
-		if (connection === null) {
-			pendingWarm = null;
-			return null;
-		}
-		if (pendingWarm === null) return null;
-		const frame: ChannelFrame = { kind: "warm", url: pendingWarm };
-		pendingWarm = null;
-		return frame;
-	},
-	deliveryFailed(): void {
-		// Dropped. Lossy class: the hover is already history; no re-queue.
-	},
-};
+  collect(connection: string | null): ChannelFrame | null {
+    if (connection === null) {
+      pendingWarm = null
+      return null
+    }
+    if (pendingWarm === null) return null
+    const frame: ChannelFrame = { kind: "warm", url: pendingWarm }
+    pendingWarm = null
+    return frame
+  },
+  deliveryFailed(): void {
+    // Dropped. Lossy class: the hover is already history; no re-queue.
+  },
+}
 
 /** The transport's own ack producer — cumulative committed delivery
  *  seq, contributed whenever the watermark advanced past the last
@@ -1445,34 +1414,34 @@ const warmProducer: ChannelProducer = {
  *  degrade signal (handled in `flush`, which sees the whole envelope's
  *  fate). */
 const ackProducer: ChannelProducer = {
-	collect(connection: string | null): ChannelFrame | null {
-		if (connection === null) return null;
-		// Report as-of drops within the acked range — deliveries the client
-		// received but did not hold. Only those the cumulative watermark
-		// covers: a drop past the contiguous frontier isn't acked yet, so
-		// the server has no settled record to evict against; it rides the
-		// ack that finally covers it. The server evicts each seq's
-		// optimistic promotions instead of folding them.
-		const dropped: number[] = [];
-		for (const seq of asOfDroppedSeqs) {
-			if (seq <= deliveredWatermark) dropped.push(seq);
-		}
-		if (deliveredWatermark <= lastAckCollected && dropped.length === 0) {
-			return null;
-		}
-		lastAckCollected = deliveredWatermark;
-		for (const seq of dropped) asOfDroppedSeqs.delete(seq);
-		return {
-			kind: "ack",
-			delivered: deliveredWatermark,
-			...(dropped.length > 0 ? { dropped } : {}),
-		};
-	},
-	deliveryFailed(): void {
-		// Per-connection ack state resets at the next establishment; the
-		// degrade decision lives in the flush's failure path.
-	},
-};
+  collect(connection: string | null): ChannelFrame | null {
+    if (connection === null) return null
+    // Report as-of drops within the acked range — deliveries the client
+    // received but did not hold. Only those the cumulative watermark
+    // covers: a drop past the contiguous frontier isn't acked yet, so
+    // the server has no settled record to evict against; it rides the
+    // ack that finally covers it. The server evicts each seq's
+    // optimistic promotions instead of folding them.
+    const dropped: number[] = []
+    for (const seq of asOfDroppedSeqs) {
+      if (seq <= deliveredWatermark) dropped.push(seq)
+    }
+    if (deliveredWatermark <= lastAckCollected && dropped.length === 0) {
+      return null
+    }
+    lastAckCollected = deliveredWatermark
+    for (const seq of dropped) asOfDroppedSeqs.delete(seq)
+    return {
+      kind: "ack",
+      delivered: deliveredWatermark,
+      ...(dropped.length > 0 ? { dropped } : {}),
+    }
+  },
+  deliveryFailed(): void {
+    // Per-connection ack state resets at the next establishment; the
+    // degrade decision lives in the flush's failure path.
+  },
+}
 
 /**
  * Publish an established live connection. Called from the wire entry
@@ -1487,50 +1456,50 @@ const ackProducer: ChannelProducer = {
  * point.
  */
 export function _channelEstablished(connection: string): void {
-	pendingLaneSeqs.clear();
-	laneProducerWaiters.clear();
-	deliveredOutOfOrder.clear();
-	deliveredWatermark = 0;
-	lastAckCollected = 0;
-	asOfDroppedSeqs.clear();
-	navStreamingByPoint.clear();
-	ackDeliveredOnConnection = false;
-	establishedSinceClose = true;
-	// A successful attach clears the establishment-failure streak and any
-	// pending backoff timer; document-nav mode lifts here UNLESS a
-	// first-ack-failure streak is still holding it (that clears on a
-	// delivered ack — the full duplex proof).
-	establishFailures = 0;
-	if (reattachTimer !== null) {
-		clearTimeout(reattachTimer);
-		reattachTimer = null;
-	}
-	refreshDocumentNavMode();
-	// Consequence gates anchor on the PREVIOUS connection's delivery
-	// seqs — dead numbers now. Release them: the fresh connection's
-	// whole-tree render is the catch-up (over-fetch, never a frozen
-	// overlay).
-	releaseAllConsequenceGates();
-	retransmitPending = retransmitBuffer.length > 0;
-	_setLiveConnectionId(connection);
-	if (typeof document !== "undefined") {
-		// Presence-only: the marker says "a live push channel is
-		// established", never WHICH connection — the id is the envelope
-		// credential and stays out of the DOM.
-		document.documentElement.setAttribute("data-parton-live", "");
-	}
-	for (const cb of [...establishListeners]) cb(connection);
-	// Statements that latched while no connection existed (and weren't
-	// folded into this attach — they landed after its subsume) flush on
-	// the fresh connection alongside any retransmit survivors.
-	if (
-		retransmitPending ||
-		pendingNavFrame !== null ||
-		pendingFrameFrames.size > 0 ||
-		pendingCancelScopes.size > 0
-	) {
-		scheduleChannelFlush();
-	}
+  pendingLaneSeqs.clear()
+  laneProducerWaiters.clear()
+  deliveredOutOfOrder.clear()
+  deliveredWatermark = 0
+  lastAckCollected = 0
+  asOfDroppedSeqs.clear()
+  navStreamingByPoint.clear()
+  ackDeliveredOnConnection = false
+  establishedSinceClose = true
+  // A successful attach clears the establishment-failure streak and any
+  // pending backoff timer; document-nav mode lifts here UNLESS a
+  // first-ack-failure streak is still holding it (that clears on a
+  // delivered ack — the full duplex proof).
+  establishFailures = 0
+  if (reattachTimer !== null) {
+    clearTimeout(reattachTimer)
+    reattachTimer = null
+  }
+  refreshDocumentNavMode()
+  // Consequence gates anchor on the PREVIOUS connection's delivery
+  // seqs — dead numbers now. Release them: the fresh connection's
+  // whole-tree render is the catch-up (over-fetch, never a frozen
+  // overlay).
+  releaseAllConsequenceGates()
+  retransmitPending = retransmitBuffer.length > 0
+  _setLiveConnectionId(connection)
+  if (typeof document !== "undefined") {
+    // Presence-only: the marker says "a live push channel is
+    // established", never WHICH connection — the id is the envelope
+    // credential and stays out of the DOM.
+    document.documentElement.setAttribute("data-parton-live", "")
+  }
+  for (const cb of [...establishListeners]) cb(connection)
+  // Statements that latched while no connection existed (and weren't
+  // folded into this attach — they landed after its subsume) flush on
+  // the fresh connection alongside any retransmit survivors.
+  if (
+    retransmitPending ||
+    pendingNavFrame !== null ||
+    pendingFrameFrames.size > 0 ||
+    pendingCancelScopes.size > 0
+  ) {
+    scheduleChannelFlush()
+  }
 }
 
 /** The live connection settled (keepalive elapsed, abort, error) —
@@ -1555,207 +1524,198 @@ export function _channelEstablished(connection: string): void {
  *  its fire's `finished` settles; fires are strictly sequential, so the
  *  settling connection's id is the current one. */
 export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
-	if (typeof document !== "undefined") {
-		document.documentElement.removeAttribute("data-parton-live");
-	}
-	_setLiveConnectionId(null);
-	const established = establishedSinceClose;
-	establishedSinceClose = false;
-	// One-shot: a transport-upgrade handover requested this close re-fire
-	// unconditionally (no pending interaction triggers it). Consume it
-	// here so it can never leak into a later close.
-	const forceReattach = reattachOnClose;
-	reattachOnClose = false;
-	const firstAckFailed = firstAckFailedThisConnection;
-	firstAckFailedThisConnection = false;
-	// The connection's delivery seqs are dead — a gate anchored on them
-	// can never pass. Release: the reattach's whole-tree render carries
-	// the consequences (over-fetch, never a frozen overlay).
-	releaseAllConsequenceGates();
+  if (typeof document !== "undefined") {
+    document.documentElement.removeAttribute("data-parton-live")
+  }
+  _setLiveConnectionId(null)
+  const established = establishedSinceClose
+  establishedSinceClose = false
+  // One-shot: a transport-upgrade handover requested this close re-fire
+  // unconditionally (no pending interaction triggers it). Consume it
+  // here so it can never leak into a later close.
+  const forceReattach = reattachOnClose
+  reattachOnClose = false
+  const firstAckFailed = firstAckFailedThisConnection
+  firstAckFailedThisConnection = false
+  // The connection's delivery seqs are dead — a gate anchored on them
+  // can never pass. Release: the reattach's whole-tree render carries
+  // the consequences (over-fetch, never a frozen overlay).
+  releaseAllConsequenceGates()
 
-	const establishmentFailed = !established && opts?.aborted !== true;
-	const pendingInteraction =
-		pendingNavRecords.some((r) => !r.settled) ||
-		pendingFrameNavRecords.some((r) => !r.settled);
+  const establishmentFailed = !established && opts?.aborted !== true
+  const pendingInteraction =
+    pendingNavRecords.some((r) => !r.settled) || pendingFrameNavRecords.some((r) => !r.settled)
 
-	// What COUNTS toward the document-nav bound (each counter has its own
-	// reset — establishment / delivered-ack — so the establish→ack-fail
-	// loop of an upstream-only block still accrues):
-	//   - an establishment failure that STRANDED a real interaction (a
-	//     blocked path under a navigation — master's caller 2). An
-	//     idle-heartbeat non-establishment is a benign transient (a
-	//     saturated server, a keepalive race) — NOT counted, so a slow
-	//     server can never false-trip the fallback; the interval retries.
-	//   - a first-ack failure on any connection (a delivered-but-unackable
-	//     connection is a genuine blocked upstream, not a load blip).
-	const countsToward =
-		(establishmentFailed && pendingInteraction) || firstAckFailed;
-	if (establishmentFailed && pendingInteraction) establishFailures += 1;
-	if (firstAckFailed) firstAckFailures += 1;
-	refreshDocumentNavMode();
+  // What COUNTS toward the document-nav bound (each counter has its own
+  // reset — establishment / delivered-ack — so the establish→ack-fail
+  // loop of an upstream-only block still accrues):
+  //   - an establishment failure that STRANDED a real interaction (a
+  //     blocked path under a navigation — master's caller 2). An
+  //     idle-heartbeat non-establishment is a benign transient (a
+  //     saturated server, a keepalive race) — NOT counted, so a slow
+  //     server can never false-trip the fallback; the interval retries.
+  //   - a first-ack failure on any connection (a delivered-but-unackable
+  //     connection is a genuine blocked upstream, not a load blip).
+  const countsToward = (establishmentFailed && pendingInteraction) || firstAckFailed
+  if (establishmentFailed && pendingInteraction) establishFailures += 1
+  if (firstAckFailed) firstAckFailures += 1
+  refreshDocumentNavMode()
 
-	if (documentNavMode) {
-		// The bound is reached — a genuinely blocked path. Pending
-		// interactions complete as ONE document navigation; the heartbeat's
-		// interval keeps probing (its fire is no longer degrade-gated), so
-		// a later successful attach lifts the mode and restores channel
-		// navigation. RECOVERABLE.
-		if (pendingInteraction) documentNavForPendingRecords();
-		return;
-	}
-	if (countsToward) {
-		// Transient failure under the bound: re-attach with backoff (the
-		// counter grew, so this can't tight-loop). Pending records LATCH
-		// and ride the next attach (folded by `_channelNavSubsumedByAttach`
-		// at fire) — never document-navved on a single stumble.
-		scheduleReattach();
-		return;
-	}
-	// Not counted — a benign idle non-establishment, a normal keepalive
-	// close, our own supersede, or a transport-upgrade handover. Re-ride a
-	// pending interaction (or the upgrade's requested re-attach)
-	// immediately; otherwise the heartbeat's interval reopens on its own
-	// (a background non-establishment retries there — no fast loop while
-	// the counter stays put).
-	if (pendingInteraction || forceReattach) _requestAttachNow();
+  if (documentNavMode) {
+    // The bound is reached — a genuinely blocked path. Pending
+    // interactions complete as ONE document navigation; the heartbeat's
+    // interval keeps probing (its fire is no longer degrade-gated), so
+    // a later successful attach lifts the mode and restores channel
+    // navigation. RECOVERABLE.
+    if (pendingInteraction) documentNavForPendingRecords()
+    return
+  }
+  if (countsToward) {
+    // Transient failure under the bound: re-attach with backoff (the
+    // counter grew, so this can't tight-loop). Pending records LATCH
+    // and ride the next attach (folded by `_channelNavSubsumedByAttach`
+    // at fire) — never document-navved on a single stumble.
+    scheduleReattach()
+    return
+  }
+  // Not counted — a benign idle non-establishment, a normal keepalive
+  // close, our own supersede, or a transport-upgrade handover. Re-ride a
+  // pending interaction (or the upgrade's requested re-attach)
+  // immediately; otherwise the heartbeat's interval reopens on its own
+  // (a background non-establishment retries there — no fast loop while
+  // the counter stays put).
+  if (pendingInteraction || forceReattach) _requestAttachNow()
 }
 
 /** Request an envelope flush. Coalesced per animation frame (the
  *  producers' statement cadence) and inert during SSR — same guard
  *  the visibility controller's dispatch always had. */
 export function scheduleChannelFlush(): void {
-	if (rafScheduled || typeof requestAnimationFrame === "undefined") return;
-	rafScheduled = true;
-	requestAnimationFrame(() => {
-		rafScheduled = false;
-		void flush();
-	});
+  if (rafScheduled || typeof requestAnimationFrame === "undefined") return
+  rafScheduled = true
+  requestAnimationFrame(() => {
+    rafScheduled = false
+    void flush()
+  })
 }
 
 async function flush(): Promise<void> {
-	// Serialize: one envelope in flight. A flush requested meanwhile
-	// re-fires when it lands (the `finally` below), so no statement is
-	// stranded behind a consumed rAF.
-	if (inFlight) {
-		reflushPending = true;
-		return;
-	}
-	const connection = _getLiveConnectionId();
+  // Serialize: one envelope in flight. A flush requested meanwhile
+  // re-fires when it lands (the `finally` below), so no statement is
+  // stranded behind a consumed rAF.
+  if (inFlight) {
+    reflushPending = true
+    return
+  }
+  const connection = _getLiveConnectionId()
 
-	// Retransmit-first: a fresh establishment replays the reliable
-	// buffer's survivors — original seqs, in order — before any new
-	// envelope, so the server sees the page-lifetime seq timeline in
-	// order. A failure mid-replay keeps the rest buffered for the next
-	// establishment; the frames' producers are never handed back
-	// (`reliable` — the buffer owns redelivery).
-	if (retransmitPending && connection !== null) {
-		inFlight = true;
-		try {
-			for (const entry of [...retransmitBuffer]) {
-				if (_getLiveConnectionId() !== connection) return;
-				const ok = await getChannelTransport().send({
-					connection,
-					seq: entry.seq,
-					frames: entry.frames,
-				});
-				if (!ok) {
-					if (_getLiveConnectionId() === connection) _setLiveConnectionId(null);
-					return;
-				}
-			}
-			retransmitPending = false;
-		} finally {
-			inFlight = false;
-			reflushPending = false;
-		}
-		// Collect whatever producers accumulated while replaying — on
-		// failure too: the fallback cue (`collect(null)`) must reach
-		// them, or statements strand until their next delta.
-		scheduleChannelFlush();
-		return;
-	}
+  // Retransmit-first: a fresh establishment replays the reliable
+  // buffer's survivors — original seqs, in order — before any new
+  // envelope, so the server sees the page-lifetime seq timeline in
+  // order. A failure mid-replay keeps the rest buffered for the next
+  // establishment; the frames' producers are never handed back
+  // (`reliable` — the buffer owns redelivery).
+  if (retransmitPending && connection !== null) {
+    inFlight = true
+    try {
+      for (const entry of [...retransmitBuffer]) {
+        if (_getLiveConnectionId() !== connection) return
+        const ok = await getChannelTransport().send({
+          connection,
+          seq: entry.seq,
+          frames: entry.frames,
+        })
+        if (!ok) {
+          if (_getLiveConnectionId() === connection) _setLiveConnectionId(null)
+          return
+        }
+      }
+      retransmitPending = false
+    } finally {
+      inFlight = false
+      reflushPending = false
+    }
+    // Collect whatever producers accumulated while replaying — on
+    // failure too: the fallback cue (`collect(null)`) must reach
+    // them, or statements strand until their next delta.
+    scheduleChannelFlush()
+    return
+  }
 
-	const carried: Array<{ producer: ChannelProducer; frame: ChannelFrame }> = [];
-	for (const producer of [...producers]) {
-		const contributed = producer.collect(connection);
-		if (contributed === null) continue;
-		// A producer's array contribution stays in ITS order within the
-		// envelope — the frame-navigation producer's cancel-then-url pair
-		// relies on it.
-		for (const frame of Array.isArray(contributed)
-			? contributed
-			: [contributed]) {
-			carried.push({ producer, frame });
-		}
-	}
-	if (connection === null || carried.length === 0) return;
-	const carriesAck = carried.some((c) => c.frame.kind === "ack");
-	inFlight = true;
-	try {
-		const seq = ++envelopeSeq;
-		// Reliable frames enter the buffer BEFORE the POST — a failed (or
-		// silently lost) envelope must leave them retransmittable. Only
-		// the reliable frames: loss-tolerant co-riders self-heal and must
-		// not replay.
-		const reliableFrames = carried
-			.filter((c) => c.producer.reliable === true)
-			.map((c) => c.frame);
-		if (reliableFrames.length > 0) {
-			retransmitBuffer.push({ seq, frames: reliableFrames });
-		}
-		const delivered = await getChannelTransport().send({
-			connection,
-			seq,
-			frames: carried.map((c) => c.frame),
-		});
-		if (!delivered) {
-			// The server's explicit "connection not open" signal (or the
-			// POST never reached it). Clear the published id so producers'
-			// re-owned statements — and everything after them — pend for
-			// the next establishment. Reliable frames stay in the buffer;
-			// their producers are not handed back.
-			if (_getLiveConnectionId() === connection) _setLiveConnectionId(null);
-			for (const { producer, frame } of carried) {
-				if (producer.reliable !== true) producer.deliveryFailed(frame);
-			}
-			// The envelope carried this connection's FIRST ack and it never
-			// got through: the client committed deliveries the server will
-			// never learn about (a blocked `/__parton/channel` POST path).
-			// NOT a sticky degrade — flag it and pull the now-unackable
-			// stream down; its settle counts a first-ack failure and
-			// arbitrates re-establishment vs the recoverable document-nav
-			// fallback through the bound (`_channelConnectionClosed`).
-			if (carriesAck && !ackDeliveredOnConnection) {
-				firstAckFailedThisConnection = true;
-				_channelAbortLiveStream();
-			} else if (
-				pendingNavRecords.length > 0 ||
-				pendingFrameNavRecords.length > 0
-			) {
-				// Pending navigations — window and frame alike — can't reach
-				// the server on this connection anymore. Abort the held
-				// stream (it still renders the state the page just left);
-				// its settle re-attaches with the statements folded in
-				// (`_channelConnectionClosed` → `_requestAttachNow`).
-				_channelAbortLiveStream();
-			}
-		} else if (carriesAck) {
-			// The first ack landed — the full duplex is proven. Clear the
-			// first-ack-failure streak; document-nav mode lifts if that was
-			// what held it.
-			ackDeliveredOnConnection = true;
-			if (firstAckFailures > 0) {
-				firstAckFailures = 0;
-				refreshDocumentNavMode();
-			}
-		}
-	} finally {
-		inFlight = false;
-		if (reflushPending) {
-			reflushPending = false;
-			scheduleChannelFlush();
-		}
-	}
+  const carried: Array<{ producer: ChannelProducer; frame: ChannelFrame }> = []
+  for (const producer of [...producers]) {
+    const contributed = producer.collect(connection)
+    if (contributed === null) continue
+    // A producer's array contribution stays in ITS order within the
+    // envelope — the frame-navigation producer's cancel-then-url pair
+    // relies on it.
+    for (const frame of Array.isArray(contributed) ? contributed : [contributed]) {
+      carried.push({ producer, frame })
+    }
+  }
+  if (connection === null || carried.length === 0) return
+  const carriesAck = carried.some((c) => c.frame.kind === "ack")
+  inFlight = true
+  try {
+    const seq = ++envelopeSeq
+    // Reliable frames enter the buffer BEFORE the POST — a failed (or
+    // silently lost) envelope must leave them retransmittable. Only
+    // the reliable frames: loss-tolerant co-riders self-heal and must
+    // not replay.
+    const reliableFrames = carried.filter((c) => c.producer.reliable === true).map((c) => c.frame)
+    if (reliableFrames.length > 0) {
+      retransmitBuffer.push({ seq, frames: reliableFrames })
+    }
+    const delivered = await getChannelTransport().send({
+      connection,
+      seq,
+      frames: carried.map((c) => c.frame),
+    })
+    if (!delivered) {
+      // The server's explicit "connection not open" signal (or the
+      // POST never reached it). Clear the published id so producers'
+      // re-owned statements — and everything after them — pend for
+      // the next establishment. Reliable frames stay in the buffer;
+      // their producers are not handed back.
+      if (_getLiveConnectionId() === connection) _setLiveConnectionId(null)
+      for (const { producer, frame } of carried) {
+        if (producer.reliable !== true) producer.deliveryFailed(frame)
+      }
+      // The envelope carried this connection's FIRST ack and it never
+      // got through: the client committed deliveries the server will
+      // never learn about (a blocked `/__parton/channel` POST path).
+      // NOT a sticky degrade — flag it and pull the now-unackable
+      // stream down; its settle counts a first-ack failure and
+      // arbitrates re-establishment vs the recoverable document-nav
+      // fallback through the bound (`_channelConnectionClosed`).
+      if (carriesAck && !ackDeliveredOnConnection) {
+        firstAckFailedThisConnection = true
+        _channelAbortLiveStream()
+      } else if (pendingNavRecords.length > 0 || pendingFrameNavRecords.length > 0) {
+        // Pending navigations — window and frame alike — can't reach
+        // the server on this connection anymore. Abort the held
+        // stream (it still renders the state the page just left);
+        // its settle re-attaches with the statements folded in
+        // (`_channelConnectionClosed` → `_requestAttachNow`).
+        _channelAbortLiveStream()
+      }
+    } else if (carriesAck) {
+      // The first ack landed — the full duplex is proven. Clear the
+      // first-ack-failure streak; document-nav mode lifts if that was
+      // what held it.
+      ackDeliveredOnConnection = true
+      if (firstAckFailures > 0) {
+        firstAckFailures = 0
+        refreshDocumentNavMode()
+      }
+    }
+  } finally {
+    inFlight = false
+    if (reflushPending) {
+      reflushPending = false
+      scheduleChannelFlush()
+    }
+  }
 }
 
 /** Send the explicit close for the open connection (if any) and clear
@@ -1763,83 +1723,83 @@ async function flush(): Promise<void> {
  *  heartbeat's next fire. The keepalive fetch is the one transport
  *  that survives the unload in progress. */
 function sendDetach(): void {
-	const connection = _getLiveConnectionId();
-	if (connection === null) return;
-	_setLiveConnectionId(null);
-	void getChannelTransport().send({
-		connection,
-		seq: ++envelopeSeq,
-		frames: [{ kind: "detach" }],
-	});
+  const connection = _getLiveConnectionId()
+  if (connection === null) return
+  _setLiveConnectionId(null)
+  void getChannelTransport().send({
+    connection,
+    seq: ++envelopeSeq,
+    frames: [{ kind: "detach" }],
+  })
 }
 
 if (typeof window !== "undefined") {
-	// `pagehide` covers tab close, cross-origin navigation, and bfcache
-	// entry — every way the page stops being able to consume the held
-	// stream. Same-origin soft navigations never fire it.
-	window.addEventListener("pagehide", sendDetach);
+  // `pagehide` covers tab close, cross-origin navigation, and bfcache
+  // entry — every way the page stops being able to consume the held
+  // stream. Same-origin soft navigations never fire it.
+  window.addEventListener("pagehide", sendDetach)
 }
 
 // The transport's own producers — the ack passenger, the window url
 // statement source, the frame-navigation source, the warm-intent
 // source, and the cookie-delta source — ride the same producer contract
 // every external statement source uses.
-registerChannelProducer(ackProducer);
-registerChannelProducer(urlProducer);
-registerChannelProducer(frameNavProducer);
-registerChannelProducer(warmProducer);
-registerChannelProducer(cookieProducer);
+registerChannelProducer(ackProducer)
+registerChannelProducer(urlProducer)
+registerChannelProducer(frameNavProducer)
+registerChannelProducer(warmProducer)
+registerChannelProducer(cookieProducer)
 
 /** Test-only: reset the transport's module state (seq, in-flight
  *  serialization, registrations, delivery tracking, buffer, degrade,
  *  navigation, frame navigation, consequence gates). */
 export function _resetChannelClient(): void {
-	producers.clear();
-	registerChannelProducer(ackProducer);
-	registerChannelProducer(urlProducer);
-	registerChannelProducer(frameNavProducer);
-	registerChannelProducer(warmProducer);
-	registerChannelProducer(cookieProducer);
-	establishListeners.clear();
-	envelopeSeq = 0;
-	rafScheduled = false;
-	inFlight = false;
-	reflushPending = false;
-	pendingLaneSeqs.clear();
-	laneProducerWaiters.clear();
-	deliveredOutOfOrder.clear();
-	deliveredWatermark = 0;
-	lastAckCollected = 0;
-	asOfDroppedSeqs.clear();
-	navStreamingByPoint.clear();
-	ackDeliveredOnConnection = false;
-	retransmitBuffer = [];
-	appliedWatermark = 0;
-	retransmitPending = false;
-	establishFailures = 0;
-	firstAckFailures = 0;
-	firstAckFailedThisConnection = false;
-	documentNavMode = false;
-	if (reattachTimer !== null) {
-		clearTimeout(reattachTimer);
-		reattachTimer = null;
-	}
-	if (typeof document !== "undefined") {
-		document.documentElement.removeAttribute("data-parton-degraded");
-	}
-	navPoint = 0;
-	pendingNavFrame = null;
-	pendingNavRecords = [];
-	pendingFrameFrames = new Map();
-	pendingCancelScopes = new Set();
-	pendingCookies = new Map();
-	pendingFrameNavRecords = [];
-	frameSeqKeys.clear();
-	consequenceGates.clear();
-	windowNavClaim = false;
-	liveStreamAbort = null;
-	attachRequester = null;
-	establishedSinceClose = false;
-	pendingWarm = null;
-	_setLiveConnectionId(null);
+  producers.clear()
+  registerChannelProducer(ackProducer)
+  registerChannelProducer(urlProducer)
+  registerChannelProducer(frameNavProducer)
+  registerChannelProducer(warmProducer)
+  registerChannelProducer(cookieProducer)
+  establishListeners.clear()
+  envelopeSeq = 0
+  rafScheduled = false
+  inFlight = false
+  reflushPending = false
+  pendingLaneSeqs.clear()
+  laneProducerWaiters.clear()
+  deliveredOutOfOrder.clear()
+  deliveredWatermark = 0
+  lastAckCollected = 0
+  asOfDroppedSeqs.clear()
+  navStreamingByPoint.clear()
+  ackDeliveredOnConnection = false
+  retransmitBuffer = []
+  appliedWatermark = 0
+  retransmitPending = false
+  establishFailures = 0
+  firstAckFailures = 0
+  firstAckFailedThisConnection = false
+  documentNavMode = false
+  if (reattachTimer !== null) {
+    clearTimeout(reattachTimer)
+    reattachTimer = null
+  }
+  if (typeof document !== "undefined") {
+    document.documentElement.removeAttribute("data-parton-degraded")
+  }
+  navPoint = 0
+  pendingNavFrame = null
+  pendingNavRecords = []
+  pendingFrameFrames = new Map()
+  pendingCancelScopes = new Set()
+  pendingCookies = new Map()
+  pendingFrameNavRecords = []
+  frameSeqKeys.clear()
+  consequenceGates.clear()
+  windowNavClaim = false
+  liveStreamAbort = null
+  attachRequester = null
+  establishedSinceClose = false
+  pendingWarm = null
+  _setLiveConnectionId(null)
 }

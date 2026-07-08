@@ -58,17 +58,17 @@
 
 import React, { useEffect, useRef } from "react"
 import {
-	type ChannelProducer,
-	onChannelEstablished,
-	registerChannelProducer,
-	scheduleChannelFlush,
+  type ChannelProducer,
+  onChannelEstablished,
+  registerChannelProducer,
+  scheduleChannelFlush,
 } from "./channel-client.ts"
 import type { ChannelFrame, VisibleFrame } from "./channel-protocol.ts"
 import {
-	registerCullObserver,
-	reportCullState,
-	reportedStateEvicted,
-	reportedVisibility,
+  registerCullObserver,
+  reportCullState,
+  reportedStateEvicted,
+  reportedVisibility,
 } from "./cull-park.ts"
 import { _getLiveConnectionId, cachedTokensFor } from "./partial-client-state.ts"
 
@@ -86,9 +86,9 @@ const POST_FLUSH_BATCH = 256
  *  installed react-dom exposes these; `@types/react` may not type a
  *  Fragment `ref` yet, so we shape it locally and cast at the ref site. */
 interface FragmentInstance {
-	observeUsing(observer: IntersectionObserver): void
-	unobserveUsing(observer: IntersectionObserver): void
-	getClientRects(): DOMRect[]
+  observeUsing(observer: IntersectionObserver): void
+  unobserveUsing(observer: IntersectionObserver): void
+  getClientRects(): DOMRect[]
 }
 
 // ─── Controller (module-level client state) ───────────────────────────
@@ -171,12 +171,11 @@ let fullSyncPending = false
  * `measured` — a primed set is still an unmeasured one.
  */
 export function _primeVisible(id: string, isInView: boolean): void {
-	if (everReported.has(id)) return
-	const reported = reportedVisibility(id)
-	const displayed =
-		reported !== undefined ? reported : reportedStateEvicted(id) ? false : isInView
-	if (displayed) inView.add(id)
-	else inView.delete(id)
+  if (everReported.has(id)) return
+  const reported = reportedVisibility(id)
+  const displayed = reported !== undefined ? reported : reportedStateEvicted(id) ? false : isInView
+  if (displayed) inView.add(id)
+  else inView.delete(id)
 }
 
 /** Report a cullable parton's MEASURED viewport state. Idempotent per
@@ -188,27 +187,27 @@ export function _primeVisible(id: string, isInView: boolean): void {
  *  marks the producer dirty (`newlyMeasured`) — a passenger on the
  *  next driven flush, never a flush of its own. */
 export function reportVisible(id: string, isInView: boolean): void {
-	if (!measured) {
-		measured = true
-		const waiters = measurementWaiters
-		measurementWaiters = []
-		for (const cb of waiters) cb()
-	}
-	if (!everReported.has(id)) {
-		everReported.add(id)
-		newlyMeasured = true
-	}
-	if (inView.has(id) === isInView) return
-	if (isInView) inView.add(id)
-	else inView.delete(id)
-	changed.add(id)
-	reportCullState(id, isInView)
-	schedule()
+  if (!measured) {
+    measured = true
+    const waiters = measurementWaiters
+    measurementWaiters = []
+    for (const cb of waiters) cb()
+  }
+  if (!everReported.has(id)) {
+    everReported.add(id)
+    newlyMeasured = true
+  }
+  if (inView.has(id) === isInView) return
+  if (isInView) inView.add(id)
+  else inView.delete(id)
+  changed.add(id)
+  reportCullState(id, isInView)
+  schedule()
 }
 
 /** Whether any viewport measurement has landed this page. */
 export function _visibilityMeasured(): boolean {
-	return measured
+  return measured
 }
 
 /** Run `cb` at the first viewport measurement — immediately when one
@@ -216,11 +215,11 @@ export function _visibilityMeasured(): boolean {
  *  the connection opens with a measured `?visible=` seed (see
  *  `live-page-heartbeat.tsx`). */
 export function _onFirstMeasurement(cb: () => void): void {
-	if (measured) {
-		cb()
-		return
-	}
-	measurementWaiters.push(cb)
+  if (measured) {
+    cb()
+    return
+  }
+  measurementWaiters.push(cb)
 }
 
 /** The current visible set as ids, or `undefined` before the first
@@ -229,8 +228,8 @@ export function _onFirstMeasurement(cb: () => void): void {
  *  session starts from the client's measured set and the whole-tree
  *  first segment already renders against it. */
 export function _visibleSetIds(): string[] | undefined {
-	if (!measured) return undefined
-	return [...inView]
+  if (!measured) return undefined
+  return [...inView]
 }
 
 // Arm the full-set sync per established connection, at the first
@@ -243,11 +242,11 @@ export function _visibleSetIds(): string[] | undefined {
 // sync means the connection is gone, and the transport already fell
 // back.
 function armEstablishmentSync(connection: string): void {
-	_onFirstMeasurement(() => {
-		if (_getLiveConnectionId() !== connection) return
-		fullSyncPending = true
-		schedule()
-	})
+  _onFirstMeasurement(() => {
+    if (_getLiveConnectionId() !== connection) return
+    fullSyncPending = true
+    schedule()
+  })
 }
 onChannelEstablished(armEstablishmentSync)
 
@@ -265,14 +264,14 @@ onChannelEstablished(armEstablishmentSync)
  *  teardown for the cull-park state rides the merge layer's prune
  *  instead (see `cull-park.ts`). */
 function reportGone(id: string): void {
-	inView.delete(id)
-	// A returning instance re-primes from its fresh emission's display
-	// state before its observer's first report.
-	everReported.delete(id)
+  inView.delete(id)
+  // A returning instance re-primes from its fresh emission's display
+  // state before its observer's first report.
+  everReported.delete(id)
 }
 
 function schedule(): void {
-	scheduleChannelFlush()
+  scheduleChannelFlush()
 }
 
 /**
@@ -287,39 +286,39 @@ function schedule(): void {
  * re-establishes.
  */
 const visibilityProducer: ChannelProducer = {
-	collect(connection: string | null): VisibleFrame | null {
-		if (connection === null) return null
-		if (changed.size === 0 && !newlyMeasured && !fullSyncPending) return null
-		// A statement commits nothing client-side, so it cannot supersede
-		// or tear a mid-flight route swap the way a reload can — no
-		// navigation-transition deferral on this path.
-		newlyMeasured = false
-		fullSyncPending = false
-		// Viewport first — the same rule as the reload path below: flips the
-		// user can SEE outrank stale cull-outs, both across batches (the cap
-		// slices in-view flips first) and within one frame (the server
-		// starts lanes in `changed` order, so in-view renders lead).
-		const all = [...changed]
-		const inViewFlips = all.filter((id) => inView.has(id))
-		const outFlips = all.filter((id) => !inView.has(id))
-		const ordered = [...inViewFlips, ...outFlips]
-		const targets = ordered.slice(0, POST_FLUSH_BATCH)
-		changed = new Set(ordered.slice(POST_FLUSH_BATCH))
-		if (changed.size > 0) schedule()
-		return {
-			kind: "visible",
-			changed: targets,
-			visible: [...inView],
-			// The client's actual holdings for the flipped ids — what the
-			// server may confirm with a placeholder instead of re-rendering.
-			cached: cachedTokensFor(targets),
-		}
-	},
-	deliveryFailed(frame: ChannelFrame): void {
-		if (frame.kind !== "visible") return
-		for (const id of frame.changed) changed.add(id)
-		schedule()
-	},
+  collect(connection: string | null): VisibleFrame | null {
+    if (connection === null) return null
+    if (changed.size === 0 && !newlyMeasured && !fullSyncPending) return null
+    // A statement commits nothing client-side, so it cannot supersede
+    // or tear a mid-flight route swap the way a reload can — no
+    // navigation-transition deferral on this path.
+    newlyMeasured = false
+    fullSyncPending = false
+    // Viewport first — the same rule as the reload path below: flips the
+    // user can SEE outrank stale cull-outs, both across batches (the cap
+    // slices in-view flips first) and within one frame (the server
+    // starts lanes in `changed` order, so in-view renders lead).
+    const all = [...changed]
+    const inViewFlips = all.filter((id) => inView.has(id))
+    const outFlips = all.filter((id) => !inView.has(id))
+    const ordered = [...inViewFlips, ...outFlips]
+    const targets = ordered.slice(0, POST_FLUSH_BATCH)
+    changed = new Set(ordered.slice(POST_FLUSH_BATCH))
+    if (changed.size > 0) schedule()
+    return {
+      kind: "visible",
+      changed: targets,
+      visible: [...inView],
+      // The client's actual holdings for the flipped ids — what the
+      // server may confirm with a placeholder instead of re-rendering.
+      cached: cachedTokensFor(targets),
+    }
+  },
+  deliveryFailed(frame: ChannelFrame): void {
+    if (frame.kind !== "visible") return
+    for (const id of frame.changed) changed.add(id)
+    schedule()
+  },
 }
 registerChannelProducer(visibilityProducer)
 
@@ -329,16 +328,16 @@ registerChannelProducer(visibilityProducer)
  *  Both re-registrations are idempotent (same references, Set-backed
  *  registries). */
 export function _resetVisibilityController(): void {
-	inView.clear()
-	everReported.clear()
-	changed = new Set()
-	newlyMeasured = false
-	measured = false
-	measurementWaiters = []
-	fullSyncPending = false
-	sweepScheduled = false
-	registerChannelProducer(visibilityProducer)
-	onChannelEstablished(armEstablishmentSync)
+  inView.clear()
+  everReported.clear()
+  changed = new Set()
+  newlyMeasured = false
+  measured = false
+  measurementWaiters = []
+  fullSyncPending = false
+  sweepScheduled = false
+  registerChannelProducer(visibilityProducer)
+  onChannelEstablished(armEstablishmentSync)
 }
 
 // ─── Boundary observer ────────────────────────────────────────────────
@@ -383,16 +382,16 @@ const reattachHandles = new Map<string, Set<() => void>>()
 let sweepScheduled = false
 
 export function _sweepEmptyVisibilityObservers(): void {
-	// One sweep per microtask — a commit's burst of requests collapses to
-	// a single O(observers) walk (see the coalescing note above).
-	if (sweepScheduled) return
-	sweepScheduled = true
-	queueMicrotask(() => {
-		sweepScheduled = false
-		for (const handles of reattachHandles.values()) {
-			for (const handle of handles) handle()
-		}
-	})
+  // One sweep per microtask — a commit's burst of requests collapses to
+  // a single O(observers) walk (see the coalescing note above).
+  if (sweepScheduled) return
+  sweepScheduled = true
+  queueMicrotask(() => {
+    sweepScheduled = false
+    for (const handles of reattachHandles.values()) {
+      for (const handle of handles) handle()
+    }
+  })
 }
 
 /**
@@ -407,94 +406,94 @@ export function _sweepEmptyVisibilityObservers(): void {
  * the observer starts only on the client, in an effect.
  */
 export function VisibilityObserver({
-	id,
-	rootMargin: rootMarginProp,
-	children,
+  id,
+  rootMargin: rootMarginProp,
+  children,
 }: {
-	id: string
-	/** Observer runway (`cull.rootMargin`); omitted → the default RUNWAY. */
-	rootMargin?: string
-	children: React.ReactNode
+  id: string
+  /** Observer runway (`cull.rootMargin`); omitted → the default RUNWAY. */
+  rootMargin?: string
+  children: React.ReactNode
 }): React.ReactNode {
-	const ref = useRef<FragmentInstance | null>(null)
-	const rootMargin = rootMarginProp ?? RUNWAY
-	useEffect(() => {
-		const inst = ref.current
-		if (!inst || typeof inst.observeUsing !== "function") return
-		// This slot now observes the parton. A culling flip hands the
-		// observation to the parton's other slot; the refcount + sweep
-		// distinguishes that handoff from the parton actually leaving
-		// the page.
-		const release = registerCullObserver(id, reportGone)
-		// An IO callback batch contains only the nodes whose intersection
-		// CHANGED — with many observed children (a fragment of chunk
-		// subtrees), one leaving node must not read as "the whole parton
-		// left". Track per-node state and report the aggregate.
-		const nodeState = new Map<Element, boolean>()
-		const io = new IntersectionObserver(
-			(entries) => {
-				for (const e of entries) nodeState.set(e.target, e.isIntersecting)
-				for (const el of [...nodeState.keys()]) {
-					if (!el.isConnected) nodeState.delete(el)
-				}
-				// Zero connected nodes is UNMEASURABLE, not "out" — the parton
-				// is mid-swap (a flip lane replacing its body disconnects the
-				// old nodes before the new ones report). Reporting "out" here
-				// starts a flip loop: out → cull lane → placeholder commits →
-				// intersects → "in" → content lane → swap → transient empty →
-				// "out" → … at rAF rate, remounting the subtree every cycle.
-				// Stay silent; the new nodes' initial callback (placement
-				// attach or the empty-observer sweep) carries real evidence.
-				if (nodeState.size === 0) return
-				reportVisible(id, [...nodeState.values()].some(Boolean))
-			},
-			{ rootMargin },
-		)
-		inst.observeUsing(io)
-		// Late-materializing content: if the fragment had no host children
-		// when `observeUsing` ran (dehydrated nested boundaries, unresolved
-		// lazies), this observer watches nothing and can never report. The
-		// handle re-attaches to the CURRENT host children; the sweep calls
-		// it only while the observer tracks zero connected nodes.
-		const reattachIfEmpty = (): void => {
-			for (const el of [...nodeState.keys()]) {
-				if (!el.isConnected) nodeState.delete(el)
-			}
-			if (nodeState.size > 0) return
-			try {
-				inst.unobserveUsing(io)
-			} catch {
-				// nothing was attached
-			}
-			inst.observeUsing(io)
-		}
-		let handles = reattachHandles.get(id)
-		if (!handles) {
-			handles = new Set()
-			reattachHandles.set(id, handles)
-		}
-		handles.add(reattachIfEmpty)
-		// This mount IS a content-arrival signal for ancestors: a nested
-		// cullable materializing means an enclosing boundary's fragment may
-		// have just gained its first host children.
-		_sweepEmptyVisibilityObservers()
-		return () => {
-			const set = reattachHandles.get(id)
-			if (set) {
-				set.delete(reattachIfEmpty)
-				if (set.size === 0) reattachHandles.delete(id)
-			}
-			try {
-				inst.unobserveUsing(io)
-			} catch {
-				// unobserve after the fragment's nodes already left the tree
-			}
-			io.disconnect()
-			release()
-		}
-	}, [id, rootMargin])
-	// `ref` on a Fragment yields a FragmentInstance (React 19.3). Built via
-	// `createElement` so the ref prop isn't gated by the JSX intrinsic types
-	// (the installed react-dom supports it even where `@types/react` doesn't).
-	return React.createElement(React.Fragment, { ref } as never, children)
+  const ref = useRef<FragmentInstance | null>(null)
+  const rootMargin = rootMarginProp ?? RUNWAY
+  useEffect(() => {
+    const inst = ref.current
+    if (!inst || typeof inst.observeUsing !== "function") return
+    // This slot now observes the parton. A culling flip hands the
+    // observation to the parton's other slot; the refcount + sweep
+    // distinguishes that handoff from the parton actually leaving
+    // the page.
+    const release = registerCullObserver(id, reportGone)
+    // An IO callback batch contains only the nodes whose intersection
+    // CHANGED — with many observed children (a fragment of chunk
+    // subtrees), one leaving node must not read as "the whole parton
+    // left". Track per-node state and report the aggregate.
+    const nodeState = new Map<Element, boolean>()
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) nodeState.set(e.target, e.isIntersecting)
+        for (const el of [...nodeState.keys()]) {
+          if (!el.isConnected) nodeState.delete(el)
+        }
+        // Zero connected nodes is UNMEASURABLE, not "out" — the parton
+        // is mid-swap (a flip lane replacing its body disconnects the
+        // old nodes before the new ones report). Reporting "out" here
+        // starts a flip loop: out → cull lane → placeholder commits →
+        // intersects → "in" → content lane → swap → transient empty →
+        // "out" → … at rAF rate, remounting the subtree every cycle.
+        // Stay silent; the new nodes' initial callback (placement
+        // attach or the empty-observer sweep) carries real evidence.
+        if (nodeState.size === 0) return
+        reportVisible(id, [...nodeState.values()].some(Boolean))
+      },
+      { rootMargin },
+    )
+    inst.observeUsing(io)
+    // Late-materializing content: if the fragment had no host children
+    // when `observeUsing` ran (dehydrated nested boundaries, unresolved
+    // lazies), this observer watches nothing and can never report. The
+    // handle re-attaches to the CURRENT host children; the sweep calls
+    // it only while the observer tracks zero connected nodes.
+    const reattachIfEmpty = (): void => {
+      for (const el of [...nodeState.keys()]) {
+        if (!el.isConnected) nodeState.delete(el)
+      }
+      if (nodeState.size > 0) return
+      try {
+        inst.unobserveUsing(io)
+      } catch {
+        // nothing was attached
+      }
+      inst.observeUsing(io)
+    }
+    let handles = reattachHandles.get(id)
+    if (!handles) {
+      handles = new Set()
+      reattachHandles.set(id, handles)
+    }
+    handles.add(reattachIfEmpty)
+    // This mount IS a content-arrival signal for ancestors: a nested
+    // cullable materializing means an enclosing boundary's fragment may
+    // have just gained its first host children.
+    _sweepEmptyVisibilityObservers()
+    return () => {
+      const set = reattachHandles.get(id)
+      if (set) {
+        set.delete(reattachIfEmpty)
+        if (set.size === 0) reattachHandles.delete(id)
+      }
+      try {
+        inst.unobserveUsing(io)
+      } catch {
+        // unobserve after the fragment's nodes already left the tree
+      }
+      io.disconnect()
+      release()
+    }
+  }, [id, rootMargin])
+  // `ref` on a Fragment yields a FragmentInstance (React 19.3). Built via
+  // `createElement` so the ref prop isn't gated by the JSX intrinsic types
+  // (the installed react-dom supports it even where `@types/react` doesn't).
+  return React.createElement(React.Fragment, { ref } as never, children)
 }

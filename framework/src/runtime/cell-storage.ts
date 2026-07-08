@@ -29,7 +29,11 @@
  * primitive for durability-critical state.
  */
 
-import { existsSync, readFileSync as fsReadFileSync, writeFileSync as fsWriteFileSync } from "node:fs"
+import {
+  existsSync,
+  readFileSync as fsReadFileSync,
+  writeFileSync as fsWriteFileSync,
+} from "node:fs"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { _getRequestEphemeralStorage } from "./context.ts"
@@ -266,7 +270,9 @@ export class JsonFileCellStorage implements CellStorage {
 export function defaultCellsPath(): string {
   const env = process.env.CELLS_DATA_PATH
   if (env) return resolve(env)
-  const dir = process.env.CMS_DATA_DIR ? resolve(process.env.CMS_DATA_DIR) : resolve(process.cwd(), "cms/data")
+  const dir = process.env.CMS_DATA_DIR
+    ? resolve(process.env.CMS_DATA_DIR)
+    : resolve(process.cwd(), "cms/data")
   return resolve(dir, "cells.json")
 }
 

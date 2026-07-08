@@ -79,10 +79,7 @@ export function ChatMessage({ fileId }: { fileId: string }) {
       <div data-testid={`chat-body-${fileId}`}>
         <ChunkList chunks={snapshot.chunks} />
         {snapshot.done ? (
-          <span
-            data-testid={`chat-done-${fileId}`}
-            className="mt-1 block text-xs text-emerald-500"
-          >
+          <span data-testid={`chat-done-${fileId}`} className="mt-1 block text-xs text-emerald-500">
             ✓ stream complete ({snapshot.cursor} chunks)
           </span>
         ) : (

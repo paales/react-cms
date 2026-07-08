@@ -32,22 +32,22 @@ function Code({ children, ...rest }: React.ComponentProps<"code">) {
 
 // ─── Inner specs ───────────────────────────────────────────────────────
 
-const Intro = parton(
-  async function CacheDemoIntroRender({ flavor }: { flavor: string } & RenderArgs) {
-    const stats = await _cacheStats()
-    return (
-      <>
-        <title>Cache Demo</title>
-        <h1 className="mb-4 text-2xl font-semibold">Server-side cache spike</h1>
-        <p className="mb-4 text-muted-foreground">
-          flavor=<Code>{flavor}</Code> · cache size:{" "}
-          <Code data-testid="cache-size">{stats.size}</Code>
-        </p>
-        <CacheControls />
-      </>
-    )
-  },
-)
+const Intro = parton(async function CacheDemoIntroRender({
+  flavor,
+}: { flavor: string } & RenderArgs) {
+  const stats = await _cacheStats()
+  return (
+    <>
+      <title>Cache Demo</title>
+      <h1 className="mb-4 text-2xl font-semibold">Server-side cache spike</h1>
+      <p className="mb-4 text-muted-foreground">
+        flavor=<Code>{flavor}</Code> · cache size:{" "}
+        <Code data-testid="cache-size">{stats.size}</Code>
+      </p>
+      <CacheControls />
+    </>
+  )
+})
 
 // `Slow` self-sources `flavor` from the URL via a tracked
 // `searchParam` read, so a targeted `#slow` refetch (`?partials=slow`)

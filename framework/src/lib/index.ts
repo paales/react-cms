@@ -27,20 +27,12 @@ export {
 } from "./partial.tsx"
 
 // CMS block constructor — composes around `parton`.
-export {
-  block,
-  type BlockOptions,
-  type SchemaScope,
-} from "../runtime/cms-block.ts"
+export { block, type BlockOptions, type SchemaScope } from "../runtime/cms-block.ts"
 
 // Server context — `createServerContext(default)` returns a provider
 // component (`<Ctx value={…}>…</Ctx>`) plus the handle for
 // `getServerContext(Ctx)`, readable anywhere in a Server Component's render.
-export {
-  createServerContext,
-  getServerContext,
-  type ServerContext,
-} from "./server-context.ts"
+export { createServerContext, getServerContext, type ServerContext } from "./server-context.ts"
 
 // Server-hooks — free functions a parton's schema/Render calls to read
 // a request dimension AND record it as an fp dependency: `cookie()`,
@@ -121,7 +113,6 @@ export {
   type ClientCell,
 } from "./cell-client.tsx"
 
-
 export { type TimeScope } from "./time.ts"
 
 export type {
@@ -146,9 +137,5 @@ export { RemoteFrame, remote, type RemoteFrameProps } from "./remote-frame.tsx"
 // client-side statement (`reportTelemetry`) lives in `./telemetry.ts`
 // and is imported by deep path from `"use client"` modules per the
 // barrel caveat.
-export {
-  registerWarmProjector,
-  type WarmCandidate,
-  type WarmProjector,
-} from "./warm-projection.ts"
+export { registerWarmProjector, type WarmCandidate, type WarmProjector } from "./warm-projection.ts"
 export type { SessionTelemetry } from "./connection-session.ts"

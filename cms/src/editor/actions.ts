@@ -135,9 +135,7 @@ export async function addBlockToSlot(
   }
   const existing = lookupDraftNode(parentId)
   if (!existing) {
-    throw new Error(
-      `addBlockToSlot: parent "${parentId}" not found in draft or published stores.`,
-    )
+    throw new Error(`addBlockToSlot: parent "${parentId}" not found in draft or published stores.`)
   }
   const parent = cloneNode(existing)
   const slots = parent.slots ?? {}

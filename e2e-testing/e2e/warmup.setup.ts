@@ -1,4 +1,4 @@
-import { test, waitForPageInteractive } from "./fixtures";
+import { test, waitForPageInteractive } from "./fixtures"
 
 /**
  * Warmup pre-pass — the `warmup` Playwright project. Runs alone
@@ -22,49 +22,49 @@ import { test, waitForPageInteractive } from "./fixtures";
  */
 
 const ROUTES = [
-	"/",
-	"/pokemon/1",
-	"/pokemon/1?search=url",
-	"/docs",
-	"/magento",
-	"/magento/browse",
-	"/magento/cart",
-	"/cache-demo",
-	"/cache-streaming-demo",
-	"/defer-demo",
-	"/deferred-demo",
-	"/selector-demo",
-	"/sentinels-demo",
-	"/frames-demo",
-	"/inspect",
-	"/cms-demo",
-	"/cms-demo?editor=1",
-	"/streaming-demo",
-	"/cursors",
-	"/forms-demo",
-	"/chat-notes",
-	"/remote-frame-demo",
-	"/remote-frame-crossorigin-demo",
-] as const;
+  "/",
+  "/pokemon/1",
+  "/pokemon/1?search=url",
+  "/docs",
+  "/magento",
+  "/magento/browse",
+  "/magento/cart",
+  "/cache-demo",
+  "/cache-streaming-demo",
+  "/defer-demo",
+  "/deferred-demo",
+  "/selector-demo",
+  "/sentinels-demo",
+  "/frames-demo",
+  "/inspect",
+  "/cms-demo",
+  "/cms-demo?editor=1",
+  "/streaming-demo",
+  "/cursors",
+  "/forms-demo",
+  "/chat-notes",
+  "/remote-frame-demo",
+  "/remote-frame-crossorigin-demo",
+] as const
 
 test("warm every route on the fresh dev server", async ({ page }) => {
-	// A cold compile of a heavy page can take tens of seconds; the
-	// whole crawl gets a generous budget so it never races the clock.
-	test.setTimeout(300_000);
-	for (const route of ROUTES) {
-		// A dep-optimizer discovery mid-navigation reloads the page and
-		// aborts the in-flight `goto` (net::ERR_ABORTED). That reload IS
-		// the warming this crawl exists to trigger, so retry the route —
-		// the re-navigation runs against the now-optimized graph. Bounded:
-		// each discovery pass optimizes strictly more of the graph.
-		for (let attempt = 1; ; attempt++) {
-			try {
-				await page.goto(route, { timeout: 60_000 });
-				break;
-			} catch (err) {
-				if (attempt >= 3 || !String(err).includes("ERR_ABORTED")) throw err;
-			}
-		}
-		await waitForPageInteractive(page, { timeout: 60_000 });
-	}
-});
+  // A cold compile of a heavy page can take tens of seconds; the
+  // whole crawl gets a generous budget so it never races the clock.
+  test.setTimeout(300_000)
+  for (const route of ROUTES) {
+    // A dep-optimizer discovery mid-navigation reloads the page and
+    // aborts the in-flight `goto` (net::ERR_ABORTED). That reload IS
+    // the warming this crawl exists to trigger, so retry the route —
+    // the re-navigation runs against the now-optimized graph. Bounded:
+    // each discovery pass optimizes strictly more of the graph.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await page.goto(route, { timeout: 60_000 })
+        break
+      } catch (err) {
+        if (attempt >= 3 || !String(err).includes("ERR_ABORTED")) throw err
+      }
+    }
+    await waitForPageInteractive(page, { timeout: 60_000 })
+  }
+})

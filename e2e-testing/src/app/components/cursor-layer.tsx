@@ -104,9 +104,9 @@ export function CursorLayer({ cursors }: { cursors: ResolvedCell<CursorMap> }) {
       className="relative h-96 w-full overflow-hidden rounded-lg border bg-card"
     >
       <p className="pointer-events-none p-3 text-xs text-muted-foreground">
-        Move your mouse here, then open this page in a second tab (or another
-        browser) — each viewer sees every other viewer's cursor. Yours is your
-        real cursor; the coloured arrows are everyone else.
+        Move your mouse here, then open this page in a second tab (or another browser) — each viewer
+        sees every other viewer's cursor. Yours is your real cursor; the coloured arrows are
+        everyone else.
       </p>
       {/* Stable count for the e2e harness — number of remote cursors. */}
       <span data-testid="remote-cursor-count" className="sr-only">

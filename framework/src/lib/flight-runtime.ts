@@ -126,9 +126,7 @@ export function renderToReadableStream<T>(data: T): ReadableStream<Uint8Array> {
   })
 }
 
-export async function createFromReadableStream<T>(
-  stream: ReadableStream<Uint8Array>,
-): Promise<T> {
+export async function createFromReadableStream<T>(stream: ReadableStream<Uint8Array>): Promise<T> {
   if (IS_TEST) {
     return ReactClient.createFromReadableStream(stream, {
       serverConsumerManifest: STUB_SERVER_CONSUMER_MANIFEST,

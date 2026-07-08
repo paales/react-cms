@@ -29,9 +29,7 @@ import { expect, test } from "@playwright/test"
 
 const ITERATIONS = 10
 
-test("every load renders every parton — no schema-using parton blanks", async ({
-  browser,
-}) => {
+test("every load renders every parton — no schema-using parton blanks", async ({ browser }) => {
   const failures: Array<{ iter: number; blanked: string[] }> = []
   for (let iter = 0; iter < ITERATIONS; iter++) {
     const ctx = await browser.newContext()
@@ -48,8 +46,7 @@ test("every load renders every parton — no schema-using parton blanks", async 
       const html = await page.content()
       const flightIdx = html.indexOf("__FLIGHT_DATA")
       const dom = flightIdx > 0 ? html.slice(0, flightIdx) : html
-      const has = (testid: string) =>
-        dom.includes(`data-testid="${testid}"`)
+      const has = (testid: string) => dom.includes(`data-testid="${testid}"`)
       const blanked: string[] = []
       // streaming-demo-tick: vary-only parton, sanity check that
       // hydration ran at all.

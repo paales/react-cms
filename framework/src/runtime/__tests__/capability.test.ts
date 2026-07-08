@@ -57,9 +57,13 @@ describe("encodeCapability / decodeCapability", () => {
   it("decodes malformed input to empty (no throw)", () => {
     expect(decodeCapability("not-base64!!!")).toEqual({})
     expect(decodeCapability("aGVsbG8=")).toEqual({}) // "hello" — valid base64, invalid JSON
-    expect(decodeCapability(encodeCapability(null as unknown as Record<string, string>))).toEqual({})
+    expect(decodeCapability(encodeCapability(null as unknown as Record<string, string>))).toEqual(
+      {},
+    )
     // Encoded array (not an object) — decoder rejects.
-    expect(decodeCapability(encodeCapability(["a", "b"] as unknown as Record<string, string>))).toEqual({})
+    expect(
+      decodeCapability(encodeCapability(["a", "b"] as unknown as Record<string, string>)),
+    ).toEqual({})
   })
 })
 

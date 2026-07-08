@@ -1,4 +1,10 @@
-import { clearCaches, test, expect, waitForLiveConnection, waitForPageInteractive } from "./fixtures"
+import {
+  clearCaches,
+  test,
+  expect,
+  waitForLiveConnection,
+  waitForPageInteractive,
+} from "./fixtures"
 
 /**
  * `useNavigation().preload(target)` — hover-eager warm of a

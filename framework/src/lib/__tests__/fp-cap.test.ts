@@ -53,9 +53,7 @@ describe("registerClientPartial — FP cap / eviction", () => {
     expect(fps).toHaveLength(FP_CAP_PER_VARIANT)
     // fp1 and fp2 (the oldest) are gone; the latest four remain in
     // insertion order.
-    expect(fps).toEqual(
-      Array.from({ length: FP_CAP_PER_VARIANT }, (_, i) => `fp${i + 3}`),
-    )
+    expect(fps).toEqual(Array.from({ length: FP_CAP_PER_VARIANT }, (_, i) => `fp${i + 3}`))
   })
 
   it("re-registering an existing fp neither duplicates nor evicts", () => {

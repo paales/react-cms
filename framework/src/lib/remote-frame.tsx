@@ -41,18 +41,10 @@ import {
   type RowRewriter,
 } from "./flight-rewrite.ts"
 import type { PartialCtx } from "./partial-context.ts"
-import {
-  deferCommitUntil,
-  registerPartial,
-  type PartialSnapshot,
-} from "./partial-registry.ts"
+import { deferCommitUntil, registerPartial, type PartialSnapshot } from "./partial-registry.ts"
 import { splitStreamAtSnapshotTrailer } from "./snapshot-trailer.ts"
 import { getRequest } from "../runtime/context.ts"
-import {
-  CAPABILITY_HEADER,
-  encodeCapability,
-  type Capability,
-} from "../runtime/capability.ts"
+import { CAPABILITY_HEADER, encodeCapability, type Capability } from "../runtime/capability.ts"
 
 export interface RemoteFrameProps {
   /** Absolute URL or same-origin path of the remote Flight endpoint. */
@@ -161,9 +153,7 @@ export async function RemoteFrame({
     credentials: "omit",
   })
   if (!response.ok || !response.body) {
-    throw new Error(
-      `RemoteFrame: fetch failed for ${absoluteUrl} (status ${response.status})`,
-    )
+    throw new Error(`RemoteFrame: fetch failed for ${absoluteUrl} (status ${response.status})`)
   }
   const split = splitStreamAtSnapshotTrailer(response.body)
 

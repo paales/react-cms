@@ -62,7 +62,11 @@ const opt = (name, dflt) => {
   return hit ? hit.slice(name.length + 3) : dflt
 }
 if (has("--help")) {
-  console.log(readFileSync(fileURLToPath(import.meta.url), "utf8").split("*/")[0].slice(3))
+  console.log(
+    readFileSync(fileURLToPath(import.meta.url), "utf8")
+      .split("*/")[0]
+      .slice(3),
+  )
   process.exit(0)
 }
 const MODE = has("--dev") ? "dev" : "preview"
@@ -194,7 +198,8 @@ function makeSymbolicator() {
     cache.set(base, sm)
     return sm
   }
-  const shorten = (src) => (src ?? "").replace(/^.*?(framework\/src\/|website\/src\/|copies\/src\/|node_modules\/)/, "$1")
+  const shorten = (src) =>
+    (src ?? "").replace(/^.*?(framework\/src\/|website\/src\/|copies\/src\/|node_modules\/)/, "$1")
   return (cf) => {
     const sm = mapFor(cf.url)
     if (!sm) return null
@@ -266,13 +271,29 @@ function aggregateProfile(profile, symbolicate) {
 // doesn't silently drop a category into "other".
 const PHASE_OF = (name) => {
   if (/[Ii]ntersect/.test(name)) return "intersection"
-  if (/UpdateLayoutTree|RecalculateStyles|StyleRecalc|ParseAuthorStyleSheet|StyleInvalidation/.test(name)) return "style"
+  if (
+    /UpdateLayoutTree|RecalculateStyles|StyleRecalc|ParseAuthorStyleSheet|StyleInvalidation/.test(
+      name,
+    )
+  )
+    return "style"
   if (/^Layout$|HitTest|UpdateLayerTree|LayoutShift/.test(name)) return "layout"
   if (/Paint|Rasterize|DecodeImage|DecodeLazyPixelRef|GPUTask/.test(name)) return "paint"
-  if (/Commit|Composite|Layerize|Layer$|ScrollLayer|UpdateLayer|DrawFrame|BeginFrame|BeginMainThreadFrame|ActivateLayerTree|RequestMainThreadFrame/.test(name)) return "composite"
+  if (
+    /Commit|Composite|Layerize|Layer$|ScrollLayer|UpdateLayer|DrawFrame|BeginFrame|BeginMainThreadFrame|ActivateLayerTree|RequestMainThreadFrame/.test(
+      name,
+    )
+  )
+    return "composite"
   if (/GC|GarbageCollect/.test(name)) return "gc"
-  if (/URLLoader|Mojo|ResourceRequest|ResourceLoad|ResourceFetch|ResourceReceive/.test(name)) return "network"
-  if (/FunctionCall|EvaluateScript|RunMicrotasks|EventDispatch|TimerFire|FireAnimationFrame|FireIdleCallback|XHR|V8\.|ParseHTML|CompileScript|ProfileCall/.test(name)) return "scripting"
+  if (/URLLoader|Mojo|ResourceRequest|ResourceLoad|ResourceFetch|ResourceReceive/.test(name))
+    return "network"
+  if (
+    /FunctionCall|EvaluateScript|RunMicrotasks|EventDispatch|TimerFire|FireAnimationFrame|FireIdleCallback|XHR|V8\.|ParseHTML|CompileScript|ProfileCall/.test(
+      name,
+    )
+  )
+    return "scripting"
   return "other"
 }
 
@@ -281,7 +302,8 @@ function analyzeTrace(traceText) {
   const rendererTids = new Set()
   const frameStarts = []
   for (const e of events) {
-    if (e.name === "thread_name" && e.args?.name === "CrRendererMain") rendererTids.add(`${e.pid}:${e.tid}`)
+    if (e.name === "thread_name" && e.args?.name === "CrRendererMain")
+      rendererTids.add(`${e.pid}:${e.tid}`)
     if (e.name === "BeginMainThreadFrame") frameStarts.push(e.ts)
   }
   frameStarts.sort((a, b) => a - b)
@@ -309,7 +331,17 @@ function analyzeTrace(traceText) {
   // that tallies each event at pop; dur is µs. `main` is ts-sorted, ties
   // broken by longer dur first so a parent precedes its children.
   main.sort((a, b) => a.ts - b.ts || b.dur - a.dur)
-  const phases = { scripting: 0, style: 0, layout: 0, intersection: 0, paint: 0, composite: 0, gc: 0, network: 0, other: 0 }
+  const phases = {
+    scripting: 0,
+    style: 0,
+    layout: 0,
+    intersection: 0,
+    paint: 0,
+    composite: 0,
+    gc: 0,
+    network: 0,
+    other: 0,
+  }
   const runTasks = []
   let mainBusyUs = 0
   // Per-frame main-thread self-time: bin each event's self-time into the
@@ -357,7 +389,16 @@ function analyzeTrace(traceText) {
 }
 
 function bucketize(durs) {
-  const b = { count: durs.length, total: 0, max: 0, over3: 0, over5: 0, over8_33: 0, over16_7: 0, over33_3: 0 }
+  const b = {
+    count: durs.length,
+    total: 0,
+    max: 0,
+    over3: 0,
+    over5: 0,
+    over8_33: 0,
+    over16_7: 0,
+    over33_3: 0,
+  }
   const sorted = durs.slice().sort((a, b) => a - b)
   for (const d of durs) {
     b.total += d
@@ -413,24 +454,32 @@ if (!NO_BUILD) {
   })
 }
 
-const server = spawn("yarn", ["workspace", "@parton/website", MODE, "--port", String(PORT), "--strictPort"], {
-  cwd: REPO_ROOT,
-  stdio: ["ignore", "pipe", "pipe"],
-  detached: true,
-})
+const server = spawn(
+  "yarn",
+  ["workspace", "@parton/website", MODE, "--port", String(PORT), "--strictPort"],
+  {
+    cwd: REPO_ROOT,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  },
+)
 const serverLog = []
 server.stdout.on("data", (d) => serverLog.push(d.toString()))
 server.stderr.on("data", (d) => serverLog.push(d.toString()))
 
 let browser
 try {
-  await until(async () => {
-    try {
-      return (await fetch(BASE)).ok
-    } catch {
-      return false
-    }
-  }, 40000, "server up")
+  await until(
+    async () => {
+      try {
+        return (await fetch(BASE)).ok
+      } catch {
+        return false
+      }
+    },
+    40000,
+    "server up",
+  )
   console.log(`mode: ${MODE}  ${BASE}`)
 
   browser = await chromium.launch()
@@ -441,7 +490,11 @@ try {
 
   // Boot + settle: origin content, live boot, first flips quiesced.
   await page.goto(BASE)
-  await until(async () => (await page.$('[data-testid="chunk-0,0"][data-loaded]')) !== null, 20000, "origin content")
+  await until(
+    async () => (await page.$('[data-testid="chunk-0,0"][data-loaded]')) !== null,
+    20000,
+    "origin content",
+  )
   await sleep(3500)
 
   const runWorkload = () => page.evaluate(driveWorkload, WORKLOAD)
@@ -517,10 +570,14 @@ try {
   const printBuckets = (b) =>
     `  >3ms: ${b.over3}  >5ms: ${b.over5}  >8.33ms: ${b.over8_33}  >16.7ms: ${b.over16_7}  >33.3ms: ${b.over33_3}`
 
-  console.log(`\n${"═".repeat(72)}\nCLIENT-SCROLL  (${MODE}, viewport ${VIEWPORT.width}×${VIEWPORT.height}, workload east/south/diagonal)\n${"═".repeat(72)}`)
+  console.log(
+    `\n${"═".repeat(72)}\nCLIENT-SCROLL  (${MODE}, viewport ${VIEWPORT.width}×${VIEWPORT.height}, workload east/south/diagonal)\n${"═".repeat(72)}`,
+  )
 
   const pf = trace.perFrame
-  console.log(`\nMAIN-THREAD FRAME COST  (per-frame self-time from the trace — present-independent;`)
+  console.log(
+    `\nMAIN-THREAD FRAME COST  (per-frame self-time from the trace — present-independent;`,
+  )
   console.log(`                         what a fast-GPU device pays per scroll frame)`)
   console.log(
     `  ${pf.count} frames · p50 ${pf.p50.toFixed(2)} · p95 ${pf.p95.toFixed(2)} · max ${pf.max.toFixed(2)}ms`,
@@ -532,11 +589,15 @@ try {
     `  ${rafBuckets.count} frames · p50 ${rafBuckets.p50.toFixed(1)} · p95 ${rafBuckets.p95.toFixed(1)} · max ${rafBuckets.max.toFixed(1)}ms · over-8.33 ${((rafBuckets.over8_33 / rafBuckets.count) * 100 || 0).toFixed(0)}%`,
   )
   console.log(printBuckets(rafBuckets))
-  console.log(`  longtasks: ${frameStats.longtasks.length} · total ${longtaskTotal.toFixed(0)}ms · max ${longtaskMax.toFixed(0)}ms · CLS ${frameStats.cls.toFixed(3)}`)
+  console.log(
+    `  longtasks: ${frameStats.longtasks.length} · total ${longtaskTotal.toFixed(0)}ms · max ${longtaskMax.toFixed(0)}ms · CLS ${frameStats.cls.toFixed(3)}`,
+  )
 
   const P = trace.phases
   const perFrame = (v) => (trace.frames ? (v / trace.frames).toFixed(2) : "?")
-  console.log(`\nMAIN-THREAD PHASES  (self-time from the trace, ${trace.frames} BeginMainFrames, busy ${trace.mainBusyMs.toFixed(0)}ms)`)
+  console.log(
+    `\nMAIN-THREAD PHASES  (self-time from the trace, ${trace.frames} BeginMainFrames, busy ${trace.mainBusyMs.toFixed(0)}ms)`,
+  )
   console.log(`                       total ms     ms/frame`)
   for (const [k, v] of Object.entries(P).sort((a, b) => b[1] - a[1])) {
     if (v < 0.5) continue
@@ -557,7 +618,9 @@ try {
   }
 
   if (soakAgg) {
-    console.log(`\nSOAK (idle 8s, pulses live) — top 12 by self-time (scripting ${ms(soakAgg.scriptingUs)}ms):`)
+    console.log(
+      `\nSOAK (idle 8s, pulses live) — top 12 by self-time (scripting ${ms(soakAgg.scriptingUs)}ms):`,
+    )
     for (const r of soakAgg.rows.filter((r) => r.label !== "(idle)").slice(0, 12)) {
       console.log(`    ${ms(r.us).padStart(7)}ms  ${r.label}`)
     }
@@ -580,13 +643,20 @@ try {
     longtasks: { count: frameStats.longtasks.length, total: longtaskTotal, max: longtaskMax },
     cls: frameStats.cls,
     scripting: { totalUs: agg.totalUs, scriptingUs: agg.scriptingUs, idleUs: agg.idleUs },
-    rollups: Object.fromEntries(Object.entries(rollups).map(([k, us]) => [k, { us, pct: Number(pct(us)) }])),
+    rollups: Object.fromEntries(
+      Object.entries(rollups).map(([k, us]) => [k, { us, pct: Number(pct(us)) }]),
+    ),
     top: agg.rows
       .filter((r) => r.label !== "(idle)")
       .slice(0, 40)
       .map((r) => ({ label: r.label, us: r.us, pct: Number(pct(r.us)) })),
     soak: soakAgg
-      ? { top: soakAgg.rows.filter((r) => r.label !== "(idle)").slice(0, 20).map((r) => ({ label: r.label, us: r.us })) }
+      ? {
+          top: soakAgg.rows
+            .filter((r) => r.label !== "(idle)")
+            .slice(0, 20)
+            .map((r) => ({ label: r.label, us: r.us })),
+        }
       : null,
     tracePath,
     pageErrors,

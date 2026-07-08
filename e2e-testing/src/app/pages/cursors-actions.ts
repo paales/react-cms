@@ -24,12 +24,7 @@ import { cursorsCell, type Cursor, type CursorMap } from "./cursors-state.ts"
 /** Cursors older than this (no move within the window) are evicted. */
 const STALE_MS = 10_000
 
-export async function moveCursor(
-  uid: string,
-  x: number,
-  y: number,
-  color: string,
-): Promise<void> {
+export async function moveCursor(uid: string, x: number, y: number, color: string): Promise<void> {
   const now = Date.now()
   const current = (cursorsCell.peek() as CursorMap | null) ?? {}
   const next: CursorMap = { [uid]: { x, y, color, ts: now } }

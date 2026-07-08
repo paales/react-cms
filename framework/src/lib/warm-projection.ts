@@ -18,36 +18,36 @@
  * warm pass costs nothing.
  */
 
-import type { SessionTelemetry } from "./connection-session.ts";
+import type { SessionTelemetry } from "./connection-session.ts"
 
 /** One parked cullable parton the projector may choose to warm. */
 export interface WarmCandidate {
-	/** The parton's instance id — what the projector returns. */
-	readonly id: string;
-	/** The spec catalog id (`WorldChunkRender` → `"world-chunk"`) —
-	 *  how a projector picks its kind out of a mixed route. */
-	readonly type?: string;
-	/** The placement's call-site props as recorded on the snapshot —
-	 *  where coordinate-shaped identity lives. */
-	readonly props?: Readonly<Record<string, unknown>>;
+  /** The parton's instance id — what the projector returns. */
+  readonly id: string
+  /** The spec catalog id (`WorldChunkRender` → `"world-chunk"`) —
+   *  how a projector picks its kind out of a mixed route. */
+  readonly type?: string
+  /** The placement's call-site props as recorded on the snapshot —
+   *  where coordinate-shaped identity lives. */
+  readonly props?: Readonly<Record<string, unknown>>
 }
 
 /** Map a telemetry statement onto the parked partons the viewport is
  *  projected to reach — ids in priority order (the driver truncates at
  *  its per-park cap). Pure and synchronous; runs inside the driver. */
 export type WarmProjector = (
-	telemetry: SessionTelemetry,
-	candidates: readonly WarmCandidate[],
-) => readonly string[];
+  telemetry: SessionTelemetry,
+  candidates: readonly WarmCandidate[],
+) => readonly string[]
 
-let projector: WarmProjector | null = null;
+let projector: WarmProjector | null = null
 
 /** Register the process's warm projector (or `null` to remove it). */
 export function registerWarmProjector(p: WarmProjector | null): void {
-	projector = p;
+  projector = p
 }
 
 /** The registered projector — the driver's read side. */
 export function _getWarmProjector(): WarmProjector | null {
-	return projector;
+  return projector
 }

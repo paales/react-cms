@@ -46,7 +46,9 @@ export interface HoleRef {
 
 /** Split buffered Flight bytes into non-empty row strings. */
 export function splitRows(bytes: Uint8Array): string[] {
-  return DECODER.decode(bytes).split("\n").filter((r) => r.length > 0)
+  return DECODER.decode(bytes)
+    .split("\n")
+    .filter((r) => r.length > 0)
 }
 
 /** Join row strings back to bytes (each row newline-terminated). */
@@ -428,8 +430,7 @@ async function spliceOne<H extends HoleRef>(
     if (dropped.has(row.id)) return
     const newId = idRemap(row.id)
     const parsed = tryParse(row.data)
-    const newData =
-      parsed === undefined ? row.data : JSON.stringify(remapRefs(parsed, idRemap))
+    const newData = parsed === undefined ? row.data : JSON.stringify(remapRefs(parsed, idRemap))
     controller.enqueue(ENCODER.encode(serializeRow({ ...row, id: newId, data: newData }) + "\n"))
   }
 

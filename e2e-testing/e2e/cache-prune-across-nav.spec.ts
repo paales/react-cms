@@ -1,4 +1,10 @@
-import { clearCaches, test, expect, recordPartialDispatches, waitForPageInteractive } from "./fixtures"
+import {
+  clearCaches,
+  test,
+  expect,
+  recordPartialDispatches,
+  waitForPageInteractive,
+} from "./fixtures"
 
 /**
  * With `keepalive: true` (the default on every spec), partials that

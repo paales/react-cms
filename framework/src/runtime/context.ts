@@ -515,10 +515,7 @@ export async function _runWithWarmRenderScope<T>(
  * statement, no commit hook. The driver's continuation resumes with
  * its own store.
  */
-export async function _runWithWarmRequestScope<T>(
-  url: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+export async function _runWithWarmRequestScope<T>(url: string, fn: () => Promise<T>): Promise<T> {
   const store = getStore()
   const warmStore: RequestStore = {
     request: new Request(new URL(url, store.request.url), {
@@ -545,10 +542,7 @@ export function _getConnectionVisibleSet(): ReadonlySet<string> | null {
  *  folds acked holdings in as `ack` frames land, and every render on
  *  the connection (whole-tree segments and lanes alike) consults the
  *  same map. */
-export function _getConnectionAckedFps(): ReadonlyMap<
-  string,
-  ReadonlySet<string>
-> | null {
+export function _getConnectionAckedFps(): ReadonlyMap<string, ReadonlySet<string>> | null {
   return requestContext.getStore()?.connectionSession?.ackedFps ?? null
 }
 

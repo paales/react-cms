@@ -64,7 +64,10 @@ function OriginCard() {
       <h1 className="card__title">PARTON</h1>
       <p>An RSC-native framework.</p>
       <p>A parton is an enhanced component: one part on the client, one part on the server.</p>
-      <p>Every chunk of this world is one. Scroll — chunks load as they enter view, and each light flashes when its chunk's bytes arrive.</p>
+      <p>
+        Every chunk of this world is one. Scroll — chunks load as they enter view, and each light
+        flashes when its chunk's bytes arrive.
+      </p>
       <p className="card__hint">WASD / drag / scroll</p>
     </div>
   )

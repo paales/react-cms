@@ -191,12 +191,15 @@ describe("cold-record gate: no snapshot → no skip for a hooks-only spec", () =
     // First visit to the /gate/p/3 bucket, cookie changed. Without the
     // evidence check the dep-less fps collide and the stale `a` body
     // would be skipped-in; the gate must render fresh `b` bytes.
-    const fresh = await flightAt(`http://t/gate/p/3?cached=atv-gate-tail:${ROOT_MK}:${coldFp}`, tree, {
-      cookie: "pref=b",
-    })
+    const fresh = await flightAt(
+      `http://t/gate/p/3?cached=atv-gate-tail:${ROOT_MK}:${coldFp}`,
+      tree,
+      {
+        cookie: "pref=b",
+      },
+    )
     expect(fresh).toContain("gate-tail-body:b")
   })
-
 })
 
 // ── Absence is a value: `?flag=` (empty) ≠ no `?flag` at all ──────────
@@ -329,11 +332,9 @@ describe("descendant fold: a nested hooks-only spec's read change un-skips the w
 
     // Same cookie + cached wrapper fp → the wrapper (whose fold re-reads
     // the child's deps) matches and skips: neither body is emitted.
-    const skipped = await flightAt(
-      `${url}?cached=atv-fold-wrapper:${ROOT_MK}:${wrapperFp}`,
-      tree,
-      { cookie: "pref=a" },
-    )
+    const skipped = await flightAt(`${url}?cached=atv-fold-wrapper:${ROOT_MK}:${wrapperFp}`, tree, {
+      cookie: "pref=a",
+    })
     expect(skipped).not.toContain("fold-wrapper-body")
     expect(skipped).not.toContain("fold-child-body")
 
@@ -341,11 +342,9 @@ describe("descendant fold: a nested hooks-only spec's read change un-skips the w
     // re-reads the child's recorded deps at the current request — the
     // wrapper's fp moves, the skip is declined, and the child re-renders
     // with the new value.
-    const fresh = await flightAt(
-      `${url}?cached=atv-fold-wrapper:${ROOT_MK}:${wrapperFp}`,
-      tree,
-      { cookie: "pref=b" },
-    )
+    const fresh = await flightAt(`${url}?cached=atv-fold-wrapper:${ROOT_MK}:${wrapperFp}`, tree, {
+      cookie: "pref=b",
+    })
     expect(fresh).toContain("fold-wrapper-body")
     expect(fresh).toContain("fold-child-body:b")
   })

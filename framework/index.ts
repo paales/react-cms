@@ -36,20 +36,12 @@ export * from "./src/lib/index.ts"
 export { TRANSPORT_PARAMS } from "./src/lib/match.ts"
 export type { MatchInit, MatchPattern, FieldTest, ValueTest } from "./src/lib/match.ts"
 
-export {
-  NotFoundError,
-  RedirectError,
-  notFound,
-  redirect,
-} from "./src/runtime/errors.ts"
+export { NotFoundError, RedirectError, notFound, redirect } from "./src/runtime/errors.ts"
 
 export { Redirect } from "./src/runtime/redirect-client.tsx"
 
 // ── Navigation error surface ────────────────────────────────────────────
-export {
-  NavigationError,
-  type NavigationErrorKind,
-} from "./src/runtime/navigation-error.ts"
+export { NavigationError, type NavigationErrorKind } from "./src/runtime/navigation-error.ts"
 
 // ── Framework runtime — request context (server) ────────────────────────
 //
@@ -77,10 +69,7 @@ export { getNavigation } from "./src/runtime/navigation-api.ts"
 // ── Server-side navigation handle ───────────────────────────────────────
 // Symmetric to client `getNavigation()`. Reads/writes the invalidation
 // registry; use in server actions and external server-side tasks.
-export {
-  getServerNavigation,
-  type ServerNavigation,
-} from "./src/runtime/server-navigation.ts"
+export { getServerNavigation, type ServerNavigation } from "./src/runtime/server-navigation.ts"
 
 // ── Invalidation registry ──────────────────────────────────────────────
 export {
@@ -135,10 +124,7 @@ export {
 } from "./src/runtime/cms-runtime.ts"
 
 // ── CMS prerender (build-time catalog) ──────────────────────────────────
-export {
-  getCatalogManifest,
-  type BlockManifest,
-} from "./src/runtime/cms-prerender.ts"
+export { getCatalogManifest, type BlockManifest } from "./src/runtime/cms-prerender.ts"
 
 // ── Partial registry — read-only snapshot lookups for the editor ───────
 export { getRouteSnapshots } from "./src/lib/partial-registry.ts"
@@ -152,11 +138,7 @@ export {
 } from "./src/runtime/session.ts"
 
 // ── Capability scoping (RemoteFrame) ───────────────────────────────────
-export {
-  getCapability,
-  type Capability,
-  type CapabilityValue,
-} from "./src/runtime/capability.ts"
+export { getCapability, type Capability, type CapabilityValue } from "./src/runtime/capability.ts"
 
 // ── Remote endpoint dispatch (host side of <RemoteFrame>) ──────────────
 export {

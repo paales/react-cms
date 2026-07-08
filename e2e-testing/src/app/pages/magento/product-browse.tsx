@@ -34,9 +34,7 @@ import { GridSkeleton } from "./grid-skeleton.tsx"
 import { magentoProductsCell } from "./products-cell.ts"
 
 type ProductsValue = NonNullable<CellValue<typeof magentoProductsCell>>
-type ProductItem = NonNullable<
-  NonNullable<NonNullable<ProductsValue["products"]>["items"]>[number]
->
+type ProductItem = NonNullable<NonNullable<NonNullable<ProductsValue["products"]>["items"]>[number]>
 
 /** Fixed pixel height of every page section — reserves space so a culled
  *  (skeleton) page holds exactly the room its products will need. */
@@ -50,10 +48,7 @@ function BrowseProductCard({ product }: { product: ProductItem }) {
   const { name, sku, id } = product
 
   return (
-    <Card
-      className="h-full overflow-hidden p-4"
-      data-testid={`browse-card-${sku ?? id}`}
-    >
+    <Card className="h-full overflow-hidden p-4" data-testid={`browse-card-${sku ?? id}`}>
       <CardContent className="flex h-full flex-col gap-1 px-0">
         {product.small_image?.url && (
           <img
@@ -66,9 +61,7 @@ function BrowseProductCard({ product }: { product: ProductItem }) {
         <h3 className="mt-1 line-clamp-2 text-sm">{name}</h3>
         <span className="mt-auto font-semibold tabular-nums">
           {product.price_range.minimum_price.regular_price.currency}{" "}
-          {(product.price_range.minimum_price.regular_price.value || 0).toFixed(
-            2,
-          )}
+          {(product.price_range.minimum_price.regular_price.value || 0).toFixed(2)}
         </span>
       </CardContent>
     </Card>
@@ -125,8 +118,7 @@ const BrowsePage = parton(
       // anchor so the first paint fills the right neighborhood; the
       // live set refines it. The `searchParam` read records as a dep,
       // so a moved anchor re-resolves the gate.
-      seed: ({ page }) =>
-        Math.abs(page - (Number(searchParam("page")) || 1)) <= COLD_RING,
+      seed: ({ page }) => Math.abs(page - (Number(searchParam("page")) || 1)) <= COLD_RING,
       skeleton: GridSkeleton,
     },
   },
@@ -150,9 +142,7 @@ function BrowseList({ totalPages }: { totalPages: number }) {
           style={{ height: PAGE_H }}
           className="flex flex-col overflow-hidden"
         >
-          <h2 className="h-6 text-xs font-medium text-muted-foreground">
-            Page {p}
-          </h2>
+          <h2 className="h-6 text-xs font-medium text-muted-foreground">Page {p}</h2>
           <BrowsePage page={p} />
         </section>
       ))}
@@ -176,9 +166,8 @@ export const ProductBrowsePage = parton(
         <header className="mb-4">
           <h1 className="text-2xl font-semibold">Browse Products</h1>
           <p className="text-muted-foreground">
-            Spec-level view culling over the whole catalog ({totalPages} pages)
-            — only pages in view fetch; the rest are reserved space.{" "}
-            <code>?page=</code> seeds the first paint.
+            Spec-level view culling over the whole catalog ({totalPages} pages) — only pages in view
+            fetch; the rest are reserved space. <code>?page=</code> seeds the first paint.
           </p>
         </header>
         <BrowseList totalPages={totalPages} />

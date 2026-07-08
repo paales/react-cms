@@ -30,16 +30,9 @@ import { promises as fs } from "node:fs"
 import type { ReactNode } from "react"
 import { ROOT } from "../lib/partial.tsx"
 import { getSpecById, listSpecs } from "../lib/spec-catalog.ts"
-import {
-  enterRequestRegistry,
-  getActiveRegistry,
-} from "../lib/partial-registry.ts"
+import { enterRequestRegistry, getActiveRegistry } from "../lib/partial-registry.ts"
 import { wrapStreamWithSnapshotTrailer } from "../lib/snapshot-trailer.ts"
-import {
-  CAPABILITY_HEADER,
-  decodeCapability,
-  runWithCapability,
-} from "./capability.ts"
+import { CAPABILITY_HEADER, decodeCapability, runWithCapability } from "./capability.ts"
 import { runWithRequestAsync } from "./context.ts"
 
 export interface RemoteHandlerOptions {
@@ -154,16 +147,13 @@ export function createRemoteHandler(
           },
         })
       } catch (err) {
-        return new Response(
-          `// failed to read ${opts.typesPath}: ${(err as Error).message}\n`,
-          {
-            status: 500,
-            headers: {
-              "content-type": "text/plain;charset=utf-8",
-              ...CORS_HEADERS,
-            },
+        return new Response(`// failed to read ${opts.typesPath}: ${(err as Error).message}\n`, {
+          status: 500,
+          headers: {
+            "content-type": "text/plain;charset=utf-8",
+            ...CORS_HEADERS,
           },
-        )
+        })
       }
     }
 

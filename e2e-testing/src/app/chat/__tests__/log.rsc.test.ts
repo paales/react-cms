@@ -49,9 +49,7 @@ describe("chat log — markdown path resolution", () => {
     // levels up from `log.ts` and lands on the repo `docs/`.
     process.chdir(WORKSPACE_ROOT)
     const { waitForNextChunk, readLogState, _clearLogs } = await import("../log.ts")
-    const { runWithRequestAsync } = await import(
-      "@parton/framework/runtime/context.ts"
-    )
+    const { runWithRequestAsync } = await import("@parton/framework/runtime/context.ts")
     try {
       await runWithRequestAsync(new Request("http://t/"), async () => {
         // Trigger the lazy producer via a state read, then wait for
@@ -75,9 +73,7 @@ describe("chat log — markdown path resolution", () => {
     process.chdir(REPO_ROOT)
     process.env.DOCS_DIR = path.resolve(REPO_ROOT, "docs")
     const { waitForNextChunk, readLogState, _clearLogs } = await import("../log.ts")
-    const { runWithRequestAsync } = await import(
-      "@parton/framework/runtime/context.ts"
-    )
+    const { runWithRequestAsync } = await import("@parton/framework/runtime/context.ts")
     try {
       await runWithRequestAsync(new Request("http://t/"), async () => {
         readLogState("AA_CHAT_STREAMING")

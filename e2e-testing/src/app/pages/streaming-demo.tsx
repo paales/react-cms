@@ -124,9 +124,9 @@ export const StreamingDemoPage = parton(
           </CardHeader>
           <CardContent className="px-0">
             <p className="mb-2 text-xs text-muted-foreground">
-              The body declares <code>expires(time().nextSecond)</code>. The framework's
-              heartbeat holds the page's RSC connection open; the segment driver wakes at each
-              second boundary and re-renders, shipping the next tick as a new lane.
+              The body declares <code>expires(time().nextSecond)</code>. The framework's heartbeat
+              holds the page's RSC connection open; the segment driver wakes at each second boundary
+              and re-renders, shipping the next tick as a new lane.
             </p>
             <LiveTick />
           </CardContent>

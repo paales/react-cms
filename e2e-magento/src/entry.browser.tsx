@@ -1,3 +1,3 @@
-import { bootBrowser } from "@parton/framework/entry/browser.tsx";
+import { bootBrowser } from "@parton/framework/entry/browser.tsx"
 
-bootBrowser();
+bootBrowser()

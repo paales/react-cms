@@ -7,13 +7,7 @@
  *  - `RedirectDemoPage` — calls `redirect()` on /redirect-demo
  */
 
-import {
-  parton,
-  Redirect,
-  notFound,
-  setFrameworkControl,
-  type RenderArgs,
-} from "@parton/framework"
+import { parton, Redirect, notFound, setFrameworkControl, type RenderArgs } from "@parton/framework"
 import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/components/ui/card"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { buttonVariants } from "@parton/copies/components/ui/button"

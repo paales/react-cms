@@ -105,11 +105,7 @@ describe("cull-to-park: the culled emission is the pair, not a body", () => {
     // A flip-in revalidation's verdict: matching manifest fp under a
     // measured set → placeholder, zero body bytes, the confirm marker
     // (re-arms the restored fiber).
-    const skip = await flightAt(
-      `http://t/x?cached=${ID}:${base}:${fpIn}`,
-      tree,
-      [ID],
-    )
+    const skip = await flightAt(`http://t/x?cached=${ID}:${base}:${fpIn}`, tree, [ID])
     expect(skip).not.toContain("data-full")
     expect(skip).toContain(`"data-partial-id":"${ID}","data-partial-match":"${base}"`)
     expect(skip).toContain('"data-partial-confirm":true')

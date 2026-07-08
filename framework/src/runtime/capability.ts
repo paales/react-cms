@@ -74,8 +74,8 @@ export function decodeCapability(value: string | null | undefined): Capability {
     if (typeof Buffer !== "undefined") {
       json = Buffer.from(value, "base64url").toString("utf-8")
     } else {
-      const padded = value.replace(/-/g, "+").replace(/_/g, "/") +
-        "=".repeat((4 - (value.length % 4)) % 4)
+      const padded =
+        value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4)
       const bin = atob(padded)
       const bytes = new Uint8Array(bin.length)
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)

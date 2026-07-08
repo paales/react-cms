@@ -18,10 +18,7 @@ import { parton, PartialRoot, type RenderArgs } from "../partial.tsx"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { clearRegistry } from "../partial-registry.ts"
 import { tag } from "../current-parton.ts"
-import {
-  refreshSelector,
-  _clearInvalidationRegistry,
-} from "../../runtime/invalidation-registry.ts"
+import { refreshSelector, _clearInvalidationRegistry } from "../../runtime/invalidation-registry.ts"
 
 function fpById(flight: string): Map<string, string> {
   const out = new Map<string, string>()

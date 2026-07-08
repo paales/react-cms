@@ -373,10 +373,7 @@ export const PokemonOverviewPage = parton(
           const page = i + 1
           const offset = (page - 1) * 24
           return (
-            <P
-              key={`list-page-${page}`}
-              results={pokemonListCell.with({ limit: 24, offset })}
-            />
+            <P key={`list-page-${page}`} results={pokemonListCell.with({ limit: 24, offset })} />
           )
         })}
         <LoadMorePartial />

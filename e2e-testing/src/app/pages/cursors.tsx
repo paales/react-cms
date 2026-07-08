@@ -30,10 +30,9 @@ export const CursorsPage = parton(
         <title>Multiplayer cursors</title>
         <h1 className="text-2xl font-semibold">Multiplayer cursors</h1>
         <p className="text-sm text-muted-foreground">
-          Each viewer's pointer is a <code>deferred</code> cell write — it
-          goes up on a one-shot POST that carries no re-render, and comes
-          back down to every other viewer over the open heartbeat stream.
-          Open this page in a second tab to see it.
+          Each viewer's pointer is a <code>deferred</code> cell write — it goes up on a one-shot
+          POST that carries no re-render, and comes back down to every other viewer over the open
+          heartbeat stream. Open this page in a second tab to see it.
         </p>
         <CursorPresence />
       </main>

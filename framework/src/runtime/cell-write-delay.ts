@@ -14,9 +14,7 @@
 
 let _writeDelaySimulator: (() => number | void) | null = null
 
-export function _setCellWriteDelaySimulator(
-  fn: (() => number | void) | null,
-): void {
+export function _setCellWriteDelaySimulator(fn: (() => number | void) | null): void {
   _writeDelaySimulator = fn
 }
 

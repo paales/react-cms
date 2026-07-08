@@ -8,12 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { parton, type RenderArgs } from "../partial.tsx"
-import {
-  getCellById,
-  localCell,
-  _clearCellRegistry,
-  type ResolvedCell,
-} from "../cell.ts"
+import { getCellById, localCell, _clearCellRegistry, type ResolvedCell } from "../cell.ts"
 import { runWithRequestAsync } from "../../runtime/context.ts"
 import { searchParam } from "../server-hooks.ts"
 import { clearRegistry } from "../partial-registry.ts"
@@ -25,9 +20,7 @@ import {
   _resetCellStorage,
   getCellStorage,
 } from "../../runtime/cell-storage.ts"
-import {
-  _clearInvalidationRegistry,
-} from "../../runtime/invalidation-registry.ts"
+import { _clearInvalidationRegistry } from "../../runtime/invalidation-registry.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 
 async function flightAt(
@@ -204,16 +197,14 @@ describe("scoped cell — in-body resolution in a parton", () => {
     // No-arg peek resolves the `{}` partition — the slot a
     // partition-less inline cell resolves against. Nothing stored yet
     // (a resolve miss without a loader doesn't write storage).
-    const { result: coldPeek } = await runWithRequestAsync(
-      new Request("http://t/x"),
-      async () => handle!.peek(),
+    const { result: coldPeek } = await runWithRequestAsync(new Request("http://t/x"), async () =>
+      handle!.peek(),
     )
     expect(coldPeek).toBe("(default)")
 
     seedCell("peek-parton/notes", {}, "stored!")
-    const { result: warmPeek } = await runWithRequestAsync(
-      new Request("http://t/x"),
-      async () => handle!.peek(),
+    const { result: warmPeek } = await runWithRequestAsync(new Request("http://t/x"), async () =>
+      handle!.peek(),
     )
     expect(warmPeek).toBe("stored!")
   })
@@ -262,9 +253,8 @@ describe("scoped cell — in-body resolution in a parton", () => {
     expect(handle).toBeDefined()
 
     seedCell("peek-invalid/count", {}, "not a number")
-    const { result } = await runWithRequestAsync(
-      new Request("http://t/x"),
-      async () => handle!.peek(),
+    const { result } = await runWithRequestAsync(new Request("http://t/x"), async () =>
+      handle!.peek(),
     )
     expect(result).toBe(7)
   })

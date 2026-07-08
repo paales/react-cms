@@ -130,7 +130,11 @@ if (prof) {
       }
     }
     console.log(`\n[bench] CPU profile: ${stable}`)
-    console.log("[bench] open in Chrome DevTools (Performance → Load profile) or `npx speedscope " + stable + "`")
+    console.log(
+      "[bench] open in Chrome DevTools (Performance → Load profile) or `npx speedscope " +
+        stable +
+        "`",
+    )
   } else {
     console.log("[bench] WARNING: no .cpuprofile produced — check the fork execArgv")
   }

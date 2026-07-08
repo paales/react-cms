@@ -123,9 +123,7 @@ describe("settle-time trailer emission", () => {
     expect(result.bodyText).not.toContain("ÿ")
     // Cumulative last-wins: the resolved trailer carries the fast
     // parton's drift entry ({from,to} object shape).
-    const entry = result.trailer?.["settle-fast"] as
-      | { from: string; to: string }
-      | undefined
+    const entry = result.trailer?.["settle-fast"] as { from: string; to: string } | undefined
     expect(entry?.from).toBeDefined()
     expect(entry?.to).toBeDefined()
     expect(entry?.to).not.toBe(entry?.from)

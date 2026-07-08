@@ -17,11 +17,7 @@ import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"
 import { WhenVisible } from "../components/when-visible.tsx"
 import { HeaderPartial, SearchAreaPage, SearchAreaFrame, extractSprite } from "./pokemon.tsx"
-import {
-  pokemonHeroCell,
-  pokemonStatsCell,
-  pokemonSpeciesCell,
-} from "./pokemon-cells.ts"
+import { pokemonHeroCell, pokemonStatsCell, pokemonSpeciesCell } from "./pokemon-cells.ts"
 
 // Derive each result type from the cell's value type. A cell's `load`
 // is optional on `CellInterface<T>` (localCell / fragmentCell have none), so

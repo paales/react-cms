@@ -138,8 +138,7 @@ describe("wake hooks — expires()/staleUntil()/time()", () => {
 
         // No bump fired — the 80ms hook boundary alone must wake a lane.
         const second = await h.segments.next()
-        if (second.done || second.value.kind !== "lanes")
-          throw new Error("expected lanes segment")
+        if (second.done || second.value.kind !== "lanes") throw new Error("expected lanes segment")
         const laneIter = second.value.lanes[Symbol.asyncIterator]()
         const lane = (await laneIter.next()).value as DemuxedLane
         expect(lane.partonId).toBe("wake-clock")

@@ -84,12 +84,7 @@ export interface CellPartitionScope {
 export type CellArgs = Record<string, unknown>
 
 /** Shape declaration accepted by `localCell({shape: ...})`. */
-export type CellShapeSpec =
-  | "string"
-  | "number"
-  | "boolean"
-  | "opaque"
-  | { enum: readonly string[] }
+export type CellShapeSpec = "string" | "number" | "boolean" | "opaque" | { enum: readonly string[] }
 
 /** Runtime shape descriptor stored on the handle — drives validation.
  *  `opaque` accepts any value (used for object/list-shaped cells where
@@ -103,13 +98,17 @@ export type CellShape =
 
 /** Map a `CellShapeSpec` to its runtime value type. `opaque` is unknown
  *  on inference; authors supply an explicit type parameter. */
-export type ValueOfShape<S> =
-  S extends "string" ? string :
-  S extends "number" ? number :
-  S extends "boolean" ? boolean :
-  S extends "opaque" ? unknown :
-  S extends { enum: readonly (infer V)[] } ? V :
-  never
+export type ValueOfShape<S> = S extends "string"
+  ? string
+  : S extends "number"
+    ? number
+    : S extends "boolean"
+      ? boolean
+      : S extends "opaque"
+        ? unknown
+        : S extends { enum: readonly (infer V)[] }
+          ? V
+          : never
 
 /**
  * Module-scope cell handle. Constructed via `localCell({...})` or
@@ -287,8 +286,12 @@ export function getCellById(id: string): CellInterface<unknown> | undefined {
 }
 
 /** Type predicate — works on module handles and resolved cells. */
-export function isCellHandle(value: unknown): value is CellInterface<unknown> | ResolvedCell<unknown> {
-  return typeof value === "object" && value !== null && (value as { __cell?: boolean }).__cell === true
+export function isCellHandle(
+  value: unknown,
+): value is CellInterface<unknown> | ResolvedCell<unknown> {
+  return (
+    typeof value === "object" && value !== null && (value as { __cell?: boolean }).__cell === true
+  )
 }
 
 export function isModuleCell(value: unknown): value is CellInterface<unknown> {
@@ -304,7 +307,10 @@ export function isBoundCell(value: unknown): value is BoundCell<unknown> {
 }
 
 /** Compute the partition key for a cell against a request scope. */
-export function computeCellPartitionKey(cell: CellInterface<unknown>, scope: CellPartitionScope): string {
+export function computeCellPartitionKey(
+  cell: CellInterface<unknown>,
+  scope: CellPartitionScope,
+): string {
   const out = cell.partition(scope)
   return hash(stableStringify(out))
 }
@@ -400,8 +406,7 @@ interface CellTxWrite {
  *  a throw discards the buffer with the pending invalidations. */
 const cellTxStorage = new AsyncLocalStorage<Map<string, CellTxWrite>>()
 
-const txKey = (scope: string, cellId: string, pk: string): string =>
-  `${scope}|${cellId}|${pk}`
+const txKey = (scope: string, cellId: string, pk: string): string => `${scope}|${cellId}|${pk}`
 
 /** Wrap a storage adapter in the active transaction's overlay (identity
  *  outside a transaction). */
@@ -473,41 +478,39 @@ function shapeFromSpec(spec: CellShapeSpec): CellShape {
 function makeValidator<T>(id: string, shape: CellShape): (v: unknown) => T {
   switch (shape.kind) {
     case "string":
-      return ((v: unknown): T => {
+      return (v: unknown): T => {
         if (typeof v !== "string") {
           throw new TypeError(`cell ${id}: expected string, got ${typeof v}`)
         }
         return v as T
-      })
+      }
     case "number":
-      return ((v: unknown): T => {
+      return (v: unknown): T => {
         if (typeof v !== "number" || Number.isNaN(v)) {
           throw new TypeError(`cell ${id}: expected number, got ${typeof v}`)
         }
         return v as T
-      })
+      }
     case "boolean":
-      return ((v: unknown): T => {
+      return (v: unknown): T => {
         if (typeof v !== "boolean") {
           throw new TypeError(`cell ${id}: expected boolean, got ${typeof v}`)
         }
         return v as T
-      })
+      }
     case "opaque":
       // No runtime validation for opaque cells — author owns the TS
       // type, framework treats the value as a black box.
-      return ((v: unknown): T => v as T)
+      return (v: unknown): T => v as T
     case "enum": {
       const allowed: ReadonlySet<string> = new Set(shape.values)
       const values = shape.values
-      return ((v: unknown): T => {
+      return (v: unknown): T => {
         if (typeof v !== "string" || !allowed.has(v)) {
-          throw new TypeError(
-            `cell ${id}: expected one of ${values.join(", ")}, got ${String(v)}`,
-          )
+          throw new TypeError(`cell ${id}: expected one of ${values.join(", ")}, got ${String(v)}`)
         }
         return v as T
-      })
+      }
     }
   }
 }
@@ -599,10 +602,7 @@ function buildCellPartitionScopeFromRequest(): CellPartitionScope {
  * Reads are sync when storage is warm (the common case after first
  * hydration). The cold-start path is the only async branch.
  */
-export async function resolveCellValue<T>(
-  cell: CellInterface<T>,
-  args: CellArgs,
-): Promise<T> {
+export async function resolveCellValue<T>(cell: CellInterface<T>, args: CellArgs): Promise<T> {
   const partitionKey = hash(stableStringify(args))
   const storage = cellStorageForArgs(cell as CellInterface<unknown>, args)
   const stored = storage.read(getScope(), cell.id, partitionKey)
@@ -653,7 +653,12 @@ function buildBoundCell<T>(cell: CellInterface<T>, args: CellArgs): BoundCell<T>
       // Then fire the partition-scoped signal so connected viewers
       // re-resolve (and hit the loader since storage is now empty).
       const partitionKey = hash(stableStringify(args))
-      cellStorageForArgs(cell as CellInterface<unknown>, args).write(getScope(), cellId, partitionKey, undefined)
+      cellStorageForArgs(cell as CellInterface<unknown>, args).write(
+        getScope(),
+        cellId,
+        partitionKey,
+        undefined,
+      )
       const { __cellInvalidate } = await import("../runtime/cell-actions.ts")
       await __cellInvalidate(cellId, args)
     },
@@ -661,7 +666,12 @@ function buildBoundCell<T>(cell: CellInterface<T>, args: CellArgs): BoundCell<T>
       const partitionKey = hash(stableStringify(args))
       const validated = cell.validate(value)
       const stored = cell.write ? cell.write(validated) : validated
-      cellStorageForArgs(cell as CellInterface<unknown>, args).write(getScope(), cellId, partitionKey, stored)
+      cellStorageForArgs(cell as CellInterface<unknown>, args).write(
+        getScope(),
+        cellId,
+        partitionKey,
+        stored,
+      )
     },
   }
 }
@@ -819,8 +829,7 @@ async function resolveInlineLocalCell<S extends CellShapeSpec, T = ValueOfShape<
     validate: makeValidator<T>(id, shape),
   }
   const handle =
-    (getCellById(id) as CellInterface<T> | undefined) ??
-    finalizeScopedCell(descriptor, cp.id, key)
+    (getCellById(id) as CellInterface<T> | undefined) ?? finalizeScopedCell(descriptor, cp.id, key)
   const value = await resolveCellValue(handle, partition)
   // Fold the cell's invalidation into the fp via the dep-record: the
   // `cell:` branch in evalDepKeys re-reads its timestamp (store-and-
@@ -952,9 +961,7 @@ export interface ScopedCellDescriptor<T> {
   readonly validate: (value: unknown) => T
 }
 
-export function isScopedCellDescriptor(
-  value: unknown,
-): value is ScopedCellDescriptor<unknown> {
+export function isScopedCellDescriptor(value: unknown): value is ScopedCellDescriptor<unknown> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -997,4 +1004,3 @@ export function finalizeScopedCell<T>(
   cellRegistry.set(id, handle as CellInterface<unknown>)
   return handle
 }
-

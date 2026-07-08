@@ -53,11 +53,7 @@ import {
   getPartialState,
   type PartialRequestState,
 } from "./partial-request-state.ts"
-import {
-  getSpecById,
-  registerSpec,
-  type SpecComponentProps,
-} from "./spec-catalog.ts"
+import { getSpecById, registerSpec, type SpecComponentProps } from "./spec-catalog.ts"
 import {
   _getAttachStatement,
   _getCachedOverride,
@@ -1164,11 +1160,7 @@ interface PairEmit {
  * the content subtree parks instead of unmounting, and a cull-out never
  * needs server bytes.
  */
-function cullPairOf(
-  id: string,
-  pair: PairEmit,
-  contentChild: ReactNode | null,
-): ReactNode {
+function cullPairOf(id: string, pair: PairEmit, contentChild: ReactNode | null): ReactNode {
   return (
     <CullPair id={id} culled={pair.culled} obs={pair.rootMargin} skel={pair.skel}>
       {contentChild}
@@ -1193,10 +1185,7 @@ function cullPropsOf(
 }
 
 // erased-generic call surface — V is unknowable here
-function buildSkeletonElement(
-  cull: CullConfig<any>,
-  props: Record<string, unknown>,
-): ReactElement {
+function buildSkeletonElement(cull: CullConfig<any>, props: Record<string, unknown>): ReactElement {
   const Skeleton = cull.skeleton as ComponentType<Record<string, unknown>>
   return <Skeleton {...props} />
 }
@@ -1821,8 +1810,7 @@ function createSpecComponent<V>(
     // is a fixed point — reads are conditioned only on tracked inputs,
     // so nothing can make a future render start reading). Otherwise
     // decline and render: the cold path over-fetches, never staleness.
-    const coldRecordMissing =
-      priorSnap == null && committedDepsEvidence(id) !== "depless"
+    const coldRecordMissing = priorSnap == null && committedDepsEvidence(id) !== "depless"
     // TTL gate: a snapshot past its declared freshness boundary
     // (the `expires()` hook) must not be served from
     // the client's cache even when the fp matches — the boundary IS the
@@ -2077,10 +2065,7 @@ function createSpecComponent<V>(
       if ((err as { __framework?: string }).__framework) throw err
       const message = err instanceof Error ? err.message : String(err)
       return (
-        <PartialErrorCard
-          partialId={spec.id}
-          message={import.meta.env.DEV ? message : undefined}
-        />
+        <PartialErrorCard partialId={spec.id} message={import.meta.env.DEV ? message : undefined} />
       )
     }
   }
@@ -2376,8 +2361,7 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   // this connection's holdings and adopts them as the pre-installed
   // override (`_adoptConnectionForAction`), taken by the `existingOverride`
   // branch below before this param is ever consulted.
-  const cachedParam =
-    _getAttachStatement()?.cached ?? requestUrl.searchParams.get("cached")
+  const cachedParam = _getAttachStatement()?.cached ?? requestUrl.searchParams.get("cached")
 
   // Document-level frame params: a degraded page's frame navigation
   // and the CMS editor's preview iframe carry the frame move as

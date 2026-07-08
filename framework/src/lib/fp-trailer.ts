@@ -39,11 +39,7 @@ import {
   getRequest,
   getScope,
 } from "../runtime/context.ts"
-import {
-  _currentTs,
-  _registryEpoch,
-  queryMatchingTs,
-} from "../runtime/invalidation-registry.ts"
+import { _currentTs, _registryEpoch, queryMatchingTs } from "../runtime/invalidation-registry.ts"
 import { getSessionFrameUrl } from "../runtime/session.ts"
 import {
   buildMarker,
@@ -213,13 +209,9 @@ function recomputeFpWithFold(
   depsKey: string,
 ): string {
   const ambientFrameKey =
-    snap.framePath.length > 0
-      ? `|inFrame=${snap.framePath.join(".")}:${frameRequestUrl}`
-      : ""
+    snap.framePath.length > 0 ? `|inFrame=${snap.framePath.join(".")}:${frameRequestUrl}` : ""
   const propsKey =
-    snap.props && Object.keys(snap.props).length > 0
-      ? `|props=${stableStringify(snap.props)}`
-      : ""
+    snap.props && Object.keys(snap.props).length > 0 ? `|props=${stableStringify(snap.props)}` : ""
   const varyKey = snap.varyKey ?? ""
   // Mirror `partial.tsx`'s formula — fold matchKey in so content-
   // independent specs still produce distinct fps across variants of
@@ -448,9 +440,7 @@ export function wrapStreamWithFpTrailer(
   const emitted: FpUpdatesPayload = {}
   const incremental = opts?.incremental !== false && request !== null
 
-  const emitDelta = (
-    controller: TransformStreamDefaultController<Uint8Array>,
-  ): void => {
+  const emitDelta = (controller: TransformStreamDefaultController<Uint8Array>): void => {
     const delta: FpUpdatesPayload = {}
     for (const [id, entry] of Object.entries(cumulative)) {
       const sent = emitted[id]
@@ -556,7 +546,9 @@ function emitTrailer(
  *  header carries the body length so the splitter can read the exact
  *  byte count. JSON bodies use UTF-8 encoding. */
 export function emitTrailerEntry(
-  controller: TransformStreamDefaultController<Uint8Array> | ReadableStreamDefaultController<Uint8Array>,
+  controller:
+    | TransformStreamDefaultController<Uint8Array>
+    | ReadableStreamDefaultController<Uint8Array>,
   tag: string,
   body: string | Uint8Array,
 ): void {
@@ -579,7 +571,9 @@ export function emitNextSegmentDelimiter(
  *  The client bootstrap (`../entry/browser.tsx`) applies the push
  *  before committing the segment's setPayload. */
 export function emitUrlUpdate(
-  controller: TransformStreamDefaultController<Uint8Array> | ReadableStreamDefaultController<Uint8Array>,
+  controller:
+    | TransformStreamDefaultController<Uint8Array>
+    | ReadableStreamDefaultController<Uint8Array>,
   update: { window?: string; frames?: Record<string, string>; history?: "push" | "replace" },
 ): void {
   emitTrailerEntry(controller, TAG_URL_UPDATE, JSON.stringify(update))

@@ -143,10 +143,7 @@ function parseChunkJSON(part: string): GraphQLChunk | null {
 }
 
 /** Merge incremental patches into the base data object in place. */
-export function mergeIncremental(
-  base: Record<string, unknown>,
-  patches: IncrementalPatch[],
-): void {
+export function mergeIncremental(base: Record<string, unknown>, patches: IncrementalPatch[]): void {
   for (const patch of patches) {
     let target: unknown = base
     for (const segment of patch.path) {

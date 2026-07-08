@@ -35,21 +35,14 @@ import { PartialErrorBoundary } from "../partial-error-boundary.tsx"
 
 function fresh(id: string, mk: string, fp: string, q: string): ReactNode {
   return (
-    <PartialErrorBoundary
-      key={id}
-      partialId={id}
-      partialFingerprint={fp}
-      partialMatchKey={mk}
-    >
+    <PartialErrorBoundary key={id} partialId={id} partialFingerprint={fp} partialMatchKey={mk}>
       <div data-testid={id} data-q={q} data-fp={fp} />
     </PartialErrorBoundary>
   )
 }
 
 function placeholder(id: string, mk: string): ReactNode {
-  return (
-    <i key={`${id}|${mk}`} hidden data-partial data-partial-id={id} data-partial-match={mk} />
-  )
+  return <i key={`${id}|${mk}`} hidden data-partial data-partial-id={id} data-partial-match={mk} />
 }
 
 /** Render a tree through PartialsClient and return the HTML string. */
@@ -164,9 +157,7 @@ describe("fp-set / slot desync on a stable (id, matchKey)", () => {
 
     const advertised = getCachedPartialIds()
     expect(advertised).toContain(`${id}:mkA:a_warm`)
-    expect(advertised, "warm fp leaked onto the latest matchKey").not.toContain(
-      `${id}:mkB:a_warm`,
-    )
+    expect(advertised, "warm fp leaked onto the latest matchKey").not.toContain(`${id}:mkB:a_warm`)
   })
 
   it("an in-order warm-fp trailer still aliases (cold→warm fp-skip preserved)", () => {

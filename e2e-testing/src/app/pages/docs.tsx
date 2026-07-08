@@ -106,10 +106,10 @@ async function DirIndex({ rel }: { rel: string }) {
     <section>
       {rel === "" ? (
         <p className="mb-5 max-w-prose text-sm text-muted-foreground">
-          Everything under <code className="rounded bg-muted px-1.5 py-0.5">docs/</code> —
-          framework reference, internals, active research notes, and the archive. Pick a file
-          from the tree on the left, or browse the sections below. Markdown renders inline; code
-          and config files show with syntax highlighting.
+          Everything under <code className="rounded bg-muted px-1.5 py-0.5">docs/</code> — framework
+          reference, internals, active research notes, and the archive. Pick a file from the tree on
+          the left, or browse the sections below. Markdown renders inline; code and config files
+          show with syntax highlighting.
         </p>
       ) : null}
       <DirList nodes={tree} />
@@ -165,7 +165,9 @@ async function FileView({ resolved }: { resolved: ResolvedDoc }) {
   // a file that itself contains ``` can't break out of the block.
   const fence = "`".repeat(Math.max(3, longestBacktickRun(content) + 1))
   return (
-    <Markdown baseUrl={baseUrl}>{`${fence}${codeLang(resolved.ext)}\n${content}\n${fence}`}</Markdown>
+    <Markdown
+      baseUrl={baseUrl}
+    >{`${fence}${codeLang(resolved.ext)}\n${content}\n${fence}`}</Markdown>
   )
 }
 
@@ -202,11 +204,7 @@ async function DocsRender({ filepath }: { filepath?: string } & RenderArgs) {
         </aside>
         <div data-testid="docs-content" className="min-w-0 flex-1">
           <Breadcrumb rel={resolved.rel} />
-          {stats.isDirectory() ? (
-            <DirIndex rel={resolved.rel} />
-          ) : (
-            <FileView resolved={resolved} />
-          )}
+          {stats.isDirectory() ? <DirIndex rel={resolved.rel} /> : <FileView resolved={resolved} />}
         </div>
       </div>
     </main>

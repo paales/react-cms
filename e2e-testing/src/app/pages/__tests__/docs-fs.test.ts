@@ -106,9 +106,7 @@ describe("serveDocAsset", () => {
   it("falls through (null) for non-image and non-docs requests", async () => {
     expect(await serveDocAsset(new Request("http://x/docs/reference/intro.md"))).toBeNull()
     expect(await serveDocAsset(new Request("http://x/pokemon/1"))).toBeNull()
-    expect(
-      await serveDocAsset(new Request("http://x/docs/x.png", { method: "POST" })),
-    ).toBeNull()
+    expect(await serveDocAsset(new Request("http://x/docs/x.png", { method: "POST" }))).toBeNull()
   })
 
   it("can't be made to traverse — the URL layer normalizes `..` away", async () => {

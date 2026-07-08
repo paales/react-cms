@@ -270,10 +270,7 @@ describe("parton — two-step builder", () => {
       )
     }
     const Page = Builder(BuilderVaryRender)
-    const out = await flightAt(
-      "http://t/builder/foo?variant=mint",
-      <Page />,
-    )
+    const out = await flightAt("http://t/builder/foo?variant=mint", <Page />)
     expect(out).toContain('"foo",":","mint"')
   })
 })
@@ -281,10 +278,7 @@ describe("parton — two-step builder", () => {
 describe("parton — match grammar inference", () => {
   it("optional `:foo?` flows through as optional prop", async () => {
     const Page = parton(
-      function OptionalParamRender({
-        slug,
-        page,
-      }: { slug: string; page?: string } & RenderArgs) {
+      function OptionalParamRender({ slug, page }: { slug: string; page?: string } & RenderArgs) {
         return (
           <span data-testid="opt-out">
             {slug}/{page ?? "none"}
@@ -437,12 +431,8 @@ describe("multi-variant pool", () => {
     const mk = hash(stableStringify({ id: "1" }))
     const stalefp = "0".repeat(16)
     const flight = await new Response(
-      (
-        await renderWithRequest(
-          `http://t/pokemon/1?cached=no-sibling-test:${mk}:${stalefp}`,
-          tree,
-        )
-      ).stream,
+      (await renderWithRequest(`http://t/pokemon/1?cached=no-sibling-test:${mk}:${stalefp}`, tree))
+        .stream,
     ).text()
     expect(flight).toContain('"id=","1"')
     // No hidden Activity mode in the stream — only the visible one.
@@ -470,9 +460,7 @@ describe("multi-variant pool", () => {
       { selector: "#inherited-match-key-inner" },
     )
     const Outer = parton(
-      function InheritedMatchKeyOuterRender({
-        id,
-      }: { id: string } & RenderArgs) {
+      function InheritedMatchKeyOuterRender({ id }: { id: string } & RenderArgs) {
         return <Inner id={id} />
       },
       { match: "/pokemon/:id", selector: "#inherited-match-key-outer" },
@@ -497,8 +485,7 @@ describe("multi-variant pool", () => {
     // Each render's Flight stream carries `partialMatchKey:"<mk>"`
     // on every PEB wrapper — outer AND inner. Both spec wrappers in
     // a single render share the same matchKey: proof of inheritance.
-    const count = (haystack: string, needle: string) =>
-      haystack.split(needle).length - 1
+    const count = (haystack: string, needle: string) => haystack.split(needle).length - 1
     expect(count(flight1, `partialMatchKey":"${mk1}"`)).toBeGreaterThanOrEqual(2)
     expect(count(flight2, `partialMatchKey":"${mk2}"`)).toBeGreaterThanOrEqual(2)
     // Cross-check: render-1 has no mk2 (and vice versa) — variants

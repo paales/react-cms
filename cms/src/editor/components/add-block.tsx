@@ -33,12 +33,7 @@ function bucketFor(opt: AddBlockOption): string {
   const labels = opt.labels ?? []
   const has = (frag: string) => labels.some((x) => x.includes(frag))
   if (has("group") || has("section") || has("layout") || /^group$/.test(t)) return "Layout"
-  if (
-    has("commerce") ||
-    has("product") ||
-    has("cart") ||
-    /product|cart|collection/.test(t)
-  )
+  if (has("commerce") || has("product") || has("cart") || /product|cart|collection/.test(t))
     return "Commerce"
   if (has("page-block") || has("content") || /text|hero|heading|image|button|rich/.test(t))
     return "Content"
@@ -134,7 +129,13 @@ export function CmsEditAddBlock({
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="cms-tree-add-row"
-        style={{ width: "100%", border: 0, background: "transparent", textAlign: "left", cursor: "pointer" }}
+        style={{
+          width: "100%",
+          border: 0,
+          background: "transparent",
+          textAlign: "left",
+          cursor: "pointer",
+        }}
         data-testid={`cms-edit-slot-add-trigger-${parentId}-${slotName}`}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -206,9 +207,7 @@ export function CmsEditAddBlock({
                               <Icon name={iconForType(opt.type)} size={14} />
                             </span>
                             <span className="cms-blockpicker-item-text">
-                              <span className="name">
-                                {opt.displayName ?? opt.type}
-                              </span>
+                              <span className="name">{opt.displayName ?? opt.type}</span>
                               <span className="desc">{describeType(opt.type)}</span>
                             </span>
                           </button>

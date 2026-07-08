@@ -27,7 +27,6 @@
  * Access the browser's `navigation` global via `getNavigation()`.
  */
 
-
 // ─── Framework state shapes ───────────────────────────────────────
 
 /**
@@ -227,9 +226,7 @@ export interface NavigationMilestones {
 }
 
 /** Reload fire function — returned in the first slot of the tuple. */
-export type Reload = (
-  options?: FrameworkReloadOptions,
-) => NavigationMilestones
+export type Reload = (options?: FrameworkReloadOptions) => NavigationMilestones
 
 /** Navigate fire function — returned in the first slot of the tuple. */
 export type Navigate = (
@@ -370,10 +367,7 @@ export interface ImperativeNavigation extends Omit<
   readonly currentEntry: FrameNavigationHistoryEntry | null
   entries(): FrameNavigationHistoryEntry[]
   readonly name: string | null
-  navigate(
-    target: NavigateTarget,
-    options?: FrameworkNavigateOptions,
-  ): NavigationMilestones
+  navigate(target: NavigateTarget, options?: FrameworkNavigateOptions): NavigationMilestones
   reload(options?: FrameworkReloadOptions): NavigationMilestones
 }
 

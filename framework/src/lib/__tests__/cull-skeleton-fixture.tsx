@@ -1,4 +1,4 @@
-"use client";
+"use client"
 
 /**
  * Skeleton fixtures for the cull-gate rsc tests. A `cull.skeleton` is
@@ -8,5 +8,5 @@
  */
 
 export function SkelBox(_props: object) {
-	return <div data-skel="1" />;
+  return <div data-skel="1" />
 }

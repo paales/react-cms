@@ -47,12 +47,12 @@ export const FormsDemoPage = parton(
         <title>Forms demo — cells + a plain server function</title>
         <h1 className="text-2xl font-semibold">Forms — cells + a plain server function</h1>
         <p className="text-sm text-muted-foreground">
-          Module cells resolved in the parton's <code>Render</code> via{" "}
-          <code>cell.resolve()</code>. <code>notes</code> is bound directly via{" "}
+          Module cells resolved in the parton's <code>Render</code> via <code>cell.resolve()</code>.{" "}
+          <code>notes</code> is bound directly via{" "}
           <code>useCell.input({"{mode: 'onChange'}"})</code> — every keystroke writes through the
           cell batcher. Card fields are local until submit:{" "}
-          <code>useCell.input({"{mode: 'onSubmit'}"})</code> seeds <code>defaultValue</code> from the
-          cell, the input owns the draft locally, and <code>saveCard</code> commits inside{" "}
+          <code>useCell.input({"{mode: 'onSubmit'}"})</code> seeds <code>defaultValue</code> from
+          the cell, the input owns the draft locally, and <code>saveCard</code> commits inside{" "}
           <code>atomic()</code>. <code>failChance</code> toggles a simulated failure path — on
           throw, the whole batch rolls back.
         </p>

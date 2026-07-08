@@ -83,7 +83,9 @@ test("opening the overlay then typing loads the results exactly once", async ({ 
   const stageCalls = dispatches.filter((c) => c.partials === "search-results")
   const otherCalls = dispatches.filter((c) => c.partials !== "search-results")
 
-  console.log(`\n=== after keystroke: ${dispatches.length} dispatch(es), ${mounts} grid mount(s) ===`)
+  console.log(
+    `\n=== after keystroke: ${dispatches.length} dispatch(es), ${mounts} grid mount(s) ===`,
+  )
   for (const c of dispatches) console.log(`  [${c.transport}] partials=${c.partials}`)
 
   expect(
