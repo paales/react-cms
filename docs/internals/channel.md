@@ -48,8 +48,10 @@ POST /__parton/live
   stating WHAT it holds. UNCAPPED — the body has no request line to
   protect; the 96-entry `CACHED_MANIFEST_CAP` and the parked-id
   priority walk apply only to the `?cached=` URL form, which survives
-  solely on ACTION POSTs (a discrete request with a real request line
-  to protect). The body manifest is structurally bounded by the
+  solely on UNATTACHED / degraded ACTION POSTs (a discrete request with
+  a real request line to protect, and no connection mirror to consult —
+  an attached POST sends none, § Action consequence seqs). The body
+  manifest is structurally bounded by the
   client pool itself — at most `CLIENT_POOL_CAP` ids, each variant
   capped at `FP_CAP_PER_VARIANT` fps (`getAllCachedPartialTokens` in
   `partial-client-state.ts`). `PartialRoot` and the catch-up override
@@ -439,7 +441,7 @@ held stream in stream order.
 | Frame navigation (`useNavigation(frame).navigate/reload`, frame traverse) | frame-scoped `url` frame (+ a `cancel` co-rider when it supersedes an unsettled fire for the same frame) — §Frames ride the channel | latches; rides the attach's `frames` intent | document navigation carrying `__frame`/`__frameUrl` document params |
 | Culling flips | `visible` frames | PEND until establishment (the attach seed + first segment carry the truth) | none (no transport) |
 | Preload (`useNavigation().preload`) | `warm` frame | dropped (advisory) | Speculation Rules document prefetch |
-| Action POSTs, cold start | discrete by design (the action carries `x-parton-conn` when attached — §Action consequence seqs; its URL keeps the capped `?cached=` manifest) | same | same (native form posts included) |
+| Action POSTs, cold start | discrete by design (the action carries `x-parton-conn` when attached — §Action consequence seqs — and then NO `?cached=`, the server reads the connection mirror; the capped URL manifest survives only on the unattached POST) | same | same (native form posts included) |
 
 The pieces:
 
@@ -762,19 +764,40 @@ as the only carrier, unchanged:
 
 - **The client names its connection** (`x-parton-conn` on the action
   POST — an explicit statement, never inferred), when attached and
-  non-degraded.
+  non-degraded. On such a POST the client sends NO `?cached=` manifest:
+  the server already knows this connection's holdings (its session
+  mirror), which the action adopts. The capped URL manifest survives
+  only on the UNATTACHED / degraded POST, where there is no mirror.
+- **The action adopts the connection's state**
+  (`_adoptConnectionForAction`, before the action body runs). Two
+  things follow the connection so the action and its held stream agree:
+  its **ephemeral cell storage** — so the action's `.set`/`.invalidate`
+  land in the SAME storage the driver's consequence lanes read (without
+  this the writes hit a throwaway per-action storage and the lanes
+  re-render the pre-mutation values the driver still holds) — and a
+  snapshot of its **cached mirror** + acked layer, so an action that
+  DOES render its own root fp-skips against what the server delivered
+  (the `?cached=` replacement above). The mirror snapshot decouples the
+  action's read-only fp checks from the driver's concurrent mutation of
+  the live one.
 - **The server reserves INSIDE the action's transaction**
   (`_reserveActionConsequences`, called by the entry between the
   action body and the commit): the pending selectors match the
   connection's route snapshots (`_routeMatchingSelectorIds`, parked
-  partons excluded), and each target id gets a delivery seq assigned
-  (`assignedLaneSeqs`). Because the commit's flush is what wakes the
-  drivers, the reservation is strictly ordered before any driver
-  could mint the same lanes' seqs — no race window exists.
-  Re-reserving an id with an unconsumed assignment reuses it: one
-  render of the latest state covers both writes. Binding checks
-  mirror the envelope's (scope + session identity); a mismatched
-  header reserves nothing.
+  partons excluded), and each target gets a delivery seq assigned
+  (`assignedLaneSeqs`). A match with no `emittedFp` (a selector-less
+  spec — a layout wrapper, a cell-bound child like a cart line) cannot
+  carry a lane: it has no client slot to swap, so it ESCALATES to its
+  nearest addressable ancestor (`laneCarrierFor` in `segment-relevance`,
+  shared with the live lane-open path so the reserve and the driver
+  agree on carriers), whose one render re-renders the subtree that
+  contains it — exactly as a whole-tree segment does off the lane path.
+  Because the commit's flush is what wakes the drivers, the reservation
+  is strictly ordered before any driver could mint the same lanes'
+  seqs — no race window exists. Re-reserving an id with an unconsumed
+  assignment reuses it: one render of the latest state covers both
+  writes. Binding checks mirror the envelope's (scope + session
+  identity); a mismatched header reserves nothing.
 - **The pump consumes at iteration start;** every skip path VOIDS the
   assignment (`voidSeqs` → the `seqvoid` entry: parked flips, a gone
   snapshot, window-freed-then-parked ids, a navigation tear — which

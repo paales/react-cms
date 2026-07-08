@@ -641,15 +641,6 @@ async function main() {
 		// server url push is gated on (client-wins: a push the client has
 		// channel-navigated past is a stale suggestion).
 		const actionIssueNavPoint = _channelNavPoint();
-		// Include cached partial fingerprints so the server can skip
-		// unchanged partials in the action's response render — the one
-		// surviving `?cached=` carrier (a discrete POST with a real
-		// request line to protect, hence the capped URL form).
-		const actionUrl = new URL(window.location.href);
-		const cachedIds = getCachedPartialIds();
-		if (cachedIds.length > 0) {
-			actionUrl.searchParams.set("cached", cachedIds.join(","));
-		}
 		// An attached, healthy page names its live connection on the
 		// action POST (`x-parton-conn`) — an explicit client statement,
 		// never inferred — so the server can reserve the delivery seqs
@@ -660,6 +651,20 @@ async function main() {
 		const consequenceConn = _channelNavAvailable()
 			? _getLiveConnectionId()
 			: null;
+		// The cached-partial manifest rides the URL as `?cached=` ONLY when
+		// there is no live connection to consult. An attached POST omits it:
+		// the server already knows this connection's holdings from its
+		// session mirror (what it has delivered), which the action adopts —
+		// so re-sending the capped manifest would be redundant and would
+		// bloat the POST's request line. Degraded / pre-establishment pages
+		// (`consequenceConn === null`) keep the carrier — there is no mirror.
+		const actionUrl = new URL(window.location.href);
+		if (consequenceConn === null) {
+			const cachedIds = getCachedPartialIds();
+			if (cachedIds.length > 0) {
+				actionUrl.searchParams.set("cached", cachedIds.join(","));
+			}
+		}
 		const renderRequest = createRscRenderRequest(
 			actionUrl.toString(),
 			{

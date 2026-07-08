@@ -54,9 +54,13 @@
 import {
 	type CachedOverride,
 	_setAttachStatement,
+	_setCachedOverride,
+	_setConnectionSession,
+	_setRequestEphemeralStorage,
 	getRequest,
 	getScope,
 } from "../runtime/context.ts";
+import type { CellStorage } from "../runtime/cell-storage.ts";
 import { getSessionId, setSessionFrameUrl } from "../runtime/session.ts";
 import {
 	type AckFrame,
@@ -280,6 +284,15 @@ export interface ConnectionSession {
 	 *  the driver's first segment installs the override. Per-connection:
 	 *  a reattach mints a fresh session and a fresh override. */
 	cachedOverride: CachedOverride | null;
+	/** The connection's ephemeral cell storage — the SAME storage the
+	 *  driver's renders resolve cells from, linked here (at session open)
+	 *  so an ATTACHED action (a separate request scope naming this
+	 *  connection via `x-parton-conn`) can bind it and write its cell
+	 *  mutations where the consequence lanes read. Identity is stable for
+	 *  the connection's lifetime — the driver never clears it — so the
+	 *  link is a one-shot reference. `null` only before the driver opens
+	 *  the session's storage. */
+	ephemeralStorage: CellStorage | null;
 	/** The mirror's ACKED layer: fps whose delivering emission the
 	 *  client COMMITTED — client-proven holdings, consulted by the
 	 *  fp-skip verdict on an optimistic-layer miss. Per-id sets capped
@@ -450,6 +463,7 @@ export function _openConnectionSession(
 		firstAckReceived: false,
 		pendingDeliveries: new Map(),
 		cachedOverride: null,
+		ephemeralStorage: null,
 		ackedFps: new Map(),
 		ackedSlots: new Map(),
 		// The attach statement's upstream watermark seeds both sides of
@@ -984,6 +998,65 @@ export function _resolveBoundSession(
 	if (getScope() !== session.scope) return null;
 	if ((getSessionId() ?? "") !== session.boundSessionId) return null;
 	return session;
+}
+
+/**
+ * Adopt the named live connection's per-connection state into the
+ * CURRENT request scope — an attached action's own scope (`x-parton-conn`
+ * names the connection). Two things follow the connection so the action
+ * and its held stream agree:
+ *
+ *   - Ephemeral cell storage: the action's cell writes land where the
+ *     held-stream driver's consequence lanes read, so the lanes render
+ *     the mutated state instead of the pre-mutation values the driver
+ *     still holds.
+ *   - The cached mirror (a snapshot of the optimistic layer) + the acked
+ *     layer: when the action DOES render its own root (a mixed / no-match
+ *     batch that reserves nothing), it fp-skips against what the server
+ *     has already delivered to THIS connection — so the client never
+ *     re-sends its cached manifest as `?cached=` on an attached POST. The
+ *     snapshot decouples the action's read-only fp checks from the
+ *     driver's concurrent mutation of the live mirror.
+ *
+ * Binding-checked like every connection-addressed operation: the
+ * request's scope + session identity must match the attach's (a
+ * mismatched or stale `x-parton-conn` adopts nothing — the action still
+ * runs on its own throwaway storage, and its response render falls back
+ * to the request's own `?cached=`). Returns whether the adopt happened.
+ */
+export function _adoptConnectionForAction(connectionId: string): boolean {
+	const session = sessions.get(connectionId);
+	if (!session) return false;
+	if (getScope() !== session.scope) return false;
+	if ((getSessionId() ?? "") !== session.boundSessionId) return false;
+	if (session.ephemeralStorage !== null) {
+		_setRequestEphemeralStorage(session.ephemeralStorage);
+	}
+	if (session.cachedOverride !== null) {
+		_setCachedOverride(snapshotCachedOverride(session.cachedOverride));
+	}
+	_setConnectionSession({
+		visible: session.visible,
+		ackedFps: session.ackedFps,
+	});
+	return true;
+}
+
+/** Deep-copy a `CachedOverride`'s Maps so an attached action reads a
+ *  stable mirror while the held-stream driver keeps mutating the live
+ *  one. Bounded by the client pool cap, so the copy is cheap. */
+function snapshotCachedOverride(o: CachedOverride): CachedOverride {
+	const fingerprints = new Map<string, Set<string>>();
+	for (const [id, fps] of o.fingerprints) fingerprints.set(id, new Set(fps));
+	const matchKeys = new Map<string, Set<string>>();
+	for (const [id, mks] of o.matchKeys) matchKeys.set(id, new Set(mks));
+	const slots = new Map<string, Map<string, Set<string>>>();
+	for (const [id, perMk] of o.slots) {
+		const copy = new Map<string, Set<string>>();
+		for (const [mk, fps] of perMk) copy.set(mk, new Set(fps));
+		slots.set(id, copy);
+	}
+	return { fingerprints, matchKeys, slots };
 }
 
 /**

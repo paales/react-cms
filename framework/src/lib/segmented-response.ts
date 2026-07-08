@@ -65,6 +65,7 @@ import {
 	takeConnectionFrameNavs,
 	takeConnectionNavigation,
 } from "./connection-session.ts";
+import { getEphemeralCellStorage } from "../runtime/cell-storage.ts";
 import { renderToReadableStream } from "./flight-runtime.ts";
 import { wrapStreamWithFpTrailer } from "./fp-trailer.ts";
 import {
@@ -702,6 +703,13 @@ function openLiveConnectionSession(): ConnectionSession | null {
 	// consume.
 	session.routeKey = computeRouteKey(request.url);
 	_setConnectionSession(session);
+	// Link the connection's ephemeral cell storage onto the session so an
+	// ATTACHED action (a separate request scope) can bind it and write its
+	// mutations where this driver's consequence lanes read. Force-creating
+	// it here fixes its identity for the connection's lifetime (the driver
+	// never clears it), so the one-shot link stays valid across every
+	// segment and lane.
+	session.ephemeralStorage = getEphemeralCellStorage();
 	return session;
 }
 

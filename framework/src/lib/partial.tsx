@@ -2371,7 +2371,11 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   const requestUrl = new URL(getRequest().url)
   // The client manifest: the attach statement's uncapped token array
   // (the connection's opening statement — see `channel-protocol.ts`),
-  // or the capped `?cached=` URL form an action POST carries.
+  // or the capped `?cached=` URL form an UNATTACHED action POST carries.
+  // An ATTACHED action POST carries neither — the server already knows
+  // this connection's holdings and adopts them as the pre-installed
+  // override (`_adoptConnectionForAction`), taken by the `existingOverride`
+  // branch below before this param is ever consulted.
   const cachedParam =
     _getAttachStatement()?.cached ?? requestUrl.searchParams.get("cached")
 
@@ -2410,7 +2414,9 @@ export async function PartialRoot({ children }: PartialRootProps): Promise<React
   // The first render parses the manifest and installs the carrier;
   // subsequent renders on the same connection (navigation segments,
   // reconciles) find the carrier already populated (the driver appends
-  // newly-emitted tuples directly to those Maps between emissions).
+  // newly-emitted tuples directly to those Maps between emissions). An
+  // attached action POST finds it too — a snapshot of the connection's
+  // mirror installed by `_adoptConnectionForAction` before the render.
   let cachedFps: Map<string, Set<string>>
   let cachedMks: Map<string, Set<string>>
   const existingOverride = _getCachedOverride()

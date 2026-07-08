@@ -44,6 +44,7 @@ import {
 	driveChannelWebTransport,
 } from "../lib/channel-server.ts";
 import {
+	_adoptConnectionForAction,
 	bindAttachStatement,
 	handleChannelPost,
 	isSameOriginPost,
@@ -331,6 +332,13 @@ export function createRscHandler(config: RscHandlerConfig): {
 				const args = await decodeReply(body, { temporaryReferences });
 				const action = await loadServerAction(renderRequest.actionId);
 				const consequenceConn = request.headers.get("x-parton-conn");
+				// An attached action operates on the live connection's state:
+				// adopt its ephemeral cell storage (so the action's writes land
+				// where the held-stream driver's consequence lanes read) and its
+				// cached mirror (so an action that renders its own root fp-skips
+				// against what the server has delivered to this connection — the
+				// client sends no `?cached=` on an attached POST).
+				if (consequenceConn) _adoptConnectionForAction(consequenceConn);
 				try {
 					// Run inside an invalidation transaction so server-side
 					// `getServerNavigation().reload({selector})` calls inside the

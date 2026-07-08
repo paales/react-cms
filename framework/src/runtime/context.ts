@@ -605,20 +605,21 @@ export function _getRequestEphemeralStorage(
 }
 
 /**
- * Drop the current request's ephemeral cell storage so the next
- * access opens a fresh one. Used by the streaming-segment driver
- * between segments — after an invalidation signal wakes the driver,
- * the heartbeat's next render must NOT serve stale ephemeral-cell
- * values that another scope (e.g. an action POST) wrote past. Wiping
- * forces loaders to re-run on the next reads.
+ * Adopt an existing ephemeral cell storage into the current request
+ * scope. An attached action (one naming a live connection via
+ * `x-parton-conn`) binds THE CONNECTION's storage here, so its cell
+ * writes land where the held-stream driver's consequence lanes read —
+ * the action and the lanes then agree on the mutated state. Without
+ * this the action's writes go to a throwaway per-action storage and
+ * the driver re-renders the pre-mutation values it still holds.
  *
- * No-op outside a request context, or when no ephemeral storage was
- * opened yet for this request.
+ * No-op outside a request context.
  */
-export function _clearRequestEphemeralStorage(): void {
+export function _setRequestEphemeralStorage(
+  storage: import("./cell-storage.ts").CellStorage,
+): void {
   const store = requestContext.getStore()
-  if (!store) return
-  store.ephemeralCellStorage = null
+  if (store) store.ephemeralCellStorage = storage
 }
 
 export function getDefaultScope(): string {
