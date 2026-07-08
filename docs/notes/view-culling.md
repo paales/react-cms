@@ -35,9 +35,10 @@ rides the connection and
 Cull-to-park closed the note's original gap: a culling flip no longer
 replaces the mounted content (which destroyed client state and made
 re-entry a cold remount). The culled state is a parked VARIANT — a
-stable two-slot Activity pair whose modes flip with the viewport
-report, revalidated by the flip's dispatch under fp-skip semantics,
-budgeted by an LRU of the 64 most-recently-culled subtrees.
+content `<Activity>` that parks (mode driven by the viewport report)
+paired with a conditionally-rendered skeleton, revalidated by the
+flip's dispatch under fp-skip semantics, budgeted by an LRU of the 64
+most-recently-culled subtrees.
 
 This is the shipped form of what [`IDEAS.md`](./IDEAS.md) filed as
 "Activate ⇄ deactivate symmetry" (now collapsed there to a pointer here),

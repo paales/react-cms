@@ -327,16 +327,20 @@ wire mechanics in
 
 **Cull-to-park.** For a keepalive spec (the default), the culled
 state doesn't replace the content — it parks it. The parton renders
-as one `<CullPair>` holding two `<Activity>` slots: the content slot
-(this render's body, or the placeholder hole its next bytes will
-substitute into) and the skeleton slot (the inline skeleton element —
-always present, always renderable). A culling flip is a MODE change
-on the pair: the out-of-view content PARKS (fiber alive, DOM kept,
+as one `<CullPair>`: a content `<Activity>` slot (this render's body,
+or the placeholder hole its next bytes will substitute into) and a
+conditionally-rendered inline skeleton (client-rendered from the
+placement's props). A culling flip is a MODE change on the content
+Activity: the out-of-view content PARKS (fiber alive, DOM kept,
 `useState` / `useRef` / DOM state preserved, effects unmounted)
 behind the skeleton, the moment the observer reports, before any
-network. The content slot's observer mounts only over REAL content —
-an unbacked hole is a zero-size node whose testimony would flip the
-parton right back out.
+network. The skeleton shows out of view, or in view while the content
+slot is still a hole (first bytes streaming); it's a plain conditional
+rather than a hidden Activity because React never applies an Activity's
+hide on the initial hydration/mount of a born-hidden one — it would
+paint and ghost behind the content. The content slot's observer mounts
+only over REAL content — an unbacked hole is a zero-size node whose
+testimony would flip the parton right back out.
 
 A flip-IN is a REVALIDATION — the flipped-in parton comes back as a
 lane on the held stream. The lane settles the restored copy: an fp

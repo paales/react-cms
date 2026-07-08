@@ -215,7 +215,7 @@ Client merge layer:
 | `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `touchClientPartial`, `_applyFpUpdates`, `pruneToLive`; the cached manifest has two forms — the attach statement's BODY manifest (`getAllCachedPartialTokens`) carries everything, no request line to protect, while the action POST's `?cached=` URL form (`getCachedPartialIds`) is doubly bounded: `FP_CAP_PER_VARIANT` fps per variant, `CACHED_MANIFEST_CAP` entries total, parked-by-culling ids first (`_setManifestPriorityIds`) then newest-sighting-first, since it travels in the request URL and a many-parton page would otherwise blow the server's request-line limit; `CLIENT_POOL_CAP` bounds distinct ids, aging out the least-recently-sighted — every walk touches the ids it sees, so recency means "still emitted by commits"), the id-pruned listener (`_setIdPrunedListener` — the page-membership teardown signal cull-park registers on), the persisted template (`getTemplate` / `setTemplate`), the lane-commit subscription (`subscribeLaneCommits` / `notifyLaneCommit`), the live-connection id (`_setLiveConnectionId` / `_getLiveConnectionId`) + the take-once catch-up anchor, and the frame-URL cache. |
 | `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel (pending lazies' Flight chunks are captured into `LazyWalkStats.thenables` so `PartialsClient` can arrange a re-walk when they land), `treeHasPendingLazy`, the per-parton lane commit (`_commitPartonLane` — synchronous cache walk + fp updates + the notify that re-renders `PartialsClient`; see [streaming.md](./streaming.md)) and the fp-trailer DOM scan. |
 | `partial-template.tsx` | `deriveTemplate` + `renderTemplate`. |
-| `cull-key.ts` / `cull-park.ts` / `cull-pair.tsx` | Cull-to-park (see the section below): the registry-internal `~cull` variant-key grammar; the client pool state (reported viewport per id, the parked-by-culling LRU + `CULL_PARK_CAP`, the drop-on-drift generation + `parkedSince`, the observer refcount); the `CullPair` client component (both `<Activity>` slots in one component — content + inline skeleton — modes from the reported state, display-state priming, per-slot observers). |
+| `cull-key.ts` / `cull-park.ts` / `cull-pair.tsx` | Cull-to-park (see the section below): the registry-internal `~cull` variant-key grammar; the client pool state (reported viewport per id, the parked-by-culling LRU + `CULL_PARK_CAP`, the drop-on-drift generation + `parkedSince`, the observer refcount); the `CullPair` client component (a content `<Activity>` slot that parks + a conditionally-rendered inline skeleton in one component — display from the reported state, content presence read off the slot's child via `contentIsReal`, display-state priming, per-slot observers). |
 | `refetch.ts` | `enqueueRefetch` (microtask-batched targeted refetch → one channel `url` statement: the page URL with the labels as its one-shot `?__force=` overlay, intent "silent"), selector parsing, the silent-navigation info brand. |
 | `frame-client.tsx` | The frames tree on the nav entry (read/write + the write serialiser), `FrameNameProvider`, frame refetch dispatch, and the window/frame imperative handle builders. |
 | `use-navigation.tsx` | The `useNavigation()` hook layer (`[fire, progress]` tuples, `@self` resolution, preload), `useActivate`, `useScrollRestore`, `PageUrlContext`, `PartialIdContext`. |
@@ -443,20 +443,29 @@ replacement. The moving parts, end to end:
   collide because the visible dep folds a distinct token per state).
 - **The pair** (`cullPairOf` in `partial.tsx`, `lib/cull-pair.tsx`).
   Every emission of a cullable keepalive parton — fresh, culled,
-  fp-skip, match-miss park — is ONE `<CullPair>` client component
-  holding two `<Activity>` slots. The content slot's child is this
-  render's PEB-wrapped body or the placeholder hole (ALWAYS shipped:
-  the mounted pair lives in the persisted template or an ancestor's
-  cached wrapper; a later flip-in's bytes can only reach the tree
-  through a hole). The skeleton slot's child is the spec's
-  `cull.skeleton` element — inline, client-rendered from the
+  fp-skip, match-miss park — is ONE `<CullPair>` client component: a
+  content `<Activity>` slot plus a conditionally-rendered skeleton. The
+  content slot's child is this render's PEB-wrapped body or the
+  placeholder hole (ALWAYS shipped: the mounted pair lives in the
+  persisted template or an ancestor's cached wrapper; a later flip-in's
+  bytes can only reach the tree through a hole). The skeleton is the
+  spec's `cull.skeleton` element — inline, client-rendered from the
   placement's serializable props, never cached, never fingerprinted —
-  so a cull-out never needs server bytes. A culling flip is a MODE
-  change on the two Activities, computed client-side from the
-  visibility controller's reported state (`useSyncExternalStore` over
-  `cull-park.ts`) — the flip shows the moment the observer reports;
-  the skeleton also shows in view while the content slot has nothing
-  to render yet. Each slot wraps its child in a
+  so a cull-out never needs server bytes. A culling flip is computed
+  client-side from the visibility controller's reported state
+  (`useSyncExternalStore` over `cull-park.ts`): the content Activity's
+  MODE flips (parking the subtree out of view) and the skeleton shows
+  when the parton is out of view OR in view while the content slot is
+  still a hole (first bytes streaming). The skeleton is a plain
+  conditional, NOT a hidden Activity — React applies an Activity's hide
+  only on a visible→hidden TRANSITION, never on the initial
+  hydration/mount of a born-hidden one, so a skeleton parked hidden at
+  hydration would paint with no `display:none` and ghost behind the
+  content. Content presence is read straight off the content slot's
+  child (`contentIsReal` — a real wrapper vs an `<i data-partial>`
+  hole/nothing), the real signal rather than a cache lookup on the
+  cullable's OWN id (which misses when the body is a nested parton,
+  cached under the CHILD's id). Each showing slot wraps its child in a
   `<VisibilityObserver>`; the CONTENT observer mounts only over real
   content — an unbacked hole is a connected zero-size node whose
   testimony would flip an in-view parton right back out (a lane-rate

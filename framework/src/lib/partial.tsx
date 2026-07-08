@@ -1154,24 +1154,23 @@ interface PairEmit {
 
 /**
  * The `<CullPair>` a cullable parton renders as (see `cull-pair.tsx`).
- * ONE client component holding both Activity slots: `children` is the
- * content slot's child (this render's PEB-wrapped body, an fp-skip /
- * park placeholder hole, or nothing when the client holds no content
- * for the variant), `skel` the always-present client-rendered
- * skeleton. The pair's shape is identical across every emission
- * (fresh, culled, fp-skip, match-miss park), so a culling flip is an
- * Activity MODE change inside a stable structure — the content
- * subtree parks instead of unmounting, and a cull-out never needs
- * server bytes.
+ * ONE client component holding the content slot (a parking `<Activity>`)
+ * and the skeleton: `children` is the content slot's child (this
+ * render's PEB-wrapped body, an fp-skip / park placeholder hole, or
+ * nothing when the client holds no content for the variant), `skel` the
+ * client-rendered skeleton. The pair's shape is identical across every
+ * emission (fresh, culled, fp-skip, match-miss park), so a culling flip
+ * is a MODE change on the content Activity inside a stable structure —
+ * the content subtree parks instead of unmounting, and a cull-out never
+ * needs server bytes.
  */
 function cullPairOf(
   id: string,
-  matchKey: string,
   pair: PairEmit,
   contentChild: ReactNode | null,
 ): ReactNode {
   return (
-    <CullPair id={id} mk={matchKey} culled={pair.culled} obs={pair.rootMargin} skel={pair.skel}>
+    <CullPair id={id} culled={pair.culled} obs={pair.rootMargin} skel={pair.skel}>
       {contentChild}
     </CullPair>
   )
@@ -1230,7 +1229,7 @@ function emitParkedKeepalive(
   const matchKeys = state?.cachedMatchKeys.get(id)
   if (!matchKeys || matchKeys.size === 0) return null
   const parkedBody = (mk: string): ReactNode =>
-    pair ? cullPairOf(id, mk, pair, placeholderFor(id, mk)) : placeholderFor(id, mk)
+    pair ? cullPairOf(id, pair, placeholderFor(id, mk)) : placeholderFor(id, mk)
   const bases = [...matchKeys]
   // Single cached variant — emit one Activity without a key so React
   // reconciles by position across active ↔ parked transitions. Same
@@ -1276,7 +1275,7 @@ function emitWithVariantSiblings(
   pair?: PairEmit | null,
 ): ReactNode {
   const cached = state?.cachedMatchKeys.get(id)
-  const body = pair ? cullPairOf(id, matchKey, pair, visibleBody) : visibleBody
+  const body = pair ? cullPairOf(id, pair, visibleBody) : visibleBody
   const others: string[] = []
   if (cached) {
     for (const mk of cached) {
@@ -1303,7 +1302,7 @@ function emitWithVariantSiblings(
               element reuses the active placement's props — it never
               shows while hidden, and a restore-by-navigation re-emits
               the variant fresh with its own props. */}
-          {pair ? cullPairOf(id, mk, pair, placeholderFor(id, mk)) : placeholderFor(id, mk)}
+          {pair ? cullPairOf(id, pair, placeholderFor(id, mk)) : placeholderFor(id, mk)}
         </Activity>
       ))}
     </>

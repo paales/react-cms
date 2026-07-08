@@ -1,11 +1,12 @@
 "use client";
 
 /**
- * The two Activity slots of a cullable parton — the client half of
- * cull-to-park, in one component.
+ * The two slots of a cullable parton — the client half of
+ * cull-to-park, in one component: a CONTENT `<Activity>` that parks,
+ * and a SKELETON that is conditionally rendered.
  *
  * The server emits every cullable parton as ONE `<CullPair>` (see
- * `cullPairEmit` in `partial.tsx`):
+ * `cullPairOf` in `partial.tsx`):
  *
  *   - `children` — the CONTENT slot's child: the parton's rendered
  *     body (its PEB wrapper), an `<i data-partial>` hole the merge
@@ -18,16 +19,22 @@
  *     serializable props. It renders CLIENT-SIDE and ships as one
  *     module reference + props, so the culled state needs no server
  *     render, no cache variant, no fingerprint, and no manifest slot.
- *     It is ALWAYS present, which is what makes a cull-out flip a
- *     purely local operation: swap Activity modes, done — no bytes.
+ *     Being stateless, it is mounted only while shown (`showSkel`) —
+ *     a cull-out flip stays a purely local operation regardless: flip
+ *     the content Activity to hidden, mount the skeleton, no bytes.
  *
- * Each slot renders `<Activity>` around its child; a culling flip is
- * a MODE change on the two Activities, so the content subtree PARKS
- * when the parton leaves view (fiber alive, DOM kept, effects
- * unmounted) and RESTORES in place when it returns — client state
- * survives the round trip.
+ * The content slot renders `<Activity>` around its child, so a
+ * culling flip is a MODE change that PARKS the content subtree when
+ * the parton leaves view (fiber alive, DOM kept, effects unmounted)
+ * and RESTORES it in place when it returns — client state survives
+ * the round trip. The skeleton is NOT an Activity: a born-hidden
+ * Activity never gets `display:none` (React applies the hide only on
+ * a visible→hidden transition, never on initial hydration/mount), so
+ * a skeleton parked hidden at hydration would paint and ghost behind
+ * the content. Conditional rendering sidesteps that — the skeleton is
+ * simply absent when it shouldn't show.
  *
- * Mode comes from the visibility controller's live report
+ * Display comes from the visibility controller's live report
  * (`cull-park.ts`, via useSyncExternalStore) with the server-computed
  * `culled` prop as the pre-report fallback — the report IS the
  * display state, so a flip shows instantly while any revalidation
@@ -43,10 +50,11 @@
  * semantics.
  *
  * Both slots wrap their child in a `<VisibilityObserver>` under the
- * parton's id. Activity-hiding unmounts the parked slot's observer
- * effects, so exactly the showing slot observes; the observer
- * refcount in `cull-park.ts` distinguishes that handoff from the
- * parton leaving the page.
+ * parton's id, and exactly one is mounted at a time (the content slot
+ * when it holds content and is in view, the skeleton otherwise). A
+ * flip hands observation from one to the other; the observer refcount
+ * in `cull-park.ts` distinguishes that handoff from the parton
+ * leaving the page.
  *
  * On mount the pair PRIMES the visibility controller with its
  * server-computed display state (`_primeVisible`). The controller
@@ -57,34 +65,52 @@
  * the commit and IO callbacks are always async, so the prime can't
  * lose the race against the first report.
  *
- * SSR renders modes purely from the `culled` prop — no report, no
- * cache — which matches the client's pre-report first render, so
- * hydration sees one shape.
+ * SSR renders the content slot's mode and `showSkel` purely from
+ * `culled` and the emitted `children` shape — no report, no cache —
+ * which matches the client's pre-report first render, so hydration
+ * sees one shape.
  */
 
-import React, { Activity, type ReactNode } from "react";
+import React, { Activity, isValidElement, type ReactNode } from "react";
 import {
 	contentGeneration,
 	cullStateSnapshot,
 	reportedVisibility,
 	subscribeCullState,
 } from "./cull-park.ts";
-import { cacheLookup, getCurrentPagePartials } from "./partial-client-state.ts";
+import { isPlaceholder } from "./partial-cache.ts";
 import { _primeVisible, VisibilityObserver } from "./visibility.tsx";
+
+/**
+ * Whether the content slot's child is REAL content to show, versus an
+ * unfilled `<i data-partial>` hole (or nothing at all). The server ships
+ * the parton's rendered body — a partial wrapper — when it has content,
+ * and a placeholder hole (or null) when the client must fill the slot
+ * from its cache; the merge layer substitutes a cached body into that
+ * hole before the pair renders. Reading the child directly is the real
+ * content-presence signal — correct for every cull state (fresh, culled,
+ * fp-skip park/restore, match-miss) and every render path — unlike a
+ * cache lookup on the cullable's OWN id, which misses whenever the body
+ * is a nested parton (the content caches under the CHILD's id).
+ */
+function contentIsReal(node: ReactNode): boolean {
+	if (node == null || typeof node === "boolean") return false;
+	if (Array.isArray(node)) return node.some(contentIsReal);
+	if (isValidElement(node) && isPlaceholder(node)) return false;
+	return true;
+}
 
 interface CullPairProps {
 	/** The parton's effective id — the visibility controller's key. */
 	id: string;
-	/** matchKey of the variant this pair belongs to — the content
-	 *  slot's cache slot under `id`. */
-	mk: string;
 	/** Server-computed culled state of the render that produced this
 	 *  element — the pre-report fallback only; a live report wins. */
 	culled: boolean;
 	/** Observer runway (IntersectionObserver rootMargin) from the
 	 *  spec's `cull.rootMargin`. Omitted → the default runway. */
 	obs?: string;
-	/** The skeleton element — always present, always renderable. */
+	/** The skeleton element — client-rendered from the placement's
+	 *  props; mounted only while the pair shows it (see `showSkel`). */
 	skel: ReactNode;
 	/** The content slot's child; absent when the client holds nothing
 	 *  for this variant (nothing to park, nothing to restore). */
@@ -95,7 +121,6 @@ const noopSubscribe = () => () => {};
 
 export function CullPair({
 	id,
-	mk,
 	culled,
 	obs,
 	skel,
@@ -109,13 +134,13 @@ export function CullPair({
 		() => cullStateSnapshot(id),
 		() => "u|0",
 	);
-	// Hydration gate for the cache-availability adjustment below. The
-	// HYDRATION render must reproduce the SSR modes exactly — the walk
-	// may not have cached a still-streaming slot yet, and adjusting an
-	// Activity's mode against the server-rendered state mid-hydration
-	// crashes React's hydration pass. useSyncExternalStore returns the
-	// server snapshot during hydration and re-renders with the client
-	// one right after mount, which is exactly the boundary needed.
+	// Hydration gate for the content Activity's generation key below. The
+	// HYDRATION render must reproduce the SSR key exactly — the server
+	// keys the slot 0, but a returning page can carry a non-zero
+	// generation in client state that, applied on the first render, would
+	// remount the subtree against the server DOM. useSyncExternalStore
+	// returns the server snapshot during hydration and re-renders with the
+	// client one right after mount, which is exactly the boundary needed.
 	const hydrated = React.useSyncExternalStore(
 		noopSubscribe,
 		() => true,
@@ -133,14 +158,20 @@ export function CullPair({
 	const reported = isServer ? undefined : reportedVisibility(id);
 	const out = reported === undefined ? culled : !reported;
 
-	// Content availability: the emission itself on the server/hydration
-	// pass (a non-culled emission carries its content), the live cache
-	// afterwards — every commit that stores a slot re-renders the pair,
-	// so the check re-runs exactly when it can change.
-	const cache = hydrated ? getCurrentPagePartials() : null;
-	const hasContent = hydrated
-		? cache != null && cacheLookup(cache, id, mk) != null
-		: !culled;
+	// Content availability read straight off the content slot's child —
+	// the real signal (see `contentIsReal`), not a cache-presence proxy.
+	// On the SSR/hydration pass this equals `!culled` (a culled emission
+	// ships a hole, a live one its body), so the pair hydrates to one
+	// shape; past hydration it tracks what will actually render.
+	const hasContent = contentIsReal(children);
+	// The skeleton shows out of view, or in view while the content slot
+	// is still a hole (first bytes streaming). It is CONDITIONALLY
+	// rendered, never a hidden `<Activity>`: React applies an Activity's
+	// hide only on a visible→hidden TRANSITION, never on the initial
+	// hydration/mount of a born-hidden one — a skeleton born hidden would
+	// paint with no `display:none` and ghost behind the content. The
+	// content slot keeps its Activity so its subtree PARKS on a cull-out.
+	const showSkel = out || !hasContent;
 
 	const generation = hydrated ? contentGeneration(id) : 0;
 	return (
@@ -151,8 +182,9 @@ export function CullPair({
 			    "out" for a parton that's squarely in view (the hole is what
 			    its flip-in bytes will substitute), flipping it right back
 			    out: a lane-rate flip loop. While content is missing the
-			    SKELETON slot is showing (below) and its observer is the
-			    parton's testimony. */}
+			    SKELETON (below) shows and its observer is the parton's
+			    testimony. The content Activity parks the subtree on a
+			    cull-out — fiber alive, DOM kept, effects unmounted. */}
 			<Activity key={generation} mode={out ? "hidden" : "visible"}>
 				{hasContent ? (
 					<VisibilityObserver id={id} rootMargin={obs}>
@@ -162,14 +194,19 @@ export function CullPair({
 					children
 				)}
 			</Activity>
-			{/* The skeleton also shows IN VIEW while the content slot has
-			    nothing to render (first bytes still streaming) — the pair
-			    must always hold the parton's space and its observer. */}
-			<Activity mode={out || !hasContent ? "visible" : "hidden"}>
+			{/* Skeleton: CONDITIONALLY rendered, not a parked Activity — a
+			    born-hidden Activity never gets `display:none` (React hides
+			    only on a visible→hidden transition), so it would ghost
+			    behind the content. Stateless (client-rendered from the
+			    placement's props), so nothing is lost by mounting and
+			    unmounting it across flips. Its observer hands off to/from
+			    the content slot's — the refcount + microtask sweep in
+			    `cull-park.ts` absorb the pass-through-zero. */}
+			{showSkel ? (
 				<VisibilityObserver id={id} rootMargin={obs}>
 					{skel}
 				</VisibilityObserver>
-			</Activity>
+			) : null}
 		</>
 	);
 }

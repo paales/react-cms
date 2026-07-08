@@ -562,8 +562,9 @@ lifecycle:
     CONNECTED zero-size node, so the empty-set rule can't catch it —
     and an observer over it testifies "out" for a parton squarely in
     view, flipping it right back out: the same loop at lane rate.
-    While content is missing, the skeleton slot is showing and its
-    observer is the parton's testimony.
+    While content is missing, the skeleton is showing (conditionally
+    rendered, not a hidden Activity) and its observer is the parton's
+    testimony.
   - An observer attached while its fragment had NO host children
     (dehydrated nested boundaries on a fast prod hydration,
     unresolved Flight lazies) re-attaches when content arrives —
