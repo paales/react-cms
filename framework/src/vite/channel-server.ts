@@ -113,9 +113,17 @@ async function driveOne(
 	req: IncomingMessage,
 	loadHandler: () => Promise<ChannelSocketHandler>,
 ): Promise<void> {
+	// Adapt the socket NOW — synchronously in the upgrade callback, before
+	// the async handler load — so its listeners buffer the attach the
+	// client sends immediately on `open`. `loadHandler()` is a cold RSC
+	// import on the first upgrade; without buffering, that attach lands in
+	// the gap before `driveChannelSocket` registers `onMessage` and is
+	// DROPPED (Node drops an unheard `message` event), so the connection
+	// never establishes. See `wsToChannelSocket`.
+	const socket = wsToChannelSocket(ws);
 	try {
 		const handleSocket = await loadHandler();
-		await handleSocket(wsToChannelSocket(ws), nodeRequest(req));
+		await handleSocket(socket, nodeRequest(req));
 	} catch (err) {
 		try {
 			ws.close();
@@ -214,6 +222,27 @@ function nodeRequest(req: IncomingMessage): Request {
  *  `bufferedAmount` + the send-flush callback (`onDrain`), no timers. */
 function wsToChannelSocket(ws: WsSocket): ChannelSocket {
 	const drainHandlers: Array<() => void> = [];
+	// The raw `ws` listeners attach at CONSTRUCTION (synchronously, before
+	// the async handler load), and buffer/latch whatever arrives before
+	// `driveChannelSocket` registers its own `onMessage`/`onClose` — the
+	// gap in which the client's attach (sent on `open`) would otherwise be
+	// dropped. Once the real handlers register, the buffer replays in
+	// order and everything after flows straight through.
+	const bufferedMessages: string[] = [];
+	let messageHandler: ((data: string) => void) | null = null;
+	ws.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
+		const text = Array.isArray(data)
+			? Buffer.concat(data).toString("utf8")
+			: Buffer.from(data as ArrayBuffer).toString("utf8");
+		if (messageHandler) messageHandler(text);
+		else bufferedMessages.push(text);
+	});
+	let closed = false;
+	let closeHandler: (() => void) | null = null;
+	ws.on("close", () => {
+		closed = true;
+		closeHandler?.();
+	});
 	return {
 		send(bytes) {
 			try {
@@ -231,15 +260,12 @@ function wsToChannelSocket(ws: WsSocket): ChannelSocket {
 			} catch {}
 		},
 		onMessage(handler) {
-			ws.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
-				const text = Array.isArray(data)
-					? Buffer.concat(data).toString("utf8")
-					: Buffer.from(data as ArrayBuffer).toString("utf8");
-				handler(text);
-			});
+			messageHandler = handler;
+			for (const text of bufferedMessages.splice(0)) handler(text);
 		},
 		onClose(handler) {
-			ws.on("close", handler);
+			closeHandler = handler;
+			if (closed) handler();
 		},
 		onDrain(handler) {
 			drainHandlers.push(handler);
