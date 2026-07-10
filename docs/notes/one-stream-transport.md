@@ -386,42 +386,64 @@ the upgrade reuses the one the framework runs on every keepalive/nav.
   heuristics" rule forbids). The probe presents the manifest so its
   throwaway render fp-skips, and closes the socket the instant `conn` is
   seen.
-- **Confirmed → flip + re-attach** (`armTransportUpgrade`, browser entry):
-  `setChannelTransport(new WebSocketTransport())` then
-  `_channelRequestReattach()` (`channel-client.ts`) — a one-shot flag that
-  drops the held fetch stream and makes its settle
-  (`_channelConnectionClosed`) re-fire the attach even with no pending
-  interaction. The re-fire opens on WS (the transport is read fresh at
-  `open` time). From there everything rides the socket.
+- **Confirmed → graceful wind-down, then the replacing attach**
+  (`armTransportUpgrade`, browser entry + `_channelBeginTransportHandover`,
+  `channel-client.ts`). The e2e suite proved the original abort-based
+  handover WRONG under adversarial load: `_channelRequestReattach`'s
+  abort cancelled the held fetch stream inside the LANES region, tearing
+  in-flight renders on both sides (server "Connection closed." floods,
+  committed progressive bodies rejected into error boundaries) and
+  punting racing interactions through re-statement paths. The shipped
+  handover instead: quiesce (`_channelIdle` — no nav/refetch record in
+  flight), then the `atPark` detach — the server winds the held stream
+  down at its next FULL PARK (open lanes drain and commit, latched
+  statements get their covering renders) and closes with nothing to
+  tear; the id stays PUBLISHED until the close, so statements and
+  actions keep riding fetch for the whole wind-down. The close's
+  one-shot flag re-fires the heartbeat; that fire installs the WS
+  transport and is an ORDINARY attach whose statement is assembled AT
+  FIRE TIME (manifest complete — a fire's `finished` awaits its lane
+  chains — so the new connection can never roll the page back), carries
+  the retained document anchor (open into lanes, no whole-tree replay —
+  a whole-tree replay re-ships defer partons as fallbacks and remounts
+  activation triggers), and names the closed connection
+  (`handoverFrom` → the handover locker hands its ephemeral cell
+  storage to the new session). Action POSTs hold for
+  `_channelHandoverSettled` across the millisecond close→establish
+  window so their `x-parton-conn` affinity is never dropped.
 - **Failure/timeout → stay on fetch,** transparently. Bounded
   backed-off re-probes (`MAX_UPGRADE_PROBES`), then give up for the page
-  lifetime — never hammer a blocked endpoint.
+  lifetime — never hammer a blocked endpoint. A confirmed-then-dead
+  socket reverts through the fire path: an attach that settles without
+  `conn` on an unforced WS transport restores fetch before re-attaching.
 - **`?transport=` forces stand the upgrade down** (`isTransportForced()`):
   `fetch` pins fetch (no probe), `ws`/`webtransport` boot straight on
   their transport. The user's explicit choice is never second-guessed.
 
-**No frame loss / no leak.** The WS re-attach presents the manifest +
+**No frame loss / no leak.** The replacing attach presents the manifest +
 `applied` watermark, so fp-skip + the layered mirror elide everything the
 client holds and the retransmit buffer carries reliable frames across the
-brief two-session overlap (loss-tolerant frames — visibility, acks —
+close→establish window (loss-tolerant frames — visibility, acks —
 re-derive from the attach seed; url/frame/cookie frames retire at the
-subsume). The fetch stream is explicitly aborted and torn cooperatively
-via the splitter (its `close` is a no-op); the probe socket is closed on
-every path; exactly one connection is live after the switch (the
-heartbeat's single-`inFlight` invariant holds — the re-fire runs after
-`inFlight` clears).
+subsume; an envelope that raced the close and failed against the dead
+connection is recognized as stale and neither tears the new stream nor
+counts toward degrade). The probe socket is closed on every path; the
+server closes its socket whenever a drive ends; exactly one connection
+is live after the switch (the heartbeat's single-`inFlight` invariant
+holds — the re-fire runs after `inFlight` clears).
 
-**Verified:** `probeWebSocketTransport` in isolation
-(`channel-ws.rsc.test.tsx` — confirms on a driven socket, declines on an
-undriven/absent one), the auto-upgrade end to end
-(`website/validate-upgrade.mjs` — fetch-first → socket-after, streaming +
-culling intact across the switch, zero further fetch POSTs), and the
-CAPABILITY GATE (`website/validate-no-ws.mjs` on the plugin-less
-e2e-testing app — ZERO `/__parton/ws` sockets, no console error, the
-fetch channel stays held; the upgrade never arms because the server never
-advertised). The forced-fetch world (`validate-world.mjs`, now
-`?transport=fetch`) and forced-WS glue (`validate-ws.mjs`) gate the two
-pinned transports.
+**Verified:** the handover's channel state
+(`channel-handover-client.test.ts`), the `atPark` park-exit + probe over
+a real socket (`channel-ws.rsc.test.tsx`), the auto-upgrade end to end
+(`website/validate-upgrade.mjs` — fetch-first → socket-after, the held
+fetch attach closing CLEANLY and only after the socket opened, streaming
++ culling intact across the switch, zero further fetch POSTs), and the
+CAPABILITY GATE (`website/validate-no-ws.mjs` — the advertisement is
+suppressed client-side, ZERO `/__parton/ws` sockets, no console error,
+the fetch channel stays held). The full e2e-testing Playwright suite
+runs over the upgraded socket (the app ships `partonChannelServer()`);
+the forced-fetch world (`validate-world.mjs`, `?transport=fetch`) and
+forced-WS glue (`validate-ws.mjs`) gate the two pinned transports.
 
 ### P2 — WebTransport (task #22)
 

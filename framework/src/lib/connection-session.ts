@@ -244,6 +244,11 @@ export interface ConnectionSession {
    *  drive loop exits at its next wake (the frame fires the wake
    *  arms) instead of holding the stream for the keepalive. */
   detached: boolean
+  /** An `atPark` detach arrived — the transport handover's graceful
+   *  wind-down. The drive loop exits at its next FULL PARK (no open
+   *  lanes, nothing latched), so everything in flight is served and
+   *  the close tears nothing. */
+  windDownAtPark: boolean
   /** Last minted DELIVERY seq — the per-connection monotonic counter
    *  every payload segment and lane emission carries as its `seq`
    *  entry (the ack currency). Minted by the driver at emission. */
@@ -456,6 +461,7 @@ export function _openConnectionSession(
     pendingFlips: new Map(),
     flipWakes: new Set(),
     detached: false,
+    windDownAtPark: false,
     deliverySeq: 0,
     ackedDeliverySeq: 0,
     firstAckReceived: false,
@@ -612,7 +618,68 @@ function evictOverrideTokens(
 /** Unregister a session — the drive loop exited; the stream is closed
  *  or closing. Envelopes for the id now answer `404`. */
 export function _closeConnectionSession(id: string): void {
+  const session = sessions.get(id)
+  // A session closed by the transport handover's park-exit deposits its
+  // ephemeral cell storage in the locker: the REPLACING attach (whose
+  // fire the close itself triggers) claims it via the statement's
+  // `handoverFrom` link, so connection-scoped state — deferred cells,
+  // streaming logs — survives the pipe swap. Binding rides along and is
+  // re-checked at claim; the TTL bounds an unclaimed deposit (the
+  // replacing attach normally lands within milliseconds).
+  if (session !== undefined && session.windDownAtPark && session.ephemeralStorage !== null) {
+    sweepHandoverLocker()
+    handoverLocker.set(id, {
+      scope: session.scope,
+      sessionId: session.boundSessionId,
+      storage: session.ephemeralStorage,
+      expiresAt: Date.now() + HANDOVER_LOCKER_TTL_MS,
+    })
+  }
   sessions.delete(id)
+}
+
+// ─── The handover locker ─────────────────────────────────────────────
+
+/** How long an unclaimed handover deposit lives. Generous relative to
+ *  the close→attach gap it bridges (milliseconds); small enough that an
+ *  abandoned handover (the page died mid-swap) never accumulates. */
+const HANDOVER_LOCKER_TTL_MS = 30_000
+
+interface HandoverDeposit {
+  scope: string
+  sessionId: string
+  storage: CellStorage
+  expiresAt: number
+}
+
+const handoverLocker = new Map<string, HandoverDeposit>()
+
+function sweepHandoverLocker(): void {
+  if (handoverLocker.size === 0) return
+  const now = Date.now()
+  for (const [id, deposit] of handoverLocker) {
+    if (deposit.expiresAt <= now) handoverLocker.delete(id)
+  }
+}
+
+/**
+ * Claim a wound-down connection's ephemeral cell storage for its
+ * replacing attach — one-shot, binding-checked: the claimant's scope +
+ * session identity must match the deposit's, so a forged `handoverFrom`
+ * inherits nothing. `null` when the deposit is absent, expired, or
+ * bound elsewhere.
+ */
+export function _claimHandoverStorage(
+  connectionId: string,
+  scope: string,
+  sessionId: string,
+): CellStorage | null {
+  sweepHandoverLocker()
+  const deposit = handoverLocker.get(connectionId)
+  if (deposit === undefined) return null
+  if (deposit.scope !== scope || deposit.sessionId !== sessionId) return null
+  handoverLocker.delete(connectionId)
+  return deposit.storage
 }
 
 /** Look up an OPEN session by its minted id — the rsc harness's window
@@ -861,11 +928,13 @@ function applyWarmFrame(
 
 /** Apply a `detach` frame: mark the session and fire the wake arms so
  *  the parked driver exits its drive loop (which closes the session)
- *  instead of holding the stream for the keepalive. Best-effort by
- *  nature — a lost detach leaves the keepalive timeout as the
- *  backstop. */
-function detachConnectionSession(session: ConnectionSession): void {
-  session.detached = true
+ *  instead of holding the stream for the keepalive. `atPark` marks the
+ *  graceful variant instead — the loop exits at its next full park,
+ *  with everything in flight served first. Best-effort by nature — a
+ *  lost detach leaves the keepalive timeout as the backstop. */
+function detachConnectionSession(session: ConnectionSession, atPark: boolean): void {
+  if (atPark) session.windDownAtPark = true
+  else session.detached = true
   for (const wake of [...session.flipWakes]) wake()
 }
 
@@ -1079,7 +1148,7 @@ export function applyEnvelopeToSession(
         applyVisibleFrame(session, envelope.seq, frame)
         break
       case "detach":
-        detachConnectionSession(session)
+        detachConnectionSession(session, frame.atPark === true)
         break
       case "ack":
         // An advancing ack frees the unacked delivery window — the

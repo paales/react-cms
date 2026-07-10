@@ -32,7 +32,8 @@ its JSON body (`AttachStatement` in
 POST /__parton/live
 
 { "url": "/page?q=a", "cached": [...], "since": {"epoch","ts"} | null,
-  "visible": [...] | null, "applied": N, "frames": [...]? }
+  "visible": [...] | null, "applied": N, "frames": [...]?,
+  "handoverFrom": "conn-id"? }
 ```
 
 - `url` — the client's window URL statement. The server builds the
@@ -58,12 +59,19 @@ POST /__parton/live
   install read the statement; verdicts are carrier-identical with the
   action leg's URL form.
 - `since` — the catch-up anchor, stating WHEN the client last heard:
-  the document's registry anchor, take-once. Honored when the epoch
-  names the CURRENT registry timeline, the route still has snapshots,
-  and the statement carries no frame intent (a `frames` entry needs
-  the full render as its covering pass): the driver skips the
-  whole-route initial segment and opens straight into lanes; refused,
-  it falls through to the full render — over-fetch, never stale.
+  the document's registry anchor, take-once for the boot attach.
+  Honored when the epoch names the CURRENT registry timeline, the
+  route still has snapshots, and the statement carries no frame intent
+  (a `frames` entry needs the full render as its covering pass): the
+  driver skips the whole-route initial segment and opens straight into
+  lanes; refused, it falls through to the full render — over-fetch,
+  never stale. Two later presenters reuse a RETAINED copy of the
+  anchor (`_documentCatchupAnchor`): the transport upgrade's probe
+  (its throwaway session then opens parked — near-zero server work)
+  and the handover's replacing attach (its manifest is complete at
+  fire time, so a whole-tree segment would only re-ship held bytes —
+  and re-ship DEFER partons as fallbacks, remounting activation
+  triggers the client already fired).
 - `visible` — the viewport seed, stating what the client SEES.
   `null` is the unmeasured state (no statement); `[]` is a
   measurement. The seed and the session's `visible` frames are the
@@ -88,6 +96,14 @@ POST /__parton/live
   the attach response's headers — so the whole-tree first render
   already reads them: the segment IS the covering render the client's
   re-anchored records resolve against.
+- `handoverFrom` — the transport handover's continuity link: the
+  connection this attach REPLACES. The new session inherits its
+  ephemeral cell storage through the handover locker (deposited at the
+  old session's park-exit close, claimed one-shot under the SAME
+  scope + session-identity binding, TTL-bounded), so connection-scoped
+  state — deferred cells, streaming logs — survives the pipe swap: the
+  handover is the same logical connection continuing on a new
+  transport.
 
 A malformed statement (or a cross-origin `url` / frame target)
 answers `400`; cross-site provenance answers `403` (the same
@@ -147,7 +163,7 @@ Frame kinds shipped:
 |---|---|---|
 | `visible` | `{changed, visible, cached?}` — the visibility statement: flipped ids, the wholesale snapshot, the client's actual holdings for the changed ids | Applied to the connection session; flipped-IN partons lane on the EXISTING stream (never on this response) |
 | `ack` | `{delivered, dropped?}` — the highest CONTIGUOUSLY committed delivery seq (cumulative), plus the seqs within the newly-acked range the client received but did NOT hold (its as-of guard dropped them) | Advances the session's ack watermark, folds each covered delivery's fps into the ACKED mirror layer — UNLESS its seq is `dropped`, which EVICTS the delivery's optimistic promotions instead — frees the unacked delivery window (the parked driver wakes), and — any ack frame at all — proves the duplex (`firstAckReceived`, the never-acked degrade's off-switch) |
-| `detach` | nothing | Explicit close: the parked driver wakes, the drive loop exits, the session closes. Best-effort by nature (sent on `pagehide` via keepalive fetch); the keepalive timeout remains the backstop |
+| `detach` | `{atPark?}` | Explicit close: the parked driver wakes, the drive loop exits, the session closes. Best-effort by nature (sent on `pagehide` via keepalive fetch); the keepalive timeout remains the backstop. `atPark` softens it to the transport handover's GRACEFUL wind-down: the loop exits at its next FULL PARK — nothing latched, no open lanes — so everything in flight is served first (open lanes drain and commit, latched statements get their covering renders) and the close tears nothing on either side |
 | `telemetry` | `{viewport: {w,h}, scroll: {x,y,vx,vy}, at}` — the client's scroll context: container box, position, velocity (px/s), performance-clock timestamp | Replaces the session's `telemetry` slot, latest-wins by envelope seq. NOTHING else: no invalidation, no wake, never a render — the channel carries freshness statements, and telemetry is CONTEXT, not a dependency. Consumers read the slot when awake for their own reasons (the warm pass — see §Telemetry) |
 | `url` | `{url, intent, frame?}` — a URL statement for a scope the client owns: absent `frame`, the WINDOW URL (a `?__force=` overlay names a refetch's forced targets); present, the named FRAME's URL (the frame path's segments). `intent` is the history semantic (`push`/`replace`/`silent` — descriptive: the client's history work is done by send time) | Same-origin-validated (`400` the envelope on a cross-origin target — a violation, nothing applies). WINDOW scope: LATCHED on the session (newest seq wins; a seq at or below the consumed navigation is a stale restatement, a no-op — retransmit idempotence); the driver consumes it navigation-FIRST at wait entry and answers with a whole-tree payload segment, then forced-target lanes — §Navigation rides the channel. FRAME scope: the session frame URL is written AT THE ENDPOINT (the same store `?__frame=` writes through — and the one channel response that can mint the session cookie; an anonymous binding rebinds in place); the render latches per frame key and the driver lanes the frame's targets on the open region — §Frames ride the channel |
 | `cancel` | `{scope}` — supersede the scope's in-flight renders: the frame's top-level name | Aborts the scope's open lane renders synchronously at apply (the driver's `cancelListeners` arm — the same reach into a suspended render the window supersede's nav-latch arm has). A cancelled body closes with a `muxend` and NO delivery announcement, so the client's decode settles, the content never commits, and the id can reopen for the covering statement's lane. Per-scope seq gate: a replayed cancel at or below its scope's applied seq is a no-op — it can never abort a newer statement's render |
@@ -1021,51 +1037,87 @@ background where the socket works. The socket.io-shaped default, but
 built on the framework's own re-attach machinery, not an in-place socket
 swap: client state (the cache, fingerprints, cull state,
 delivery/envelope timelines) is transport-independent module state, so
-"upgrade to WS" is just a RE-ATTACH on the WS transport
-(`armTransportUpgrade`, browser entry). The steps:
+"upgrade to WS" is a graceful close of the fetch connection followed by
+an ORDINARY attach on the WS transport (`armTransportUpgrade`, browser
+entry). The handover is NO-GAP and NO-TEAR — nothing mid-render is torn
+on either side, no statement class is lost, and the replacing
+connection can never roll the page back. The steps:
 
 1. **Boot on fetch.** `selectChannelTransport()` keeps fetch unless a
    `?transport=` force pins one; first content rides the fetch attach.
-2. **Capability gate, then background probe.** The upgrade arms ONLY on
-   an app whose server ADVERTISED it serves the socket:
+2. **Capability gate, quiesce, then background probe.** The upgrade
+   arms ONLY on an app whose server ADVERTISED it serves the socket:
    `partonChannelServer` (the Vite plugin registering the `/__parton/ws`
    handler) sets `PARTON_WS_AVAILABLE` in the render process,
    `renderHTML` reflects it into every document's bootstrap as
    `self.__partonWsAvailable`, and `armTransportUpgrade` stands down
-   unless that flag is present. No plugin → no flag → no probe: a
-   plugin-less app opens ZERO sockets and logs no error. This is the
+   unless that flag is present. No plugin → no flag → no probe: an
+   unadvertised page opens ZERO sockets and logs no error. This is the
    no-heuristic rule — the server that serves the socket advertises it;
    the client never probes an unadvertised endpoint (a blind probe would
    open a doomed socket the host leaves hanging, close 1006, twice).
 
    Once advertised AND the fetch connection establishes (first content
-   already delivered — the upgrade costs the user nothing), a BACKGROUND
-   probe opens a speculative WS attach on a throwaway socket
-   (`probeWebSocketTransport`). It confirms iff the server-minted `conn`
-   handshake arrives over the socket — the SAME establishment signal the
-   live path reads (`splitSegments`' `TAG_CONNECTION_ID`), not a bare
-   `onopen` (which only proves the TCP upgrade, never that the server
-   drove the socket). The probe presents the manifest so its throwaway
-   render fp-skips, and closes the socket the instant `conn` is seen.
-3. **Confirmed → flip + re-attach.** `setChannelTransport(new
-   WebSocketTransport())`, then `_channelRequestReattach()` drops the
-   held fetch stream; its settle re-attaches through the NORMAL close
-   path (`_channelConnectionClosed`), now opening on the socket. From
-   there every attach, lane, and envelope rides WS. No frame is lost
-   across the switch: the WS re-attach presents the manifest + applied
-   watermark, so fp-skip + the layered mirror elide anything the client
-   already holds, and the retransmit buffer covers reliable frames in the
-   brief overlap — it IS an ordinary re-attach, only its trigger is new.
-4. **Failed → stay on fetch.** An ADVERTISED endpoint that still fails to
-   confirm (the WS handshake errors before `onopen`, or `conn` never
+   already delivered — the upgrade costs the user nothing), the attempt
+   first QUIESCES: `_channelIdle()` resolves only when no navigation /
+   refetch record is in flight (the record machinery's own settle
+   milestones — never a timer), so the swap never lands under a
+   mid-stream covering render; a page that never idles simply keeps
+   fetch. Then a BACKGROUND probe opens a speculative WS attach on a
+   throwaway socket (`probeWebSocketTransport`). It confirms iff the
+   server-minted `conn` handshake arrives over the socket — the SAME
+   establishment signal the live path reads (`splitSegments`'
+   `TAG_CONNECTION_ID`), not a bare `onopen` (which only proves the TCP
+   upgrade, never that the server drove the socket). The probe presents
+   the manifest AND the retained document anchor, so an anchor-honoring
+   server opens the probe's session straight into a parked lanes region
+   — `conn` arrives with near-zero server work, and closing the probe
+   socket tears no render.
+3. **Confirmed → graceful wind-down, then the replacing attach.**
+   `_channelBeginTransportHandover()` states the fetch connection's
+   `atPark` detach: the server winds the held stream down at its next
+   FULL PARK — nothing latched, no open lanes — so everything in flight
+   is served first (open lanes drain and commit, latched statements get
+   their covering renders) and the stream closes CLEANLY, with nothing
+   to tear. The connection id stays PUBLISHED for the whole wind-down:
+   statements and actions keep riding the fetch connection until the
+   moment it actually closes. That close consumes the one-shot reattach
+   flag and re-fires the heartbeat; the fire installs the WebSocket
+   transport (the one-shot flip in the attach transport) and is an
+   ORDINARY attach — its statement folds pending intent and presents
+   the manifest AT FIRE TIME, strictly after every one of the old
+   stream's commits landed (a fire's `finished` awaits its lane
+   chains), so the new connection's first render can never roll the
+   page back behind content the old connection delivered. The statement
+   presents the retained anchor (`since`) — the new connection opens
+   straight into lanes, no whole-tree replay — and names the closed
+   connection (`handoverFrom`), inheriting its ephemeral cell storage
+   through the handover locker. The only unpublished window is the
+   close→establish gap (milliseconds); statements latch through it on
+   the ordinary pre-establishment machinery, and action POSTs hold for
+   `_channelHandoverSettled()` so their connection affinity — the
+   `x-parton-conn` binding routing cell writes into the connection's
+   storage — is never silently dropped to unattached semantics. An
+   envelope that raced the close and failed against the dead connection
+   is recognized as stale (its connection is no longer the current one)
+   and neither tears the new stream nor counts toward the degrade
+   bound. From there every attach, lane, and envelope rides WS.
+4. **Failed → stay on fetch.** An ADVERTISED endpoint that still fails
+   to confirm (the WS handshake errors before `onopen`, or `conn` never
    arrives within the timeout — a proxy stripping the upgrade, a
-   transient) closes the probe socket and stays on fetch, transparently.
-   A bounded, backed-off re-probe (up to `MAX_UPGRADE_PROBES`) covers a
-   transient stumble, then it gives up for the page lifetime — never
-   hammering a blocked endpoint. An app WITHOUT `partonChannelServer`
-   (e.g. e2e-testing) never reaches this branch at all: unadvertised, the
-   upgrade arms no probe (step 2), so the page is fetch, unchanged, and
-   opens ZERO sockets — no doomed handshake, no console error.
+   transient) closes the probe socket and stays on fetch, transparently
+   — the fetch connection was never touched. A bounded, backed-off
+   re-probe (up to `MAX_UPGRADE_PROBES`) covers a transient stumble,
+   then it gives up for the page lifetime — never hammering a blocked
+   endpoint. A socket that confirms and later stops establishing falls
+   back through the fire path itself: an attach that settles without
+   ever seeing `conn` on an UNFORCED WebSocket transport reverts the
+   transport to fetch before the close arbitration re-attaches
+   (`consumeLiveStream`'s settle guard) — so a mid-handover socket
+   death lands back on the universal transport with no dead gap. The
+   wind-down has a liveness backstop (`HANDOVER_DRAIN_TIMEOUT_MS`): a
+   connection that never parks (an unbounded producer, a wedged loader)
+   is aborted after the bound so the handover completes.
 
 A `?transport=` force (`fetch`/`ws`/`webtransport`) is the user's
 explicit choice and STANDS THE UPGRADE DOWN: `isTransportForced()` is
@@ -1096,7 +1148,10 @@ its return) drives one upgraded socket: `driveChannelSocket` reads the
 attach off the first message, binds it, and runs `driveSegmentedResponse`
 UNCHANGED against a controller whose `enqueue` is `ws.send` and whose
 `demand` reads the socket's `bufferedAmount` + send-flush (`onDrain`) —
-no timers. Each later message decodes to an envelope and applies through
+no timers. When the drive ends (keepalive elapse, detach, the
+handover's park-exit) the driver CLOSES the socket, exactly as the
+fetch wrapper closes its response stream — the client's downstream body
+ends instead of holding a silent socket for a wound-down stream. Each later message decodes to an envelope and applies through
 the SAME `applyEnvelopeToSession` switch the fetch endpoint uses, in a
 request scope carrying the upgrade's cookies (so a frame-url's session
 write lands where the client's cookie resolves). `_resolveBoundSession`
@@ -1146,17 +1201,25 @@ the plugin never advertises `/__parton/ws`, so the auto-upgrade never
 probes (it opens no socket) and the page stays fetch — the default suite
 is unaffected.
 
-**Verification.** Three gates — the tunnel, the forced-WS live glue, and
-the auto-upgrade:
+**Verification.** Four surfaces — the tunnel, the handover's channel
+state, the forced-WS live glue, and the auto-upgrade:
 
 - `channel-ws.rsc.test.tsx` proves the TUNNEL end to end over a REAL
   socket (the client transport + `driveChannelSocket`: attach, first
   segment, an expiry lane, and an upstream envelope whose seq surfaces on
   the `applied` marker) — but with a hand-built `ws` server, not the Vite
-  glue — PLUS `probeWebSocketTransport` in isolation: it confirms (`true`)
-  when the server drives the socket and mints `conn`, and declines
-  (`false`) when the socket opens but is never driven, or the endpoint is
-  absent (the WS-unavailable → stay-on-fetch guarantee, in miniature).
+  glue — PLUS the `atPark` detach (the stream keeps serving, then closes
+  CLEANLY at the next full park — iteration completes without error) and
+  `probeWebSocketTransport` in isolation: it confirms (`true`) when the
+  server drives the socket and mints `conn`, and declines (`false`) when
+  the socket opens but is never driven, or the endpoint is absent (the
+  WS-unavailable → stay-on-fetch guarantee, in miniature).
+- `channel-handover-client.test.ts` pins the handover's channel-state
+  half: the `atPark` detach with the id kept published, the close's
+  one-shot re-fire + `handoverFrom` consumption, the detach-failure
+  fallback to the abort, close-racing statements latching and gating
+  stale deliveries, the action gate (`_channelHandoverSettled`)
+  releasing at establishment, and the quiesce gate (`_channelIdle`).
 - `website/validate-ws.mjs` proves the Vite PLUGIN's dev/preview upgrade
   glue in a running server (`yarn build:website && node
   website/validate-ws.mjs`, and `--dev` for the dev server): it drives
@@ -1172,20 +1235,26 @@ the auto-upgrade:
   at `/` with NO `?transport=` param and asserts the FIRST content rides
   fetch (a `POST /__parton/live` before any socket opens), then the
   connection UPGRADES within a short window (a `/__parton/ws` socket, WS
-  attach binary frames, `data-parton-live` still set), and streaming +
-  culling stay intact ACROSS the switch (scroll streams the new chunk in
-  over the socket, flips ride up it, pulses advance) with ZERO further
+  attach binary frames, `data-parton-live` still set) with the NO-TEAR
+  handover contract — the held fetch attach closes CLEANLY
+  (`requestfinished`, the park-exit wind-down; never `requestfailed`)
+  and only AFTER the socket opened — and streaming + culling stay
+  intact ACROSS the switch (scroll streams the new chunk in over the
+  socket, flips ride up it, pulses advance) with ZERO further
   fetch-endpoint POSTs and no tear/duplication. The FETCH world stays
   gated by `validate-world.mjs` (`?transport=fetch`, forced — its budgets
   are fetch-transport contracts).
-- `website/validate-no-ws.mjs` proves the CAPABILITY GATE — the inverse of
-  the auto-upgrade (`yarn build && node website/validate-no-ws.mjs`). The
-  plugin-less app is e2e-testing (the website always ships the plugin), so
-  it drives that app's preview at `/` and asserts the fetch channel
-  establishes and stays held (`data-parton-live`, a `POST /__parton/live`)
-  while ZERO `/__parton/ws` sockets ever open, no WebSocket console error
-  fires, and the served bootstrap carries no `__partonWsAvailable` flag —
-  the upgrade stood down because the server never advertised.
+- `website/validate-no-ws.mjs` proves the CAPABILITY GATE — the inverse
+  of the auto-upgrade (`yarn build && node website/validate-no-ws.mjs`).
+  Every in-repo app ships the plugin, so the unadvertised page is
+  produced by SUPPRESSING the advertisement client-side (an init script
+  swallows the bootstrap's `self.__partonWsAvailable = 1` write —
+  exactly the state a plugin-less server leaves the page in). It drives
+  the e2e-testing preview at `/` and asserts the fetch channel
+  establishes and stays held (`data-parton-live`, a `POST
+  /__parton/live`) while ZERO `/__parton/ws` sockets ever open and no
+  WebSocket console error fires — with the served bootstrap asserted to
+  CARRY the flag as the control (the client gate is what stood down).
 
 One teardown note the live gate surfaced: a hard socket close during an
 in-flight render logs `Error: The render was aborted by the server

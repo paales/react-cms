@@ -21,7 +21,11 @@
  *   2. upgrade     — within a short window the connection UPGRADES: the
  *      throwaway PROBE socket confirms and closes, then a HELD
  *      `/__parton/ws` socket (the re-attach) streams binary and stays
- *      open, `<html data-parton-live>` set, the fetch attach dropped.
+ *      open, `<html data-parton-live>` set. The handover is NO-TEAR:
+ *      the held fetch attach is never torn before the socket is up —
+ *      it closes CLEANLY (a server-side park-exit wind-down, observed
+ *      as `requestfinished`, never `requestfailed`) and only after the
+ *      probe confirmed.
  *   3. rides the socket — AFTER the upgrade, streaming + culling stay
  *      intact ACROSS the switch: scrolling into fresh territory streams
  *      the new centre chunk in over the SOCKET (binary frames), the
@@ -91,12 +95,29 @@ try {
   // Fetch-endpoint POST accounting, timestamped — the boot attach rides
   // `/__parton/live`; upstream envelopes pre-upgrade ride
   // `/__parton/channel`. After the upgrade NONE of these may fire.
-  const postsLive = [] // { t }
+  const postsLive = [] // { t, request, endT, how }
   const postsChannel = [] // { t }
   page.on("request", (r) => {
     if (r.method() !== "POST") return
-    if (r.url().includes("/__parton/live")) postsLive.push({ t: Date.now() })
+    if (r.url().includes("/__parton/live"))
+      postsLive.push({ t: Date.now(), request: r, endT: null, how: null })
     else if (r.url().includes("/__parton/channel")) postsChannel.push({ t: Date.now() })
+  })
+  // The held live POST's lifecycle — the no-tear proof: the handover
+  // must close it CLEANLY (server-side park-exit → `requestfinished`),
+  // never tear it (`requestfailed`), and only after the socket opened.
+  const endLive = (r, how) => {
+    const entry = postsLive.find((e) => e.request === r && e.endT === null)
+    if (entry) {
+      entry.endT = Date.now()
+      entry.how = how
+    }
+  }
+  page.on("requestfinished", (r) => {
+    if (r.method() === "POST" && r.url().includes("/__parton/live")) endLive(r, "finished")
+  })
+  page.on("requestfailed", (r) => {
+    if (r.method() === "POST" && r.url().includes("/__parton/live")) endLive(r, "failed")
   })
 
   // Per-socket lifecycle: the PROBE socket confirms and CLOSES; the
@@ -192,6 +213,24 @@ try {
     binaryDown > 0 && textDown === 0,
     "held socket downstream is opaque binary (the marker tunnel)",
     `${binaryDown} binary / ${textDown} text`,
+  )
+
+  // ── 2b. No tear across the handover — the held fetch attach closed
+  // CLEANLY (the park-exit wind-down), never failed, and only after the
+  // socket was up. `requestfailed` here would mean the client tore the
+  // held stream (the abort path) instead of the server winding it down.
+  const heldLive = postsLive.find((e) => e.how !== null)
+  check(
+    heldLive !== undefined && heldLive.how === "finished",
+    "held fetch attach closed CLEANLY at the handover (never torn)",
+    heldLive === undefined ? "still open / unobserved" : `ended: ${heldLive.how}`,
+  )
+  check(
+    heldLive !== undefined && firstWsOpenAt !== null && heldLive.endT >= firstWsOpenAt,
+    "fetch attach outlived the socket's open — no dead gap",
+    heldLive !== undefined && firstWsOpenAt !== null
+      ? `fetch closed ${heldLive.endT - firstWsOpenAt}ms after ws open`
+      : "unobserved",
   )
 
   // Let the handover fully settle, then snapshot: from here NOTHING may

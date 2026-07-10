@@ -21,8 +21,20 @@ import { clearCaches, test, expect, waitForPageInteractive } from "./fixtures"
  * navs preserve the JS realm; only a document load resets it).
  */
 
-test.beforeEach(async ({ baseURL }) => {
+test.beforeEach(async ({ baseURL, page }) => {
   await clearCaches(baseURL)
+  // These specs pin the FETCH transport's degrade machinery: with the
+  // dev server advertising `/__parton/ws`, the auto-upgrade would swap
+  // a blocked-POST page onto the socket and RECOVER it (correct
+  // behavior — but not what is under test). Suppress the advertisement
+  // so the upgrade stands down and the fetch paths stay the only ones.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "__partonWsAvailable", {
+      get: () => undefined,
+      set: () => {},
+      configurable: true,
+    })
+  })
 })
 
 test("blocked channel POSTs degrade the page; links become document loads", async ({ page }) => {

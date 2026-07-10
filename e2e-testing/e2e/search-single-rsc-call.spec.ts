@@ -9,11 +9,13 @@ import { test, expect, waitForPageInteractive } from "./fixtures"
  * LoadMore races with the keystroke and produces a second dispatch for
  * page-N + load-more.
  *
- * Two transports carry a refetch: attached to the live channel, the
+ * Three carriers can take a refetch: attached to the live channel, the
  * batch rides a `url` frame on a `/__parton/channel` envelope (the
- * page URL with the `?__force=` overlay); pre-attach it is a discrete
- * `_.rsc` GET with `?partials=`. The keystroke races establishment, so
- * the guard counts dispatches across BOTH and expects exactly one.
+ * page URL with the `?__force=` overlay); after the auto-upgrade the
+ * same envelope is a text frame on the `/__parton/ws` socket; and
+ * pre-attach it is a discrete `_.rsc` GET with `?partials=`. The
+ * keystroke races establishment and the upgrade, so the guard counts
+ * dispatches across ALL of them and expects exactly one.
  */
 test("single keystroke in search dispatches exactly one RSC call", async ({ page }) => {
   const rscCalls: Array<{
@@ -54,6 +56,29 @@ test("single keystroke in search dispatches exactly one RSC call", async ({ page
         }
       } catch {}
     }
+  })
+  // The upgraded socket — envelopes ride it as text frames.
+  page.on("websocket", (ws) => {
+    if (!ws.url().includes("/__parton/ws")) return
+    ws.on("framesent", (frame) => {
+      if (typeof frame.payload !== "string") return
+      try {
+        const message = JSON.parse(frame.payload) as {
+          connection?: string
+          frames?: Array<{ kind: string; url?: string; frame?: string[] }>
+        }
+        if (typeof message.connection !== "string") return
+        for (const f of message.frames ?? []) {
+          if (f.kind !== "url" || !f.url || f.frame) continue
+          const stated = new URL(f.url, "http://localhost")
+          urlStatements.push({
+            url: f.url,
+            partials: stated.searchParams.get("__force"),
+            time: Date.now() - t0,
+          })
+        }
+      } catch {}
+    })
   })
 
   // 1. Load with search open (empty query) — only stage-1 renders initially.

@@ -1,5 +1,5 @@
 /**
- * CAPABILITY-GATE gate: proves a PLUGIN-LESS parton app opens ZERO
+ * CAPABILITY-GATE gate: proves an UNADVERTISED page opens ZERO
  * `/__parton/ws` sockets and logs NO WebSocket console error, while its
  * fetch channel stays live. This is the fix for the reported bug: before
  * the capability gate the auto-upgrade probed `/__parton/ws` BLIND on
@@ -11,11 +11,16 @@
  * The gate: the server ADVERTISES it serves the socket
  * (`partonChannelServer` sets `PARTON_WS_AVAILABLE`, `renderHTML` reflects
  * it into the bootstrap as `self.__partonWsAvailable`); the client probes
- * ONLY when advertised. No plugin → no flag → no probe → no socket.
+ * ONLY when advertised. No flag → no probe → no socket.
  *
- * The website ALWAYS ships the plugin, so the plugin-less app under test
- * is e2e-testing — the exact app (`:5173`) from the report. Build it
- * first (`yarn build` builds e2e-testing):
+ * Every in-repo app now ships the plugin, so the unadvertised page is
+ * produced by SUPPRESSING the advertisement client-side: an init script
+ * swallows the bootstrap's `self.__partonWsAvailable = 1` write before
+ * the browser entry reads it — exactly the state a plugin-less server
+ * leaves the page in. As a control, the served document itself is
+ * asserted to CARRY the flag (the suppression is what's under test, not
+ * its absence). Drives the e2e-testing preview; build it first (`yarn
+ * build` builds e2e-testing):
  *   yarn build && node website/validate-no-ws.mjs
  *
  * It drives Chromium at `/` (NO `?transport=` param) and asserts:
@@ -28,8 +33,9 @@
  *      is ever opened. The auto-upgrade stood down: unadvertised.
  *   3. no ws error  — no console error / pageerror / failed request that
  *      names WebSocket or `/__parton/ws`. The doomed-socket noise is gone.
- *   4. no advert    — the served document's bootstrap carries no
- *      `__partonWsAvailable` flag (the server never set it).
+ *   4. advert control — the served document's bootstrap DOES carry the
+ *      `__partonWsAvailable` flag (the server ships the plugin), so the
+ *      zero-socket result above is the CLIENT gate standing down.
  *
  * The ADVERTISED counterpart (the website upgrades to WS) is gated by
  * `validate-upgrade.mjs`; the forced paths by `validate-world.mjs`
@@ -48,8 +54,8 @@ try {
   process.exit(2)
 } catch {}
 
-// Drive the PLUGIN-LESS e2e-testing app in preview (its vite.config has no
-// `partonChannelServer()`, so `/__parton/ws` is unserved — the 5173 shape).
+// Drive the e2e-testing app in preview (it ships `partonChannelServer()`;
+// the advertisement is suppressed client-side below — the 5173 shape).
 const server = spawn(
   "yarn",
   ["workspace", "@parton/e2e-testing", "preview", "--port", String(PORT), "--strictPort"],
@@ -89,6 +95,18 @@ try {
 
   const browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+
+  // Suppress the advertisement BEFORE any page script runs: the
+  // bootstrap's `self.__partonWsAvailable = 1` write is swallowed, so
+  // the browser entry sees an unadvertised endpoint — the plugin-less
+  // server's exact client state.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "__partonWsAvailable", {
+      get: () => undefined,
+      set: () => {},
+      configurable: true,
+    })
+  })
 
   // Every `/__parton/ws` socket construction + close code, captured
   // in-page (Playwright's own `close` event drops the code). Even a socket
@@ -185,11 +203,13 @@ try {
   if (otherConsole.length)
     console.log(`  (${otherConsole.length} unrelated console error(s), ignored)`)
 
-  // ── 4. The served bootstrap carries no advertise flag ──
+  // ── 4. Advert control: the served bootstrap DOES carry the flag ──
+  // (the server ships the plugin), so the zero-socket result above is
+  // the CLIENT gate standing down on a suppressed advertisement.
   const html = await (await fetch(BASE)).text()
   check(
-    !html.includes("__partonWsAvailable"),
-    "document bootstrap carries no __partonWsAvailable flag",
+    html.includes("__partonWsAvailable"),
+    "document bootstrap carries the __partonWsAvailable flag (control)",
   )
 
   // ── Fetch channel still live after the window (fallback untouched) ──

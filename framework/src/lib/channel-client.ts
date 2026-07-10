@@ -70,7 +70,7 @@
  */
 
 import { type ChannelFrame, UNACKED_DELIVERY_WINDOW, type UrlFrame } from "./channel-protocol.ts"
-import { getChannelTransport } from "./channel-transport.ts"
+import { fetchTransport, getChannelTransport } from "./channel-transport.ts"
 import {
   TAG_CONNECTION_ID,
   TAG_DELIVERY_SEQ,
@@ -362,6 +362,11 @@ function refreshDocumentNavMode(): void {
     establishFailures >= CHANNEL_FAILURE_LIMIT || firstAckFailures >= CHANNEL_FAILURE_LIMIT
   if (fallback === documentNavMode) return
   documentNavMode = fallback
+  // Falling to document-nav settles any in-flight transport handover:
+  // the swap's outcome is decided (no connection), so held action
+  // POSTs proceed unattached rather than waiting on an establishment
+  // that is no longer coming.
+  if (fallback) releaseHandoverWaiters()
   if (typeof document !== "undefined") {
     if (fallback) document.documentElement.setAttribute("data-parton-degraded", "")
     else document.documentElement.removeAttribute("data-parton-degraded")
@@ -541,28 +546,153 @@ export function _channelAbortLiveStream(): void {
   liveStreamAbort?.()
 }
 
-/** Set by `_channelRequestReattach` — the NEXT connection close re-fires
- *  the attach even with no pending interaction. The transport-upgrade
- *  handover is its only user: a deliberate close whose sole purpose is to
- *  re-establish on the just-installed transport, so nothing else would
- *  trigger the settle's re-fire. One-shot, consumed in
+/** Set by the transport handover — the NEXT connection close re-fires
+ *  the attach even with no pending interaction: a deliberate close whose
+ *  sole purpose is to re-establish on the adopted transport, so nothing
+ *  else would trigger the settle's re-fire. One-shot, consumed in
  *  `_channelConnectionClosed`. */
 let reattachOnClose = false
 
+// ─── The transport handover (fetch → WebSocket) ──────────────────────
+//
+// The auto-upgrade swaps the transport UNDER the channel with no gap
+// and no tear (`armTransportUpgrade`, browser entry). Once a throwaway
+// probe proves the socket (`probeWebSocketTransport`), the handover is
+// two ordinary moves, sequenced so nothing is ever torn or rolled back:
+//
+//   1. `_channelBeginTransportHandover` — the commit point. States the
+//      old connection's `atPark` detach: the server winds the held
+//      stream down at its next FULL PARK — everything in flight is
+//      served first (open lanes drain and commit, latched statements
+//      get their covering renders), and the close tears nothing on
+//      either side. The connection id stays PUBLISHED for the whole
+//      wind-down, so statements and actions keep riding the old
+//      connection until the moment it actually closes; the one-shot
+//      reattach flag makes that close re-fire the heartbeat.
+//   2. That fire is a NORMAL attach on the just-installed WebSocket
+//      transport: its statement folds pending intent and presents the
+//      manifest AT FIRE TIME — strictly after every one of the old
+//      stream's commits landed (`finished` awaits the lane chains) —
+//      so the new connection's whole-tree first segment can never
+//      roll the page back behind content the old connection
+//      delivered. The statement also names the closed connection
+//      (`handoverFrom`), and the new session inherits its ephemeral
+//      cell storage server-side — connection-scoped state survives
+//      the pipe swap.
+
+/** The handover's only unpublished window is open: the old connection
+ *  CLOSED (its park-exit settle consumed the one-shot reattach flag)
+ *  and the replacing attach has not established yet. Action POSTs wait
+ *  it out (`_channelHandoverSettled`) so their connection affinity —
+ *  the `x-parton-conn` binding that routes cell writes into the
+ *  connection's ephemeral storage — is never silently dropped into
+ *  unattached semantics by a swap the user never asked for. */
+let handoverInFlight = false
+let handoverWaiters: Array<() => void> = []
+
+/** The connection the next attach REPLACES — captured at the handover
+ *  commit, consumed (one-shot) by the attach transport into the
+ *  statement's `handoverFrom` continuity link. */
+let handoverFromId: string | null = null
+
+function releaseHandoverWaiters(): void {
+  handoverInFlight = false
+  const waiters = handoverWaiters
+  handoverWaiters = []
+  for (const resolve of waiters) resolve()
+}
+
 /**
- * The transport-upgrade handover: drop the held connection and
- * immediately re-attach on the CURRENT transport (the caller has just
- * `setChannelTransport`'d the confirmed WebSocket — [[channel-transport]]).
- * Aborting the held fetch stream settles it through the normal close path
- * (`_channelConnectionClosed`); the one-shot flag makes that close re-fire
- * even though no navigation is pending. The re-attach presents the
- * manifest + watermark, so fp-skip + the layered mirror + the retransmit
- * buffer carry the brief overlap without frame loss — it IS an ordinary
- * re-attach, only its trigger is new.
+ * Resolves when no committed handover is in flight: immediately in the
+ * steady state, else at the adopted connection's establishment (or the
+ * degrade fallback — whichever settles the swap). The action transport
+ * awaits this before capturing its connection binding; everything else
+ * (url/frame/cookie statements) latches through the window on its own
+ * machinery and needs no wait.
  */
-export function _channelRequestReattach(): void {
+export function _channelHandoverSettled(): Promise<void> {
+  if (!handoverInFlight) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    handoverWaiters.push(resolve)
+  })
+}
+
+// The upgrade's quiesce gate: the handover COMMITS only while no
+// interaction is in flight — an unsettled navigation / refetch record
+// means a covering render is mid-stream on the held connection, and
+// swapping the transport under it would punt the interaction through
+// the re-statement path (a full extra render) for no reason. The
+// signal is the record machinery itself — a record's settle is an
+// exact milestone, never a timer — and a page that never goes idle
+// simply keeps its fetch connection (the upgrade is opportunistic).
+
+let idleWaiters: Array<() => void> = []
+
+function channelInteractionPending(): boolean {
+  return pendingNavRecords.some((r) => !r.settled) || pendingFrameNavRecords.some((r) => !r.settled)
+}
+
+function maybeReleaseIdleWaiters(): void {
+  if (idleWaiters.length === 0) return
+  if (channelInteractionPending()) return
+  const waiters = idleWaiters
+  idleWaiters = []
+  for (const resolve of waiters) resolve()
+}
+
+/** Resolves when no navigation / refetch interaction is in flight —
+ *  immediately in the steady state, else at the next moment the last
+ *  pending record retires (settle, abort, document-nav completion). */
+export function _channelIdle(): Promise<void> {
+  if (!channelInteractionPending()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    idleWaiters.push(resolve)
+  })
+}
+
+/**
+ * Commit the transport handover: the probe CONFIRMED the socket while
+ * the old connection is still established. Arms the one-shot reattach
+ * and states the old connection's `atPark` detach on the fetch
+ * transport — the graceful server-side wind-down: the drive exits at
+ * its next full park, so open lanes drain and commit, latched
+ * statements get their covering renders, and the stream closes with
+ * nothing to tear. The id stays PUBLISHED until that close, so the
+ * old connection keeps serving statements and actions for the whole
+ * wind-down; the close's settle re-fires the heartbeat, whose attach
+ * rides the caller's just-installed transport and names the closed
+ * connection (`handoverFrom`, consumed via `_takeHandoverFrom`). A
+ * detach the server never took (`false` — the connection is already
+ * gone, or the POST path just broke) falls back to aborting the held
+ * stream: its settle still re-fires. Returns `false` when no
+ * connection is established — the re-fire is requested directly.
+ */
+export function _channelBeginTransportHandover(): boolean {
+  const connection = _getLiveConnectionId()
   reattachOnClose = true
-  _channelAbortLiveStream()
+  if (connection === null) {
+    // Nothing established (the connection settled between the upgrade
+    // gate and the confirm). No stream to wind down — request the fire
+    // directly.
+    _requestAttachNow()
+    return false
+  }
+  handoverFromId = connection
+  void fetchTransport
+    .send({ connection, seq: ++envelopeSeq, frames: [{ kind: "detach", atPark: true }] })
+    .then((delivered) => {
+      if (!delivered) _channelAbortLiveStream()
+    })
+  return true
+}
+
+/** Consume (one-shot) the connection the next attach replaces — the
+ *  statement's `handoverFrom` continuity link. `null` outside a
+ *  handover. */
+export function _takeHandoverFrom(): string | null {
+  const id = handoverFromId
+  handoverFromId = null
+  return id
 }
 
 // ─── Cookie changes over the channel ─────────────────────────────────
@@ -584,14 +714,15 @@ let pendingCookies = new Map<string, string | null>()
  * State one-or-more client cookie changes on the channel — the tear's
  * replacement. `document.cookie` is already written (the browser ships
  * the new jar on the next request); this states the changes to the OPEN
- * connection so its held renders reflect them without a reattach. No
- * connection open → nothing to update (the next attach's `Cookie` header
- * carries them). Values are the wire form (URL-encoded, `null` = delete)
- * — exactly what the raw `Cookie` header would carry — so the overlay
- * and a later reattach's header agree.
+ * connection so its held renders reflect them without a reattach. With
+ * no connection open the deltas LATCH: a fetch attach retires them (its
+ * own `Cookie` header restates the jar — the subsume's clear), while a
+ * handover-adopted WS connection flushes them as frames (its jar froze
+ * at the upgrade handshake). Values are the wire form (URL-encoded,
+ * `null` = delete) — exactly what the raw `Cookie` header would carry —
+ * so the overlay and a later reattach's header agree.
  */
 export function _channelCookieChange(changes: Record<string, string | null>): void {
-  if (_getLiveConnectionId() === null) return
   for (const name of Object.keys(changes)) {
     pendingCookies.set(name, changes[name])
   }
@@ -716,6 +847,7 @@ export function _channelNavigate(init: {
       const err = abortError()
       if (!record.streamingResolved) record.rejectStreaming(err)
       record.rejectFinished(err)
+      maybeReleaseIdleWaiters()
     }
     if (init.signal.aborted) onAbort()
     else init.signal.addEventListener("abort", onAbort, { once: true })
@@ -828,6 +960,7 @@ export function _channelNavSegmentSettled(asOf: number): void {
   }
   pendingFrameNavRecords = remainingFrames
   pruneFrameSeqKeys()
+  maybeReleaseIdleWaiters()
 }
 
 /** The folded intent an attach fire carries — what
@@ -1037,6 +1170,7 @@ export function _channelFrameNavigate(init: {
       const err = abortError()
       if (!record.streamingResolved) record.rejectStreaming(err)
       record.rejectFinished(err)
+      maybeReleaseIdleWaiters()
     }
     if (init.signal.aborted) onAbort()
     else init.signal.addEventListener("abort", onAbort, { once: true })
@@ -1088,6 +1222,7 @@ export function _channelFrameLaneSettled(navSeq: number): void {
   }
   pendingFrameNavRecords = remaining
   pruneFrameSeqKeys()
+  maybeReleaseIdleWaiters()
 }
 
 /** The frame-navigation producer — RELIABLE class. One url frame per
@@ -1160,6 +1295,7 @@ function documentNavForPendingRecords(): void {
     if (!r.streamingResolved) r.resolveStreaming()
     r.resolveFinished()
   }
+  maybeReleaseIdleWaiters()
 }
 
 /**
@@ -1456,6 +1592,10 @@ const ackProducer: ChannelProducer = {
  * point.
  */
 export function _channelEstablished(connection: string): void {
+  // Any establishment settles an in-flight transport handover — the
+  // waiters (action POSTs holding for their connection binding) run
+  // with the fresh id published below.
+  releaseHandoverWaiters()
   pendingLaneSeqs.clear()
   laneProducerWaiters.clear()
   deliveredOutOfOrder.clear()
@@ -1490,13 +1630,15 @@ export function _channelEstablished(connection: string): void {
   }
   for (const cb of [...establishListeners]) cb(connection)
   // Statements that latched while no connection existed (and weren't
-  // folded into this attach — they landed after its subsume) flush on
-  // the fresh connection alongside any retransmit survivors.
+  // folded into this attach — they landed after its subsume, or the
+  // attach was a handover adoption, which folds nothing) flush on the
+  // fresh connection alongside any retransmit survivors.
   if (
     retransmitPending ||
     pendingNavFrame !== null ||
     pendingFrameFrames.size > 0 ||
-    pendingCancelScopes.size > 0
+    pendingCancelScopes.size > 0 ||
+    pendingCookies.size > 0
   ) {
     scheduleChannelFlush()
   }
@@ -1532,9 +1674,13 @@ export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
   establishedSinceClose = false
   // One-shot: a transport-upgrade handover requested this close re-fire
   // unconditionally (no pending interaction triggers it). Consume it
-  // here so it can never leak into a later close.
+  // here so it can never leak into a later close. From this moment to
+  // the adopted connection's establishment the id is unpublished — the
+  // handover's only window — so action POSTs hold for it
+  // (`_channelHandoverSettled`).
   const forceReattach = reattachOnClose
   reattachOnClose = false
+  if (forceReattach) handoverInFlight = true
   const firstAckFailed = firstAckFailedThisConnection
   firstAckFailedThisConnection = false
   // The connection's delivery seqs are dead — a gate anchored on them
@@ -1677,7 +1823,14 @@ async function flush(): Promise<void> {
       // re-owned statements — and everything after them — pend for
       // the next establishment. Reliable frames stay in the buffer;
       // their producers are not handed back.
-      if (_getLiveConnectionId() === connection) _setLiveConnectionId(null)
+      //
+      // A failure for a connection that is NO LONGER the current one
+      // (the transport handover closed it while this envelope was in
+      // flight) is moot beyond the handbacks: the new connection
+      // re-acks and re-covers everything, so it must neither pull the
+      // NEW stream down nor count toward the degrade bound.
+      const stillCurrent = _getLiveConnectionId() === connection
+      if (stillCurrent) _setLiveConnectionId(null)
       for (const { producer, frame } of carried) {
         if (producer.reliable !== true) producer.deliveryFailed(frame)
       }
@@ -1688,10 +1841,13 @@ async function flush(): Promise<void> {
       // stream down; its settle counts a first-ack failure and
       // arbitrates re-establishment vs the recoverable document-nav
       // fallback through the bound (`_channelConnectionClosed`).
-      if (carriesAck && !ackDeliveredOnConnection) {
+      if (stillCurrent && carriesAck && !ackDeliveredOnConnection) {
         firstAckFailedThisConnection = true
         _channelAbortLiveStream()
-      } else if (pendingNavRecords.length > 0 || pendingFrameNavRecords.length > 0) {
+      } else if (
+        stillCurrent &&
+        (pendingNavRecords.length > 0 || pendingFrameNavRecords.length > 0)
+      ) {
         // Pending navigations — window and frame alike — can't reach
         // the server on this connection anymore. Abort the held
         // stream (it still renders the state the page just left);
@@ -1793,6 +1949,11 @@ export function _resetChannelClient(): void {
   pendingFrameFrames = new Map()
   pendingCancelScopes = new Set()
   pendingCookies = new Map()
+  handoverInFlight = false
+  handoverWaiters = []
+  handoverFromId = null
+  idleWaiters = []
+  reattachOnClose = false
   pendingFrameNavRecords = []
   frameSeqKeys.clear()
   consequenceGates.clear()

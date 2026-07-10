@@ -479,14 +479,28 @@ export function notifyLaneCommit(): void {
  */
 let _liveCatchupAnchor: { epoch: string; ts: number } | null = null
 
+/** Retained copy of the document anchor — never cleared. The transport
+ *  upgrade's PROBE presents it so an anchor-honoring server opens the
+ *  probe's throwaway session straight into a parked lanes region:
+ *  `conn` arrives with near-zero server work and closing the probe
+ *  socket tears no render. Never presented by a REAL attach — those
+ *  keep the take-once semantic below (a reattach's first segment is
+ *  whole-tree, the mirror's reconcile pass). */
+let _documentAnchor: { epoch: string; ts: number } | null = null
+
 export function _setLiveCatchupAnchor(anchor: { epoch: string; ts: number }): void {
   _liveCatchupAnchor = anchor
+  _documentAnchor = anchor
 }
 
 export function _takeLiveCatchupAnchor(): { epoch: string; ts: number } | null {
   const anchor = _liveCatchupAnchor
   _liveCatchupAnchor = null
   return anchor
+}
+
+export function _documentCatchupAnchor(): { epoch: string; ts: number } | null {
+  return _documentAnchor
 }
 
 // ─── Live connection id ───────────────────────────────────────────

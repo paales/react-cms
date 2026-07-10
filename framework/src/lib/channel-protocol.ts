@@ -136,6 +136,13 @@ export interface AttachStatement {
   /** Optional on the wire; entries MUST carry a frame path (window
    *  intent folds into `url` — a window-scoped entry is malformed). */
   frames?: UrlFrame[]
+  /** The connection this attach REPLACES — the transport handover's
+   *  continuity link. The new session inherits the named connection's
+   *  ephemeral cell storage (same scope + session binding only), so
+   *  connection-scoped state — deferred cells, streaming logs —
+   *  survives the pipe swap: the handover is the same logical
+   *  connection continuing on a new transport. */
+  handoverFrom?: string
 }
 
 /**
@@ -184,6 +191,11 @@ export function decodeAttachStatement(value: unknown): AttachStatement | null {
       frames.push(decoded)
     }
   }
+  let handoverFrom: string | undefined
+  if (v.handoverFrom !== null && v.handoverFrom !== undefined) {
+    if (typeof v.handoverFrom !== "string" || v.handoverFrom.length === 0) return null
+    handoverFrom = v.handoverFrom
+  }
   return {
     url: v.url,
     cached: v.cached,
@@ -191,6 +203,7 @@ export function decodeAttachStatement(value: unknown): AttachStatement | null {
     visible,
     applied,
     ...(frames !== undefined && frames.length > 0 ? { frames } : {}),
+    ...(handoverFrom !== undefined ? { handoverFrom } : {}),
   }
 }
 
@@ -224,9 +237,20 @@ export interface VisibleFrame {
  * by nature (an unload beacon can always be lost); the driver's
  * keepalive timeout remains the backstop. The driver wakes, exits its
  * drive loop, and closes the session.
+ *
+ * `atPark` softens the close to the transport handover's wind-down:
+ * the drive exits at its next FULL PARK — no open lanes, nothing
+ * latched — so the connection keeps serving everything already in
+ * flight (open lanes drain, latched statements get their covering
+ * renders) and the stream closes with nothing to tear, on either
+ * side. An immediate detach (no flag) is the client-gone semantic:
+ * exit now, tear open lanes.
  */
 export interface DetachFrame {
   kind: "detach"
+  /** Wind down at the next full park instead of immediately — the
+   *  transport handover's graceful close. */
+  atPark?: boolean
 }
 
 /**
@@ -451,7 +475,7 @@ export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
       continue
     }
     if (f.kind === "detach") {
-      frames.push({ kind: "detach" })
+      frames.push({ kind: "detach", ...(f.atPark === true ? { atPark: true } : {}) })
       continue
     }
     if (f.kind === "ack") {

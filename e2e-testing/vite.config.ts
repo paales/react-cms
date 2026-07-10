@@ -4,6 +4,7 @@ import react, { reactCompilerPreset } from "@vitejs/plugin-react"
 import rsc from "@vitejs/plugin-rsc"
 import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from "vite"
+import { partonChannelServer } from "@parton/framework/vite/channel-server.ts"
 import { rscCompression } from "@parton/framework/vite/compression.ts"
 
 // Skip `@vitejs/plugin-rsc` when vitest is running: its `"use client"`
@@ -98,6 +99,7 @@ export default defineConfig(({ mode }) => ({
     ? [react(), tailwindcss()]
     : [
         rscCompression(),
+        partonChannelServer(),
         rsc(),
         react(),
         babel({

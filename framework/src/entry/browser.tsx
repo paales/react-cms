@@ -24,10 +24,15 @@ import React from "react"
 import { createRoot, hydrateRoot } from "react-dom/client"
 import { rscStream } from "rsc-html-stream/client"
 import {
+  _channelAbortLiveStream,
+  _channelAppliedWatermark,
+  _channelBeginTransportHandover,
   _channelClaimWindowNav,
   _channelDeliveryCommittable,
   _channelFrameLaneCommitted,
   _channelFrameLaneSettled,
+  _channelHandoverSettled,
+  _channelIdle,
   _channelIsDegraded,
   _channelNavAvailable,
   _channelNavigate,
@@ -37,7 +42,6 @@ import {
   _channelNavSegmentCommitted,
   _channelNavSegmentSettled,
   _channelNavSubsumedByAttach,
-  _channelRequestReattach,
   _channelWireEntry,
   _laneDeliveryCommitted,
   _laneDeliveryDropped,
@@ -49,6 +53,7 @@ import {
   _segmentDelivery,
   _segmentDeliveryCommitted,
   _segmentDeliveryDroppedStale,
+  _takeHandoverFrom,
   onChannelEstablished,
   type WireDelivery,
 } from "../lib/channel-client.ts"
@@ -62,7 +67,7 @@ import {
   setChannelTransport,
   WebSocketTransport,
 } from "../lib/channel-transport.ts"
-import type { FpUpdatesPayload } from "../lib/fp-trailer-marker.ts"
+import { type FpUpdatesPayload, TAG_CONNECTION_ID } from "../lib/fp-trailer-marker.ts"
 import { type DemuxedLane, splitAtFpTrailer, splitSegments } from "../lib/fp-trailer-split.ts"
 import { LivePageHeartbeat } from "../lib/live-page-heartbeat.tsx"
 import { markPageInteractive } from "../lib/page-interactive.ts"
@@ -77,7 +82,12 @@ import {
   getCachedPartialIds,
   isFrameworkSilentInfo,
 } from "../lib/partial-client.tsx"
-import { _getLiveConnectionId, getAllCachedPartialTokens } from "../lib/partial-client-state.ts"
+import {
+  _documentCatchupAnchor,
+  _getLiveConnectionId,
+  getAllCachedPartialTokens,
+} from "../lib/partial-client-state.ts"
+import { _visibleSetIds } from "../lib/visibility.tsx"
 import { applyStandardTrailers } from "../lib/segment-trailers-client.ts"
 import { GlobalErrorBoundary, NavigationErrorBoundary } from "../runtime/error-boundary.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
@@ -99,19 +109,32 @@ export function bootBrowser(): void {
 }
 
 /** Delay after the fetch connection first establishes before the WS
- *  probe fires — long enough that first content already rendered over
+ *  attach fires — long enough that first content already rendered over
  *  fetch (the upgrade costs the user nothing), short enough that the
  *  socket takes over promptly. */
 const UPGRADE_PROBE_DELAY_MS = 600
-/** Backoff base between failed re-probes (scaled by the probe count). */
+/** Backoff base between failed re-attempts (scaled by the count). */
 const UPGRADE_REPROBE_MS = 2_000
-/** Total WS probes before giving up for the page's lifetime — bounded so
- *  a blocked endpoint is never hammered. Small: a same-origin socket that
- *  works confirms on the FIRST probe (the cold-handler race is fixed
- *  server-side), so the retry is only for a genuine transient blip, and an
- *  app with no `/__parton/ws` (Vite leaves the upgrade hanging) should
- *  give up promptly — the next document navigation re-arms anyway. */
+/** Total WS attempts before giving up for the page's lifetime — bounded
+ *  so a blocked endpoint is never hammered. Small: a same-origin socket
+ *  that works confirms on the FIRST attempt (the cold-handler race is
+ *  fixed server-side), so the retry is only for a genuine transient
+ *  blip — the next document navigation re-arms anyway. */
 const MAX_UPGRADE_PROBES = 2
+/** Backstop on the old connection's graceful wind-down: if its stream
+ *  hasn't settled this long after the `atPark` detach (a connection
+ *  that never parks — an unbounded producer, a wedged loader), escalate
+ *  to the abrupt abort so the handover completes. A liveness bound, not
+ *  a signal: a normally-active connection parks within its current
+ *  lanes' loader time. */
+const HANDOVER_DRAIN_TIMEOUT_MS = 10_000
+
+/** The upgrade committed: the NEXT attach fire installs the WebSocket
+ *  transport before opening. Set together with the handover's `atPark`
+ *  detach, consumed by the attach transport — so the transport flips
+ *  exactly at the fire that replaces the wound-down connection, never
+ *  under an envelope addressed to the old one. */
+let upgradeToWebSocketOnNextFire = false
 
 /**
  * Auto-upgrade the live channel from fetch to WebSocket where the socket
@@ -119,24 +142,50 @@ const MAX_UPGRADE_PROBES = 2
  * re-attach machinery rather than an in-place socket swap.
  *
  * Boot rides fetch (instant, universal). Once the fetch connection
- * establishes, a BACKGROUND probe opens a speculative WS attach; if the
- * server-minted `conn` handshake arrives over the socket (the real
- * establishment signal — not a bare `onopen`, see
- * `probeWebSocketTransport`), WebSocket becomes the active transport and
- * the held fetch connection is dropped so its settle RE-ATTACHES on the
- * socket (`_channelRequestReattach`). From there every attach, lane, and
- * envelope rides the socket. A blocked/absent endpoint fails the probe
- * and everything stays on fetch, transparently — no user-visible delay,
- * bounded backed-off re-probes, then it gives up for the page lifetime.
+ * establishes AND the channel is idle (no navigation / refetch in
+ * flight — the quiesce gate, `_channelIdle`), a BACKGROUND probe opens
+ * a speculative WS attach on a throwaway socket
+ * (`probeWebSocketTransport`). The probe presents the manifest and the
+ * retained document anchor, so an anchor-honoring server opens its
+ * session straight into a parked lanes region: `conn` — the real
+ * establishment signal, not a bare `onopen` — arrives with near-zero
+ * server work, and closing the probe socket tears no render.
+ *
+ * Confirmed → the handover, two ordinary moves with no gap and no tear:
+ *
+ *   1. `_channelBeginTransportHandover` states the old connection's
+ *      `atPark` detach: the server winds the held stream down at its
+ *      next FULL PARK — everything in flight is served first (open
+ *      lanes drain and commit, latched statements get their covering
+ *      renders) and the close tears nothing. The connection id stays
+ *      published for the whole wind-down, so the page keeps its full
+ *      transport until the very close.
+ *   2. That close re-fires the heartbeat (the one-shot reattach flag),
+ *      and the fire is a NORMAL attach on the WebSocket transport
+ *      (installed by the one-shot flip above): its statement folds
+ *      pending intent and presents the manifest AT FIRE TIME —
+ *      strictly after every one of the old stream's commits landed —
+ *      so the new connection's first segment can never roll the page
+ *      back. The statement names the closed connection
+ *      (`handoverFrom`) and the new session inherits its ephemeral
+ *      cell storage. From there every attach, lane, and envelope
+ *      rides the socket.
+ *
+ * A blocked/absent endpoint fails the probe and everything stays on
+ * fetch, transparently — bounded backed-off re-probes, then it gives up
+ * for the page lifetime. A confirmed-then-failed socket falls back to
+ * fetch through the fire path itself: an attach that settles without
+ * establishing on an unforced WebSocket transport reverts to fetch
+ * before re-attaching (`consumeLiveStream`'s settle guard).
  *
  * The probe is CAPABILITY-GATED: it fires only when the server ADVERTISED
  * it serves the socket. `partonChannelServer` (the Vite plugin registering
  * the `/__parton/ws` upgrade handler) sets `PARTON_WS_AVAILABLE`, which
  * `renderHTML` reflects into the bootstrap as `self.__partonWsAvailable`.
  * No flag → no plugin → no handler; probing would open a doomed socket the
- * host leaves hanging (close 1006) and log a console error, twice. This is
- * the no-heuristic rule: the server that serves the socket advertises it;
- * the client never probes an unadvertised endpoint.
+ * host leaves hanging (close 1006) and log a console error. This is the
+ * no-heuristic rule: the server that serves the socket advertises it; the
+ * client never probes an unadvertised endpoint.
  *
  * Stands down entirely when the endpoint is unadvertised, when a
  * `?transport=` force pins the transport (the user's explicit choice — a
@@ -159,41 +208,54 @@ function armTransportUpgrade(): void {
     // Only ever upgrade FROM the default fetch transport.
     if (getChannelTransport() !== fetchTransport) return
     probing = true
+    // The quiesce gate: commit only while no navigation / refetch is in
+    // flight — a swap under a mid-stream covering render would punt the
+    // interaction through the close-race path for no reason. The wait
+    // is the record machinery's own settle milestones; a page that
+    // never idles keeps fetch.
+    await _channelIdle()
+    if (upgraded || getChannelTransport() !== fetchTransport) {
+      probing = false
+      return
+    }
     probes += 1
     let confirmed = false
     try {
       confirmed = await probeWebSocketTransport({
         url: window.location.pathname + window.location.search,
-        // Present the manifest so the probe's throwaway server render
-        // fp-skips to placeholders. `since: null` — the catch-up anchor
-        // was consumed by the boot attach — and the socket closes on
-        // `conn` anyway, before that render matters.
+        // The manifest + the retained document anchor keep the probe's
+        // throwaway session near-free server-side (see the doc above).
         cached: getAllCachedPartialTokens(),
-        since: null,
-        visible: null,
-        applied: 0,
+        since: _documentCatchupAnchor(),
+        visible: _visibleSetIds() ?? null,
+        applied: _channelAppliedWatermark(),
       })
     } finally {
       probing = false
     }
-    if (confirmed) {
-      upgraded = true
-      // Flip the transport, then hand the connection over: the held
-      // fetch stream closes and its settle re-attaches — now on the
-      // socket. fp-skip + the layered mirror + the retransmit buffer
-      // cover the brief overlap, so no frame is lost across the switch.
-      setChannelTransport(new WebSocketTransport())
-      _channelRequestReattach()
-    } else if (probes < MAX_UPGRADE_PROBES) {
-      // Backed-off re-probe — never hammer a blocked endpoint.
-      setTimeout(() => void tryUpgrade(), UPGRADE_REPROBE_MS * probes)
+    if (!confirmed) {
+      if (probes < MAX_UPGRADE_PROBES) {
+        // Backed-off re-probe — never hammer a blocked endpoint.
+        setTimeout(() => void tryUpgrade(), UPGRADE_REPROBE_MS * probes)
+      }
+      return
     }
+    upgraded = true
+    // Flip at the REPLACING fire, then wind the old connection down.
+    upgradeToWebSocketOnNextFire = true
+    _channelBeginTransportHandover()
+    // The wind-down backstop — see HANDOVER_DRAIN_TIMEOUT_MS.
+    setTimeout(() => {
+      if (getChannelTransport() === fetchTransport && upgradeToWebSocketOnNextFire) {
+        _channelAbortLiveStream()
+      }
+    }, HANDOVER_DRAIN_TIMEOUT_MS)
   }
 
   // Probe once the FETCH connection is up (first content already
   // delivered — no penalty). Arm on the FIRST establishment only; the
-  // probe and its bounded retry own the rest, so later re-establishments
-  // (keepalive, navigation) don't re-trigger it.
+  // probe and its bounded retry own the rest, so later
+  // re-establishments (keepalive, navigation) don't re-trigger it.
   onChannelEstablished(() => {
     if (armed) return
     if (getChannelTransport() !== fetchTransport) return
@@ -320,21 +382,30 @@ async function main() {
   }
 
   /**
-   * Consume one attach stream: POST the statement to
-   * `/__parton/live` and decode the held segmented response — the
-   * `conn` handshake, payload segments (whole-tree renders,
-   * navigation segments, reconciles), and per-parton lanes. Returns
-   * synchronously with `{streaming, finished}` promises: `streaming`
-   * resolves when the first segment commits (or the lanes region
-   * opens on a catch-up boot — the current tree IS the state);
-   * `finished` when the connection fully drains (keepalive close,
-   * abort, error) — the heartbeat's settle signal.
+   * Consume one attach stream: open the downstream (the transport's
+   * POST/socket, or the handover's adopted pre-opened body) and decode
+   * the held segmented response — the `conn` handshake, payload
+   * segments (whole-tree renders, navigation segments, reconciles),
+   * and per-parton lanes. Returns synchronously with
+   * `{streaming, finished}` promises: `streaming` resolves when the
+   * first segment commits (or the lanes region opens on a catch-up
+   * boot — the current tree IS the state); `finished` when the
+   * connection fully drains (keepalive close, abort, error) AND every
+   * lane commit it carried has landed — the heartbeat's settle signal,
+   * so the next fire's establishment (which resets the per-connection
+   * delivery tracking) can never race a prior stream's tail commits.
    *
    * Commit arbitration for seq'd deliveries is the AS-OF guard alone:
    * commit iff the delivery was rendered as-of the client's current
    * navigation point or later (`_channelDeliveryCommittable`). A
    * document navigation unloads the page — no cross-page staleness
    * class exists.
+   *
+   * Settling WITHOUT ever seeing `conn` on an UNFORCED WebSocket
+   * transport reverts the transport to fetch before the settle
+   * propagates — the auto-upgrade's fallback: a socket that stops
+   * establishing hands the page back to the universal transport, and
+   * the close arbitration's re-attach rides it.
    */
   function consumeLiveStream(
     statement: AttachStatement,
@@ -359,6 +430,12 @@ async function main() {
     streaming.catch(() => {})
 
     const gen = ++liveFireGen
+    // Whether this fire's stream carried the `conn` handshake — the
+    // settle guard's real signal for "the transport established".
+    let sawConn = false
+    // Every lane-commit chain this stream spawned; the settle awaits
+    // them so `finished` means "content landed", not just "bytes read".
+    const allLaneChains: Array<Promise<void>> = []
     void (async () => {
       let streamingResolved = false
       try {
@@ -531,6 +608,9 @@ async function main() {
         // consume it.
         let pendingSegmentDelivery: WireDelivery | null = null
         const onWireEntry = (tag: string, body: Uint8Array): void => {
+          // This fire's own establishment record — read even for a
+          // superseded fire (the settle guard below is per-fire).
+          if (tag === TAG_CONNECTION_ID) sawConn = true
           // A superseded fire's entries are dead — see `liveFireGen`.
           if (gen !== liveFireGen) return
           // The transport's entries — `conn` handshake, lane-form
@@ -589,10 +669,9 @@ async function main() {
               const laneChains = new Map<string, Promise<void>>()
               for await (const lane of segment.lanes) {
                 const prev = laneChains.get(lane.partonId) ?? Promise.resolve()
-                laneChains.set(
-                  lane.partonId,
-                  prev.then(() => handleLane(lane)).catch(() => {}),
-                )
+                const chained = prev.then(() => handleLane(lane)).catch(() => {})
+                laneChains.set(lane.partonId, chained)
+                allLaneChains.push(chained)
               }
               continue
             }
@@ -676,12 +755,32 @@ async function main() {
           streamingResolved = true
           resolveStreaming()
         }
+        // The stream fully drained — wait for its lane commits to land
+        // before settling, so the next fire's establishment can't race
+        // this stream's tail commits (chains always settle once the
+        // source ended: their bodies end or error with it).
+        await Promise.allSettled(allLaneChains)
+        revertWebSocketIfNeverEstablished()
         resolveFinished()
       } catch (err) {
         if (!streamingResolved) rejectStreaming(err)
+        await Promise.allSettled(allLaneChains)
+        revertWebSocketIfNeverEstablished()
         rejectFinished(err)
       }
     })()
+
+    /** The auto-upgrade's fallback (see the doc above): a fire that
+     *  settles without EVER establishing while the CURRENT transport is
+     *  an unforced WebSocket reverts to fetch, so the close
+     *  arbitration's re-attach rides the universal transport instead of
+     *  hammering a socket that stopped answering. A superseded fire
+     *  keeps its opinion to itself. */
+    function revertWebSocketIfNeverEstablished(): void {
+      if (sawConn || gen !== liveFireGen) return
+      if (isTransportForced()) return
+      if (getChannelTransport() instanceof WebSocketTransport) setChannelTransport()
+    }
 
     return { streaming, finished }
   }
@@ -691,8 +790,12 @@ async function main() {
    * channel's URL timeline (pending statements FOLD INTO the
    * statement: the window statement becomes its `url`, frame
    * statements its `frames` — attach-with-intent), assembles the full
-   * statement (uncapped manifest, anchor, seed, watermark), and
-   * consumes the held stream.
+   * statement (uncapped manifest, anchor, seed, watermark, and — on
+   * the fire replacing a handover's wound-down connection — the
+   * `handoverFrom` continuity link), and consumes the held stream.
+   * The transport-upgrade's one-shot flip lands here, so the WebSocket
+   * transport installs exactly at the fire that replaces the old
+   * connection.
    */
   function fireAttach(
     halves: {
@@ -702,6 +805,11 @@ async function main() {
     },
     signal?: AbortSignal,
   ): { streaming: Promise<void>; finished: Promise<void> } {
+    if (upgradeToWebSocketOnNextFire) {
+      upgradeToWebSocketOnNextFire = false
+      setChannelTransport(new WebSocketTransport())
+    }
+    const handoverFrom = _takeHandoverFrom()
     const intent = _channelNavSubsumedByAttach()
     const statement: AttachStatement = {
       // The statement's URL: the pending window statement's (with its
@@ -712,10 +820,23 @@ async function main() {
       // The FULL manifest — the body has no request line to protect;
       // the client pool bounds it structurally.
       cached: getAllCachedPartialTokens(),
-      since: halves.since,
+      // The handover's replacing attach presents the retained document
+      // anchor: the client's holdings are CURRENT (the wound-down
+      // connection served everything before closing — this fire is its
+      // settle), so a whole-tree first segment would only re-ship what
+      // the manifest already covers — and re-ship DEFER partons as
+      // their fallbacks, remounting activation triggers the client
+      // already fired. Anchored, the new connection opens straight
+      // into lanes: everything bumped since the document re-lanes and
+      // fp-skips against the fire-time manifest — over-fetch, never
+      // stale, zero client-state disruption. The server still refuses
+      // a stale anchor (epoch change, frames intent) and falls back to
+      // the whole-tree segment.
+      since: halves.since ?? (handoverFrom !== null ? _documentCatchupAnchor() : null),
       visible: halves.visible,
       applied: halves.applied,
       ...(intent.frames.length > 0 ? { frames: intent.frames } : {}),
+      ...(handoverFrom !== null ? { handoverFrom } : {}),
     }
     return consumeLiveStream(statement, signal)
   }
@@ -723,6 +844,12 @@ async function main() {
 
   setServerCallback(async (id, args) => {
     const temporaryReferences = createTemporaryReferenceSet()
+    // A committed transport handover in flight settles first (the
+    // adopted connection's establishment — normally milliseconds):
+    // capturing the binding mid-swap would silently drop the action to
+    // unattached semantics, routing its cell writes into a throwaway
+    // storage instead of the connection's. Immediate in steady state.
+    await _channelHandoverSettled()
     // The navigation point at action fire — the as-of this response's
     // server url push is gated on (client-wins: a push the client has
     // channel-navigated past is a stale suggestion).

@@ -40,6 +40,7 @@ import {
   _setCachedOverride,
   _setConnectionSession,
   _setFoldExclusionIds,
+  _setRequestEphemeralStorage,
   getRequest,
   getScope,
   setRequest,
@@ -53,6 +54,7 @@ import {
 import { getSessionId, SESSION_COOKIE } from "../runtime/session.ts"
 import { UNACKED_DELIVERY_WINDOW as PROTOCOL_UNACKED_DELIVERY_WINDOW } from "./channel-protocol.ts"
 import {
+  _claimHandoverStorage,
   _closeConnectionSession,
   _openConnectionSession,
   _peekConnectionSession,
@@ -667,6 +669,25 @@ function openLiveConnectionSession(): ConnectionSession | null {
   // consume.
   session.routeKey = computeRouteKey(request.url)
   _setConnectionSession(session)
+  // The transport handover's continuity link: the statement names the
+  // connection this attach REPLACES, and the new session INHERITS its
+  // ephemeral cell storage — connection-scoped state (deferred cells,
+  // streaming logs) survives the pipe swap because the handover is the
+  // same logical connection continuing on a new transport. The old
+  // session is already closed by fire time (its park-exit is what
+  // triggered this attach), so the claim goes through the handover
+  // locker, which is binding-checked: only a claimant under the SAME
+  // scope + session identity inherits, so a forged id gets nothing.
+  if (statement.handoverFrom !== undefined) {
+    const inherited = _claimHandoverStorage(
+      statement.handoverFrom,
+      getScope(),
+      getSessionId() ?? "",
+    )
+    if (inherited !== null) {
+      _setRequestEphemeralStorage(inherited)
+    }
+  }
   // Link the connection's ephemeral cell storage onto the session so an
   // ATTACHED action (a separate request scope) can bind it and write its
   // mutations where this driver's consequence lanes read. Force-creating
@@ -2064,6 +2085,13 @@ async function driveLaneStream(
       else await warmProjectedPartons()
       wake = latchedWake()
     }
+    // The graceful wind-down's exit: an `atPark` detach (the transport
+    // handover) closes the connection at its next FULL PARK — nothing
+    // latched, no open lanes — so everything in flight was served and
+    // the close tears nothing. Open lanes re-arm the check through the
+    // lane-drained wake; latched statements get their covering renders
+    // first (the loop below serves them and comes back here).
+    if (wake === null && session !== null && session.windDownAtPark && lanes.size === 0) break
     if (wake === null) {
       // No await between the loop's final latch evaluations and the
       // wait's synchronous arm registration — an envelope can only
@@ -2304,7 +2332,8 @@ async function driveLaneStream(
   // waiting for. Producer lanes get their reads aborted too: their
   // bodies stream until a producer resolves — an unbounded await that
   // must not hold the wind-down (normal renders are loader-bounded
-  // and drain out).
+  // and drain out). A transport handover never reaches this with open
+  // lanes: its `atPark` exit fires only at a full park.
   session?.cancelListeners.delete(onCancelScope)
   stopping = true
   for (const runtime of lanes.values()) {

@@ -150,6 +150,10 @@ export interface AttachStatementHandle {
     readonly url: string
     readonly frame?: readonly string[]
   }>
+  /** The connection this attach replaces — the transport handover's
+   *  continuity link (the new session inherits its ephemeral cell
+   *  storage; see `openLiveConnectionSession`). */
+  readonly handoverFrom?: string
 }
 
 /** In-memory mirror of the client manifest. Same identity Maps shared
@@ -190,6 +194,15 @@ function deriveScope(request: Request): string {
   if (import.meta.env?.DEV) {
     const h = request.headers.get("x-test-scope")
     if (h) return h
+    // Cookie fallback for the one request kind a browser cannot stamp
+    // headers on: the WebSocket upgrade (`/__parton/ws`). The e2e
+    // fixtures set the same value as a cookie so a worker's socket
+    // session binds the same scope bucket as its HTTP requests.
+    const cookie = request.headers.get("cookie")
+    if (cookie !== null) {
+      const match = /(?:^|;\s*)x-test-scope=([^;]+)/.exec(cookie)
+      if (match) return decodeURIComponent(match[1])
+    }
   }
   return DEFAULT_SCOPE
 }

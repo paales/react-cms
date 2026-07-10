@@ -44,11 +44,18 @@ export const test = base.extend<object, WorkerFixtures>({
   ],
 
   // Override the built-in `page` fixture so every HTTP request the
-  // browser fires carries the worker's scope header.
-  page: async ({ page, testScope }, use) => {
+  // browser fires carries the worker's scope header — and the same
+  // value as a COOKIE, for the one request kind a browser cannot stamp
+  // headers on: the WebSocket upgrade (the auto-upgraded live channel's
+  // `/__parton/ws` handshake). The framework's `deriveScope` reads the
+  // header first, the cookie as fallback.
+  page: async ({ page, testScope, baseURL }, use) => {
     await page.context().setExtraHTTPHeaders({
       "x-test-scope": testScope,
     })
+    if (baseURL) {
+      await page.context().addCookies([{ name: "x-test-scope", value: testScope, url: baseURL }])
+    }
     await use(page)
   },
 
@@ -165,10 +172,12 @@ export async function waitForLiveConnection(
  * its page URL with the `?__force=` overlay — the whole-tree segment's
  * forced targets — and the response rides the held stream);
  * `"attach"` — the statement folded into a `POST /__parton/live` body
- * (a pre-establishment fire riding the attach it triggered).
+ * (a pre-establishment fire riding the attach it triggered); `"ws"` —
+ * either shape as a text frame on the upgraded `/__parton/ws` socket
+ * (the auto-upgrade promotes an unforced page shortly after boot).
  */
 export interface PartialDispatch {
-  transport: "channel" | "attach"
+  transport: "channel" | "attach" | "ws"
   /** The dispatch's target selector — the statement URL's `?__force=`
    *  overlay (`null`: a full-page nav). */
   partials: string | null
@@ -176,13 +185,13 @@ export interface PartialDispatch {
 }
 
 /**
- * Record every partial dispatch from `page`, across BOTH carriers.
+ * Record every partial dispatch from `page`, across ALL carriers.
  * Specs that assert dispatch counts/shapes use this instead of
- * counting raw requests — whether a given fire rides an envelope or
- * the attach it triggered depends on whether the live connection was
- * established by then, so the assertion must be carrier-agnostic. A
- * bare attach (no `__force`, no pending statement) is transport, not
- * a dispatch, and records nothing.
+ * counting raw requests — whether a given fire rides an envelope, the
+ * attach it triggered, or the upgraded socket depends on connection
+ * timing, so the assertion must be carrier-agnostic. A bare attach (no
+ * `__force`, no pending statement) is transport, not a dispatch, and
+ * records nothing.
  */
 export function recordPartialDispatches(page: Page): PartialDispatch[] {
   const dispatches: PartialDispatch[] = []
@@ -218,6 +227,29 @@ export function recordPartialDispatches(page: Page): PartialDispatch[] {
       } catch {}
     }
   })
+  page.on("websocket", (ws) => {
+    if (!ws.url().includes("/__parton/ws")) return
+    ws.on("framesent", (frame) => {
+      if (typeof frame.payload !== "string") return
+      try {
+        const message = JSON.parse(frame.payload) as {
+          connection?: string
+          url?: string
+          frames?: Array<{ kind: string; url?: string; frame?: string[] }>
+        }
+        if (typeof message.connection === "string") {
+          // A channel envelope — its window url frames.
+          for (const f of message.frames ?? []) {
+            if (f.kind !== "url" || !f.url || f.frame) continue
+            recordStated("ws", f.url)
+          }
+        } else if (typeof message.url === "string") {
+          // The attach statement (the socket's first text message).
+          recordStated("ws", message.url)
+        }
+      } catch {}
+    })
+  })
   return dispatches
 }
 
@@ -227,10 +259,11 @@ export function recordPartialDispatches(page: Page): PartialDispatch[] {
  * `/__parton/channel` envelope (the endpoint writes the session frame
  * URL and the response lanes on the held stream); `"attach"` — a
  * statement riding a `POST /__parton/live` body's `frames` intent (a
- * pre-establishment fire).
+ * pre-establishment fire); `"ws"` — either shape as a text frame on
+ * the upgraded `/__parton/ws` socket.
  */
 export interface FrameDispatch {
-  transport: "channel" | "attach"
+  transport: "channel" | "attach" | "ws"
   /** Dotted frame key (`"search"`, `"chat-overlay"`). */
   frame: string
   /** The stated frame URL. */
@@ -238,14 +271,27 @@ export interface FrameDispatch {
 }
 
 /**
- * Record every frame-navigation dispatch from `page`, across BOTH
+ * Record every frame-navigation dispatch from `page`, across ALL
  * carriers — the frame twin of `recordPartialDispatches`: whether a
- * given frame nav rides an envelope or the attach it triggered depends
- * on whether the live connection was established by then, so specs
- * assert carrier-agnostically.
+ * given frame nav rides an envelope, the attach it triggered, or the
+ * upgraded socket depends on connection timing, so specs assert
+ * carrier-agnostically.
  */
 export function recordFrameDispatches(page: Page): FrameDispatch[] {
   const dispatches: FrameDispatch[] = []
+  const recordFrames = (
+    transport: FrameDispatch["transport"],
+    frames: Array<{ kind: string; url?: string; frame?: string[] }> | undefined,
+  ) => {
+    for (const frame of frames ?? []) {
+      if (frame.kind !== "url" || !frame.url || !frame.frame) continue
+      dispatches.push({
+        transport,
+        frame: frame.frame.join("."),
+        frameUrl: frame.url,
+      })
+    }
+  }
   page.on("request", (req) => {
     const url = req.url()
     if (url.includes("/__parton/channel")) {
@@ -253,14 +299,7 @@ export function recordFrameDispatches(page: Page): FrameDispatch[] {
         const envelope = JSON.parse(req.postData() ?? "") as {
           frames?: Array<{ kind: string; url?: string; frame?: string[] }>
         }
-        for (const frame of envelope.frames ?? []) {
-          if (frame.kind !== "url" || !frame.url || !frame.frame) continue
-          dispatches.push({
-            transport: "channel",
-            frame: frame.frame.join("."),
-            frameUrl: frame.url,
-          })
-        }
+        recordFrames("channel", envelope.frames)
       } catch {}
       return
     }
@@ -269,16 +308,21 @@ export function recordFrameDispatches(page: Page): FrameDispatch[] {
         const statement = JSON.parse(req.postData() ?? "") as {
           frames?: Array<{ kind: string; url?: string; frame?: string[] }>
         }
-        for (const frame of statement.frames ?? []) {
-          if (frame.kind !== "url" || !frame.url || !frame.frame) continue
-          dispatches.push({
-            transport: "attach",
-            frame: frame.frame.join("."),
-            frameUrl: frame.url,
-          })
-        }
+        recordFrames("attach", statement.frames)
       } catch {}
     }
+  })
+  page.on("websocket", (ws) => {
+    if (!ws.url().includes("/__parton/ws")) return
+    ws.on("framesent", (frame) => {
+      if (typeof frame.payload !== "string") return
+      try {
+        const message = JSON.parse(frame.payload) as {
+          frames?: Array<{ kind: string; url?: string; frame?: string[] }>
+        }
+        recordFrames("ws", message.frames)
+      } catch {}
+    })
   })
   return dispatches
 }

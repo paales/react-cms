@@ -498,12 +498,12 @@ export function selectChannelTransport(): void {
   }
 }
 
-/** How long the WS probe waits for the `conn` handshake before giving up.
- *  A same-origin socket that WORKS confirms in ~100ms (handshake + the
- *  server's `conn` mint); this backstops the cases that DON'T fail their
- *  handshake — an endpoint the host leaves the upgrade HANGING (e.g. a
- *  Vite dev server with no `partonChannelServer`), or one that opens but
- *  is never driven. Kept tight so a plugin-less app gives up promptly. */
+/** How long the WS probe waits for the `conn` handshake before giving
+ *  up. A same-origin socket that WORKS confirms in ~100ms (handshake +
+ *  the server's `conn` mint); this backstops the cases that DON'T fail
+ *  their handshake — an endpoint the host leaves the upgrade HANGING,
+ *  or one that opens but is never driven. Kept tight so a broken
+ *  advertised endpoint gives up promptly. */
 const PROBE_CONN_TIMEOUT_MS = 2_000
 
 /**
@@ -513,11 +513,12 @@ const PROBE_CONN_TIMEOUT_MS = 2_000
  * bare `onopen`, which only proves the TCP upgrade succeeded, never that
  * the server actually drove the socket — is the REAL establishment signal
  * (the driver mints ids only for sessions it opened, see [[channel-server]]
- * §The id handshake). Resolves `false` on any failure (absent endpoint,
+ * § The id handshake). Resolves `false` on any failure (absent endpoint,
  * close before `conn`, error) or if `timeoutMs` elapses, and ALWAYS closes
- * the probe socket. The statement's manifest lets the server fp-skip its
- * throwaway render; the socket closes the instant `conn` is seen, before
- * that render matters.
+ * the probe socket. The statement should present the manifest AND the
+ * document catch-up anchor: an anchor-honoring server opens the probe's
+ * session straight into a parked lanes region — the `conn` arrives with
+ * near-zero server work and nothing is ever torn when the socket closes.
  *
  * The confirmation reuses the live path's own establishment detection —
  * `splitSegments`' `onEntry` surfacing the `TAG_CONNECTION_ID` marker,

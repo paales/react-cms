@@ -194,10 +194,92 @@ describe("channel WebSocket transport", () => {
   })
 })
 
+describe("the atPark detach — the transport handover's graceful wind-down", () => {
+  it("closes the stream cleanly at the next full park, serving open work first", async () => {
+    const scope = freshLiveScope("ws-atpark")
+    const wss = new WebSocketServer({ port: 0 })
+    await new Promise<void>((resolve) => wss.once("listening", resolve))
+    const port = (wss.address() as AddressInfo).port
+    wss.on("connection", (ws) => {
+      const socket = wsToChannelSocket(ws)
+      const upgradeRequest = new Request("http://localhost/", {
+        headers: { "x-test-scope": scope },
+      })
+      const renderOnce = (): ReadableStream<Uint8Array> =>
+        wrapStreamWithFpTrailer(
+          renderServerToFlight(
+            <PartialRoot>
+              <WsClock />
+            </PartialRoot>,
+          ),
+          _captureCommitHandle(),
+        )
+      void driveChannelSocket(socket, upgradeRequest, renderOnce)
+    })
+
+    const transport = new WebSocketTransport(`ws://localhost:${port}`)
+    const statement: AttachStatement = {
+      url: "/ws-clock?live=1",
+      cached: [],
+      since: null,
+      visible: null,
+    }
+    try {
+      const { body } = await transport.open(statement)
+      let connId: string | null = null
+      const iter = splitSegments(body, undefined, (tag, b) => {
+        if (tag === TAG_CONNECTION_ID) connId = new TextDecoder().decode(b)
+      })[Symbol.asyncIterator]()
+
+      // Segment 0 drains; the connection is established.
+      const first = await iter.next()
+      if (first.done || first.value.kind !== "payload")
+        throw new Error("expected payload segment 0")
+      await new Response(first.value.body).text()
+      await first.value.trailers
+      expect(connId).toBeTruthy()
+
+      // State the graceful wind-down. The drive exits at its next full
+      // park — nothing latched, no open lanes — and the stream ENDS
+      // CLEANLY: the region exit is a between-frames close (no torn
+      // bodies), so iteration completes without error. The expiry
+      // ticker's due lanes keep serving until the park.
+      const accepted = await transport.send({
+        connection: connId as unknown as string,
+        seq: 1,
+        frames: [{ kind: "detach", atPark: true }],
+      })
+      expect(accepted).toBe(true)
+
+      const deadline = Date.now() + 3000
+      let ended = false
+      while (Date.now() < deadline) {
+        const next = await iter.next()
+        if (next.done) {
+          ended = true
+          break
+        }
+        if (next.value.kind === "lanes") {
+          for await (const lane of next.value.lanes) {
+            await new Response(lane.body).arrayBuffer()
+          }
+        } else {
+          await new Response(next.value.body).arrayBuffer().catch(() => {})
+          await next.value.trailers
+        }
+      }
+      expect(ended).toBe(true)
+    } finally {
+      transport.close()
+      await new Promise<void>((resolve) => wss.close(() => resolve()))
+    }
+  })
+})
+
 describe("probeWebSocketTransport — the auto-upgrade confirmation", () => {
   // The probe is the auto-upgrade's gate: it CONFIRMS the socket works
-  // before the client flips off fetch, by watching for the same `conn`
-  // handshake the live path establishes on — not a bare `onopen`.
+  // before the client commits the handover, by watching for the same
+  // `conn` handshake the live path establishes on — not a bare `onopen`.
   const probeStatement: AttachStatement = {
     url: "/ws-clock",
     cached: [],
@@ -261,7 +343,8 @@ describe("probeWebSocketTransport — the auto-upgrade confirmation", () => {
 
   it("declines (false) when the endpoint is absent (WS-unavailable → stay on fetch)", async () => {
     // The fallback guarantee in miniature: no server on the port, the WS
-    // handshake fails, the probe declines — the caller stays on fetch.
+    // handshake fails, the probe declines — the caller stays on fetch,
+    // its held connection untouched.
     const wss = new WebSocketServer({ port: 0 })
     await new Promise<void>((resolve) => wss.once("listening", resolve))
     const deadPort = (wss.address() as AddressInfo).port

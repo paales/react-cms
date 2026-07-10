@@ -181,6 +181,12 @@ export async function driveChannelSocket(
   })
 
   await done
+  // The drive finished (keepalive elapse, detach, the handover's
+  // park-exit) — close the socket so the client's downstream body ends,
+  // exactly as the fetch wrapper closes its response stream. Without
+  // this the client would hold a silent socket for a stream the server
+  // already wound down.
+  socket.close()
 }
 
 /**
