@@ -369,6 +369,99 @@ export function _flushPendingInvalidations(): void {
 // ─── Queries ──────────────────────────────────────────────────────────
 
 /**
+ * Cap on the non-null surface keys eligible for keyed probes. Each key
+ * contributes up to two candidate encodings besides absence, so the
+ * probe-key product grows as 3^k; past the cap the enumeration would
+ * rival the linear scan it replaces, so the query falls back to
+ * scanning (`probes: null`). Real constraint surfaces are partition
+ * keys (`{cx, cy}`, `{cart_id}`) — comfortably under it.
+ */
+const PROBE_SUBSET_CAP = 6
+
+/**
+ * A constraint surface pre-compiled for repeated registry queries. The
+ * per-bump wake filter runs the same surface against the registry on
+ * every `refreshSelector` for every held connection, so the probe-key
+ * enumeration is hoisted out of the query (`segment-relevance.ts`
+ * memoizes one of these per snapshot).
+ */
+export interface CompiledSurfaceQuery {
+  /** The raw surface — the linear-scan fallback's input, and what
+   *  `_selectorMatchesSurface` matches pending selectors against. */
+  surface: Record<string, unknown> | null | undefined
+  /** Exact per-name map keys an entry can be stored under and still
+   *  match `surface` (see `constraintProbeKeys`); `null` → the surface
+   *  is too wide, the query linear-scans instead. */
+  probes: readonly string[] | null
+}
+
+/** Pre-compile `surface` for `_queryCompiledMatchingTs`. */
+export function _compileSurfaceQuery(
+  surface: Record<string, unknown> | null | undefined,
+): CompiledSurfaceQuery {
+  return { surface, probes: constraintProbeKeys(surface) }
+}
+
+/**
+ * The exact per-name map keys (`stableStringify(entry.constraints)`)
+ * an entry can be stored under and still satisfy `matchesConstraints`
+ * against `surface` — the keyed inverse of that predicate, so a query
+ * probes the per-name map directly instead of scanning every entry.
+ *
+ * Per surface key `k` with value `v`, the constraint values that match
+ * collapse to at most two canonical entry-key fragments:
+ *
+ *   - the string-loose branch: a string constraint equal to
+ *     `String(v)`, whose fragment is
+ *     `JSON.stringify(k) + ":" + JSON.stringify(String(v))`;
+ *   - the type-exact branch (non-string constraints): any value whose
+ *     `stableStringify` equals `stableStringify(v)` — every such value
+ *     yields the SAME fragment, `JSON.stringify(k) + ":" +
+ *     stableStringify(v)`, because `stableStringify` is compositional
+ *     (an object's encoding embeds each value's own encoding at its
+ *     sorted key position). For string `v` this branch is empty: a
+ *     string's encoding is `"`-quoted, which no non-string value's
+ *     encoding ever is.
+ *
+ * A key whose surface value is `null`/`undefined` satisfies NO
+ * constraint (`matchesConstraints` rejects `v == null`), so it only
+ * ever appears absent. An entry matches iff its constrained keys are a
+ * subset of the surface's, so the probe set is the fragment product
+ * over every subset — `"{}"` (the bare-name entry) included. Fragments
+ * are emitted in sorted-key order, matching how `stableStringify`
+ * built the entry keys.
+ *
+ * Returns `null` when more than `PROBE_SUBSET_CAP` keys are eligible —
+ * the product would explode instead of saving work.
+ */
+function constraintProbeKeys(
+  surface: Record<string, unknown> | null | undefined,
+): readonly string[] | null {
+  let combos: string[] = [""]
+  if (surface) {
+    const keys = Object.keys(surface).sort()
+    let eligible = 0
+    for (const k of keys) {
+      const v = surface[k]
+      if (v == null) continue
+      if (++eligible > PROBE_SUBSET_CAP) return null
+      const kEnc = JSON.stringify(k)
+      const fragments =
+        typeof v === "string"
+          ? [`${kEnc}:${JSON.stringify(v)}`]
+          : [`${kEnc}:${JSON.stringify(String(v))}`, `${kEnc}:${stableStringify(v)}`]
+      const next: string[] = []
+      for (const combo of combos) {
+        next.push(combo)
+        for (const f of fragments) next.push(combo === "" ? f : `${combo},${f}`)
+      }
+      combos = next
+    }
+  }
+  return combos.map((c) => `{${c}}`)
+}
+
+/**
  * Return the maximum `ts` of any registry entry whose `name` matches
  * one of `labels` AND whose `constraints` are a subset of `varyInputs`.
  * Returns 0 when nothing matches.
@@ -383,14 +476,37 @@ export function queryMatchingTs(
   varyInputs: Record<string, unknown> | null | undefined,
 ): number {
   if (labels.length === 0) return 0
+  return _queryCompiledMatchingTs(labels, _compileSurfaceQuery(varyInputs))
+}
+
+/**
+ * `queryMatchingTs` against a pre-compiled surface. Per label, picks
+ * whichever exact strategy touches fewer entries: keyed probes into
+ * the per-name map (each probe key can only be hit by an entry that
+ * `matchesConstraints` would accept, and every accepting entry's key
+ * is in the probe set — the same result by construction) or the linear
+ * `matchesConstraints` scan.
+ */
+export function _queryCompiledMatchingTs(
+  labels: readonly string[],
+  query: CompiledSurfaceQuery,
+): number {
   let max = 0
   for (const label of labels) {
     const perName = byName.get(label)
     if (!perName) continue
-    for (const entry of perName.values()) {
-      if (entry.ts <= max) continue
-      if (matchesConstraints(varyInputs, entry.constraints)) {
-        max = entry.ts
+    const probes = query.probes
+    if (probes !== null && probes.length <= perName.size) {
+      for (const key of probes) {
+        const entry = perName.get(key)
+        if (entry !== undefined && entry.ts > max) max = entry.ts
+      }
+    } else {
+      for (const entry of perName.values()) {
+        if (entry.ts <= max) continue
+        if (matchesConstraints(query.surface, entry.constraints)) {
+          max = entry.ts
+        }
       }
     }
   }

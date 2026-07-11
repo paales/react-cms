@@ -76,7 +76,16 @@ any selector-routing logic that could replace it.
      session's cell) re-arms the wait WITHOUT re-rendering — so one
      viewer's write doesn't wake every open stream into a fp-skip
      pass. The wake itself is global (`_onNextBump` fires on any
-     bump); the relevance check is what gates the re-render.
+     bump); the relevance check is what gates the re-render. The
+     check is cheap by design — it runs on EVERY bump for every held
+     connection: each snapshot's constraint surface is compiled once
+     and memoized on the snapshot (WeakMap in `segment-relevance.ts`),
+     and the registry query probes the per-name entry map by exact
+     key instead of scanning entries (see
+     [`registry-internals.md`](./registry-internals.md)), so steady
+     ticker traffic over a large route bucket (the website world's
+     ~100 pulse bumps/sec against hundreds of snapshots) filters in
+     map lookups, not stringify work.
 
      Every park's arms observe per-park state and release on wake —
      the **wake-arm release invariant**: wake arms are
@@ -93,6 +102,7 @@ any selector-routing logic that could replace it.
      session's flip signal are latch + listener set, the latch
      re-checked at each iteration's entry so a signal that raced a
      losing arm is consumed, not starved.
+
    - Expiry arm — the earliest `expires()` boundary among the
      route's snapshots (read through `effectiveExpiresAt`) elapses.
    - Visibility arm (lane driver only) — a channel envelope's
@@ -134,6 +144,7 @@ any selector-routing logic that could replace it.
      steady bump traffic hold a fully-parked, possibly torn connection
      open forever, each wake re-scanning the route (zombie connections
      accumulate one per refresh and peg the server).
+
 4. **On a relevant bump, an expiry boundary, or a visibility flip,
    the driver renders per-parton lanes.** The wake resolves WHICH
    snapshot ids it touched (`_routeMatchingBumpIds` for bumps;
@@ -210,6 +221,7 @@ any selector-routing logic that could replace it.
    their latest state when a delivery ack frees it — correct for
    cells (state, not events), nothing dropped. See
    [`channel.md`](./channel.md) §Backpressure.
+
 5. **The client demuxes and commits per lane.** The splitter
    (`splitSegments`) classifies the region off the server's `lanes`
    marker and yields each lane's body — itself shaped like a
@@ -312,7 +324,7 @@ it progressively — see [`channel.md`](./channel.md) §Producer lanes.
 ## Deferred (stream-only) writes
 
 A normal action POST still carries a re-render: the changed partials'
-bytes come back on the response and the client commits them, *and* the
+bytes come back on the response and the client commits them, _and_ the
 bump wakes the heartbeat which ships the same change to every other
 viewer. For a write whose only job is to broadcast — a cursor / scroll /
 presence firehose — the POST-side render is pure duplication of what the
@@ -332,7 +344,7 @@ null root:
    (`createRscHandler` in `framework/src/entry/rsc.tsx`) suppresses the
    action payload's root — `root: suppressRoot ? null : <Root/>` — when
    `isAction && actionStatus === undefined && (_actionSuppressesCommit()
-   || consequenceBox.seqs !== null)`. A suppressed action renders no tree
+|| consequenceBox.seqs !== null)`. A suppressed action renders no tree
    — the POST body is just the `returnValue` (+ `formState` + any
    url-trailer). Errored actions (`actionStatus` set) always render so
    the failure surfaces. The deferred-only tally is one of two suppress
@@ -343,7 +355,7 @@ null root:
 3. **Client skip-commit.** `setServerCallback` still captures
    `returnValue` (so the `cell.set` promise resolves and the optimistic
    overlay reconciles) but guards the commit: `if (payload.root != null)
-   setPayload(payload)`. A null root is never committable — committing
+setPayload(payload)`. A null root is never committable — committing
    it would blank the page — so the guard is safe for every action, not
    just deferred ones.
 
@@ -660,7 +672,7 @@ React root:
 import { LivePageHeartbeat } from "@parton/framework/lib/live-page-heartbeat.tsx"
 
 // …alongside <BrowserRoot />
-<LivePageHeartbeat />
+;<LivePageHeartbeat />
 ```
 
 Behaviour:
@@ -905,7 +917,7 @@ hard-scroll-edge chunks never materializing was exactly this).
 Two guards keep transforms off the wire:
 
 - Every segmented `.rsc` response declares `Cache-Control:
-  no-transform` — the spec-level instruction that the payload must
+no-transform` — the spec-level instruction that the payload must
   not be modified in transit. Real deployments' proxies honor it.
   ALL segmented GETs get the stamp, not just `?live=1`: a plain GET
   can go live mid-render (`markConnectionLive()` — the chat), which
@@ -955,7 +967,7 @@ triggered).
 ## GraphQL `@defer` (incremental delivery)
 
 Distinct from the framework's own parton-level streaming: `@defer` lets a
-GraphQL server send a query's slow fields *after* the initial payload, as
+GraphQL server send a query's slow fields _after_ the initial payload, as
 `multipart/mixed` chunks (`{data, hasNext: true}` then
 `{incremental: [{data, path}], hasNext}`). `framework/src/lib/multipart.ts`
 parses this — `parseMultipartStream` yields each chunk as its bytes
@@ -963,7 +975,7 @@ arrive (the unit a defer-aware loader consumes); `parseMultipartResponse`
 is the buffered merge.
 
 How it maps onto the existing machinery (design; the loader is future
-work): a `@defer`'d *named fragment* becomes a pending `fragmentCell`
+work): a `@defer`'d _named fragment_ becomes a pending `fragmentCell`
 partition. A child parton bound to it reads cold and **suspends at its
 own boundary** — which is already a Suspense boundary, so its `fallback`
 streams within the same response (no heartbeat needed; the patches arrive

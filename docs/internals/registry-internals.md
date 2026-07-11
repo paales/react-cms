@@ -2,8 +2,8 @@
 
 The registry powers isolated per-parton re-renders (the lane pass's
 `partialFromSnapshot` reconstruction) by remembering
-*where* every spec was placed on the rendered tree. It does not
-remember *what* it rendered (no JSX, no rendered output) — that
+_where_ every spec was placed on the rendered tree. It does not
+remember _what_ it rendered (no JSX, no rendered output) — that
 lives in `<Cache>` (see [`cache-internals.md`](./cache-internals.md)).
 
 ## Storage shape
@@ -21,25 +21,25 @@ interface ScopeStore {
 Two layers:
 
 1. **`partials`** — the snapshot store. Keyed by spec id and a
-   *variant key* derived from the snapshot's structural fields.
+   _variant key_ derived from the snapshot's structural fields.
    Snapshots that share the same structural placement collapse
    onto a single variant entry, regardless of which route or
    request triggered the registration.
 
 2. **`hints`** — a per-routeKey index. Each entry maps `(routeKey,
-   id) → variantKey` so an isolated lookup can resolve "which
+id) → variantKey` so an isolated lookup can resolve "which
    variant of `cart` does this request want" without scanning the
    variant store. Bounded LRU (default 10 000 routeKeys).
 
    The routeKey is NOT the URL pathname — it's a hash of which
-   registered URLPatterns match the URL's *base* (scheme + host +
+   registered URLPatterns match the URL's _base_ (scheme + host +
    pathname; search and hash are stripped before matching — see
    `computeRouteKey` in `partial.tsx`). 50k product URLs that all
    match `/p/:slug` collapse to one routeKey, so they share a hint
    slot instead of evicting each other from the LRU. Spam to junk
    URLs that hit the same pattern can't displace real hot entries
    for the same reason. Search and hash are request dimensions
-   *within* a page (tracked reads, matchKeys, and fingerprints carry
+   _within_ a page (tracked reads, matchKeys, and fingerprints carry
    them), so a
    search-constrained pattern (`match: { search: "*q=:query" }`)
    never splits its page's bucket — a search overlay's `?q=`
@@ -53,10 +53,7 @@ Two layers:
 
 ```ts
 function variantKeyOf(snap: PartialSnapshot): string {
-  const base = hash(stableStringify([
-    snap.parentPath,
-    snap.parentFrameChain,
-  ]))
+  const base = hash(stableStringify([snap.parentPath, snap.parentFrameChain]))
   return snap.culled ? culledKey(base) : base
 }
 ```
@@ -75,11 +72,11 @@ composite is a correctness requirement, not a perf choice.
 The variant key captures the **structural placement axes** that
 distinguish two registrations of the same id:
 
-| Axis | When it differs |
-|---|---|
-| `parentPath` | Same id mounted under different ancestors (e.g. `Header` under `PageRoot` vs under `EditorShell`) |
-| `parentFrameChain` | Same id rendered inside vs outside a frame |
-| `culled` | A cullable spec's culled render (the gate skipped the body; deps are the gate's reads) vs its in-view one — the REGISTRY-INTERNAL `~cull` suffix (`lib/cull-key.ts`; it never crosses the wire — the client has no culled cache variant, the skeleton rides inline on the pair). Per-state snapshots keep each state's dep record intact, so a culling flip's fingerprint folds the record of the state it is ENTERING (`lookupPartial(id, culled)`), not whichever state rendered last. See [render-pipeline.md](./render-pipeline.md#cull-to-park). |
+| Axis               | When it differs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parentPath`       | Same id mounted under different ancestors (e.g. `Header` under `PageRoot` vs under `EditorShell`)                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `parentFrameChain` | Same id rendered inside vs outside a frame                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `culled`           | A cullable spec's culled render (the gate skipped the body; deps are the gate's reads) vs its in-view one — the REGISTRY-INTERNAL `~cull` suffix (`lib/cull-key.ts`; it never crosses the wire — the client has no culled cache variant, the skeleton rides inline on the pair). Per-state snapshots keep each state's dep record intact, so a culling flip's fingerprint folds the record of the state it is ENTERING (`lookupPartial(id, culled)`), not whichever state rendered last. See [render-pipeline.md](./render-pipeline.md#cull-to-park). |
 
 Per-instance content divergence (slot blocks bound to different CMS
 rows, partials called with different JSX props) folds into the
@@ -88,7 +85,7 @@ each instance registers under its own id (`spec.id:HASH` for
 auto-derived instances, or the CMS row id for slot blocks).
 
 Per-user variation (cookies, search params, A/B test buckets) is
-*not* in the variant key — that divergence flows through the
+_not_ in the variant key — that divergence flows through the
 spec's tracked reads, whose VALUES are never stored: the snapshot
 records only the dep keys, re-read per-request inside the spec
 component (store-and-reread). Two concurrent users hitting the same
@@ -102,9 +99,9 @@ and accumulates work in three sets:
 
 ```ts
 interface RequestRegistry {
-  pendingWrites: Map<string, PartialSnapshot>  // id → snapshot
-  pendingHints: Map<string, string>            // id → variantKey
-  invalidations: Set<string>                   // id-wide invalidations
+  pendingWrites: Map<string, PartialSnapshot> // id → snapshot
+  pendingHints: Map<string, string> // id → variantKey
+  invalidations: Set<string> // id-wide invalidations
   // ...
 }
 ```
@@ -197,7 +194,7 @@ Content changes and record removal are separate mechanisms:
 
 - **Fingerprint invalidation** (the live path). Server-side
   `getServerNavigation().reload({ selector: "cart" })` bumps the
-  *invalidation registry* (`refreshSelector`) under the name
+  _invalidation registry_ (`refreshSelector`) under the name
   `cart`: every placement carrying the `cart` label or id folds the
   bump's timestamp into its fp (`|inv=`), mismatches the client's
   cached fp, and re-renders fresh on the next pass. Snapshots stay —
@@ -221,10 +218,30 @@ Content changes and record removal are separate mechanisms:
   `pulse/*` scenarios gate it. The bump counter (`_currentTs` /
   `_onNextBump`) advances monotonically per bump, independent
   of what's stored.
+
+  The query itself is KEYED, not scanned. Because the per-name map is
+  keyed by `stableStringify(constraints)`, the set of keys an entry
+  could be stored under and still match a given surface is
+  enumerable up front: per surface key, the matching constraint
+  values collapse to at most two canonical encodings (the string-loose
+  form `String(v)` and, for non-string values, the type-exact
+  `stableStringify(v)` — see `constraintProbeKeys`), and an entry's
+  constrained keys must be a subset of the surface's, so the probe
+  set is the fragment product over every subset (`"{}"`, the bare
+  entry, included). `queryMatchingTs` probes those keys directly —
+  per label, whichever exact strategy touches fewer entries: the
+  probes or the linear `matchesConstraints` scan (also the fallback
+  for surfaces past `PROBE_SUBSET_CAP` keys, where the product would
+  explode). A partition-heavy name (`world.pulse`'s 512 entries) is
+  therefore a handful of map hits per query, not a scan. The segment
+  driver's wake filter memoizes one compiled query per snapshot
+  (`_compileSurfaceQuery`, WeakMap in `segment-relevance.ts`) so the
+  per-bump relevance pass does no re-parsing or re-enumeration at all.
+
 - **Snapshot invalidation.** `invalidateSnapshot(id)` removes the
   id's registry records entirely (inside a request: buffered into
   `ctx.invalidations`, applied at commit; outside: direct canonical
-  delete). For entries whose *placement* is gone — the next render
+  delete). For entries whose _placement_ is gone — the next render
   covering the id is a whole-tree pass that re-registers it.
 
 ## LRU bound

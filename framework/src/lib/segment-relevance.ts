@@ -13,9 +13,11 @@
  */
 
 import {
+  _compileSurfaceQuery,
+  _queryCompiledMatchingTs,
   _selectorMatchesSurface,
+  type CompiledSurfaceQuery,
   type ParsedSelector,
-  queryMatchingTs,
 } from "../runtime/invalidation-registry.ts"
 import type { PartialSnapshot } from "./partial-registry.ts"
 
@@ -117,7 +119,7 @@ export function _routeMatchingSelectorIds(
   if (selectors.length === 0) return []
   const ids: string[] = []
   for (const [id, snap] of snapshots) {
-    const surface = constraintSurface(snap)
+    const surface = surfaceQueryOf(snap).surface
     const hit = selectors.some(
       (s) => snap.labels.includes(s.name) && _selectorMatchesSurface(s.constraints, surface),
     )
@@ -175,6 +177,27 @@ function constraintSurface(snap: PartialSnapshot): Record<string, unknown> {
   }
 }
 
+/**
+ * Per-snapshot memo of the compiled constraint-surface query. The
+ * surface's inputs (`varyKey`, `constraintArgs`) are fixed when
+ * `PartialBoundary` constructs the snapshot (a re-render registers a
+ * FRESH snapshot object), so the varyKey JSON.parse and the probe-key
+ * enumeration run once per snapshot — not once per snapshot per bump,
+ * which under ticker traffic (hundreds of bumps/sec against hundreds
+ * of route snapshots, re-filtered by every held connection's driver)
+ * was a standing CPU tax.
+ */
+const surfaceQueries = new WeakMap<PartialSnapshot, CompiledSurfaceQuery>()
+
+function surfaceQueryOf(snap: PartialSnapshot): CompiledSurfaceQuery {
+  let query = surfaceQueries.get(snap)
+  if (query === undefined) {
+    query = _compileSurfaceQuery(constraintSurface(snap))
+    surfaceQueries.set(snap, query)
+  }
+  return query
+}
+
 function snapshotHasMatchingBump(snap: PartialSnapshot, sinceTs: number): boolean {
-  return queryMatchingTs(snap.labels, constraintSurface(snap)) > sinceTs
+  return _queryCompiledMatchingTs(snap.labels, surfaceQueryOf(snap)) > sinceTs
 }
