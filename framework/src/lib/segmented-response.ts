@@ -1525,8 +1525,10 @@ async function driveLaneStream(
   //     untouched), and drains into the void — no controller, no
   //     delivery seq, no promote. The only durable effects are the
   //     byte-cache entry and the parton's re-registered content
-  //     snapshot (truthful either way; the next covering render
-  //     re-registers the culled state).
+  //     snapshot (truthful for every registry consumer; the next
+  //     covering render re-registers the culled state) — stamped
+  //     `warmed` so the client-mirror promote never claims its fp as
+  //     a holding (see `PartialSnapshot.warmed`).
   //
   // The projection itself — geometry, horizon, velocity judgment — is
   // the app's (`registerWarmProjector`): only the app knows how a
@@ -2314,6 +2316,24 @@ async function driveLaneStream(
       if (flip.cached !== undefined && override) {
         applyReportedCached(id, flip.cached, override, session?.ackedFps)
       }
+      // A consumed in-flip makes any ANCESTOR's open lane stale
+      // mid-flight: that lane's current render read a visible set
+      // without this id, so its emission carries the id as a culled
+      // pair — and under burst backpressure it can COMMIT after the
+      // id's own flip lane materialized content, regressing the
+      // subtree client-side. Dirty the ancestor: pumpLane's dirty
+      // loop re-renders it after the stale body drains, against the
+      // session set that now holds the id, so the connection's last
+      // word on the ancestor reflects the flip (the same coalescing
+      // startLane uses for a wake on an open lane).
+      const flippedSnap = snapshots.get(id)
+      if (flippedSnap) {
+        for (const ancestorId of flippedSnap.parentPath) {
+          if (ancestorId === id) continue
+          const openAncestor = lanes.get(ancestorId)
+          if (openAncestor) openAncestor.dirty = true
+        }
+      }
       if (!touched.includes(id)) touched.push(id)
     }
     // Cookie deltas — a client cookie change stated over the channel
@@ -2865,6 +2885,11 @@ export function promoteSnapshotsToCachedOverride(
     // drain promotes only the snapshots its render just committed.
     if (withinId !== undefined && id !== withinId && !snap.parentPath.includes(withinId)) continue
     if (!snap.emittedFp || !snap.matchKey) continue
+    // A WARM-registered snapshot's bytes never reached any client —
+    // claiming its fp as a holding would let a later lane confirm
+    // content the client doesn't have (see `PartialSnapshot.warmed`).
+    // The id's next real emission re-registers and promotes normally.
+    if (snap.warmed) continue
     promoteSlotFpToOverride(override, id, snap.matchKey, snap.emittedFp)
     onToken?.(id, snap.matchKey, snap.emittedFp)
   }
@@ -2938,6 +2963,9 @@ export function promoteEmittedFpsToCached(
   for (const [id, snap] of snapshots) {
     const fp = snap.emittedFp
     if (!fp) continue
+    // Warm-registered snapshots never shipped — same rule as the
+    // override promote above.
+    if (snap.warmed) continue
     let set = state.cachedFingerprints.get(id)
     if (!set) {
       set = new Set()

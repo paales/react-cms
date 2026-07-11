@@ -13,6 +13,7 @@ import { cloneElement, isValidElement, type ReactElement, type ReactNode, Suspen
 import { contentSlotConfirmed, contentSlotStored } from "./cull-park.ts"
 import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
 import {
+  _addLiveTreeIds,
   _applyFpUpdates,
   _setLiveCatchupAnchor,
   cacheLookup,
@@ -571,7 +572,15 @@ export function _commitPartonLane(
   if (partonId !== undefined) {
     _laneCommitGeneration.set(partonId, (_laneCommitGeneration.get(partonId) ?? 0) + 1)
   }
-  cacheFromStreamingChildren(node, getCurrentPagePartials())
+  const seen = new Map<string, Set<string>>()
+  cacheFromStreamingChildren(node, getCurrentPagePartials(), seen)
+  // The committed subtree is part of the DISPLAYED tree the moment the
+  // notify's transition re-renders the template — its ids join the
+  // pool-cap eviction exemption (`_liveTreeIds`), which payload commits
+  // alone would only refresh at the next whole-tree walk. Without the
+  // fold, every lane commit's own fp registration could evict the
+  // content a sibling lane just delivered.
+  _addLiveTreeIds(seen.keys())
   if (fpUpdates) _applyFpUpdates(fpUpdates)
   notifyLaneCommit()
 }
@@ -600,7 +609,11 @@ export function _commitPartonLaneProgressive(partonId: string, node: ReactNode):
   const walk = (): void => {
     if (_laneCommitGeneration.get(partonId) !== generation) return
     const stats: LazyWalkStats = { pending: 0, thenables: [] }
-    cacheFromStreamingChildren(node, getCurrentPagePartials(), undefined, stats)
+    const seen = new Map<string, Set<string>>()
+    cacheFromStreamingChildren(node, getCurrentPagePartials(), seen, stats)
+    // Same live-tree fold as `_commitPartonLane` — each progressive
+    // re-walk may surface newly-resolved ids.
+    _addLiveTreeIds(seen.keys())
     notifyLaneCommit()
     const thenables = stats.thenables ?? []
     if (stats.pending > 0 && thenables.length > 0) {

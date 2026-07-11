@@ -106,5 +106,20 @@
       "baseline": 285.1,
       "cornerIdle": 3
     }
+  },
+  {
+    "sha": "a9cb41b",
+    "date": "2026-07-11T19:25:55.134Z",
+    "node": "v24.11.1",
+    "viewport": "2560x1440",
+    "serverPct": {
+      "baseline": 6.1,
+      "cornerIdle": 7.8,
+      "afterClose": 12.1
+    },
+    "headlessBrowserPct": {
+      "baseline": 127.2,
+      "cornerIdle": 41.3
+    }
   }
 ]

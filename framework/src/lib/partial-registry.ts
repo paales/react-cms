@@ -31,6 +31,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import type { ReactNode } from "react"
 import {
   _deferRegistryCommit,
+  _isWarmRender,
   _setRegistryCommit,
   getRequest,
   getScope,
@@ -160,6 +161,17 @@ export interface PartialSnapshot {
    *  record and a culling flip's fp folds the record of the state it
    *  is entering (see `lookupPartial`'s `culled` preference). */
   culled?: boolean
+  /** This snapshot was registered by a byte-silent WARM render (the
+   *  segment driver's telemetry / preload passes) — its emission never
+   *  reached any client. Truthful for every REGISTRY consumer (fp
+   *  folds, lookups, the flip-in lane's warm byte-cache replay), but
+   *  the client-mirror promote (`promoteSnapshotsToCachedOverride`)
+   *  must skip it: claiming its fp as a client holding would let a
+   *  later lane — a deferred flip carries no holdings statement —
+   *  fp-skip to a confirmation of content the client never received,
+   *  a permanent hole. Cleared by the next real emission's
+   *  registration (a fresh snapshot without the mark). */
+  warmed?: boolean
 }
 
 /** This snapshot's freshness boundary — the live box `expires()` wrote
@@ -196,14 +208,32 @@ interface ScopeStore {
   /** routeKey → id → variantKey. LRU on the outer Map by insertion
    *  order; inner Map bounded by partials-per-page. */
   hints: Map<string, Map<string, string>>
+  /** Content generation — bumped by every mutation of `partials` /
+   *  `hints` content (registration, commit, invalidation). The
+   *  `_readSnapshotsForRoute` memo's validity token. */
+  gen: number
+  /** Per-routeKey memo of `_readSnapshotsForRoute`'s built map, valid
+   *  while its recorded `gen` matches the store's. The read is on
+   *  every driver hot path (wake drains, lane scoping, warm passes —
+   *  hundreds of calls per second on a busy connection), and each
+   *  cold build walks the whole hint (thousands of map lookups on a
+   *  world-sized route); the memo collapses a quiet stretch to one
+   *  build. Small LRU (`ROUTE_SNAPSHOT_MEMO_MAX`) — the hot set is
+   *  the handful of routes with held connections. Entries are
+   *  REPLACED on rebuild; callers treat the returned map as
+   *  immutable (every mutation goes through the registry API, which
+   *  bumps `gen`). */
+  routeSnapshots: Map<string, { gen: number; map: Map<string, PartialSnapshot> }>
 }
+
+const ROUTE_SNAPSHOT_MEMO_MAX = 32
 
 const canonical = new Map<string, ScopeStore>()
 
 function scopeStore(scope: string): ScopeStore {
   let s = canonical.get(scope)
   if (!s) {
-    s = { partials: new Map(), hints: new Map() }
+    s = { partials: new Map(), hints: new Map(), gen: 0, routeSnapshots: new Map() }
     canonical.set(scope, s)
   }
   return s
@@ -363,6 +393,8 @@ function isStale(existing: PartialSnapshot | undefined, incoming: PartialSnapsho
 
 export function registerPartial(id: string, snapshot: PartialSnapshot): void {
   snapshot._seq = ++registrationSeq
+  // Byte-silent origin marker — see `PartialSnapshot.warmed`.
+  if (_isWarmRender()) snapshot.warmed = true
   const variantKey = variantKeyOf(snapshot)
   const ctx = registryAls.getStore()
   if (ctx) {
@@ -400,6 +432,7 @@ export function registerPartial(id: string, snapshot: PartialSnapshot): void {
       const hint = new Map<string, string>([[id, variantKey]])
       touchHint(store, ctx.routeKey, hint)
     }
+    store.gen++
     return
   }
   // No active request context — write straight to canonical (HMR /
@@ -414,6 +447,7 @@ export function registerPartial(id: string, snapshot: PartialSnapshot): void {
   if (!isStale(variants.get(variantKey), snapshot)) {
     variants.set(variantKey, snapshot)
   }
+  store.gen++
 }
 
 /**
@@ -581,7 +615,16 @@ export function getFoldBaseSnapshots(): Map<string, PartialSnapshot> {
  * flush hook in `lib/fp-trailer.ts` — flush fires after the
  * request's ALS contexts have unwound, but the scope + URL captured
  * at wrap time are enough to locate the same snapshot set the
- * commit just wrote.
+ * commit just wrote — and by every segment-driver hot path (wake
+ * drains, lane scoping, park checks, warm passes).
+ *
+ * Memoized per (store, routeKey) on the store's content generation
+ * (`ScopeStore.gen` — bumped by every registration, commit, and
+ * invalidation): between mutations, repeated reads return the SAME
+ * map instead of rebuilding a world-sized route's thousands of
+ * entries per call. The returned map is shared — callers read, never
+ * mutate (all registry writes go through the API, which bumps the
+ * generation and invalidates the memo).
  */
 export function _readSnapshotsForRoute(
   scope: string,
@@ -589,12 +632,27 @@ export function _readSnapshotsForRoute(
 ): Map<string, PartialSnapshot> {
   const store = canonical.get(scope)
   if (!store) return new Map()
-  const hint = store.hints.get(routeKey)
-  if (!hint) return new Map()
+  const memo = store.routeSnapshots.get(routeKey)
+  if (memo !== undefined && memo.gen === store.gen) {
+    // Re-insert for LRU recency — the hot routes stay resident.
+    store.routeSnapshots.delete(routeKey)
+    store.routeSnapshots.set(routeKey, memo)
+    return memo.map
+  }
   const snapshots = new Map<string, PartialSnapshot>()
-  for (const [id, vk] of hint) {
-    const snap = store.partials.get(id)?.get(vk)
-    if (snap) snapshots.set(id, snap)
+  const hint = store.hints.get(routeKey)
+  if (hint) {
+    for (const [id, vk] of hint) {
+      const snap = store.partials.get(id)?.get(vk)
+      if (snap) snapshots.set(id, snap)
+    }
+  }
+  store.routeSnapshots.delete(routeKey)
+  store.routeSnapshots.set(routeKey, { gen: store.gen, map: snapshots })
+  while (store.routeSnapshots.size > ROUTE_SNAPSHOT_MEMO_MAX) {
+    const oldest = store.routeSnapshots.keys().next().value
+    if (oldest === undefined) break
+    store.routeSnapshots.delete(oldest)
   }
   return snapshots
 }
@@ -611,6 +669,7 @@ export function invalidateSnapshot(id: string): void {
   if (!store) return
   store.partials.delete(id)
   for (const hint of store.hints.values()) hint.delete(id)
+  store.gen++
 }
 
 export function commitRequestRegistry(ctx: RequestRegistry): void {
@@ -674,6 +733,7 @@ export function commitRequestRegistry(ctx: RequestRegistry): void {
   for (const id of ctx.invalidations) hint.delete(id)
   for (const [id, vk] of ctx.pendingHints) hint.set(id, vk)
   touchHint(store, ctx.routeKey, hint)
+  store.gen++
 }
 
 export function clearRegistry(scope?: string | "all"): void {

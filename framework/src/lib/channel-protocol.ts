@@ -276,11 +276,28 @@ export interface DetachFrame {
  * layer. Absent (or empty) = the client held every acked delivery. An
  * explicit drop statement, not a server-side inference: only the client
  * knows which arrivals its live navigation point superseded.
+ *
+ * `evicted` names PARTON IDS whose committed content the client has
+ * since DESTROYED — the pool-cap eviction, the cull-park LRU eviction,
+ * the merge layer's page prune, a commit that regressed a displayed
+ * cull pair to its skeleton. The loss statement of the mirror: the
+ * server revokes every fp credit it holds for the id (the optimistic
+ * override AND the acked layer), so the next lane or reconcile
+ * re-ships bytes instead of confirming a ghost the client no longer
+ * holds. Applied AFTER this frame's `delivered` fold, so a delivery
+ * committed before the eviction never re-credits what the eviction
+ * destroyed; content the client commits AFTER stating the eviction
+ * re-credits through its own later ack. Explicit producer-written
+ * statements, never inferred: only the destroying code path knows the
+ * content is gone. Loss-tolerant like the rest of the ack — a torn
+ * connection's reattach reseeds the mirror from the attach manifest,
+ * which is the same eviction evidence stated wholesale.
  */
 export interface AckFrame {
   kind: "ack"
   delivered: number
   dropped?: number[]
+  evicted?: string[]
 }
 
 /**
@@ -492,10 +509,18 @@ export function decodeChannelEnvelope(value: unknown): ChannelEnvelope | null {
         }
         dropped = f.dropped as number[]
       }
+      // `evicted` is optional; when present it must be an array of
+      // parton-id strings — same strict-known rule as `dropped`.
+      let evicted: string[] | undefined
+      if (f.evicted !== undefined && f.evicted !== null) {
+        if (!isStringArray(f.evicted)) return null
+        evicted = f.evicted
+      }
       frames.push({
         kind: "ack",
         delivered: f.delivered,
         ...(dropped !== undefined && dropped.length > 0 ? { dropped } : {}),
+        ...(evicted !== undefined && evicted.length > 0 ? { evicted } : {}),
       })
       continue
     }

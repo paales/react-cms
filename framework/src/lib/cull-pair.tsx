@@ -79,7 +79,7 @@ import {
   subscribeCullState,
 } from "./cull-park.ts"
 import { isPlaceholder } from "./partial-cache.ts"
-import { _primeVisible, VisibilityObserver } from "./visibility.tsx"
+import { _primeVisible, _visibilityContentRegressed, VisibilityObserver } from "./visibility.tsx"
 
 /**
  * Whether the content slot's child is REAL content to show, versus an
@@ -150,7 +150,6 @@ export function CullPair({ id, culled, obs, skel, children }: CullPairProps): Re
     _primeVisible(id, !culled)
   }, [id, culled])
   const reported = isServer ? undefined : reportedVisibility(id)
-  const out = reported === undefined ? culled : !reported
 
   // Content availability read straight off the content slot's child —
   // the real signal (see `contentIsReal`), not a cache-presence proxy.
@@ -158,6 +157,26 @@ export function CullPair({ id, culled, obs, skel, children }: CullPairProps): Re
   // ships a hole, a live one its body), so the pair hydrates to one
   // shape; past hydration it tracks what will actually render.
   const hasContent = contentIsReal(children)
+  const out = reported === undefined ? culled : !reported
+  // Regression detector: a commit whose substitution can no longer
+  // back this pair's content slot — the cache entry was destroyed (a
+  // stale ancestor commit clobbered it, an eviction raced the
+  // display) — regresses an IN-VIEW pair to its skeleton. The pair is
+  // the one component that can testify to that (it renders the loss),
+  // so it writes the explicit signal: reset the id's visibility
+  // baseline (the skeleton observer's next measurement re-states the
+  // flip) and report the loss upstream (the re-stated flip's lane
+  // re-renders instead of confirming the destroyed copy). Only a
+  // true→false CONTENT transition while the pair displays in-view
+  // (`!out`) — a fresh pair streaming its first bytes never had
+  // content, and a client-stated out-flip (or a server-stated cull
+  // the display honors) flips `out` for the same commit.
+  const hadContent = React.useRef(hasContent)
+  React.useEffect(() => {
+    const regressed = hadContent.current && !hasContent && !out
+    hadContent.current = hasContent
+    if (regressed) _visibilityContentRegressed(id)
+  }, [id, hasContent, out])
   // The skeleton shows out of view, or in view while the content slot
   // is still a hole (first bytes streaming). It is CONDITIONALLY
   // rendered, never a hidden `<Activity>`: React applies an Activity's

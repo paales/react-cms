@@ -40,6 +40,11 @@ interface RequestStore {
    *  tabs, different users). Cross-connection caching (when we
    *  eventually want it) is a separate layer added on top. */
   ephemeralCellStorage?: import("./cell-storage.ts").CellStorage | null
+  /** This store is a byte-silent WARM render scope (`_runWithWarm*`).
+   *  Registrations under it stamp their snapshots `warmed`, so the
+   *  client-mirror promote never claims fps whose bytes no client
+   *  received. */
+  warmRender?: boolean
   control?: FrameworkControl
   /** Hook the partial-registry layer registers when it opens its
    *  per-request context. Auto-fires on `runWithRequestAsync` exit
@@ -512,8 +517,17 @@ export async function _runWithWarmRenderScope<T>(
     scope: store.scope,
     ephemeralCellStorage: store.ephemeralCellStorage,
     connectionSession: { visible, ackedFps: new Map() },
+    warmRender: true,
   }
   return requestContext.run(warmStore, fn)
+}
+
+/** Whether the CURRENT async context is a byte-silent warm render
+ *  (either warm scope). Read by `registerPartial`, which stamps the
+ *  snapshot `warmed` — the marker that keeps the client-mirror
+ *  promote from claiming fps no client ever received. */
+export function _isWarmRender(): boolean {
+  return requestContext.getStore()?.warmRender === true
 }
 
 /**
@@ -537,6 +551,7 @@ export async function _runWithWarmRequestScope<T>(url: string, fn: () => Promise
     cookies: [],
     scope: store.scope,
     ephemeralCellStorage: store.ephemeralCellStorage,
+    warmRender: true,
   }
   return requestContext.run(warmStore, fn)
 }

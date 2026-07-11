@@ -79,7 +79,11 @@ import {
   TAG_UPSTREAM_APPLIED,
 } from "./fp-trailer-marker.ts"
 import { getNavigation } from "../runtime/navigation-api.ts"
-import { _getLiveConnectionId, _setLiveConnectionId } from "./partial-client-state.ts"
+import {
+  _getLiveConnectionId,
+  _setContentLossListener,
+  _setLiveConnectionId,
+} from "./partial-client-state.ts"
 
 /** A source of upstream frames (the visibility controller is the
  *  first). Registered once at module scope; consulted on every
@@ -291,6 +295,41 @@ let ackDeliveredOnConnection = false
  *  producer reports the seqs within the acked range so the server evicts
  *  their optimistic mirror promotions. Reset per connection. */
 const asOfDroppedSeqs = new Set<number>()
+/** Parton ids whose COMMITTED content the client destroyed and hasn't
+ *  yet reported — pool-cap eviction, cull-park eviction, page prune, a
+ *  displayed cull pair regressed to its skeleton. The next ack frame
+ *  carries them as its `evicted` statement so the server revokes the
+ *  ids' mirror credit (optimistic override + acked layer) and re-ships
+ *  instead of confirming a ghost. Cleared per establishment: the
+ *  attach's manifest restates the client's holdings wholesale, which
+ *  IS the eviction evidence — a pending report is redundant on a fresh
+ *  connection. */
+const evictedContentIds = new Set<string>()
+
+/** Report a parton id whose committed content was destroyed
+ *  client-side — the loss statement's one entry point (the destruction
+ *  sites in `partial-client-state.ts` reach it through the
+ *  content-loss listener; the cull pair's regression detector calls it
+ *  via the visibility controller). Cadence follows the ack's passenger
+ *  policy: an OFF-SCREEN loss (pool cap, cull-park LRU, page prune —
+ *  the default) has no urgency — nothing will confirm the ghost before
+ *  the id's next flip-in (whose `cached` statement carries the truth
+ *  anyway) or the reconcile, so the report rides the next driven
+ *  envelope (a flip, a threshold ack). A DISPLAYED loss
+ *  (`drive: true` — the cull pair's regression detector: the user is
+ *  looking at the regressed skeleton) drives its own flush so the
+ *  server's revocation + in-view re-lane land within one RTT. Inert
+ *  during SSR: the server-side merge maps never advertise, so a loss
+ *  there states nothing. */
+export function _reportContentEvicted(id: string, opts?: { drive?: boolean }): void {
+  if (typeof document === "undefined") return
+  evictedContentIds.add(id)
+  if (opts?.drive === true) scheduleChannelFlush()
+}
+
+// The destruction sites live in `partial-client-state.ts`, which this
+// module already imports — the listener seam breaks the cycle.
+_setContentLossListener(_reportContentEvicted)
 
 // ─── Reliable-class buffer + upstream watermark ──────────────────────
 
@@ -1562,20 +1601,29 @@ const ackProducer: ChannelProducer = {
     for (const seq of asOfDroppedSeqs) {
       if (seq <= deliveredWatermark) dropped.push(seq)
     }
-    if (deliveredWatermark <= lastAckCollected && dropped.length === 0) {
+    // Pending loss statements ride the same frame — an eviction with
+    // no new commits still justifies one (the ghost credit it revokes
+    // would otherwise confirm on the next covering render).
+    const evicted = [...evictedContentIds]
+    if (deliveredWatermark <= lastAckCollected && dropped.length === 0 && evicted.length === 0) {
       return null
     }
     lastAckCollected = deliveredWatermark
     for (const seq of dropped) asOfDroppedSeqs.delete(seq)
+    evictedContentIds.clear()
     return {
       kind: "ack",
       delivered: deliveredWatermark,
       ...(dropped.length > 0 ? { dropped } : {}),
+      ...(evicted.length > 0 ? { evicted } : {}),
     }
   },
   deliveryFailed(): void {
     // Per-connection ack state resets at the next establishment; the
-    // degrade decision lives in the flush's failure path.
+    // degrade decision lives in the flush's failure path. A carried
+    // `evicted` statement needs no re-own either: a failed envelope
+    // clears the published id, and the reattach's manifest restates
+    // the client's holdings wholesale — the same eviction evidence.
   },
 }
 
@@ -1602,6 +1650,10 @@ export function _channelEstablished(connection: string): void {
   deliveredWatermark = 0
   lastAckCollected = 0
   asOfDroppedSeqs.clear()
+  // Pending loss statements retire: the attach manifest just restated
+  // the client's holdings wholesale, and the new session's mirror
+  // seeds from it — the eviction evidence, stated completely.
+  evictedContentIds.clear()
   navStreamingByPoint.clear()
   ackDeliveredOnConnection = false
   establishedSinceClose = true
@@ -1927,6 +1979,7 @@ export function _resetChannelClient(): void {
   deliveredWatermark = 0
   lastAckCollected = 0
   asOfDroppedSeqs.clear()
+  evictedContentIds.clear()
   navStreamingByPoint.clear()
   ackDeliveredOnConnection = false
   retransmitBuffer = []

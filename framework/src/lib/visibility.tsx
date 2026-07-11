@@ -59,6 +59,7 @@
 import React, { useEffect, useRef } from "react"
 import {
   type ChannelProducer,
+  _reportContentEvicted,
   onChannelEstablished,
   registerChannelProducer,
   scheduleChannelFlush,
@@ -208,6 +209,30 @@ export function reportVisible(id: string, isInView: boolean): void {
 /** Whether any viewport measurement has landed this page. */
 export function _visibilityMeasured(): boolean {
   return measured
+}
+
+/**
+ * A commit REGRESSED a displayed cull pair from content to skeleton
+ * without a client-stated out-flip — `CullPair`'s regression detector
+ * (the producer that knows: its content slot's child stopped being
+ * real while its live report still says in-view). Two consequences,
+ * both explicit signals:
+ *
+ *   - the controller's baseline resets (the `reportGone` shape), so
+ *     the skeleton observer's next measurement is a DELTA that
+ *     dispatches — without it the id is "already in view" and the
+ *     exactly-once flip machinery would never re-state it, leaving
+ *     the skeleton permanent;
+ *   - the loss rides upstream (`_reportContentEvicted`, DRIVEN — the
+ *     user is looking at the regression, so the revocation and the
+ *     in-view re-lane must land within one RTT), so the server
+ *     revokes the id's mirror credit and the re-stated flip's lane
+ *     re-renders instead of confirming the destroyed copy.
+ */
+export function _visibilityContentRegressed(id: string): void {
+  inView.delete(id)
+  everReported.delete(id)
+  _reportContentEvicted(id, { drive: true })
 }
 
 /** Run `cb` at the first viewport measurement — immediately when one

@@ -451,3 +451,54 @@ describe("predictive warming at park", () => {
     )
   })
 })
+
+describe("warm registrations never claim client holdings", () => {
+  it("the client-mirror promote skips warmed snapshots; a real re-registration promotes", async () => {
+    const { _runWithWarmRenderScope, _setCachedOverride, _getCachedOverride } =
+      await import("../../runtime/context.ts")
+    const { enterRequestRegistry, registerPartial, lookupPartial } =
+      await import("../partial-registry.ts")
+    const { computeRouteKey } = await import("../partial.tsx")
+    const { promoteSnapshotsToCachedOverride } = await import("../segmented-response.ts")
+
+    const url = "http://localhost/warm-claim"
+    const snap = () => ({
+      type: "warm-claim",
+      fallback: null,
+      labels: ["warm-claim"],
+      framePath: [],
+      parentFrameChain: [],
+      parentPath: [],
+      matchKey: "mk",
+      emittedFp: "fp-warm-claim",
+    })
+    await runWithRequestAsync(new Request(url), async () => {
+      enterRequestRegistry(computeRouteKey(url), "cache")
+      _setCachedOverride({ fingerprints: new Map(), matchKeys: new Map(), slots: new Map() })
+
+      // A byte-silent warm render registers the parton's content
+      // snapshot — truthful registry state, stamped `warmed`.
+      await _runWithWarmRenderScope(new Set(["warm-claim"]), async () => {
+        registerPartial("warm-claim", snap())
+      })
+      expect(lookupPartial("warm-claim")?.warmed).toBe(true)
+
+      // The promote (a lane drain's walk, a segment's whole-tree
+      // pass) must NOT claim it — no client ever received the bytes,
+      // and a deferred flip carries no holdings statement to correct
+      // a phantom credit.
+      const tokens: string[] = []
+      promoteSnapshotsToCachedOverride(undefined, (id) => tokens.push(id))
+      expect(tokens).toEqual([])
+      expect(_getCachedOverride()?.fingerprints.has("warm-claim")).toBe(false)
+
+      // The next REAL emission re-registers without the mark and
+      // promotes normally.
+      registerPartial("warm-claim", snap())
+      expect(lookupPartial("warm-claim")?.warmed).toBeUndefined()
+      promoteSnapshotsToCachedOverride(undefined, (id) => tokens.push(id))
+      expect(tokens).toEqual(["warm-claim"])
+      expect(_getCachedOverride()?.fingerprints.get("warm-claim")?.has("fp-warm-claim")).toBe(true)
+    })
+  })
+})

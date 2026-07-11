@@ -504,6 +504,26 @@ The pieces:
   seq: only a NEWER statement about the id supersedes it — an
   explicit out-flip cancels the wait, a fresh in-flip re-arms it
   with fresh cached tokens.
+- **A flip-in dirties open ancestor lanes.** An ancestor whose lane
+  is OPEN when a descendant's in-flip is consumed rendered against a
+  visible set WITHOUT that id — its emission carries the descendant
+  as a culled pair, and under burst backpressure those stale bytes
+  can COMMIT after the descendant's own flip lane materialized
+  content, regressing the subtree client-side. The drain walks the
+  flipped id's `parentPath` and marks every open ancestor lane
+  `dirty` (the same coalescing `startLane` uses for a wake on an
+  open lane): pumpLane re-renders the ancestor once its current body
+  drains, against the session set that now holds the id, so the
+  connection's LAST word on the ancestor reflects the flip. A
+  clobber that still slips through (the stale commit destroying the
+  descendant's cache entry) is healed by the pair's regression
+  detector: `CullPair` observes an in-view content→skeleton
+  transition and calls `_visibilityContentRegressed` — the id's
+  visibility baseline resets (the skeleton observer's next
+  measurement is a DELTA that re-states the flip) and the loss rides
+  upstream (`AckFrame.evicted` — the server revokes the mirror
+  credit, so the re-stated flip's lane re-renders instead of
+  confirming the destroyed copy).
 - **The read stays request-reproducible.** The cull gate and the fp
   fold's store-and-reread both resolve through one function
   (`readVisible` in `server-hooks.ts`): the connection session's set
@@ -655,7 +675,15 @@ app's; the framework owns only the mechanism and its hard edges:
   override and a fresh empty partial state (never fp-skips, never
   touches the mirror), mints no delivery seq, and drains into the
   void. The only durable effects are the byte-cache entry and the
-  parton's re-registered content snapshot.
+  parton's re-registered content snapshot — stamped `warmed`
+  (`registerPartial` reads the warm scope), because its bytes never
+  reached any client: the client-mirror promote
+  (`promoteSnapshotsToCachedOverride`) skips warmed snapshots, or a
+  later subtree walk would claim the fp as a client holding and a
+  deferred flip's lane — which carries no holdings statement — would
+  fp-skip to a confirmation of content the client never received (a
+  permanent skeleton). The id's next real emission re-registers
+  without the mark and promotes normally.
 - **One projection per statement.** The statement's envelope seq is
   the dedup key — re-parking on the same statement projects nothing;
   the seq latch (`pendingWarmStatement`) also catches a statement

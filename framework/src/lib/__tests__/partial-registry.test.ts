@@ -8,6 +8,7 @@
 
 import { afterEach, describe, expect, it } from "vitest"
 import {
+  _readSnapshotsForRoute,
   _registryStats,
   clearRegistry,
   commitRequestRegistry,
@@ -235,5 +236,36 @@ describe("freshness-guarded canonical writes", () => {
       const committed = lookupPartial("guarded")
       expect([...(committed?.deps ?? [])]).toContain("search:config")
     })
+  })
+})
+
+describe("_readSnapshotsForRoute memoization", () => {
+  it("returns the same map between mutations; any registry mutation invalidates it", async () => {
+    await runRequest("http://t/memo", "/memo", "streaming", () => {
+      registerPartial("memo-a", snap(["page-root"]))
+    })
+    const first = _readSnapshotsForRoute("default", "/memo")
+    expect(first.has("memo-a")).toBe(true)
+    // Quiet stretch: repeated reads are the memoized map, not a rebuild.
+    expect(_readSnapshotsForRoute("default", "/memo")).toBe(first)
+
+    // A registration (the eager canonical publish) is a content
+    // mutation — the next read rebuilds and sees it.
+    await runRequest("http://t/memo", "/memo", "streaming", () => {
+      registerPartial("memo-b", snap(["page-root"]))
+    })
+    const second = _readSnapshotsForRoute("default", "/memo")
+    expect(second).not.toBe(first)
+    expect(second.has("memo-b")).toBe(true)
+    expect(_readSnapshotsForRoute("default", "/memo")).toBe(second)
+
+    // A committed id-wide invalidation invalidates the memo too.
+    await runRequest("http://t/memo", "/memo", "cache", () => {
+      invalidateSnapshot("memo-b")
+    })
+    const third = _readSnapshotsForRoute("default", "/memo")
+    expect(third).not.toBe(second)
+    expect(third.has("memo-b")).toBe(false)
+    expect(third.has("memo-a")).toBe(true)
   })
 })

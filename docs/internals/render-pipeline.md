@@ -212,7 +212,7 @@ Client merge layer:
 
 | Module | Owns |
 |---|---|
-| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `touchClientPartial`, `_applyFpUpdates`, `pruneToLive`; the cached manifest has two forms — the attach statement's BODY manifest (`getAllCachedPartialTokens`) carries everything, no request line to protect, while the action POST's `?cached=` URL form (`getCachedPartialIds`) is doubly bounded: `FP_CAP_PER_VARIANT` fps per variant, `CACHED_MANIFEST_CAP` entries total, parked-by-culling ids first (`_setManifestPriorityIds`) then newest-sighting-first, since it travels in the request URL and a many-parton page would otherwise blow the server's request-line limit; `CLIENT_POOL_CAP` bounds distinct ids, aging out the least-recently-sighted — every walk touches the ids it sees, so recency means "still emitted by commits"), the id-pruned listener (`_setIdPrunedListener` — the page-membership teardown signal cull-park registers on), the persisted template (`getTemplate` / `setTemplate`), the lane-commit subscription (`subscribeLaneCommits` / `notifyLaneCommit`), the live-connection id (`_setLiveConnectionId` / `_getLiveConnectionId`) + the take-once catch-up anchor, and the frame-URL cache. |
+| `partial-client-state.ts` | ALL module-level mutable state, behind accessors: the partial cache + fingerprint maps (`cacheStore`, `registerClientPartial`, `touchClientPartial`, `_applyFpUpdates`, `pruneToLive`; the cached manifest has two forms — the attach statement's BODY manifest (`getAllCachedPartialTokens`) carries everything, no request line to protect, while the action POST's `?cached=` URL form (`getCachedPartialIds`) is doubly bounded: `FP_CAP_PER_VARIANT` fps per variant, `CACHED_MANIFEST_CAP` entries total, parked-by-culling ids first (`_setManifestPriorityIds`) then newest-sighting-first, since it travels in the request URL and a many-parton page would otherwise blow the server's request-line limit; `CLIENT_POOL_CAP` bounds distinct ids, aging out the least-recently-sighted — every walk touches the ids it sees, so recency means "still emitted by commits" — with the displayed tree exempt: `_liveTreeIds` from the payload prune plus lane-commit folds via `_addLiveTreeIds`), the id-pruned listener (`_setIdPrunedListener` — the page-membership teardown signal cull-park registers on), the content-loss listener (`_setContentLossListener` — every destruction of committed content reports its id, and the channel transport rides the ids on the next ack's `evicted` statement), the persisted template (`getTemplate` / `setTemplate`), the lane-commit subscription (`subscribeLaneCommits` / `notifyLaneCommit`), the live-connection id (`_setLiveConnectionId` / `_getLiveConnectionId`) + the take-once catch-up anchor, and the frame-URL cache. |
 | `partial-cache.ts` | The tree walks: wrapper/placeholder detection, `harvestPartialIds`, `cacheFromStreamingChildren`, `substituteNested`, `unwrapLazy` + the `LAZY_PENDING` sentinel (pending lazies' Flight chunks are captured into `LazyWalkStats.thenables` so `PartialsClient` can arrange a re-walk when they land), `treeHasPendingLazy`, the per-parton lane commit (`_commitPartonLane` — synchronous cache walk + fp updates + the notify that re-renders `PartialsClient`; see [streaming.md](./streaming.md)) and the fp-trailer DOM scan. |
 | `partial-template.tsx` | `deriveTemplate` + `renderTemplate`. |
 | `cull-key.ts` / `cull-park.ts` / `cull-pair.tsx` | Cull-to-park (see the section below): the registry-internal `~cull` variant-key grammar; the client pool state (reported viewport per id, the parked-by-culling LRU + `CULL_PARK_CAP`, the drop-on-drift generation + `parkedSince`, the observer refcount); the `CullPair` client component (a content `<Activity>` slot that parks + a conditionally-rendered inline skeleton in one component — display from the reported state, content presence read off the slot's child via `contentIsReal`, display-state priming, per-slot observers). |
@@ -278,18 +278,32 @@ a later commit whose render is whole.
 A second bound, `CLIENT_POOL_CAP`, caps the number of distinct ids
 retained across a long journey (a scroll across a cullable field
 registers an entry per parton ever visited). Eviction is
-oldest-registered-first but **exempts ids the live tree still
-references** (the prune set from the most recent payload commit,
-recorded as `_liveTreeIds`): the template re-substitutes those ids'
-placeholders from the cache on every re-render, so destroying one
-blanks that subtree permanently — nothing refetches it, because the
-fp-skip placeholder is the server saying "you have this". The page
-shell is the canonical would-be victim: its element identity is
-stable, React bails out of re-rendering its boundary, and it never
-re-registers for recency — under churn it becomes the pool's oldest
-entry while being the subtree everything hangs off. A page whose
-live tree alone exceeds the cap keeps every live entry (correctness
-bounds memory there); the cap bounds everything else.
+oldest-registered-first but **exempts ids the displayed tree still
+references** (`_liveTreeIds`): rebuilt by each payload commit's prune
+set, and extended by every LANE commit between payload commits
+(`_addLiveTreeIds` — a lane-delivered subtree is displayed from the
+moment its commit's transition re-renders the template). The template
+re-substitutes those ids' placeholders from the cache on every
+re-render, so destroying one blanks that subtree permanently —
+nothing refetches it, because the fp-skip placeholder is the server
+saying "you have this". The page shell is the canonical would-be
+victim: its element identity is stable, React bails out of
+re-rendering its boundary, and it never re-registers for recency —
+under churn it becomes the pool's oldest entry while being the
+subtree everything hangs off. A page whose live tree alone exceeds
+the cap keeps every live entry (correctness bounds memory there); the
+cap bounds everything else.
+
+Every client-side destruction of committed content is **reported
+upstream** — the pool-cap eviction, the cull-park LRU eviction, and
+the payload prune's drops each name the id through the content-loss
+listener (`_setContentLossListener`), and the transport rides the ids
+on the next ack frame's `evicted` statement (see
+[`channel.md`](./channel.md) §ack). The server revokes the ids' fp
+credit from every mirror layer, so a later render re-ships bytes
+instead of confirming a ghost the client no longer holds. The
+producer writes the report at the destruction site itself — nothing
+infers loss.
 
 ## Preload (server-side warm intent)
 

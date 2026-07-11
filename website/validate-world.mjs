@@ -34,6 +34,14 @@
  *                      reported, so the whole world froze)
  *   4. stress        — 40000px fast scroll; viewport fills; parked
  *                      chunks stay off the live stream (byte budget)
+ *   4b. eastBurst    — dense world (?chunk=128, 2560×1440): a fast
+ *                      east burst then hard stop; after a settle, NO
+ *                      viewport-intersecting hole survives — no
+ *                      missing chunk coords, no quad placeholders
+ *                      (the burst-backpressure clobber class: a stale
+ *                      ancestor lane committing over flipped-in
+ *                      content, deadlocked by the exactly-once flip
+ *                      baseline + the mirror's ghost credit)
  *   5. steady state  — at rest: no red mount-flashes (red = unexpected
  *                      remount), pulses still live
  *   6. server health — after all the churn (several torn live
@@ -444,6 +452,85 @@ try {
     (await page.$(`[data-testid="${stressCenter}"][data-loaded]`)) !== null,
     `viewport-center ${stressCenter} is loaded after stress`,
   )
+
+  // ── 4b. eastBurst hole check — dense world (?chunk=128) ──
+  // The adversarial burst that surfaced the clobber class: at 128px
+  // chunks a 2560×1440 viewport's working set is large enough that
+  // lane COMMIT order diverges from render order under backpressure.
+  // Every chunk coordinate whose box intersects the viewport must be
+  // materialized (content or shell element), and no quad placeholder
+  // may intersect the viewport once the burst settles. Budget is
+  // deliberately loose for CI: one re-check after an extra settle —
+  // only a PERSISTENT hole fails.
+  {
+    const dense = await browser.newPage({ viewport: { width: 2560, height: 1440 } })
+    await dense.goto(`${BASE}/?transport=fetch&chunk=128`)
+    await dense.waitForSelector('[data-testid="chunk-0,0"][data-loaded]', { timeout: 20000 })
+    await dense.waitForTimeout(2000)
+    // rAF-integrated velocity scroll — a human-like burst, then stop.
+    await dense.evaluate(async () => {
+      const el = document.querySelector('[data-testid="world-scroller"]')
+      await new Promise((resolve) => {
+        const t0 = performance.now()
+        let last = t0
+        const tick = (now) => {
+          const dt = (now - last) / 1000
+          last = now
+          el.scrollLeft += 3000 * dt
+          if (now - t0 < 1500) requestAnimationFrame(tick)
+          else resolve()
+        }
+        requestAnimationFrame(tick)
+      })
+    })
+    const detectHoles = () => {
+      const CENTER_PX = 16384
+      const el = document.querySelector('[data-testid="world-scroller"]')
+      const plane = document.querySelector('[data-testid="world-plane"]')
+      const chunkPx = Number(plane.dataset.chunk ?? 512)
+      const cx0 = Math.floor((el.scrollLeft - CENTER_PX) / chunkPx)
+      const cx1 = Math.ceil((el.scrollLeft + el.clientWidth - CENTER_PX) / chunkPx) - 1
+      const cy0 = Math.floor((el.scrollTop - CENTER_PX) / chunkPx)
+      const cy1 = Math.ceil((el.scrollTop + el.clientHeight - CENTER_PX) / chunkPx) - 1
+      const visible = (n) => {
+        const r = n.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      }
+      const missing = []
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const els = [...document.querySelectorAll(`[data-testid="chunk-${cx},${cy}"]`)]
+          if (!els.some(visible)) missing.push(`${cx},${cy}`)
+        }
+      }
+      const box = el.getBoundingClientRect()
+      const quadShells = [...document.querySelectorAll(".quad__placeholder")]
+        .map((n) => n.getBoundingClientRect())
+        .filter(
+          (r) =>
+            r.width > 0 &&
+            r.left < box.right &&
+            r.right > box.left &&
+            r.top < box.bottom &&
+            r.bottom > box.top,
+        ).length
+      return { missing, quadShells }
+    }
+    const burstStart = Date.now()
+    await dense.waitForTimeout(5000)
+    let holes = await dense.evaluate(detectHoles)
+    if (holes.missing.length > 0 || holes.quadShells > 0) {
+      // Slow fill vs permanent hole: only the latter is the bug.
+      await dense.waitForTimeout(5000)
+      holes = await dense.evaluate(detectHoles)
+    }
+    check(
+      holes.missing.length === 0 && holes.quadShells === 0,
+      "eastBurst @chunk=128: no viewport hole survives the settle",
+      `missing=${holes.missing.length} quadShells=${holes.quadShells} (${Date.now() - burstStart}ms settle)`,
+    )
+    await dense.close()
+  }
 
   // ── 5. Steady state: parked chunks quiet on the wire, no red mount-flashes ──
   // Hundreds of chunks were visited and scrolled past; their tickers

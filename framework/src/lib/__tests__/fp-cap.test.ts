@@ -167,3 +167,43 @@ describe("CLIENT_POOL_CAP eviction — live-tree exemption", () => {
     expect(cacheLookup(cache, `p-${total - 1}`, "mk")).toBe(`SUBTREE-${total - 1}`)
   })
 })
+
+describe("CLIENT_POOL_CAP eviction — lane-committed ids are live", () => {
+  it("a lane-committed subtree survives the registration flood that follows it", async () => {
+    const { _commitPartonLane } = await import("../partial-cache.ts")
+    const React = (await import("react")).default
+    const cache = getCurrentPagePartials()
+    // The payload commit's live tree: just the shell.
+    registerClientPartial("shell", "mk", "fp-shell")
+    cacheStore(cache, "shell", "mk", "SHELL")
+    pruneToLive(new Map([["shell", new Set(["mk"])]]))
+
+    // A lane delivers a flip-in subtree BETWEEN payload commits — the
+    // wrapper shape `cacheFromStreamingChildren` recognizes (keyed +
+    // `partialId`). Its ids join the live-tree exemption at commit.
+    const wrapper = React.createElement("div", {
+      key: "lane-chunk",
+      partialId: "lane-chunk",
+      partialMatchKey: "mk",
+      partialFingerprint: "fp-lane",
+    })
+    _commitPartonLane(wrapper, null, "lane-chunk")
+    expect(cacheLookup(cache, "lane-chunk", "mk")).toBe(wrapper)
+
+    // The scroll's registration flood — every lane commit's own fp
+    // registration runs the pool-cap eviction. The lane-committed id
+    // is DISPLAYED (the commit's re-render substitutes it), so it must
+    // never be destroyed under it.
+    for (let i = 0; i < CLIENT_POOL_CAP + 40; i++) {
+      registerClientPartial(`flood-${i}`, "mk", `fp${i}`)
+      cacheStore(cache, `flood-${i}`, "mk", `SUBTREE-${i}`)
+    }
+    expect(cacheLookup(cache, "lane-chunk", "mk")).toBe(wrapper)
+    expect(cacheLookup(cache, "shell", "mk")).toBe("SHELL")
+
+    // The NEXT payload commit's prune supersedes the lane fold: a lane
+    // id the new template no longer references becomes evictable again.
+    pruneToLive(new Map([["shell", new Set(["mk"])]]))
+    expect(cacheLookup(cache, "lane-chunk", "mk")).toBeUndefined()
+  })
+})

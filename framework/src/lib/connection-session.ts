@@ -577,23 +577,83 @@ function foldAckedTokens(
  * acked evidence. The drop is the client's explicit statement, not a
  * server inference: only the client knows which arrivals its live
  * navigation point superseded.
+ *
+ * The frame's `evicted` ids apply AFTER the fold — and regardless of
+ * whether the watermark advanced (an eviction with no new commits is
+ * still a loss statement): every fp credit for a named id is revoked
+ * from both mirror layers (`evictClientHoldings`), so a delivery the
+ * client committed BEFORE destroying the content never re-credits it,
+ * while content committed AFTER the statement re-credits through its
+ * own later ack. An evicted id the session's visible set still holds
+ * is content the client is LOOKING AT and just declared lost — its
+ * earlier flip-in may have been confirmed against the now-revoked
+ * credit (the report can only trail the confirmation by one RTT) — so
+ * it re-queues as a pending in-flip: the driver's next drain lanes it
+ * fresh instead of leaving the skeleton to the whole-tree reconcile's
+ * cadence.
  */
-function applyAckFrame(session: ConnectionSession, frame: AckFrame): boolean {
+function applyAckFrame(session: ConnectionSession, frame: AckFrame, seq: number): boolean {
   session.firstAckReceived = true
-  if (frame.delivered <= session.ackedDeliverySeq) return false
-  session.ackedDeliverySeq = frame.delivered
-  const dropped = frame.dropped
-  for (const [seq, record] of session.pendingDeliveries) {
-    if (seq <= frame.delivered) {
-      if (dropped !== undefined && dropped.includes(seq)) {
-        evictOverrideTokens(session, record.tokens)
-      } else {
-        foldAckedTokens(session, record.tokens)
+  const advanced = frame.delivered > session.ackedDeliverySeq
+  if (advanced) {
+    session.ackedDeliverySeq = frame.delivered
+    const dropped = frame.dropped
+    for (const [pending, record] of session.pendingDeliveries) {
+      if (pending <= frame.delivered) {
+        if (dropped !== undefined && dropped.includes(pending)) {
+          evictOverrideTokens(session, record.tokens)
+        } else {
+          foldAckedTokens(session, record.tokens)
+        }
+        session.pendingDeliveries.delete(pending)
       }
-      session.pendingDeliveries.delete(seq)
     }
   }
-  return true
+  let requeued = false
+  if (frame.evicted !== undefined) {
+    evictClientHoldings(session, frame.evicted)
+    for (const id of frame.evicted) {
+      if (session.visible === null || !session.visible.has(id)) continue
+      const prior = session.pendingFlips.get(id)
+      if (prior !== undefined && seq < prior.seq) continue
+      session.pendingFlips.set(id, { inView: true, seq })
+      requeued = true
+    }
+  }
+  return advanced || requeued
+}
+
+/**
+ * Revoke every fp credit the mirror holds for the named parton ids —
+ * the client's `evicted` loss statement: it destroyed the ids'
+ * committed content (pool-cap eviction, cull-park eviction, page
+ * prune, a displayed pair regressed to its skeleton), so neither the
+ * optimistic override nor the acked layer may confirm them again. A
+ * still-pending delivery's record is purged of the ids too: its later
+ * ack must not re-credit content the client destroyed before
+ * committing it (content committed after the statement re-registers
+ * client-side and re-enters the mirror through its own emissions).
+ * Revocation only ever costs an over-fetch — the next covering render
+ * declines the skip and re-ships — never staleness.
+ */
+function evictClientHoldings(session: ConnectionSession, ids: readonly string[]): void {
+  const override = session.cachedOverride
+  for (const id of ids) {
+    session.ackedFps.delete(id)
+    session.ackedSlots.delete(id)
+    if (override) {
+      override.fingerprints.delete(id)
+      override.matchKeys.delete(id)
+      override.slots.delete(id)
+    }
+    for (const [seq, record] of session.pendingDeliveries) {
+      if (!record.tokens.some(([tid]) => tid === id)) continue
+      session.pendingDeliveries.set(seq, {
+        tokens: record.tokens.filter(([tid]) => tid !== id),
+        asOf: record.asOf,
+      })
+    }
+  }
 }
 
 /** Remove a dropped delivery's optimistic promotions from the mirror —
@@ -1152,8 +1212,10 @@ export function applyEnvelopeToSession(
         break
       case "ack":
         // An advancing ack frees the unacked delivery window — the
-        // parked driver must re-evaluate its coalesced dirty set.
-        if (applyAckFrame(session, frame)) wakeNeeded = true
+        // parked driver must re-evaluate its coalesced dirty set —
+        // and an eviction that re-queued an in-view flip needs its
+        // covering lane.
+        if (applyAckFrame(session, frame, envelope.seq)) wakeNeeded = true
         break
       case "telemetry":
         // No wake contribution: telemetry alone must never cause a

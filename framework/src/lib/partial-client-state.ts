@@ -173,12 +173,42 @@ export function _setIdPrunedListener(fn: (id: string) => void): void {
   _onIdPruned = fn
 }
 
-/** Ids referenced by the current template's rendered tree — the
- *  prune set from the most recent payload commit. The template's
- *  placeholder-reference structure only changes on payload commits,
- *  so between commits this is exactly the set of ids whose cache
- *  entries a template re-render may need to substitute. */
-let _liveTreeIds: ReadonlySet<string> = new Set()
+/** Ids the currently-displayed tree may need to re-substitute — the
+ *  pool-cap eviction's exemption set. Rebuilt by each payload commit's
+ *  prune (`pruneToLive` — the template's placeholder references), and
+ *  extended by every LANE commit between payload commits
+ *  (`_addLiveTreeIds`): a lane-delivered subtree is part of the
+ *  displayed tree from the moment its commit's transition re-renders
+ *  the template, so destroying it would blank a region the server has
+ *  every reason to believe the client holds. A page whose live tree
+ *  alone exceeds the cap keeps every live entry — correctness bounds
+ *  memory there, the cap bounds the rest. */
+let _liveTreeIds: Set<string> = new Set()
+
+/** Fold lane-committed ids into the eviction exemption. Called by the
+ *  lane commit walks (`_commitPartonLane` / the progressive variant)
+ *  with every (id) the walk cached or sighted as a placeholder — both
+ *  are referenced by the tree the commit's re-render displays. */
+export function _addLiveTreeIds(ids: Iterable<string>): void {
+  for (const id of ids) _liveTreeIds.add(id)
+}
+
+/**
+ * Listener for committed content destroyed client-side — the loss
+ * report's producer seam. The pool-cap eviction, the cull-park LRU
+ * eviction (`evictCulledContent`), and the page prune all destroy
+ * cache + fingerprint entries the server may still credit (optimistic
+ * override, acked mirror layer); each destruction site reports the id
+ * here, and the channel transport rides the ids upstream on the next
+ * ack's `evicted` statement so the server revokes the credit. Explicit
+ * per the no-heuristics rule: the destroying code path writes the
+ * report; nothing infers loss.
+ */
+let _onContentLoss: ((id: string) => void) | null = null
+
+export function _setContentLossListener(fn: (id: string) => void): void {
+  _onContentLoss = fn
+}
 
 function evictOldest(): void {
   if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return
@@ -186,6 +216,7 @@ function evictOldest(): void {
     if (_liveTreeIds.has(id)) continue
     _currentPageFingerprints.delete(id)
     _currentPagePartials.delete(id)
+    _onContentLoss?.(id)
     _onIdPruned?.(id)
     if (_currentPageFingerprints.size <= CLIENT_POOL_CAP) return
   }
@@ -395,25 +426,37 @@ export function cachedTokensFor(ids: readonly string[]): string[] {
 export function pruneToLive(live: Map<string, Set<string>>): void {
   // Record the live id set for the pool-cap eviction guard: these are
   // the ids the committed template can re-substitute at any re-render,
-  // so `evictOldest` must not destroy them.
+  // so `evictOldest` must not destroy them. Rebuilt wholesale — lane
+  // additions since the prior payload commit are superseded by this
+  // commit's own references.
   _liveTreeIds = new Set(live.keys())
   const before = new Set<string>([
     ..._currentPagePartials.keys(),
     ..._currentPageFingerprints.keys(),
   ])
+  // Ids whose advertised FINGERPRINTS this prune destroyed (fully or
+  // per-variant) — the loss report set: the server may still credit
+  // those fps (optimistic override, acked layer), and revoking the
+  // credit is what keeps a later render from confirming a ghost.
+  const lost = new Set<string>()
   for (const map of [_currentPagePartials, _currentPageFingerprints]) {
     for (const [id, byMatchKey] of map) {
       const liveMks = live.get(id)
       if (!liveMks) {
         map.delete(id)
+        if (map === _currentPageFingerprints) lost.add(id)
         continue
       }
       for (const mk of [...byMatchKey.keys()]) {
-        if (!liveMks.has(mk)) byMatchKey.delete(mk)
+        if (!liveMks.has(mk)) {
+          byMatchKey.delete(mk)
+          if (map === _currentPageFingerprints) lost.add(id)
+        }
       }
       if (byMatchKey.size === 0) map.delete(id)
     }
   }
+  if (_onContentLoss) for (const id of lost) _onContentLoss(id)
   // Page-membership teardown: an id that left BOTH maps is off the
   // page — no commit references it rendered, skipped, or parked.
   if (_onIdPruned) {
@@ -433,11 +476,16 @@ export function pruneToLive(live: Map<string, Set<string>>): void {
  * parton's space). The mounted parked fiber unmounts on the next
  * commit's template render (its placeholder no longer resolves), and
  * with no advertised fp the next cull-in renders cold — the
- * pre-parking behavior.
+ * pre-parking behavior. The destruction is reported upstream
+ * (`_setContentLossListener`) so the server revokes the id's mirror
+ * credit — its next flip-in must re-render, never confirm the copy
+ * this eviction just destroyed.
  */
 export function evictCulledContent(id: string): void {
+  const held = _currentPagePartials.has(id) || _currentPageFingerprints.has(id)
   _currentPagePartials.delete(id)
   _currentPageFingerprints.delete(id)
+  if (held) _onContentLoss?.(id)
 }
 
 // ─── Lane commits ─────────────────────────────────────────────────

@@ -15,6 +15,9 @@ interface ScopeStore {
   // Hint table: which variant did the most-recent render for this
   // routeKey bind to each id. LRU on the outer Map.
   hints: Map<string, Map<string, string>>
+  // Content generation + the `_readSnapshotsForRoute` memo (below).
+  gen: number
+  routeSnapshots: Map<string, { gen: number; map: Map<string, PartialSnapshot> }>
 }
 ```
 
@@ -281,6 +284,23 @@ classes is roughly the number of distinct page shapes), so the
 a routeKey's hint entirely; the next targeted render on a URL that
 hashes to that routeKey falls through to a whole-tree segment
 (registry miss), which re-registers and rebuilds the hint.
+
+## The `_readSnapshotsForRoute` memo
+
+`_readSnapshotsForRoute(scope, routeKey)` — the ALS-free canonical
+read every segment-driver hot path takes (wake drains, lane scoping,
+park checks, warm passes, the fp-trailer flush) — is memoized per
+(store, routeKey) on the store's **content generation** (`gen`,
+bumped by every registration's eager publish, every commit, and
+every canonical invalidation). Between mutations, repeated reads
+return the SAME map instead of rebuilding a world-sized route's
+thousands of hint lookups per call; any mutation invalidates every
+memo entry at once (the generation check), so the map can never be
+stale. The memo is a small per-store LRU
+(`ROUTE_SNAPSHOT_MEMO_MAX = 32` routeKeys — the hot set is the
+handful of routes with held connections). Callers treat the returned
+map as immutable: all registry writes go through the API, which
+bumps the generation.
 
 ## What snapshots intentionally do not capture
 
