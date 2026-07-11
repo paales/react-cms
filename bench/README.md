@@ -432,3 +432,41 @@ content-bound). The cull/visibility machinery is a thin ~4% of scripting.
 In short: the scroll path is already lean and the residual cost is
 largely inherent (real reconciliation + pipeline) rather than reducible
 framework overhead — a useful negative result the harness makes legible.
+
+---
+
+# World idle-CPU benchmark
+
+`yarn build:website && node bench/world-idle-cpu.mjs` — prices the
+server's **standing cost of one idle client after a world tour**. Where
+`bench:server`'s soak category prices held connections against
+synthetic per-connection pages, this one drives the REAL website world
+through the scenario that first exposed the wake-filter pathology: load
+at the origin, scroll to the top edge, dwell, scroll to the top-left
+corner, stop. The tour leaves hundreds of chunk/quad snapshots in the
+route bucket and hundreds of pulse tickers bumping at 0.1–5s each; the
+server's idle CPU afterwards is the direct price of the per-bump
+relevance filter (`_routeMatchingBumpIds` → `queryMatchingTs`) over
+that snapshot × partition × bump-rate product.
+
+Three phases, each the server tree's %CPU (per-second `ps` samples,
+last-10s average):
+
+- **baseline** — idle at the origin right after boot: the healthy floor.
+- **cornerIdle** — idle at the top-left corner after the tour. **The
+  number.** It must settle near the baseline; a saturated core (~100%)
+  means the server spends its budget re-deciding NOT to render.
+- **afterClose** — zero clients, tickers still firing: attribution.
+  Connection-driven burn drops away; the remainder is the tickers' own
+  write cost.
+
+`--viewport=3840x2160` scales the visible set; `--prof` boots the
+preview under `--cpu-prof` (profiles in `/tmp/parton-cpu-prof`). The
+browser column is the harness's own headless Chromium tree only —
+software compositor, so its paint share overstates a real GPU; use
+`client-scroll.mjs` for the client-side story.
+
+Each run APPENDS to the committed artifact
+`bench/results/world-idle-cpu.json` (git SHA, node version, viewport,
+phase averages), so the corner-idle number is directly comparable
+across commits — the regression substrate for the wake-filter path.

@@ -1,0 +1,17 @@
+[
+  {
+    "sha": "5cb24bc",
+    "date": "2026-07-10T15:24:51.572Z",
+    "node": "v24.11.1",
+    "viewport": "2560x1440",
+    "serverPct": {
+      "baseline": 3.9,
+      "cornerIdle": 95.6,
+      "afterClose": 2
+    },
+    "headlessBrowserPct": {
+      "baseline": 78.5,
+      "cornerIdle": 55
+    }
+  }
+]
