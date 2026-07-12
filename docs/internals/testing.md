@@ -4,12 +4,12 @@ Four Vitest projects (root `vitest.config.ts` + the project configs
 in `framework/`). The tier is chosen by filename suffix, matched
 across every workspace (`{framework,cms,copies,e2e-testing,e2e-magento}/**`):
 
-| Project | Suffix | Runs |
-|---|---|---|
-| `node` | `*.test.ts(x)` (anything not claimed by a suffix below) | jsdom units — hooks, client merge walks, pure TS. Setup file `framework/vitest.setup.ts` installs the Navigation API shim. |
-| `rsc` | `*.rsc.test.ts(x)` | In-process Flight render via `framework/src/test/rsc-server.ts` — the **dev** Flight build, under the `react-server` condition (`framework/vitest.rsc.config.ts`). |
-| `rsc-prod` | `*.rsc-prod.test.ts(x)` | The same harness against the **production** Flight build. `yarn test:rsc:prod` sets `NODE_ENV=production`, which the vendored `server.edge` entry uses to require the prod build. The dev and prod builds schedule tasks differently, so prod-only regressions (the server-context carrier, duplicate model rows, task settle, the cache write key) need their own tier — every other tier runs the dev build. Tests guard with `describe.skipIf(process.env.NODE_ENV !== "production")`, so a plain all-projects run skips them instead of asserting against the wrong build. |
-| `browser` | `*.browser.test.ts(x)` | Real Chromium via Vitest browser mode (`framework/vitest.browser.config.ts`). |
+| Project    | Suffix                                                  | Runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `node`     | `*.test.ts(x)` (anything not claimed by a suffix below) | jsdom units — hooks, client merge walks, pure TS. Setup file `framework/vitest.setup.ts` installs the Navigation API shim.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `rsc`      | `*.rsc.test.ts(x)`                                      | In-process Flight render via `framework/src/test/rsc-server.ts` — the **dev** Flight build, under the `react-server` condition (`framework/vitest.rsc.config.ts`).                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `rsc-prod` | `*.rsc-prod.test.ts(x)`                                 | The same harness against the **production** Flight build. `yarn test:rsc:prod` sets `NODE_ENV=production`, which the vendored `server.edge` entry uses to require the prod build. The dev and prod builds schedule tasks differently, so prod-only regressions (the server-context carrier, duplicate model rows, task settle, the cache write key) need their own tier — every other tier runs the dev build. Tests guard with `describe.skipIf(process.env.NODE_ENV !== "production")`, so a plain all-projects run skips them instead of asserting against the wrong build. |
+| `browser`  | `*.browser.test.ts(x)`                                  | Real Chromium via Vitest browser mode (`framework/vitest.browser.config.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 `yarn test` = typecheck + `node` + `rsc` + `rsc-prod`. The browser
 tier is opt-in (`yarn test:browser`) to skip the browser-boot cost
@@ -17,9 +17,9 @@ on every run.
 
 Plus Playwright:
 
-| Suite | Where |
-|---|---|
-| e2e | `e2e-testing/e2e/*.spec.ts` |
+| Suite | Where                       |
+| ----- | --------------------------- |
+| e2e   | `e2e-testing/e2e/*.spec.ts` |
 
 ## Playwright — deterministic by construction
 
@@ -79,10 +79,10 @@ key-sniffing, or `window.__rsc_live_attach` presence (which is
 set before `hydrateRoot` even runs). The app publishes explicit
 markers; `e2e/fixtures.ts` wraps them:
 
-| Signal | Producer | Fixture helper | Wait on it before… |
-|---|---|---|---|
-| `<html data-parton-interactive>` | Browser entry, from the effect that follows the first hydration commit and attaches the navigate listener (`framework/lib/page-interactive.ts`) | `waitForPageInteractive(page)` | interacting with SHELL-level UI. Pre-marker clicks land on inert SSR DOM; pre-marker link clicks fall through to full document navs. |
-| `<html data-parton-live>` | The channel transport (`channel-client.ts`), set when the live stream's server-minted `conn` handshake arrives (the connection is provably established), removed when the connection settles | `waitForLiveConnection(page)` | asserting on server-PUSHED updates (live ticks, deferred cell writes), or interacting with an island the heartbeat's first fire may re-commit (a fp-drift re-commit remounts it mid-interaction). |
+| Signal                                | Producer                                                                                                                                                                                                                   | Fixture helper                                         | Wait on it before…                                                                                                                                                                                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<html data-parton-interactive>`      | Browser entry, from the effect that follows the first hydration commit and attaches the navigate listener (`framework/lib/page-interactive.ts`)                                                                            | `waitForPageInteractive(page)`                         | interacting with SHELL-level UI. Pre-marker clicks land on inert SSR DOM; pre-marker link clicks fall through to full document navs.                                                                                                                              |
+| `<html data-parton-live>`             | The channel transport (`channel-client.ts`), set when the live stream's server-minted `conn` handshake arrives (the connection is provably established), removed when the connection settles                               | `waitForLiveConnection(page)`                          | asserting on server-PUSHED updates (live ticks, deferred cell writes), or interacting with an island the heartbeat's first fire may re-commit (a fp-drift re-commit remounts it mid-interaction).                                                                 |
 | `data-hydrated` on the target element | the element's own callback ref — `useCell().input()` bindings get it from the framework; interactive demo/editor components attach it themselves; server-rendered regions embed the cms `HydrationBeacon` client component | interact through a `[data-hydrated]`-qualified locator | ANY element inside a streamed / cached / substituted Suspense boundary. Those hydrate after the root commit, and events fired earlier are silently lost — text input has no replay, and clicks aren't replayed when the island's client module hasn't loaded yet. |
 
 The root marker alone is NOT sufficient for controls inside
@@ -161,6 +161,20 @@ regimes:
   explicitly instead: `beforeEach` calls the clear helpers
   (`clearRegistry("all")`, `_clearCache()`,
   `_clearInvalidationRegistry()`, …) as needed.
+
+## Convergence fuzzing
+
+The rsc tier carries a seeded random-walk fuzzer for the client merge
+layer (`fuzz-convergence.rsc.test.tsx`): random
+navigate / write / flip / refetch / settle sequences against a
+fixture app on a real `withLiveDrive` connection, with an ORACLE at
+quiescence — the wire-reconstructed client tree must equal a fresh
+cold render of the final request state (incremental merge ≡ cold
+render). CI runs a pinned 25×20 budget; `FUZZ_BUDGET` / `FUZZ_LEN` /
+`FUZZ_SEED` drive long local runs, and failures auto-shrink to a
+minimal action sequence. Design, oracle coverage (and its honest
+gaps), and the findings ledger:
+[`docs/notes/convergence-fuzzing.md`](../notes/convergence-fuzzing.md).
 
 ## Spec test shape
 
