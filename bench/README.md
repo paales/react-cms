@@ -15,7 +15,7 @@ yarn bench:server                 # full matrix, DEV Flight → table + JSON
 yarn bench:server --prod          # full matrix, PRODUCTION Flight → .prod.json
 yarn bench:server --prof          # profile scaling/N=1000 under Node --cpu-prof
 yarn bench:server --prod --prof   # profile the PRODUCTION runtime
-yarn bench:server --only=depth    # one category (scaling | dashboard | depth | pulse | soak)
+yarn bench:server --only=depth    # one category (scaling | dashboard | depth | pulse | soak | shared)
 yarn bench:server --only=scaling/N=1000   # one exact scenario
 yarn bench:server --warmup=20 --measure=200   # shorter run while iterating
 ```
@@ -138,6 +138,7 @@ Which to use:
 | **depth**              | D ∈ {1, 4, 16}                        | N=100, M=1                    | descendant-fold cost of proving a deep subtree unchanged                                                                                 |
 | **pulse**              | bump history ∈ {512, 20k}             | N=M=512, D=2, one shared cell | invalidation-registry query cost under write history — the two rows must cost the same                                                   |
 | **soak**               | N ∈ {100, 1000, 5000} × M ∈ {0, N/10} | 3 partons/connection          | per-HELD-CONNECTION cost: steady-state heap/RSS, idle bump CPU, per-wake tick CPU — see [soak](#soak--what-a-held-live-connection-costs) |
+| **shared**             | N ∈ {10, 100, 500} × M ∈ {1, 4}       | ONE 11-parton world           | N viewers of ONE world: renders/tick = N×M — the fan-out baseline broadcast lanes must beat — see [shared](#shared--n-viewers-one-world) |
 
 The fixture is `buildDashboardPage({ partons: N, liveCells: M, depth: D })`
 (`bench/server/fixture.tsx`): N addressable leaf partons, M of them live
@@ -248,6 +249,68 @@ renders), so the category has its own defaults
 (warmup=5, measure=30); explicit `--warmup`/`--measure` apply to soak
 too. The `measure` count doubles as the idle-phase bump count.
 
+## shared — N viewers, ONE world
+
+The soak category prices N connections × N _distinct_ worlds; the
+shared category prices the other production shape: **N live
+connections all subscribed to the SAME page in the SAME scope
+bucket** — one route, one fixture (8 live leaves + 2 static leaves
+under 1 wrapper), M of its cells bumped per tick. Every bump is
+relevant to ALL N connections, so today each bumped parton lanes once
+PER CONNECTION:
+
+- **renders/tick = N×M.** THE number. This linear-in-N fan-out is the
+  baseline broadcast lanes (`docs/notes/delivery-plane.md` §D2 —
+  render once, personalize framing) exist to collapse to M. The gate
+  pins it **exactly** — a tick must render precisely N×M bodies (each
+  bumped leaf once per connection; no sibling, no wrapper, nothing
+  else) — so the baseline is proven, not assumed.
+
+The connection plumbing, phase structure, memory accounting, and idle
+gate are the soak's; only the isolation inverts. Where the soak gives
+every connection its own `x-test-scope` value (per-connection
+buckets), shared stamps ONE value on all N — sharing a snapshot
+bucket is exactly what the seam exists to prevent, opted back into
+deliberately. The seam is still what names the bucket (and the
+up-front probe proves the header round-trips, so the bucket is the
+deliberately-shared one rather than the ambient default scope), so
+**shared is a dev-Flight category** for the same mechanical reason as
+soak: it hard-fails under `--prod` (the dev→prod lane-render ratio is
+already characterized by the main table).
+
+Per scenario (N ∈ {10, 100, 500} × M ∈ {1, 4}), the soak columns plus:
+
+- **rndr/tick** — gate-tick render count, gated to exactly N×M.
+- **µs/lane** — tick CPU ÷ N×M lanes.
+- **tick B** — downstream bytes per tick aggregated across all N
+  wires (each connection is shipped every bumped parton's lane).
+- **B/wake** — reads HIGHER here than in the soak (hundreds of bytes,
+  not ≈0), and that is the measurement setup, not a leak: every wake
+  round leaves an unacked per-delivery holdings record on EVERY
+  connection (the in-process reader never acks, and the runner widens
+  the unacked-delivery window so the degrade policy stays out of the
+  measurement). In the isolated soak only the M active connections
+  accrue those records. The wake-arm release invariant's regression
+  detector remains the soak's B/wake column.
+
+The gates, in the established style — the run hard-fails on any
+violation:
+
+- **A tick renders exactly N×M bodies** — checked on the gate tick
+  and every measured tick.
+- **Delivery correctness, per connection:** every connection's own
+  wire must carry every wake round — each connection's `settled`
+  marker count is tracked individually and must equal the rounds
+  fired (an aggregate count could hide one connection double-woken
+  and another skipped).
+- **Idle connections render NOTHING** on any of the N connections
+  across the irrelevant-bump phase (same zero-render gate as soak).
+- **Every connection stays held to teardown.**
+
+Shared ticks are the heaviest in the file (one tick = N×M lane
+renders), so the category shares the soak's smaller defaults
+(warmup=5, measure=30).
+
 ## Reading the numbers
 
 The stdout table (and the JSON artifact) report, per scenario:
@@ -266,9 +329,9 @@ The stdout table (and the JSON artifact) report, per scenario:
 
 Each run writes a JSON artifact with every scenario's numbers plus a
 **git SHA** + **node version** + **`runtime`** (dev/prod) + warmup/measure
-settings, so two runs are directly comparable over time. Soak results
-ride the same artifact in their own `soak` array (their axes differ
-from the warm-tick scenarios). The path depends
+settings, so two runs are directly comparable over time. Soak and
+shared results ride the same artifact in their own `soak` / `shared`
+arrays (their axes differ from the warm-tick scenarios). The path depends
 on the runtime so the dev and prod baselines coexist:
 
 - dev (default) → `bench/results/server-warm-tick.json`

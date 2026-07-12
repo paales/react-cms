@@ -23,16 +23,29 @@ import { execSync } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { test } from "vitest"
-import { type BenchArtifact, renderSoakTable, renderTable } from "./report.ts"
+import {
+  type BenchArtifact,
+  renderSharedSoakTable,
+  renderSoakTable,
+  renderTable,
+} from "./report.ts"
 import { ALL_SCENARIOS, runScenario, type ScenarioResult } from "./runner.tsx"
-import { runSoakScenario, SOAK_SWEEP, type SoakScenarioResult } from "./soak-runner.ts"
+import {
+  runSharedSoakScenario,
+  runSoakScenario,
+  SHARED_SWEEP,
+  type SharedSoakScenarioResult,
+  SOAK_SWEEP,
+  type SoakScenarioResult,
+} from "./soak-runner.ts"
 
 const WARMUP = Number(process.env.BENCH_WARMUP ?? 50)
 const MEASURE = Number(process.env.BENCH_MEASURE ?? 500)
 // Soak ticks are far heavier than warm ticks (one tick = M lane renders
 // across N held connections, plus N−M wake-filter scans), so the soak
-// category gets its own smaller DEFAULTS. Explicit --warmup/--measure
-// always win, for soak too.
+// category gets its own smaller DEFAULTS — shared by the shared-scope
+// category, whose ticks are heavier still (N×M lane renders). Explicit
+// --warmup/--measure always win, for both.
 const SOAK_WARMUP = process.env.BENCH_WARMUP ? Number(process.env.BENCH_WARMUP) : 5
 const SOAK_MEASURE = process.env.BENCH_MEASURE ? Number(process.env.BENCH_MEASURE) : 30
 const ONLY = process.env.BENCH_ONLY?.trim() || null
@@ -82,7 +95,8 @@ test("server warm-tick benchmark", async () => {
   }
   const scenarios = ALL_SCENARIOS.filter((s) => matches(s.name))
   const soakSpecs = SOAK_SWEEP.filter((s) => matches(s.name))
-  if (scenarios.length === 0 && soakSpecs.length === 0) {
+  const sharedSpecs = SHARED_SWEEP.filter((s) => matches(s.name))
+  if (scenarios.length === 0 && soakSpecs.length === 0 && sharedSpecs.length === 0) {
     throw new Error(`BENCH_ONLY="${ONLY}" matched no scenarios`)
   }
 
@@ -106,6 +120,16 @@ test("server warm-tick benchmark", async () => {
     )
   }
 
+  const shared: SharedSoakScenarioResult[] = []
+  for (const spec of sharedSpecs) {
+    shared.push(
+      await runSharedSoakScenario(spec.name, spec.params, {
+        warmup: SOAK_WARMUP,
+        measure: SOAK_MEASURE,
+      }),
+    )
+  }
+
   const artifact: BenchArtifact = {
     generatedAt: new Date().toISOString(),
     gitSha: gitSha(),
@@ -115,6 +139,7 @@ test("server warm-tick benchmark", async () => {
     measure: MEASURE,
     results,
     soak,
+    shared,
   }
 
   // Human-readable tables to stdout.
@@ -125,6 +150,10 @@ test("server warm-tick benchmark", async () => {
   if (soak.length > 0) {
     // eslint-disable-next-line no-console
     console.log("\n" + renderSoakTable(artifact) + "\n")
+  }
+  if (shared.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log("\n" + renderSharedSoakTable(artifact) + "\n")
   }
 
   // JSON artifact (regression-tracking substrate).
@@ -140,9 +169,12 @@ test("server warm-tick benchmark", async () => {
   const unfaithful = [
     ...results.filter((r) => !r.gate.faithful),
     ...soak.filter((r) => !r.gate.faithful),
+    ...shared.filter((r) => !r.gate.faithful),
   ]
   if (unfaithful.length > 0) {
     throw new Error(`correctness gate FAILED for: ${unfaithful.map((r) => r.name).join(", ")}`)
   }
-}, // N=1000 ticks at tens of ms each, runs minutes — far past the 5s default. // Plain timeout (ms): ~14 scenarios × (warmup + measure) renders, with
-600_000)
+  // Plain timeout (ms): ~20 scenarios × (warmup + measure) renders —
+  // N=1000 warm ticks at tens of ms each plus the soak/shared connection
+  // sweeps run minutes, far past the 5s default.
+}, 900_000)

@@ -60,6 +60,19 @@
  * test-visible `_setKeepaliveMs` for the scenario's duration (restored
  * in a finally). The gate counts connections whose drive loop exited
  * before teardown — any early close fails the run.
+ *
+ * The SHARED variant (`runSharedSoakScenario`) inverts the isolation:
+ * N connections all subscribed to the SAME page in the SAME scope
+ * bucket — every connection stamps ONE `x-test-scope` value, so all N
+ * share one route bucket (sharing is the default the seam exists to
+ * prevent; here it is the point, and the probe proves the bucket is a
+ * deliberately-named shared one, not an accident of the default
+ * scope). One fixture, P partons, M of them bumped per tick — and
+ * every bump is relevant to ALL N connections, so a tick renders
+ * exactly N×M bodies: each bumped leaf lanes once PER CONNECTION.
+ * That N×M is the "N viewers, one world" fan-out baseline broadcast
+ * lanes exist to collapse to M (delivery-plane.md §D2) — the gate
+ * pins it exactly so the baseline is proven, not assumed.
  */
 
 import {
@@ -119,6 +132,36 @@ export interface SoakGateResult {
   tickRenderViolations: number
   /** Connections whose drive loop exited before teardown — a held
    *  connection must stay held for the scenario's whole span. */
+  closedEarly: number
+  faithful: boolean
+}
+
+export interface SharedSoakGateResult {
+  /** Render bodies during the N cold opens — N × (partons + depth):
+   *  a fresh connection presents no cached fps, so every body runs
+   *  even though the route bucket is shared. */
+  coldRenders: number
+  /** Irrelevant bumps fired while all N sat parked. */
+  idleBumps: number
+  /** Renders during those bumps — MUST be 0, same as the isolated
+   *  soak: an irrelevant bump misses every registration. */
+  idleRenders: number
+  /** Renders in the single gate tick — must equal N×M EXACTLY: every
+   *  bumped leaf is relevant to all N connections, so each lanes once
+   *  per connection. This is the fan-out baseline the measurement
+   *  exists to price; the gate proves it measures what it claims. */
+  tickRenders: number
+  expectedTickRenders: number
+  /** Measured ticks whose render delta deviated from N×M. */
+  tickRenderViolations: number
+  /** Wake rounds every connection must have drained by the end of the
+   *  measurement: the gate tick + warmup + measured ticks. */
+  expectedRoundsPerConnection: number
+  /** Connections whose own `settled`-marker count ≠ expected rounds —
+   *  a delivery shortfall (a connection missed a bumped parton's wake
+   *  round) or over-delivery (a round split). */
+  deliveryViolations: number
+  /** Connections whose drive loop exited before teardown. */
   closedEarly: number
   faithful: boolean
 }
@@ -192,6 +235,14 @@ export interface SoakScenarioResult {
   } | null
 }
 
+/** Shared-scope soak result: the same axes as the isolated soak (its
+ *  heap / idle-wake / tick blocks carry identical meanings), with the
+ *  fan-out gate in place of the isolation gate. `ticks.lanesPerTick`
+ *  is N×M here — every bump lanes on every connection. */
+export interface SharedSoakScenarioResult extends Omit<SoakScenarioResult, "gate"> {
+  gate: SharedSoakGateResult
+}
+
 export interface SoakOptions {
   /** Ticks discarded before measurement (M > 0 only). */
   warmup?: number
@@ -207,6 +258,16 @@ export interface SoakOptions {
 const PAGE_PARTONS = 2
 const PAGE_DEPTH = 1
 const PAGE_RENDERS = PAGE_PARTONS + PAGE_DEPTH
+
+/** The shared-soak page: ONE route all N connections subscribe to.
+ *  8 live leaves + 2 static leaves under 1 wrapper — a handful of
+ *  shared partons mirroring the per-connection page's shape (live +
+ *  untouched-sibling + untouched-ancestor paths all present), big
+ *  enough that M ∈ {1, 4} bumps a strict subset. */
+const SHARED_PAGE_PARTONS = 10
+const SHARED_PAGE_LIVE = 8
+const SHARED_PAGE_DEPTH = 1
+const SHARED_PAGE_RENDERS = SHARED_PAGE_PARTONS + SHARED_PAGE_DEPTH
 
 /** Keepalive override while a soak scenario runs (see module doc). */
 const SOAK_KEEPALIVE_MS = 10 * 60_000
@@ -263,6 +324,11 @@ interface SoakConnection {
   /** Resolves when the driver emitted its `lanes` marker — switched to
    *  per-parton lanes and parked at its wake race. */
   parked: Promise<void>
+  /** This connection's own `settled`-marker count — one per drained
+   *  wake round. The shared soak's delivery gate reads it per
+   *  connection; a shortfall means a bump's wake round never reached
+   *  this connection's wire. */
+  settled: { rounds: number }
   /** The drive loop + request scope, and the discarding reader. */
   done: Promise<void>
   /** Set when `done` resolves — read at teardown to count early
@@ -272,12 +338,15 @@ interface SoakConnection {
 }
 
 function openConnection(
-  key: string,
   fixture: DashboardFixture,
   counters: WireCounters,
+  /** The wire identity: the isolated soak gives every connection its
+   *  own url + scope (per-connection buckets); the shared soak gives
+   *  all N the SAME pair (one route, one bucket). */
+  wire: { url: string; scope: string },
 ): SoakConnection {
-  const request = new Request(`${URL_BASE}/${key}`, {
-    headers: { "x-test-scope": `soak-${key}` },
+  const request = new Request(wire.url, {
+    headers: { "x-test-scope": wire.scope },
   })
   let controller!: ReadableStreamDefaultController<Uint8Array>
   const response = new ReadableStream<Uint8Array>({
@@ -295,6 +364,7 @@ function openConnection(
   // Discarding client: counts bytes, spots the driver's markers, keeps
   // nothing — buffered chunks in an unread stream would pollute the
   // heap measurement.
+  const settled = { rounds: 0 }
   const drain = (async () => {
     while (true) {
       const { done, value } = await reader.read()
@@ -302,7 +372,10 @@ function openConnection(
       if (!value) continue
       counters.bytes += value.byteLength
       if (chunkEquals(value, LANES_OPEN_MARKER)) parkedResolve()
-      else if (chunkEquals(value, SETTLED_MARKER)) onSettled(counters)
+      else if (chunkEquals(value, SETTLED_MARKER)) {
+        settled.rounds++
+        onSettled(counters)
+      }
     }
   })()
 
@@ -311,7 +384,7 @@ function openConnection(
     // bare one (nothing to state) so the driver opens a session and
     // parks, exactly as a browser's attach would.
     bindAttachStatement({
-      url: `/${key}`,
+      url: new URL(wire.url).pathname,
       cached: [],
       since: null,
       visible: null,
@@ -327,6 +400,7 @@ function openConnection(
   const conn: SoakConnection = {
     liveSelector: fixture.liveSelectors[0],
     parked,
+    settled,
     done: Promise.all([drive, drain]).then(() => {
       conn.finished = true
     }),
@@ -417,7 +491,10 @@ export async function runSoakScenario(
         depth: PAGE_DEPTH,
         idPrefix: "w-",
       })
-      const warm = openConnection("warm", warmFixture, counters)
+      const warm = openConnection(warmFixture, counters, {
+        url: `${URL_BASE}/warm`,
+        scope: "soak-warm",
+      })
       await warm.parked
       await warm.cancelReader()
       refreshSelector(warm.liveSelector)
@@ -445,7 +522,10 @@ export async function runSoakScenario(
     resetRenderCount()
     const t0 = performance.now()
     for (let i = 0; i < n; i++) {
-      const conn = openConnection(`c${i}`, fixtures[i], counters)
+      const conn = openConnection(fixtures[i], counters, {
+        url: `${URL_BASE}/c${i}`,
+        scope: `soak-c${i}`,
+      })
       conns.push(conn)
       await conn.parked
     }
@@ -612,6 +692,273 @@ export async function runSoakScenario(
   }
 }
 
+// ─── Shared-scope scenario (N viewers, ONE world) ─────────────────────
+
+/**
+ * Shared-scope soak: N connections all subscribed to the SAME page in
+ * the SAME scope bucket — one route, one fixture, one world. Every one
+ * of the M cells a tick bumps is relevant to ALL N connections, so
+ * each bumped leaf lanes once PER CONNECTION: a tick renders exactly
+ * N×M bodies. That N×M curve is the fan-out baseline broadcast lanes
+ * (delivery-plane.md §D2) exist to collapse to M — render once,
+ * personalize framing — and the gate pins it exactly so the baseline
+ * is proven, not assumed.
+ *
+ * The phase structure, memory accounting, idle gate, and wire-marker
+ * mechanics are the isolated soak's; only the sharing inverts. The
+ * one extra gate is delivery correctness: each connection's OWN
+ * `settled`-marker count must equal the wake rounds fired — every
+ * connection received every bumped parton's lane, none was skipped
+ * and none double-woke.
+ */
+export async function runSharedSoakScenario(
+  name: string,
+  params: SoakParams,
+  options: SoakOptions = {},
+): Promise<SharedSoakScenarioResult> {
+  const warmup = options.warmup ?? 5
+  const measure = options.measure ?? 30
+  const n = params.connections
+  const m = Math.min(params.active, SHARED_PAGE_LIVE)
+  if (m <= 0) {
+    throw new Error(`shared soak "${name}": needs at least one bumped parton per tick`)
+  }
+  resetWorld()
+  _setKeepaliveMs(SOAK_KEEPALIVE_MS)
+  // Same rationale as the isolated soak: the discarding reader never
+  // acks, and the degrade policy is not what's being priced.
+  _setFirstAckDeadlineMs(SOAK_KEEPALIVE_MS)
+  _setUnackedDeliveryWindow(Number.MAX_SAFE_INTEGER)
+
+  const counters: WireCounters = { bytes: 0, settles: 0, barrier: null }
+  const conns: SoakConnection[] = []
+  // ONE url + ONE scope for every connection. Sharing a snapshot
+  // bucket is what the x-test-scope seam exists to PREVENT — here it
+  // is the measurement, opted back into deliberately by stamping the
+  // same value on all N. The seam is still what names the bucket, so
+  // the category stays dev-Flight like the isolated soak.
+  const wire = { url: `${URL_BASE}/shared`, scope: "soak-shared" }
+
+  try {
+    // Probe the scope seam before spending anything — without it every
+    // request lands in the ambient default scope. That would still be
+    // "shared", but shared with whatever else the worker has run, not
+    // the deliberately-named bucket the scenario claims to measure.
+    const probe = await runWithRequestAsync(
+      new Request(`${URL_BASE}/scope-probe`, { headers: { "x-test-scope": "soak-probe" } }),
+      async () => getScope(),
+    )
+    if (probe.result !== "soak-probe") {
+      throw new Error(
+        `shared soak "${name}": the shared bucket needs the dev-mode x-test-scope seam ` +
+          "(unavailable under --prod) — run the shared category against the dev Flight build",
+      )
+    }
+
+    // Throwaway connection (own scope): absorbs one-time lazy
+    // initialization so it isn't attributed to the held set.
+    {
+      const warmFixture = buildDashboardPage({
+        partons: PAGE_PARTONS,
+        liveCells: 1,
+        depth: PAGE_DEPTH,
+        idPrefix: "w-",
+      })
+      const warm = openConnection(warmFixture, counters, {
+        url: `${URL_BASE}/warm`,
+        scope: "soak-warm",
+      })
+      await warm.parked
+      await warm.cancelReader()
+      refreshSelector(warm.liveSelector)
+      await warm.done
+    }
+
+    // ── Phase 1: the ONE fixture — the world all N subscribe to. ──
+    const fixture = buildDashboardPage({
+      partons: SHARED_PAGE_PARTONS,
+      liveCells: SHARED_PAGE_LIVE,
+      depth: SHARED_PAGE_DEPTH,
+      idPrefix: "sh-",
+    })
+    const baseline = await sampleMemory()
+
+    // ── Phase 2: open + park all N on the same url/scope/fixture. ──
+    // A fresh connection presents no cached fps, so each cold open
+    // renders the full page even though the route bucket is shared.
+    resetRenderCount()
+    const t0 = performance.now()
+    for (let i = 0; i < n; i++) {
+      const conn = openConnection(fixture, counters, wire)
+      conns.push(conn)
+      await conn.parked
+    }
+    const openMs = performance.now() - t0
+    const coldRenders = getRenderCount()
+    if (coldRenders !== n * SHARED_PAGE_RENDERS) {
+      throw new Error(
+        `shared soak "${name}": cold opens rendered ${coldRenders}, ` +
+          `expected ${n * SHARED_PAGE_RENDERS}`,
+      )
+    }
+    const held = await sampleMemory()
+    // The initial whole-tree segment emitted one `settled` marker per
+    // connection before parking; zero the per-connection counters so
+    // the delivery gate reads pure wake rounds.
+    for (const c of conns) c.settled.rounds = 0
+
+    // ── Phase 3: idle keepalive path + the zero-render gate. ──
+    // Identical to the isolated soak: an irrelevant bump misses every
+    // registration, no parked driver wakes, nothing renders — on ANY
+    // of the N connections.
+    resetRenderCount()
+    const idleBumps = Math.max(1, measure)
+    const idleCpu0 = cpuNowUs()
+    for (let k = 0; k < idleBumps; k++) {
+      refreshSelector(NOISE_SELECTOR)
+      await yieldEventLoop()
+    }
+    const idleCpuUs = cpuNowUs() - idleCpu0
+    const idleRenders = getRenderCount()
+
+    // ── Phase 4: wake ticks. ──
+    // Each tick bumps M distinct cells of the ONE world in a
+    // synchronous batch. Every bump is relevant to every connection:
+    // all N parked drivers wake once (the M bumps land in each pending
+    // set before its microtask continuation runs, so they drain in ONE
+    // round), each renders its M lanes, each emits one `settled`
+    // marker — the tick completes at the Nth marker.
+    const activeSelectors = fixture.liveSelectors.slice(0, m)
+    const expectedTickRenders = n * m
+    const tick = async (): Promise<void> => {
+      const target = counters.settles + n
+      for (const sel of activeSelectors) refreshSelector(sel)
+      await settlesReach(counters, target)
+    }
+
+    // Gate tick: the render delta must be exactly N×M — each bumped
+    // leaf laned once per connection; no sibling, no wrapper, nothing
+    // else ran. THE number this category exists to pin: the fan-out
+    // baseline broadcast has to collapse.
+    resetRenderCount()
+    await tick()
+    await yieldEventLoop()
+    const gateTickRenders = getRenderCount()
+
+    for (let t = 0; t < warmup; t++) {
+      await tick()
+      await yieldEventLoop()
+    }
+
+    let tickRenderViolations = 0
+    const wallUs: number[] = []
+    const cpuUsPerTick: number[] = []
+    const bytesPerTick: number[] = []
+    for (let t = 0; t < measure; t++) {
+      resetRenderCount()
+      const bytes0 = counters.bytes
+      const cpu0 = cpuNowUs()
+      const w0 = performance.now()
+      await tick()
+      const w1 = performance.now()
+      await yieldEventLoop()
+      const cpu1 = cpuNowUs()
+      wallUs.push((w1 - w0) * 1000)
+      cpuUsPerTick.push(cpu1 - cpu0)
+      bytesPerTick.push(counters.bytes - bytes0)
+      if (getRenderCount() !== expectedTickRenders) tickRenderViolations++
+    }
+
+    const afterTicks = await sampleMemory()
+    const rounds = 1 + warmup + measure
+    const wakesPerConnection = idleBumps + rounds
+
+    // ── Phase 5: gates (the closes happen in finally). ──
+    const closedEarly = conns.filter((c) => c.finished).length
+    // Delivery correctness: every connection's own wire carried every
+    // wake round — its `settled` count says so, per connection, not in
+    // aggregate (an aggregate could hide one connection double-woken
+    // and another skipped).
+    const deliveryViolations = conns.filter((c) => c.settled.rounds !== rounds).length
+
+    const gate: SharedSoakGateResult = {
+      coldRenders,
+      idleBumps,
+      idleRenders,
+      tickRenders: gateTickRenders,
+      expectedTickRenders,
+      tickRenderViolations,
+      expectedRoundsPerConnection: rounds,
+      deliveryViolations,
+      closedEarly,
+      faithful:
+        idleRenders === 0 &&
+        gateTickRenders === expectedTickRenders &&
+        tickRenderViolations === 0 &&
+        deliveryViolations === 0 &&
+        closedEarly === 0,
+    }
+
+    const sortedWall = [...wallUs].sort((a, b) => a - b)
+    const wallMean = wallUs.length > 0 ? wallUs.reduce((s, x) => s + x, 0) / wallUs.length : 0
+    const cpuMean =
+      cpuUsPerTick.length > 0 ? cpuUsPerTick.reduce((s, x) => s + x, 0) / cpuUsPerTick.length : 0
+    const bytesMean =
+      bytesPerTick.length > 0 ? bytesPerTick.reduce((s, x) => s + x, 0) / bytesPerTick.length : 0
+
+    return {
+      name,
+      params,
+      openMs,
+      gate,
+      heap: {
+        baselineHeapBytes: baseline.heapUsed,
+        heldHeapBytes: held.heapUsed,
+        heapPerConnection: (held.heapUsed - baseline.heapUsed) / n,
+        baselineRssBytes: baseline.rss,
+        heldRssBytes: held.rss,
+        rssPerConnection: (held.rss - baseline.rss) / n,
+        afterTicksHeapBytes: afterTicks.heapUsed,
+        heapDriftPerConnection: (afterTicks.heapUsed - held.heapUsed) / n,
+        wakesPerConnection,
+        heapDriftPerConnectionPerWake:
+          (afterTicks.heapUsed - held.heapUsed) / n / wakesPerConnection,
+      },
+      idleWake: {
+        bumps: idleBumps,
+        cpuUsPerBump: idleCpuUs / idleBumps,
+        cpuNsPerConnectionPerBump: (idleCpuUs / idleBumps / n) * 1000,
+      },
+      ticks: {
+        measured: wallUs.length,
+        // Every bump lanes on every connection: N×M lanes per tick.
+        lanesPerTick: expectedTickRenders,
+        wall: {
+          p50us: percentile(sortedWall, 50),
+          p95us: percentile(sortedWall, 95),
+          p99us: percentile(sortedWall, 99),
+          meanUs: wallMean,
+        },
+        cpuMeanUs: cpuMean,
+        cpuPerLaneUs: cpuMean / expectedTickRenders,
+        bytesMeanPerTick: bytesMean,
+      },
+    }
+  } finally {
+    // Close every connection: cancel the client readers, then ONE bump
+    // on the shared world's first live leaf — relevant to all N, so
+    // every parked driver wakes once, its lane render hits the
+    // canceled stream on enqueue, and the drive loop exits.
+    await Promise.allSettled(conns.map((c) => c.cancelReader()))
+    if (conns.length > 0) refreshSelector(conns[0].liveSelector)
+    await Promise.allSettled(conns.map((c) => c.done))
+    _setKeepaliveMs()
+    _setFirstAckDeadlineMs()
+    _setUnackedDeliveryWindow()
+    _resetCellStorage()
+  }
+}
+
 // ─── Scenario matrix ──────────────────────────────────────────────────
 
 export interface SoakSpec {
@@ -627,3 +974,15 @@ export const SOAK_SWEEP: SoakSpec[] = [100, 1000, 5000].flatMap((n) => [
   { name: `soak/N=${n}+M=0`, params: { connections: n, active: 0 } },
   { name: `soak/N=${n}+M=${n / 10}`, params: { connections: n, active: n / 10 } },
 ])
+
+/** Shared-scope soak: N viewers of ONE world (one route, one scope
+ *  bucket), M of its partons bumped per tick — every bump relevant to
+ *  all N. The N-sweep at fixed M prints the fan-out curve (renders/tick
+ *  = N×M today) that broadcast lanes must collapse to M; the M axis
+ *  shows how the per-tick fixed overhead amortizes across lanes. */
+export const SHARED_SWEEP: SoakSpec[] = [10, 100, 500].flatMap((n) =>
+  [1, 4].map((m) => ({
+    name: `shared/N=${n}+M=${m}`,
+    params: { connections: n, active: m },
+  })),
+)

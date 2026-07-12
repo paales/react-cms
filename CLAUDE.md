@@ -216,7 +216,10 @@ Operational notes that save hours:
 - **Flake census.** Under full-suite load these specs occasionally
   wobble but pass in isolation: `defer-concurrent-refetches.spec.ts:76`,
   `chat-streaming.spec.ts`, `cms-edit.spec.ts` (various),
-  `remote-frame-crossorigin.spec.ts` (companion cold-start). Protocol:
+  `remote-frame-crossorigin.spec.ts` (companion cold-start),
+  `use-navigation-tuple.test.tsx` "@self" (node tier — cold vitest
+  transform cache leaks stale statements into `statedForce()`; fails
+  on clean HEAD too, passes warm/isolated). Protocol:
   rerun the failing spec alone; if it passes in isolation AND behaves
   identically on master, it's census — don't chase it. A NEW failure
   that reproduces in isolation is yours. Probabilistic failures need

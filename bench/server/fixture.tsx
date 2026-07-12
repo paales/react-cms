@@ -60,8 +60,10 @@ export interface DashboardParams {
    *  (`#<prefix>leaf-<i>`, `#<prefix>wrap-<level>`). The soak category
    *  builds one page per held connection; the prefix keeps their
    *  catalog ids and invalidation selectors disjoint, so a bump for one
-   *  connection's leaf can never touch another connection's. Default
-   *  `""`. */
+   *  connection's leaf can never touch another connection's. (The
+   *  shared category builds ONE prefixed page all N connections
+   *  subscribe to — there the prefix only namespaces it away from the
+   *  warm-up page.) Default `""`. */
   idPrefix?: string
 }
 

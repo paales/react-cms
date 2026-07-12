@@ -109,11 +109,35 @@ extend it to expiry-sourced deliveries); validators + e2e.
 
 ## D2 — broadcast lanes (multiplayer's read side)
 
-**Prerequisite: the missing measurement.** The soak bench prices N
-connections × N _distinct_ worlds; the "N viewers, ONE world" number
-does not exist. D2 starts by adding that scenario (shared scope, one
-route, N live subscriptions) — the baseline broadcast has to beat,
-and the demo's multiplayer claim needs it regardless.
+**Prerequisite · ✅ landed 2026-07-12: the `shared` bench category.**
+The soak bench prices N connections × N _distinct_ worlds; the
+"N viewers, ONE world" number now exists as
+`yarn bench:server --only=shared` (bench/README.md §shared): N live
+connections in ONE scope bucket on one route (8 live + 2 static
+leaves, 1 wrapper), M cells bumped per tick, every bump relevant to
+all N. Gated exactly — a tick renders N×M bodies (each bumped leaf
+lanes once PER connection), every connection's own wire settles every
+wake round, irrelevant bumps render nothing.
+
+**The baseline broadcast must beat** (dev Flight, node v24, from the
+committed `bench/results/server-warm-tick.json`):
+
+| N × M   | renders/tick | cpu/tick | wall p50 | bytes/tick |
+| ------- | ------------ | -------- | -------- | ---------- |
+| 10 × 1  | 10           | 2.2 ms   | 1.8 ms   | 53 KiB     |
+| 100 × 1 | 100          | 11.9 ms  | 9.1 ms   | 320 KiB    |
+| 500 × 1 | 500          | 87.1 ms  | 59.3 ms  | 1.85 MiB   |
+| 10 × 4  | 40           | 7.0 ms   | 6.3 ms   | 188 KiB    |
+| 100 × 4 | 400          | 55.0 ms  | 38.5 ms  | 1.4 MiB    |
+| 500 × 4 | 2000         | 399.0 ms | 248.3 ms | 7.3 MiB    |
+
+Renders/tick is exactly N×M (the gate pins it); CPU follows roughly
+linearly at ~120–200 µs/lane, drifting SUPER-linear at the top cell
+(µs/lane 137.6 at 100×4 → 199.5 at 500×4 — allocation/GC pressure at
+2000 lanes and 7 MiB per tick). At 500 viewers a 4-cell tick costs a
+quarter-second of wall clock per wake round today. Broadcast's win
+condition: renders/tick → M (independent of N), leaving per-viewer
+marginal cost ≈ framing + bytes.
 
 **Design sketch** (to be firmed against the baseline):
 
@@ -142,11 +166,11 @@ and the demo's multiplayer claim needs it regardless.
   eviction is always safe (a consumer that misses re-renders; the
   framework bias: over-fetch, never stale).
 
-**Gates**: the new N-viewers-one-world soak scenario shows per-viewer
-marginal cost ≈ bytes (renders/tick independent of N for eligible
-lanes); single-viewer paths byte-identical (the oracle + validators);
-a two-browser world demo (the leases note's multiplayer first slice)
-as the e2e proof.
+**Gates**: the `shared` bench scenario shows per-viewer marginal
+cost ≈ bytes (renders/tick independent of N for eligible lanes,
+against the baseline table above); single-viewer paths byte-identical
+(the oracle + validators); a two-browser world demo (the leases
+note's multiplayer first slice) as the e2e proof.
 
 ## Sequencing
 

@@ -7,7 +7,7 @@
  */
 
 import type { ScenarioResult } from "./runner.tsx"
-import type { SoakScenarioResult } from "./soak-runner.ts"
+import type { SharedSoakScenarioResult, SoakScenarioResult } from "./soak-runner.ts"
 
 export interface BenchArtifact {
   generatedAt: string
@@ -24,6 +24,9 @@ export interface BenchArtifact {
   /** Held-connection soak category (its axes differ from the warm-tick
    *  scenarios, so it rides its own array + table). */
   soak: SoakScenarioResult[]
+  /** Shared-scope soak category: N viewers of ONE world — the fan-out
+   *  baseline broadcast lanes must beat (renders/tick = N×M today). */
+  shared: SharedSoakScenarioResult[]
 }
 
 function pad(s: string, w: number): string {
@@ -144,6 +147,63 @@ export function renderSoakTable(artifact: BenchArtifact): string {
     "heap/c, rss/c = post-gc per-connection footprint · B/wake = heap a parked connection accretes per wake round · " +
       "idle µs = CPU per irrelevant bump across all N · rndr = gate-tick renders / cold renders " +
       "(gate additionally proves 0 renders across the idle bumps and 0 early closes)",
+  )
+  return lines.join("\n")
+}
+
+const SHARED_COLS: Array<{ head: string; width: number }> = [
+  { head: "scenario", width: 18 },
+  { head: "N", width: 5 },
+  { head: "M", width: 4 },
+  { head: "rndr/tick", width: 9 },
+  { head: "open ms", width: 9 },
+  { head: "heap/c", width: 8 },
+  { head: "rss/c", width: 8 },
+  { head: "B/wake", width: 7 },
+  { head: "idle µs", width: 8 },
+  { head: "p50 µs", width: 10 },
+  { head: "cpu µs", width: 10 },
+  { head: "µs/lane", width: 8 },
+  { head: "tick B", width: 9 },
+  { head: "gate", width: 5 },
+]
+
+export function renderSharedSoakTable(artifact: BenchArtifact): string {
+  const lines: string[] = []
+  lines.push(
+    `shared-scope soak (N viewers, ONE world)  ·  ${artifact.gitSha}  ·  node ${artifact.nodeVersion}  ·  ` +
+      `${artifact.runtime} Flight`,
+  )
+  const header = SHARED_COLS.map((c) => pad(c.head, c.width)).join("  ")
+  lines.push(header)
+  lines.push("-".repeat(header.length))
+
+  for (const r of artifact.shared) {
+    const t = r.ticks
+    const cells = [
+      pad(r.name, SHARED_COLS[0].width),
+      padLeft(String(r.params.connections), SHARED_COLS[1].width),
+      padLeft(String(r.params.active), SHARED_COLS[2].width),
+      padLeft(String(r.gate.tickRenders), SHARED_COLS[3].width),
+      padLeft(fix(r.openMs, 0), SHARED_COLS[4].width),
+      padLeft(kb(r.heap.heapPerConnection), SHARED_COLS[5].width),
+      padLeft(kb(r.heap.rssPerConnection), SHARED_COLS[6].width),
+      padLeft(fix(r.heap.heapDriftPerConnectionPerWake, 0), SHARED_COLS[7].width),
+      padLeft(fix(r.idleWake.cpuUsPerBump, 1), SHARED_COLS[8].width),
+      padLeft(t ? fix(t.wall.p50us, 0) : "-", SHARED_COLS[9].width),
+      padLeft(t ? fix(t.cpuMeanUs, 0) : "-", SHARED_COLS[10].width),
+      padLeft(t ? fix(t.cpuPerLaneUs, 1) : "-", SHARED_COLS[11].width),
+      padLeft(t ? kb(t.bytesMeanPerTick) : "-", SHARED_COLS[12].width),
+      padLeft(r.gate.faithful ? "ok" : "FAIL", SHARED_COLS[13].width),
+    ]
+    lines.push(cells.join("  "))
+  }
+
+  lines.push("")
+  lines.push(
+    "rndr/tick = gate-tick renders — must equal N×M exactly: every bumped parton lanes once PER connection. " +
+      "THE fan-out baseline broadcast lanes must collapse to M · tick B = downstream bytes/tick across all N wires · " +
+      "µs/lane = tick CPU / (N×M) · gate additionally proves 0 idle renders, every connection settled every wake round, 0 early closes",
   )
   return lines.join("\n")
 }
