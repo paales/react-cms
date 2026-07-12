@@ -221,7 +221,7 @@
       "baseline": 484.2,
       "cornerIdle": 478.1
     },
-    "note": "L1 final tree \u2014 corner saturates at density in both worlds (57-106% across runs); see leases.md L1 finding"
+    "note": "L1 final tree — corner saturates at density in both worlds (57-106% across runs); see leases.md L1 finding"
   },
   {
     "sha": "5f2c32a",
@@ -238,5 +238,68 @@
       "cornerIdle": 50.4
     },
     "note": "L1 final tree"
+  },
+  {
+    "sha": "94dc1e4",
+    "date": "2026-07-12T18:00:36.324Z",
+    "node": "v24.11.1",
+    "viewport": "2560x1440",
+    "serverPct": {
+      "baseline": 3,
+      "cornerIdle": 2.3,
+      "afterClose": 0.1
+    },
+    "headlessBrowserPct": {
+      "baseline": 93.5,
+      "cornerIdle": 47.9
+    }
+  },
+  {
+    "sha": "94dc1e4",
+    "date": "2026-07-12T18:02:55.713Z",
+    "node": "v24.11.1",
+    "viewport": "3840x2160",
+    "query": "chunk=128",
+    "serverPct": {
+      "baseline": 19.5,
+      "cornerIdle": 58.3,
+      "afterClose": 0
+    },
+    "headlessBrowserPct": {
+      "baseline": 498.9,
+      "cornerIdle": 497.1
+    }
+  },
+  {
+    "sha": "94dc1e4",
+    "date": "2026-07-12T18:05:17.537Z",
+    "node": "v24.11.1",
+    "viewport": "3840x2160",
+    "query": "chunk=128",
+    "serverPct": {
+      "baseline": 19.9,
+      "cornerIdle": 68.5,
+      "afterClose": 0
+    },
+    "headlessBrowserPct": {
+      "baseline": 493,
+      "cornerIdle": 496.8
+    }
+  },
+  {
+    "sha": "94dc1e4",
+    "date": "2026-07-12T18:07:42.395Z",
+    "node": "v24.11.1",
+    "viewport": "3840x2160",
+    "query": "chunk=128",
+    "serverPct": {
+      "baseline": 28.9,
+      "cornerIdle": 63.4,
+      "afterClose": 7.5
+    },
+    "headlessBrowserPct": {
+      "baseline": 493.9,
+      "cornerIdle": 493.9
+    }
   }
 ]

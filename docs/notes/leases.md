@@ -145,14 +145,15 @@ broadcast lanes — the W3 demo.
   (≈ 9%). Deadline coalescing recovered outright hot-cycling
   (102%→57% on its first measurement) but the scan shape stands.
 
-- **L1 follow-up — a deadline index (open).** The expiry arm needs
-  what bumps got: a delivery-side structure — a deadline heap/wheel
-  keyed by boundary, maintained at snapshot commit, park-aware so a
-  parked parton's past-due boundary costs nothing until its flip-in
-  — plus a parent→children index so subtree-scoped folds and
-  promotes stop paying O(route bucket) per lane. That scheduler is
-  the timing half of the lease primitive above; design them
-  together.
+- **L1 follow-up — a deadline index. Landed 2026-07-12 as
+  [`delivery-plane.md`](./delivery-plane.md) D1.** The expiry arm got
+  what bumps got: a per-connection deadline wheel maintained at
+  snapshot commit (park-aware — a parked parton's past-due boundary
+  fires once into the shared pending set and costs nothing until its
+  flip-in), plus the parent→children index that takes subtree-scoped
+  folds and promotes off the O(route bucket) walk. Gate numbers live
+  in the D1 entry. That scheduler is the timing half of the lease
+  primitive above.
 
 - **L2 — ts rides the row.** Persist version/ts with cell values;
   make hot registry entries and cell copies evictable + restorable.

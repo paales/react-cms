@@ -14,6 +14,7 @@
 import {
   _closeWakeSubscription,
   _compileSurfaceQuery,
+  _deliverToWakeSubscription,
   _openWakeSubscription,
   _queryCompiledMatchingTs,
   _seedWakeSubscriptionPending,
@@ -25,7 +26,7 @@ import {
   type WakeSubscriberContext,
   type WakeSubscription,
 } from "../runtime/invalidation-registry.ts"
-import type { PartialSnapshot } from "./partial-registry.ts"
+import { effectiveExpiresAt, type PartialSnapshot } from "./partial-registry.ts"
 
 /**
  * The ids whose snapshots a bump with `ts > sinceTs` touched, mapped
@@ -208,6 +209,162 @@ export function _hasCullGateDep(deps: ReadonlySet<string> | undefined, id: strin
   return false
 }
 
+// ─── The deadline wheel ───────────────────────────────────────────────
+
+/** The deadline wheel's slot grid (ms). Declared `expires()` boundaries
+ *  round UP onto this absolute-epoch grid, so independent per-parton
+ *  cadences due within one slot share a single timer firing (every
+ *  connection's slots align — the grid is epoch-anchored, not
+ *  connection-anchored). Bounds a connection's expiry wake rate at
+ *  1000/grid regardless of how many cadences the route declares; a
+ *  boundary is serviced at most one slot late. */
+export const EXPIRY_COALESCE_MS = 25
+
+/**
+ * A live connection's deadline wheel — the expiry arm's delivery-side
+ * structure (the time twin of the inverted wake index). Maintained by
+ * `_syncRouteWakeSubscription`'s pointer-diff: a snapshot's declared
+ * `expires()` boundary inserts its id into the boundary's grid slot, a
+ * re-render moves it, a drop removes it. ONE standing timer, armed at
+ * the head slot, is the connection's whole expiry arm — no per-wake
+ * scan ever re-derives "the next deadline"; the head IS the next
+ * deadline.
+ *
+ * A slot firing removes its ids from the wheel and delivers them into
+ * the subscription's pending set (`_deliverToWakeSubscription` — the
+ * same park gating bumps get: parked carriers record silently, no
+ * wake). Removal-at-fire is the dedup: a forever-past-due parked
+ * boundary fires exactly once and re-enters the wheel only when a
+ * fresh render re-registers its snapshot — for a parked parton, the
+ * flip-in revalidation, whose drain is the catch-up.
+ *
+ * Release discipline: the wheel dies wholesale with its subscription
+ * (`_closeRouteWakeSubscription` → `_closeDeadlineWheel` clears the
+ * timer and every slot), and a connection whose route declares no
+ * boundaries holds no timer at all — the soak's B/wake ≈ 0 invariant.
+ */
+export interface DeadlineWheel {
+  /** slot (absolute grid epoch ms) → ids whose boundary rounds into it. */
+  readonly slots: Map<number, Set<string>>
+  /** id → its current slot — the move/remove handle, and the oracle's
+   *  "still armed" probe. */
+  readonly slotOf: Map<string, number>
+  /** The head-slot timer (null when the wheel is empty or closed). */
+  timer: ReturnType<typeof setTimeout> | null
+  /** The slot the timer is armed at (null with no timer). */
+  armedSlot: number | null
+  closed: boolean
+  /** Fires the due ids into the connection's pending set. */
+  readonly deliver: (ids: readonly string[]) => void
+}
+
+export function _openDeadlineWheel(deliver: (ids: readonly string[]) => void): DeadlineWheel {
+  return {
+    slots: new Map(),
+    slotOf: new Map(),
+    timer: null,
+    armedSlot: null,
+    closed: false,
+    deliver,
+  }
+}
+
+export function _closeDeadlineWheel(wheel: DeadlineWheel): void {
+  wheel.closed = true
+  if (wheel.timer !== null) clearTimeout(wheel.timer)
+  wheel.timer = null
+  wheel.armedSlot = null
+  wheel.slots.clear()
+  wheel.slotOf.clear()
+}
+
+/** The grid slot a boundary fires in: rounded UP onto the absolute
+ *  grid, and never before the next grid point from `now` — an
+ *  already-due boundary (a body that keeps declaring past deadlines)
+ *  fires at most once per slot instead of spinning the drain at
+ *  event-loop speed, the pacing the retired per-wake arm had. */
+function deadlineSlot(expiresAt: number, now: number): number {
+  const grid = EXPIRY_COALESCE_MS
+  return Math.max(Math.ceil(expiresAt / grid) * grid, Math.floor(now / grid) * grid + grid)
+}
+
+/** Insert or move `id`'s boundary; a missing/non-finite boundary
+ *  (`undefined`, the `+Infinity` "never" sentinel) removes it. */
+export function _scheduleDeadline(
+  wheel: DeadlineWheel,
+  id: string,
+  expiresAt: number | undefined,
+): void {
+  if (wheel.closed) return
+  if (expiresAt === undefined || !Number.isFinite(expiresAt)) {
+    _removeDeadline(wheel, id)
+    return
+  }
+  const slot = deadlineSlot(expiresAt, Date.now())
+  const prev = wheel.slotOf.get(id)
+  if (prev === slot) return
+  if (prev !== undefined) detachDeadline(wheel, id, prev)
+  wheel.slotOf.set(id, slot)
+  let ids = wheel.slots.get(slot)
+  if (!ids) {
+    ids = new Set()
+    wheel.slots.set(slot, ids)
+  }
+  ids.add(id)
+  rearmWheel(wheel)
+}
+
+export function _removeDeadline(wheel: DeadlineWheel, id: string): void {
+  const slot = wheel.slotOf.get(id)
+  if (slot === undefined) return
+  wheel.slotOf.delete(id)
+  detachDeadline(wheel, id, slot)
+  rearmWheel(wheel)
+}
+
+function detachDeadline(wheel: DeadlineWheel, id: string, slot: number): void {
+  const ids = wheel.slots.get(slot)
+  if (!ids) return
+  ids.delete(id)
+  if (ids.size === 0) wheel.slots.delete(slot)
+}
+
+/** Keep the one timer at the head slot. Slot count is bounded by the
+ *  route's distinct cadence phases inside the declared horizon, so the
+ *  min scan is cheap; it runs only on mutation and at fire, never per
+ *  wake. */
+function rearmWheel(wheel: DeadlineWheel): void {
+  if (wheel.closed) return
+  let head: number | null = null
+  for (const slot of wheel.slots.keys()) {
+    if (head === null || slot < head) head = slot
+  }
+  if (head === wheel.armedSlot && (head === null || wheel.timer !== null)) return
+  if (wheel.timer !== null) clearTimeout(wheel.timer)
+  wheel.timer = null
+  wheel.armedSlot = head
+  if (head === null) return
+  wheel.timer = setTimeout(() => fireDueSlots(wheel), Math.max(0, head - Date.now()))
+}
+
+function fireDueSlots(wheel: DeadlineWheel): void {
+  wheel.timer = null
+  wheel.armedSlot = null
+  if (wheel.closed) return
+  const now = Date.now()
+  let due: string[] | null = null
+  for (const [slot, ids] of wheel.slots) {
+    if (slot > now) continue
+    for (const id of ids) {
+      ;(due ??= []).push(id)
+      wheel.slotOf.delete(id)
+    }
+    wheel.slots.delete(slot)
+  }
+  rearmWheel(wheel)
+  if (due !== null) wheel.deliver(due)
+}
+
 // ─── The route wake subscription ──────────────────────────────────────
 
 /**
@@ -222,13 +379,21 @@ export interface RouteWakeSubscription {
   readonly sub: WakeSubscription
   /** id → the snapshot object whose surface/carrier is registered. */
   readonly registered: Map<string, PartialSnapshot>
+  /** The connection's deadline wheel — declared `expires()` boundaries,
+   *  maintained by the same sync diff that registers the index entries;
+   *  fires due ids into `sub.pending` through the shared delivery
+   *  gate. */
+  readonly wheel: DeadlineWheel
 }
 
 export function _openRouteWakeSubscription(context: WakeSubscriberContext): RouteWakeSubscription {
-  return { sub: _openWakeSubscription(context), registered: new Map() }
+  const sub = _openWakeSubscription(context)
+  const wheel = _openDeadlineWheel((ids) => _deliverToWakeSubscription(sub, ids))
+  return { sub, registered: new Map(), wheel }
 }
 
 export function _closeRouteWakeSubscription(rws: RouteWakeSubscription): void {
+  _closeDeadlineWheel(rws.wheel)
   _closeWakeSubscription(rws.sub)
   rws.registered.clear()
 }
@@ -264,6 +429,10 @@ export function _syncRouteWakeSubscription(
       carrierParkGates: carrier === null ? null : carrierParkGates(carrier, snapshots),
     })
     rws.registered.set(id, snap)
+    // The wheel rides the same diff: the fresh snapshot's declared
+    // boundary is its next wake — insert/move (a re-render's box read
+    // is final by sync time: the driver only syncs post-drain).
+    _scheduleDeadline(rws.wheel, id, effectiveExpiresAt(snap))
     if (_queryCompiledMatchingTs(snap.labels, query) > coveredTs) {
       _seedWakeSubscriptionPending(rws.sub, id)
     }
@@ -272,6 +441,7 @@ export function _syncRouteWakeSubscription(
     for (const id of [...rws.registered.keys()]) {
       if (!snapshots.has(id)) {
         _removeWakeSubscriptionEntry(rws.sub, id)
+        _removeDeadline(rws.wheel, id)
         rws.registered.delete(id)
       }
     }
@@ -317,11 +487,15 @@ export function _wakeParityCheckEnabled(): boolean {
 }
 
 /**
- * Assert the index delivered every lane the retired pull filter would
+ * Assert delivery covers every lane the retired pull model would
  * produce — the staleness direction, and the exact contract: both
  * sides escalate to carriers against the same snapshots and drop
  * PARKED carriers (`isParked`, the drain's own filter), and the
- * filter's set must be a subset of the delivered one.
+ * pull side's set must be a subset of the delivered one. The contract
+ * spans BOTH delivery sources: bumps (the inverted wake index vs the
+ * retired per-wake relevance filter) and, when `expiry` is supplied,
+ * time boundaries (the deadline wheel vs the retired per-wake
+ * `min(expiresAt)` scan).
  *
  * Deliberately NOT strict equality. An id's registered labels can
  * SHRINK between delivery and drain — a cull-out re-registers the
@@ -336,21 +510,52 @@ export function _wakeParityCheckEnabled(): boolean {
  * covered-record probe mirrors), so post-park subset IS the lane-set
  * equivalence. `delivered` ids whose snapshot vanished drop at
  * escalation on both sides.
+ *
+ * The expiry side's expected set is every snapshot whose declared
+ * boundary elapsed (`expiresAt <= now`) and is not otherwise COVERED —
+ * `covered(id)` states the legitimate non-delivery holds: the id is
+ * still armed in the wheel (fires at most one slot late), its lane is
+ * open (the in-flight render is the service; its drain re-arms the
+ * wheel), it is deferred behind the unacked delivery window (the
+ * freeing ack's drain lanes it), or this wake's flip/cookie worklist
+ * already carries it. What remains must be in the delivered set —
+ * a due boundary absent from both the wheel and the pending set is a
+ * lost deadline, exactly the under-delivery the oracle exists to
+ * catch.
  */
 export function _assertWakeParity(
   snapshots: ReadonlyMap<string, PartialSnapshot>,
   sinceTs: number,
   delivered: ReadonlySet<string>,
   isParked: (id: string) => boolean,
+  expiry?: {
+    /** Wall clock the due set is derived at. */
+    now: number
+    /** The legitimate non-delivery holds for a due id (see above). */
+    covered: (id: string) => boolean
+  },
 ): void {
   const expected = _routeMatchingBumpIds(snapshots, sinceTs).filter((id) => !isParked(id))
+  if (expiry !== undefined) {
+    const due: string[] = []
+    for (const [id, snap] of snapshots) {
+      const exp = effectiveExpiresAt(snap)
+      if (exp === undefined || !Number.isFinite(exp) || exp > expiry.now) continue
+      if (expiry.covered(id)) continue
+      due.push(id)
+    }
+    for (const id of _escalateToLaneCarriers(due, snapshots)) {
+      if (isParked(id) || expiry.covered(id) || expected.includes(id)) continue
+      expected.push(id)
+    }
+  }
   const present: string[] = []
   for (const id of delivered) if (snapshots.has(id)) present.push(id)
   const actual = new Set(_escalateToLaneCarriers(present, snapshots).filter((id) => !isParked(id)))
   const missing = expected.filter((id) => !actual.has(id))
   if (missing.length === 0) return
   throw new Error(
-    `wake-index parity violation — the filter would lane [${missing.join(", ")}] ` +
-      `but the index delivered [${[...actual].join(", ")}]`,
+    `wake-parity violation — the pull model would lane [${missing.join(", ")}] ` +
+      `but delivery holds [${[...actual].join(", ")}]`,
   )
 }

@@ -94,13 +94,17 @@ any selector-routing logic that could replace it.
      still lanes. Surfaces past `PROBE_SUBSET_CAP` fall to a small
      per-connection scan set, checked per bump only against those
      entries. `_assertWakeParity` (opt-in via `PARTON_WAKE_PARITY=1`
-     or the parity tests) re-derives each drain's lane set through
-     the retired pull filter (`_routeMatchingBumpIds`) and asserts
-     delivery COVERS it post-park — subset, not equality: an id's
-     registered labels can shrink between delivery and drain (a
-     cull-out re-registers the CULLED variant, which drops cell
-     labels), so delivery legitimately over-covers; extras park or
-     dedup into the flip's own lane, never staleness.
+     or the parity tests) re-derives each wake's lane set through
+     the retired pull models — the bump filter
+     (`_routeMatchingBumpIds`) AND the due-boundary scan (every
+     snapshot whose `expiresAt` elapsed and is not legitimately
+     covered: still armed in the wheel, an open lane, deferred behind
+     the unacked window, or on this wake's flip/cookie worklist) —
+     and asserts delivery COVERS the union post-park — subset, not
+     equality: an id's registered labels can shrink between delivery
+     and drain (a cull-out re-registers the CULLED variant, which
+     drops cell labels), so delivery legitimately over-covers; extras
+     park or dedup into the flip's own lane, never staleness.
 
      Every park's arms observe per-park state and release on wake —
      the **wake-arm release invariant**: wake arms are
@@ -117,16 +121,35 @@ any selector-routing logic that could replace it.
      latch checked at wait entry so a signal that landed while the
      driver was busy is consumed, not starved.
 
-   - Expiry arm — the earliest `expires()` boundary among the
-     route's snapshots (read through `effectiveExpiresAt`) elapses.
-     The deadline rounds UP to an absolute 25ms grid
-     (`EXPIRY_COALESCE_MS`) before arming, and the wake services
-     EVERY past-due parton — so hundreds of independent per-parton
-     cadences (the world's per-chunk beats at `?chunk=128`) share
-     grid-aligned wakes instead of each beat paying its own wake +
-     arm re-derivation (an O(route snapshots) scan per wake — the
-     overhead that saturated a core at density, not the lanes). A
-     boundary is serviced at most one slot late.
+   - Expiry arm — the connection's **deadline wheel**
+     (`segment-relevance.ts`), the time twin of the wake index:
+     deadlines are DELIVERED, never derived. Each snapshot's declared
+     `expires()` boundary is slotted onto an absolute 25ms grid
+     (`EXPIRY_COALESCE_MS`) by the same subscription sync that
+     registers its index entry (insert on first registration, move
+     when a re-render's fresh snapshot declares a new boundary,
+     remove when the id drops or re-registers boundary-less), and ONE
+     standing timer armed at the head slot is the whole arm — the
+     head IS the next deadline; no wake ever re-derives it (the
+     retired shape re-scanned all route snapshots per wake and
+     re-classified thousands of parked, forever-past-due boundaries —
+     the overhead that saturated a core at density, not the lanes). A
+     slot firing consumes its ids from the wheel and delivers them
+     into the SAME per-connection pending set bumps use, through the
+     same park gating: a parked carrier's due boundary records
+     silently (no wake — fired once, out of the wheel until a fresh
+     render re-registers it, so a forever-past-due parked boundary
+     costs exactly one recording; the flip-in revalidation is its
+     catch-up), an actionable one fires the subscription wakes.
+     Boundaries due within one grid slot share a single firing, and a
+     boundary is serviced at most one slot late; an already-due
+     boundary schedules at the NEXT grid point, so a body that keeps
+     declaring past deadlines re-lanes at grid pace, never
+     event-loop pace. The wheel dies wholesale with the subscription
+     at connection close. The cadence loop closes through the
+     lane-drained wake: a drained lane's fresh snapshot carries its
+     next boundary, and the driver's per-iteration sync re-inserts
+     it.
    - Visibility arm (lane driver only) — a channel envelope's
      `visible` frame lands on the connection session, naming flipped
      parton ids ([`channel.md`](./channel.md)). The same listener-set
@@ -169,13 +192,14 @@ any selector-routing logic that could replace it.
 
 4. **On a delivered bump, an expiry boundary, or a visibility flip,
    the driver renders per-parton lanes.** The wake's worklist is
-   already resolved for bumps — the drain takes the subscription's
-   pending set (deduped across every bump since the last drain — the
+   already resolved for BOTH delivery sources — bumps and due
+   deadlines land in the one pending set, and the drain takes it
+   (deduped across every delivery since the last drain — the
    coalescing is intrinsic, each lane renders current state), maps it
    onto lane carriers against snapshots current at render, and
    park-checks each carrier (drain-time state stays authoritative;
-   delivery-time gating only decided waking). Time wakes resolve the
-   due-expiry set; visibility flips carry the statement's `changed`
+   delivery-time gating only decided waking). Visibility flips carry
+   the statement's `changed`
    ids. Each touched parton
    renders in isolation through the snapshot-reconstruction path a
    `?partials=` refetch uses (`partialFromSnapshot` →
@@ -198,7 +222,7 @@ any selector-routing logic that could replace it.
    whole-tree segment; until then the ancestor over-fetches on its
    next render, never serves stale.
 
-   **Parked partons don't lane.** Bump and expiry wakes drop ids whose
+   **Parked partons don't lane.** Delivery drains drop ids whose
    own snapshot, or a cullable ancestor's, is outside the session's
    measured visible set (`isParkedOnConnection` — the same
    `visible:<id>?seed=…` gate dep + session-set signal the cull gate
@@ -208,9 +232,10 @@ any selector-routing logic that could replace it.
    route snapshots persist for everything ever rendered, a held
    connection would otherwise lane-render every parton the client
    ever scrolled past at full invalidation rate, forever. A parked
-   parton's due `expiresAt` is likewise excluded from the expiry arm
-   (arming on a deadline that never lanes would hot-spin the wake
-   loop). Staleness is impossible: the flip-in revalidation's fp
+   parton's due `expiresAt` likewise never hot-spins the arm: its
+   slot firing consumes the wheel entry (recorded once, silently),
+   and only a fresh render re-inserts it. Staleness is impossible:
+   the flip-in revalidation's fp
    folds every bump that landed while parked, so it re-renders fresh
    — it can only miss, never false-match. Visibility flips bypass
    the skip: they ARE the state transition. An unmeasured session
@@ -997,11 +1022,11 @@ no-transform` — the spec-level instruction that the payload must
 Two separate concepts:
 
 - **The `expires()` hook** declares when a partial's fp becomes
-  stale. The segment driver's expiry arm races against the
-  earliest boundary across the route's snapshots, so a clock
-  display with `expires(time().nextSecond)` ticks once a second on
-  the open streaming connection. **No byte storage** — each
-  re-render re-executes the partial's render body.
+  stale. The segment driver slots the boundary into the
+  connection's deadline wheel, so a clock display with
+  `expires(time().nextSecond)` ticks once a second on the open
+  streaming connection. **No byte storage** — each re-render
+  re-executes the partial's render body.
 
 - **`cache: { maxAge: N }`** (or eventually `cache: true`)
   declares that the rendered Flight bytes should be stored and

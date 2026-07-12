@@ -534,6 +534,27 @@ function fireSubscriptionWakes(sub: WakeSubscription): void {
   for (const wake of [...sub.wakes]) wake()
 }
 
+/**
+ * Timer-sourced delivery into a subscription — the deadline wheel's
+ * firing path (`segment-relevance.ts`). Pushes the due parton ids into
+ * the SAME pending set bump deliveries use and applies the SAME
+ * park gating (`deliveryWakes` — a parked carrier's delivery records
+ * silently; an assigned consequence seq wakes even parked), so the
+ * drain path downstream is one code path for both event sources. An id
+ * without a registered entry records without waking — the drain drops
+ * it at escalation if its snapshot is gone.
+ */
+export function _deliverToWakeSubscription(sub: WakeSubscription, ids: Iterable<string>): void {
+  let wake = false
+  for (const id of ids) {
+    sub.pending.add(id)
+    if (wake) continue
+    const entry = sub.entries.get(id)
+    if (entry !== undefined) wake = deliveryWakes(sub, entry)
+  }
+  if (wake) fireSubscriptionWakes(sub)
+}
+
 /** Returns the current registry timestamp — the bump cursor every
  *  catch-up anchor and covered-record probe compares against. */
 export function _currentTs(): number {

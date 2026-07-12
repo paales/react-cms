@@ -15,9 +15,13 @@ interface ScopeStore {
   // Hint table: which variant did the most-recent render for this
   // routeKey bind to each id. LRU on the outer Map.
   hints: Map<string, Map<string, string>>
-  // Content generation + the `_readSnapshotsForRoute` memo (below).
+  // Content generation + the `_readSnapshotsForRoute` memo (below);
+  // each memo entry also carries the route's parent→children index.
   gen: number
-  routeSnapshots: Map<string, { gen: number; map: Map<string, PartialSnapshot> }>
+  routeSnapshots: Map<
+    string,
+    { gen: number; map: Map<string, PartialSnapshot>; descendants: Map<string, Set<string>> }
+  >
 }
 ```
 
@@ -264,8 +268,13 @@ Content changes and record removal are separate mechanisms:
   the carrier holds an assigned consequence seq (the driver must void
   it promptly). Subscriptions are diffed against the route snapshot
   map while the driver is awake (`_syncRouteWakeSubscription`,
-  pointer-diff per id) and removed wholesale at connection close;
-  compaction needs no change (entries and registrations share the
+  pointer-diff per id) and removed wholesale at connection close.
+  The same diff maintains the connection's **deadline wheel** — the
+  time twin of the index: each snapshot's declared `expires()`
+  boundary slots onto the 25ms grid, and one head-slot timer fires
+  due ids into the same pending set through the same park gating
+  (see [`streaming.md`](./streaming.md) §How a live update lands).
+  Compaction needs no change (entries and registrations share the
   keying, and a subscription outliving its entries is a lookup miss).
 
 - **Snapshot invalidation.** `invalidateSnapshot(id)` removes the
@@ -304,6 +313,33 @@ stale. The memo is a small per-store LRU
 handful of routes with held connections). Callers treat the returned
 map as immutable: all registry writes go through the API, which
 bumps the generation.
+
+### The parent→children index
+
+Each memo entry also carries the route's **descendants index**
+(`_readRouteDescendants(scope, routeKey)`): ancestor id → every id
+whose snapshot's `parentPath` names it — the inverse of the
+child→ancestors relation the snapshots carry, transitive by
+construction (`parentPath` is the full root-first chain). Subtree
+consumers read the actual subtree instead of filtering the whole
+route bucket by `parentPath.includes` per call — the two callers are
+the lane drain's client-mirror promote
+(`promoteSnapshotsToCachedOverride(withinId)`) and the per-lane
+fp-trailer fold (`foldUpdates` in `fp-trailer.ts`), which at world
+density paid O(route bucket) per lane settle/drain (~19% of the busy
+profile) for a ~3-snapshot subtree.
+
+The index is maintained INCREMENTALLY across memo rebuilds: the
+rebuild walk (already O(route) for the map itself) pointer-compares
+each id's snapshot against the previous memo's; only ids whose object
+changed re-check their `parentPath` content, and only genuine
+placement moves unlink/relink — a re-render in place costs one short
+array compare. Drops are detected exactly (a carried-id count, never
+a size compare — a same-size add+drop commit still re-walks). Unlike
+the snapshots map, the index object is UPDATED IN PLACE at rebuild,
+so consumers must read it fresh per synchronous section and never
+hold it across awaits. An LRU-evicted memo entry rebuilds the index
+cold on the next read.
 
 ## What snapshots intentionally do not capture
 

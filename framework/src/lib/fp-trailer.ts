@@ -27,6 +27,7 @@ import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
 import {
   _drainPendingDefers,
+  _readRouteDescendants,
   _readSnapshotsForRoute,
   deferRequestRegistryCommit,
   type PartialSnapshot,
@@ -465,9 +466,18 @@ export function wrapStreamWithFpTrailer(
     if (all.size === 0) return false
     let snapshots = all
     if (withinId !== undefined) {
+      // The route's parent→children index resolves the subtree
+      // directly — filtering the whole bucket by `parentPath` here ran
+      // O(route) per settle emission and per lane flush.
       snapshots = new Map()
-      for (const [id, snap] of all) {
-        if (id === withinId || snap.parentPath.includes(withinId)) snapshots.set(id, snap)
+      const self = all.get(withinId)
+      if (self) snapshots.set(withinId, self)
+      const subtree = _readRouteDescendants(scope, routeKey).get(withinId)
+      if (subtree) {
+        for (const id of subtree) {
+          const snap = all.get(id)
+          if (snap) snapshots.set(id, snap)
+        }
       }
       if (snapshots.size === 0) return false
     }

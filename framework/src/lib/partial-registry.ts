@@ -222,8 +222,30 @@ interface ScopeStore {
    *  the handful of routes with held connections. Entries are
    *  REPLACED on rebuild; callers treat the returned map as
    *  immutable (every mutation goes through the registry API, which
-   *  bumps `gen`). */
-  routeSnapshots: Map<string, { gen: number; map: Map<string, PartialSnapshot> }>
+   *  bumps `gen`). The entry also carries the route's parent→children
+   *  index (`descendants`, read via `_readRouteDescendants`), diffed
+   *  incrementally across rebuilds — see `RouteSnapshotsMemo`. */
+  routeSnapshots: Map<string, RouteSnapshotsMemo>
+}
+
+interface RouteSnapshotsMemo {
+  gen: number
+  map: Map<string, PartialSnapshot>
+  /** The route's parent→children index: ancestor id → every id whose
+   *  snapshot's `parentPath` names it (transitive by construction —
+   *  `parentPath` is the full root-first ancestor chain). The inverse
+   *  of the child→ancestors relation the snapshots carry, so subtree
+   *  consumers (a lane drain's client-mirror promote, the per-lane
+   *  fp-trailer fold) read the actual subtree instead of filtering the
+   *  whole route bucket per call. Maintained INCREMENTALLY across
+   *  rebuilds: a re-registered snapshot with the same `parentPath`
+   *  content costs nothing beyond the pointer compare the rebuild walk
+   *  already pays; only placement changes re-diff. Mutated in place at
+   *  rebuild — consumers read it fresh per synchronous section (like
+   *  the snapshots map, every registry mutation bumps `gen`; unlike
+   *  it, the index object is NOT replaced, so a reference must not be
+   *  held across awaits). */
+  descendants: Map<string, Set<string>>
 }
 
 const ROUTE_SNAPSHOT_MEMO_MAX = 32
@@ -630,14 +652,39 @@ export function _readSnapshotsForRoute(
   scope: string,
   routeKey: string,
 ): Map<string, PartialSnapshot> {
+  return routeSnapshotsMemo(scope, routeKey).map
+}
+
+/**
+ * The route's parent→children index — ancestor id → the ids of every
+ * snapshot whose `parentPath` contains it (see `RouteSnapshotsMemo`).
+ * Consistent with `_readSnapshotsForRoute`'s map by construction (one
+ * memo entry carries both, revalidated together). Read fresh per
+ * synchronous section; do not hold across awaits — the index is
+ * updated in place at rebuild.
+ */
+export function _readRouteDescendants(
+  scope: string,
+  routeKey: string,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  return routeSnapshotsMemo(scope, routeKey).descendants
+}
+
+const EMPTY_ROUTE_MEMO: RouteSnapshotsMemo = {
+  gen: -1,
+  map: new Map(),
+  descendants: new Map(),
+}
+
+function routeSnapshotsMemo(scope: string, routeKey: string): RouteSnapshotsMemo {
   const store = canonical.get(scope)
-  if (!store) return new Map()
+  if (!store) return EMPTY_ROUTE_MEMO
   const memo = store.routeSnapshots.get(routeKey)
   if (memo !== undefined && memo.gen === store.gen) {
     // Re-insert for LRU recency — the hot routes stay resident.
     store.routeSnapshots.delete(routeKey)
     store.routeSnapshots.set(routeKey, memo)
-    return memo.map
+    return memo
   }
   const snapshots = new Map<string, PartialSnapshot>()
   const hint = store.hints.get(routeKey)
@@ -647,14 +694,70 @@ export function _readSnapshotsForRoute(
       if (snap) snapshots.set(id, snap)
     }
   }
+  // Carry the descendants index across rebuilds, re-diffing only ids
+  // whose snapshot object changed (a re-render registers a fresh
+  // object; the common case keeps the same placement, so the diff is
+  // one short array compare on top of the pointer compare).
+  const descendants = memo?.descendants ?? new Map<string, Set<string>>()
+  updateDescendantsIndex(descendants, memo?.map, snapshots)
+  const next: RouteSnapshotsMemo = { gen: store.gen, map: snapshots, descendants }
   store.routeSnapshots.delete(routeKey)
-  store.routeSnapshots.set(routeKey, { gen: store.gen, map: snapshots })
+  store.routeSnapshots.set(routeKey, next)
   while (store.routeSnapshots.size > ROUTE_SNAPSHOT_MEMO_MAX) {
     const oldest = store.routeSnapshots.keys().next().value
     if (oldest === undefined) break
     store.routeSnapshots.delete(oldest)
   }
-  return snapshots
+  return next
+}
+
+function samePath(a: readonly string[], b: readonly string[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+function updateDescendantsIndex(
+  descendants: Map<string, Set<string>>,
+  prev: Map<string, PartialSnapshot> | undefined,
+  next: Map<string, PartialSnapshot>,
+): void {
+  const unlink = (id: string, path: readonly string[]): void => {
+    for (const ancestorId of path) {
+      const ids = descendants.get(ancestorId)
+      if (!ids) continue
+      ids.delete(id)
+      if (ids.size === 0) descendants.delete(ancestorId)
+    }
+  }
+  const link = (id: string, path: readonly string[]): void => {
+    for (const ancestorId of path) {
+      let ids = descendants.get(ancestorId)
+      if (!ids) {
+        ids = new Set()
+        descendants.set(ancestorId, ids)
+      }
+      ids.add(id)
+    }
+  }
+  let carried = 0
+  for (const [id, snap] of next) {
+    const prior = prev?.get(id)
+    if (prior !== undefined) carried++
+    if (prior === snap) continue
+    if (prior !== undefined && samePath(prior.parentPath, snap.parentPath)) continue
+    if (prior !== undefined) unlink(id, prior.parentPath)
+    link(id, snap.parentPath)
+  }
+  // Exact drop detection: every prior id the walk did not carry over
+  // was removed from the route (a same-size add+drop pair still
+  // re-walks — sizes alone can't prove membership).
+  if (prev !== undefined && carried !== prev.size) {
+    for (const [id, snap] of prev) {
+      if (!next.has(id)) unlink(id, snap.parentPath)
+    }
+  }
 }
 
 export function invalidateSnapshot(id: string): void {

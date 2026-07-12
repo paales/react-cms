@@ -90,8 +90,8 @@ import {
 import { computeRouteKey, parseCachedTokens, partialFromSnapshot } from "./partial.tsx"
 import type { PartialSnapshot } from "./partial-registry.ts"
 import {
+  _readRouteDescendants,
   _readSnapshotsForRoute,
-  effectiveExpiresAt,
   enterRequestRegistry,
   lookupPartial,
 } from "./partial-registry.ts"
@@ -155,15 +155,6 @@ let KEEPALIVE_MS = DEFAULT_KEEPALIVE_MS
 export function _setKeepaliveMs(ms?: number): void {
   KEEPALIVE_MS = ms ?? DEFAULT_KEEPALIVE_MS
 }
-
-/** The expiry arm's tick resolution (ms). `expires()` deadlines round
- *  UP to this absolute-epoch grid before arming, so boundaries due
- *  within one slot share a single wake (the wake loop renders every
- *  past-due parton). Bounds the arm's wake rate at 1000/grid per
- *  connection no matter how many independent cadences the route
- *  declares; a boundary is serviced at most one slot late. See the
- *  quantization note in `waitForSegmentWake`. */
-const EXPIRY_COALESCE_MS = 25
 
 /**
  * Max delivery seqs in flight past the client's cumulative ack before
@@ -894,7 +885,9 @@ interface LaneRuntime {
 
 /**
  * Per-parton emit loop for a live subscription. Each wake renders only
- * the partons the bump / expiresAt boundary touched — through the same
+ * the partons the delivery touched — bumps the wake index delivered
+ * and due `expires()` boundaries the connection's deadline wheel
+ * fired, one shared pending set — through the same
  * snapshot-reconstruction path a `?partials=` refetch uses — and frames
  * each render's bytes as an independent `mux` lane, interleaved as the
  * renders produce them. A fast parton's payload closes on the wire
@@ -919,7 +912,7 @@ interface LaneRuntime {
  * marking a safe abort point; mid-lane aborts are also safe client-side
  * because a torn lane rejects only its own un-committed decode.
  *
- * Bump and expiry wakes skip PARKED partons — ids whose own snapshot,
+ * Delivery drains skip PARKED partons — ids whose own snapshot,
  * or a cullable ancestor's, is outside the session's measured visible
  * set (`isParkedOnConnection`). A parked parton's client copy is a
  * hidden Activity slot; streaming lanes at it burns render + wire on
@@ -971,15 +964,17 @@ async function driveLaneStream(
     return
   }
   // Mutable: a consumed url frame moves the connection's request state,
-  // and every per-wake read below (snapshots, expiry scan, registry
-  // re-entry) must follow it to the new route.
+  // and every per-wake read below (snapshots, registry re-entry) must
+  // follow it to the new route.
   let routeKey = computeRouteKey(request.url)
-  // Register the route's snapshots into the wake index before the
-  // first park. `coveredTs = sinceTs` — the catch-up anchor on the
-  // catch-up path, the pre-initial-segment cursor on the full path —
-  // so the sync's covered-record probe seeds the pending set with
-  // exactly what bumped after the covering render: the first wait
-  // entry's bump latch drains it as the catch-up lanes.
+  // Register the route's snapshots into the wake index — and their
+  // declared `expires()` boundaries into the connection's deadline
+  // wheel — before the first park. `coveredTs = sinceTs` — the
+  // catch-up anchor on the catch-up path, the pre-initial-segment
+  // cursor on the full path — so the sync's covered-record probe seeds
+  // the pending set with exactly what bumped after the covering
+  // render: the first wait entry's bump latch drains it as the
+  // catch-up lanes.
   _syncRouteWakeSubscription(subscription, _readSnapshotsForRoute(scope, routeKey), sinceTs)
   const lanes = new Map<string, LaneRuntime>()
   const openLaneIds = new Set<string>()
@@ -1125,9 +1120,10 @@ async function driveLaneStream(
   }
 
   // Lane-drained wake arm. A drained lane's fresh snapshot carries its
-  // next `expiresAt`; the wake re-arms the wait so the deadline is
-  // re-read from the committed snapshot instead of starving behind
-  // the open-lane expiry exclusion. A latch plus a DISPOSABLE listener
+  // next `expiresAt`; the wake runs the driver's sync, which re-arms
+  // the deadline wheel from the committed snapshot (the wheel consumed
+  // the id's entry when it fired — only the fresh boundary re-inserts
+  // it). A latch plus a DISPOSABLE listener
   // set (the flipWakes shape) rather than a promise: a promise
   // reaction only frees when its promise settles, so arming each
   // re-arm iteration with `.then` on a park-lived promise accretes
@@ -2177,16 +2173,14 @@ async function driveLaneStream(
       // land at an await point, so no statement can slip between a
       // checked latch and an armed listener.
       wake = await waitForSegmentWake({
-        // Window-deferred ids must not arm the expiry timer
-        // either — their due deadlines would otherwise wake
-        // immediately, defer again, and hot-spin the loop
-        // until the window frees.
-        excludeExpiryIds:
-          windowDirty.size === 0 ? openLaneIds : new Set([...openLaneIds, ...windowDirty]),
         laneDrained: {
           pending: () => laneDrainedPending,
           wakes: laneDrainedWakes,
         },
+        // Time boundaries arrive through the same arm: the connection's
+        // deadline wheel fires due `expires()` ids into the pending set
+        // (park-gated like any delivery), so the bump arm IS the expiry
+        // arm — no per-wake deadline derivation exists anymore.
         bump: {
           pending: () => subscription.sub.pending.size > 0,
           wakes: subscription.sub.wakes,
@@ -2360,21 +2354,41 @@ async function driveLaneStream(
         if (!touched.includes(id)) touched.push(id)
       }
     }
-    if (wake === "bump") {
-      // Delivery replaced derivation: the index pushed the matched ids
-      // into the subscription's pending set at commit time; the drain
-      // maps them onto lane carriers against CURRENT snapshots (an id
-      // whose snapshot vanished drops at escalation) and park-checks
-      // each carrier — drain-time state stays authoritative, delivery-
-      // time gating only decided WAKING. Parked partons don't lane
-      // (see the parked-skip note above); their catch-up is the
-      // flip-in revalidation. A parked skip voids the id's assigned
-      // consequence seq — the lane it was reserved for is not coming.
-      if (_wakeParityCheckEnabled()) {
-        _assertWakeParity(snapshots, since, subscription.sub.pending, (id) =>
-          isParkedOnConnection(id, snapshots, session),
-        )
-      }
+    // The delivery-plane drain — ONE pending set carries both event
+    // sources (bumps delivered by the inverted wake index at commit
+    // time; due `expires()` boundaries fired by the connection's
+    // deadline wheel), so any wake that finds deliveries services them
+    // in the same pass. The drain maps the delivered ids onto lane
+    // carriers against CURRENT snapshots (an id whose snapshot
+    // vanished drops at escalation) and park-checks each carrier —
+    // drain-time state stays authoritative, delivery-time gating only
+    // decided WAKING. Parked partons don't lane (see the parked-skip
+    // note above); their catch-up is the flip-in revalidation. A
+    // parked skip voids the id's assigned consequence seq — the lane
+    // it was reserved for is not coming.
+    if (_wakeParityCheckEnabled()) {
+      _assertWakeParity(
+        snapshots,
+        since,
+        subscription.sub.pending,
+        (id) => isParkedOnConnection(id, snapshots, session),
+        {
+          now: Date.now(),
+          // A due boundary is legitimately undelivered when it is still
+          // armed in the wheel (fires ≤ one slot late), its lane is
+          // open (the in-flight render services it; the drain's sync
+          // re-arms the wheel from the fresh snapshot), it is deferred
+          // behind the unacked window, or this wake's flip/cookie
+          // worklist already carries it.
+          covered: (id) =>
+            subscription.wheel.slotOf.has(id) ||
+            openLaneIds.has(id) ||
+            windowDirty.has(id) ||
+            touched.includes(id),
+        },
+      )
+    }
+    if (subscription.sub.pending.size > 0) {
       const delivered = _takeWakeSubscriptionPending(subscription.sub)
       since = _currentTs()
       const matched = delivered.filter((id) => snapshots.has(id))
@@ -2383,9 +2397,9 @@ async function driveLaneStream(
           voidAssigned(id)
           continue
         }
-        touched.push(id)
+        if (!touched.includes(id)) touched.push(id)
       }
-      // Backstop for assignments this bump pass didn't touch (the
+      // Backstop for assignments this drain didn't touch (the
       // snapshot's constraint surface changed between the action's
       // reservation and this wake): an assignment neither laned nor
       // coalesced would pend — and hold the client's gate — forever.
@@ -2396,19 +2410,6 @@ async function driveLaneStream(
           if (windowDirty.has(id)) continue
           voidAssigned(id)
         }
-      }
-    } else if (wake === "expiry" || wake === "lane-drained") {
-      // Expiry wake, or a drained lane whose fresh snapshot may carry
-      // a due deadline: render every parton past its `expiresAt`.
-      // Open lanes are skipped — their stale snapshots still show the
-      // deadline being serviced; the dirty flag / lane-drained arm
-      // covers them. Parked partons are skipped like on a bump wake.
-      const now = Date.now()
-      for (const [id, snap] of snapshots) {
-        if (openLaneIds.has(id)) continue
-        const exp = effectiveExpiresAt(snap)
-        if (exp === undefined || !Number.isFinite(exp)) continue
-        if (exp <= now && !isParkedOnConnection(id, snapshots, session)) touched.push(id)
       }
     }
     // The unacked delivery window — the second lane-opening gate (the
@@ -2472,7 +2473,6 @@ async function driveLaneStream(
 
 const IDLE_TIMEOUT = Symbol("idle-timeout")
 const BUMP_WAKE = Symbol("bump-wake")
-const EXPIRES_AT_WAKE = Symbol("expires-at-wake")
 const LANE_DRAINED_WAKE = Symbol("lane-drained-wake")
 const VISIBILITY_WAKE = Symbol("visibility-wake")
 const DEGRADE_WAKE = Symbol("degrade-wake")
@@ -2487,7 +2487,6 @@ const DEGRADE_WAKE = Symbol("degrade-wake")
 type SegmentWake =
   | false
   | "bump"
-  | "expiry"
   | "lane-drained"
   | "visibility"
   | "cookie"
@@ -2497,39 +2496,32 @@ type SegmentWake =
   | "degrade"
 
 interface SegmentWakeOptions {
-  /** Parton ids whose `expiresAt` must NOT arm the expiry timer —
-   *  the lane driver passes its open lanes: their stale snapshots
-   *  still show the just-serviced deadline, and arming on it would
-   *  busy-loop the wait until the lane's commit lands. */
-  excludeExpiryIds?: ReadonlySet<string>
-  /** The connection's wake-subscription arm: `pending` is the entry
-   *  latch (ids the index delivered while the driver was busy, or
-   *  recorded silently for parked carriers), `wakes` the disposable
-   *  listener set an actionable delivery fires. Same latch + listener
-   *  shape as `laneDrained` — the wake-arm release invariant. */
+  /** The connection's delivery arm: `pending` is the entry latch (ids
+   *  delivered while the driver was busy, or recorded silently for
+   *  parked carriers — by the wake index's bump commits AND by the
+   *  deadline wheel's slot firings, which share the pending set),
+   *  `wakes` the disposable listener set an actionable delivery
+   *  fires. Same latch + listener shape as `laneDrained` — the
+   *  wake-arm release invariant. */
   bump?: { pending: () => boolean; wakes: Set<() => void> }
-  /** Extra wake arm: fires when a lane drains, so the wait
-   *  re-evaluates expiry against the drained parton's FRESH snapshot
-   *  (which carries its next deadline). Without it, a wait armed
-   *  while the only expiring parton had an open lane would park on
-   *  bump+keepalive alone and the parton's next tick would starve
-   *  until the keepalive closed the connection. A disposable
-   *  listener set + the driver's latch (never a promise: a `.then`
-   *  reaction on a park-lived promise can't be released, and the
-   *  irrelevant-bump re-arm loop would accrete one per idle wake);
-   *  the wait registers per race iteration and releases with the
-   *  other arms, re-checking `pending` at each re-arm so a drain
-   *  that raced a losing arm is consumed, not starved. */
+  /** Extra wake arm: fires when a lane drains, so the driver's next
+   *  iteration re-syncs the wake subscription against the drained
+   *  parton's FRESH snapshot — which re-arms the deadline wheel with
+   *  its next boundary. Without it, a parton whose only cadence is
+   *  its own `expires()` would starve after its first lane (the
+   *  wheel entry is consumed at fire; only the fresh snapshot's sync
+   *  re-inserts it). A disposable listener set + the driver's latch
+   *  (never a promise: a `.then` reaction on a park-lived promise
+   *  can't be released, and the irrelevant-bump re-arm loop would
+   *  accrete one per idle wake); the wait registers per race
+   *  iteration and releases with the other arms, re-checking
+   *  `pending` at each re-arm so a drain that raced a losing arm is
+   *  consumed, not starved. */
   laneDrained?: { pending: () => boolean; wakes: Set<() => void> }
-  /** The live connection's session (per-parton driver only). Two
-   *  roles. Parked partons' `expiresAt` deadlines must not arm the
-   *  expiry timer — the driver skips their lanes, so arming on a
-   *  parked parton's past-due deadline would hot-spin the wake loop
-   *  (immediate expiry wake → nothing laned → re-arm on the same
-   *  deadline); read live at arm time so a report landing between
-   *  wakes moves the very next arm. And the visibility wake arm
-   *  registers on the session's `flipWakes` for the park's duration
-   *  — the caller drains the flipped ids via `takeConnectionFlips`. */
+  /** The live connection's session (per-parton driver only): the
+   *  visibility wake arm registers on the session's `flipWakes` for
+   *  the park's duration — the caller drains the flipped ids via
+   *  `takeConnectionFlips`. */
   session?: ConnectionSession | null
   /** Absolute idle deadline (ms epoch) overriding the default
    *  now+KEEPALIVE_MS anchor. The lane driver passes its
@@ -2548,15 +2540,17 @@ interface SegmentWakeOptions {
 /**
  * Wait for a reason to emit the next segment, or for the keepalive to
  * elapse. Races the arms:
- *   - the wake subscription's bump arm — the inverted index delivered
- *     parton ids this connection registered (a `refreshSelector`
- *     matching a rendered partial's labels + constraint args). A bump
- *     nothing on the route subscribes to never reaches this park at
- *     all — no wake, no filter pass — which is what makes N held
- *     connections free under N peers' irrelevant mutations. A
+ *   - the delivery arm — the inverted wake index delivered parton ids
+ *     this connection registered (a `refreshSelector` matching a
+ *     rendered partial's labels + constraint args), or the
+ *     connection's deadline wheel fired due `expires()` boundaries
+ *     into the same pending set. A bump nothing on the route
+ *     subscribes to never reaches this park at all — no wake, no
+ *     filter pass — which is what makes N held connections free under
+ *     N peers' irrelevant mutations; a due boundary costs one
+ *     grid-aligned timer firing on ITS connection, never a scan. A
  *     delivery whose carrier is parked records silently (the entry
  *     latch consumes it at the next real wake's wait entry).
- *   - the earliest `expiresAt` boundary (time-based reactivity).
  *   - the keepalive cap, measured from the last useful activity.
  *   - optionally, a lane draining (per-parton driver only).
  *   - optionally, a channel statement landing on the connection
@@ -2575,25 +2569,9 @@ interface SegmentWakeOptions {
  */
 async function waitForSegmentWake(options?: SegmentWakeOptions): Promise<SegmentWake> {
   const keepaliveDeadline = options?.deadline ?? Date.now() + KEEPALIVE_MS
-  const expiresAtDelay = computeNextExpiresAtDelay(options?.excludeExpiryIds, options?.session)
-  // The expiry arm's tick resolution: the deadline rounds UP to the
-  // next EXPIRY_COALESCE_MS grid point (an absolute epoch grid, so
-  // every connection's arms align), and one wake then services every
-  // boundary due within the slot — the wake loop already renders ALL
-  // past-due partons, so batching is a latency trade, not a semantic
-  // one: a boundary fires at most one slot late. Without it, hundreds
-  // of desynchronized per-parton cadences (the world at ?chunk=128 on
-  // a 4K viewport: ~540 beats at 0.1–5s) make every beat its own
-  // wake, and each wake re-derives the arm (an O(route snapshots)
-  // scan) — the wake OVERHEAD, not the lanes, saturates the core.
-  const expiresAtDeadline =
-    expiresAtDelay !== null
-      ? Math.ceil((Date.now() + Math.max(0, expiresAtDelay)) / EXPIRY_COALESCE_MS) *
-        EXPIRY_COALESCE_MS
-      : null
   // Entry latches — a signal that landed while the driver was busy
-  // (or, for bumps, was recorded silently for a parked carrier) is
-  // consumed here instead of parking past it.
+  // (or, for deliveries, was recorded silently for a parked carrier)
+  // is consumed here instead of parking past it.
   if (options?.laneDrained?.pending()) return "lane-drained"
   if (options?.bump?.pending()) return "bump"
   const keepaliveRemaining = keepaliveDeadline - Date.now()
@@ -2611,13 +2589,6 @@ async function waitForSegmentWake(options?: SegmentWakeOptions): Promise<Segment
   }
   const kaTimer = setTimeout(() => settle(IDLE_TIMEOUT), keepaliveRemaining)
   disposers.push(() => clearTimeout(kaTimer))
-  if (expiresAtDeadline !== null) {
-    const expTimer = setTimeout(
-      () => settle(EXPIRES_AT_WAKE),
-      Math.max(0, expiresAtDeadline - Date.now()),
-    )
-    disposers.push(() => clearTimeout(expTimer))
-  }
   const laneDrainedWakes = options?.laneDrained?.wakes
   if (laneDrainedWakes) {
     const onDrain = (): void => settle(LANE_DRAINED_WAKE)
@@ -2645,49 +2616,9 @@ async function waitForSegmentWake(options?: SegmentWakeOptions): Promise<Segment
   }
   if (result === IDLE_TIMEOUT) return false
   if (result === BUMP_WAKE) return "bump"
-  if (result === EXPIRES_AT_WAKE) return "expiry"
   if (result === LANE_DRAINED_WAKE) return "lane-drained"
   if (result === VISIBILITY_WAKE) return "visibility"
   return "degrade"
-}
-
-/**
- * Compute the delay (ms from now) until the earliest `expiresAt`
- * across the just-rendered route's snapshots. Returns `null` when
- * no partial declared one (or the only declared values are
- * `+Infinity` — the "never" sentinel).
- *
- * Partials declare `expiresAt` by calling the `expires()` hook during
- * schema/Render (a live box on the snapshot; see `effectiveExpiresAt`).
- * The segment driver reads the snapshots after each render to derive
- * the next wake time.
- */
-function computeNextExpiresAtDelay(
-  excludeIds?: ReadonlySet<string>,
-  session?: ConnectionSession | null,
-): number | null {
-  let request: Request
-  let scope: string
-  try {
-    request = getRequest()
-    scope = getScope()
-  } catch {
-    return null
-  }
-  const routeKey = computeRouteKey(request.url)
-  const snapshots = _readSnapshotsForRoute(scope, routeKey)
-  if (snapshots.size === 0) return null
-  let min = Number.POSITIVE_INFINITY
-  for (const [id, snap] of snapshots) {
-    if (excludeIds?.has(id)) continue
-    const exp = effectiveExpiresAt(snap)
-    if (exp === undefined) continue
-    if (!Number.isFinite(exp)) continue
-    if (session && isParkedOnConnection(id, snapshots, session)) continue
-    if (exp < min) min = exp
-  }
-  if (!Number.isFinite(min)) return null
-  return min - Date.now()
 }
 
 /**
@@ -2902,19 +2833,37 @@ export function promoteSnapshotsToCachedOverride(
   const snapshots = _readSnapshotsForRoute(scope, routeKey)
   if (snapshots.size === 0) return
 
-  for (const [id, snap] of snapshots) {
-    // `withinId` scopes the walk to one parton's subtree — a lane
-    // drain promotes only the snapshots its render just committed.
-    if (withinId !== undefined && id !== withinId && !snap.parentPath.includes(withinId)) continue
-    if (!snap.emittedFp || !snap.matchKey) continue
+  const promote = (id: string, snap: PartialSnapshot): void => {
+    if (!snap.emittedFp || !snap.matchKey) return
     // A WARM-registered snapshot's bytes never reached any client —
     // claiming its fp as a holding would let a later lane confirm
     // content the client doesn't have (see `PartialSnapshot.warmed`).
     // The id's next real emission re-registers and promotes normally.
-    if (snap.warmed) continue
+    if (snap.warmed) return
     promoteSlotFpToOverride(override, id, snap.matchKey, snap.emittedFp)
     onToken?.(id, snap.matchKey, snap.emittedFp)
   }
+
+  // `withinId` scopes the walk to one parton's subtree — a lane drain
+  // promotes only the snapshots its render just committed. The route's
+  // parent→children index resolves the subtree directly; filtering the
+  // whole bucket by `parentPath` here was O(route) per lane drain, a
+  // standing tax at world density (hundreds of cadences over a
+  // thousands-strong bucket).
+  if (withinId !== undefined) {
+    const self = snapshots.get(withinId)
+    if (self) promote(withinId, self)
+    const subtree = _readRouteDescendants(scope, routeKey).get(withinId)
+    if (subtree) {
+      for (const id of subtree) {
+        if (id === withinId) continue
+        const snap = snapshots.get(id)
+        if (snap) promote(id, snap)
+      }
+    }
+    return
+  }
+  for (const [id, snap] of snapshots) promote(id, snap)
 }
 
 /**
