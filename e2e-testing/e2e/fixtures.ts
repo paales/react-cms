@@ -1,6 +1,8 @@
 import {
   request as pwRequest,
   test as base,
+  type Browser,
+  type BrowserContext,
   type Page,
   type Request as PwRequest,
 } from "@playwright/test"
@@ -390,4 +392,23 @@ export async function waitForRscIdle(
     page.off("requestfinished", onSettled)
     page.off("requestfailed", onSettled)
   }
+}
+
+/**
+ * A hand-rolled browser context carrying the worker scope the way the
+ * `page` fixture does: as a header for every HTTP request AND as a
+ * cookie for the one request kind a browser cannot stamp headers on —
+ * the WebSocket upgrade (`/__parton/ws`). A multi-context spec must
+ * create its extra contexts through this helper; a header-only context
+ * lands its auto-upgraded socket in the DEFAULT scope and silently
+ * stops hearing the worker scope's invalidations.
+ */
+export async function scopedContext(
+  browser: Browser,
+  testScope: string,
+  baseURL: string,
+): Promise<BrowserContext> {
+  const ctx = await browser.newContext({ extraHTTPHeaders: { "x-test-scope": testScope } })
+  await ctx.addCookies([{ name: "x-test-scope", value: testScope, url: baseURL }])
+  return ctx
 }

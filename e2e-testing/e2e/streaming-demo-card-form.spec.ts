@@ -5,6 +5,7 @@ import {
   waitForLiveConnection,
   waitForPageInteractive,
   type Page,
+  scopedContext,
 } from "./fixtures"
 
 /**
@@ -179,18 +180,18 @@ test("auto-batch: per-keystroke writes coalesce into a small number of POSTs", a
 test("multi-page broadcast: a second tab sees the typing tab's commits via its heartbeat", async ({
   browser,
   testScope,
+  baseURL,
 }) => {
   // Two independent page contexts sharing the same x-test-scope so
   // they look at the same per-worker cell store. Each page mounts its
   // own LivePageHeartbeat, holds its own streaming connection; cell
   // writes from page A wake page B's segment driver via the shared
-  // invalidation registry.
-  const ctxA = await browser.newContext({
-    extraHTTPHeaders: { "x-test-scope": testScope },
-  })
-  const ctxB = await browser.newContext({
-    extraHTTPHeaders: { "x-test-scope": testScope },
-  })
+  // invalidation registry. `scopedContext` carries the scope as header
+  // AND cookie — the auto-upgraded WebSocket handshake only sees the
+  // cookie, and a socket without it lands in the default scope, deaf
+  // to this worker's writes.
+  const ctxA = await scopedContext(browser, testScope, baseURL!)
+  const ctxB = await scopedContext(browser, testScope, baseURL!)
   try {
     const pageA = await ctxA.newPage()
     const pageB = await ctxB.newPage()
