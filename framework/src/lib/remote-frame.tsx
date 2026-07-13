@@ -56,6 +56,7 @@ import {
 import { splitSegments } from "./fp-trailer-split.ts"
 import {
   EMBED_BOX_TAG,
+  EMBED_CELLS_HEADER,
   EMBED_DEPTH_HEADER,
   EMBED_GRANT_HEADER,
   EMBED_LIMIT_ATTR,
@@ -70,6 +71,15 @@ import {
   pageEmbedRewriter,
   type EmbedGrant,
 } from "./page-embed.ts"
+import {
+  getCellById,
+  isBoundCell,
+  isCellHandle,
+  isModuleCell,
+  type CellArgs,
+  type ResolvedCell,
+} from "./cell.ts"
+import { EmbedInteractiveBridge } from "./embed-interactive.tsx"
 import { createTierRewriter } from "./tier-rewrite.ts"
 import { ParentContext } from "./partial-context.ts"
 import { deferCommitUntil, registerPartial, type PageSnapshotSource } from "./partial-registry.ts"
@@ -106,10 +116,88 @@ export interface RemoteFrameProps {
    *  the framework vocabulary survives (`grant="paint"` — no client
    *  modules load, non-vocabulary rows degrade per the violation
    *  policy), and the spliced content renders inside a host-defined
-   *  `<parton-embed-box>` with `contain: strict`. The grant also
-   *  crosses as a request header so the producer can render its
-   *  embed-surface variant — a statement, never the enforcement. */
+   *  `<parton-embed-box>` with `contain: strict`. `"interactive"`
+   *  additionally admits the vocabulary's interactive members and
+   *  mounts the host-bundle interaction bridge inside the box. The
+   *  grant also crosses as a request header so the producer can
+   *  render its embed-surface variant — a statement, never the
+   *  enforcement. */
   grant?: EmbedGrant | readonly EmbedGrant[]
+  /** Bound cells — the inward state contract (`remote-frame.md` §
+   *  Bound cells). RESOLVED cells only, keyed by the names the
+   *  remote's spec declares (`cells: { cart: { required: true } }`):
+   *
+   *      const cart = await cartCell.resolve()
+   *      <RemoteFrame url=… cells={{ cart }} />
+   *
+   *  Resolving in the enclosing parton's BODY is load-bearing — the
+   *  read IS the dependency: it records the partition-scoped `cell:`
+   *  dep on that parton, so a host-side write re-renders it and this
+   *  frame re-projects with fresh values. The projected VALUES cross
+   *  in the embed request's body; the remote sees values, never
+   *  handles, tokens, or storage. A refetch of the placement
+   *  RE-RESOLVES each binding (stamped cell id + partition on the
+   *  snapshot source) — projections are never replayed stale. */
+  cells?: Record<string, ResolvedCell<unknown>>
+}
+
+/** A placement's bound-cell bindings, normalized: the wire-projection
+ *  values plus the re-resolution stamps a refetch replays. */
+interface ResolvedCellBindings {
+  projection: Record<string, unknown>
+  stamps: Record<string, { cellId: string; args?: CellArgs }>
+}
+
+/** Normalize the `cells` prop. Accepts RESOLVED cells only — a module
+ *  handle or `.with()` binding resolved inside this frame could not
+ *  record its dep on the ENCLOSING parton (dep recording is
+ *  per-parton-body), which would silently break re-projection — the
+ *  exact staleness class the tracking invariant exists to prevent, so
+ *  it throws with the fix instead. */
+function resolveCellBindings(
+  cells: Record<string, ResolvedCell<unknown>> | undefined,
+): ResolvedCellBindings | null {
+  if (cells === undefined) return null
+  const projection: Record<string, unknown> = {}
+  const stamps: Record<string, { cellId: string; args?: CellArgs }> = {}
+  for (const [name, binding] of Object.entries(cells)) {
+    if (isBoundCell(binding) || isModuleCell(binding) || !isCellHandle(binding)) {
+      throw new Error(
+        `RemoteFrame: cells.${name} must be a RESOLVED cell — ` +
+          `\`const ${name} = await cell.resolve(args)\` in the enclosing parton's body ` +
+          `(the in-body read records the dependency that re-projects this embed), ` +
+          `then \`cells={{ ${name} }}\`.`,
+      )
+    }
+    projection[name] = binding.value
+    stamps[name] = {
+      cellId: binding.id,
+      ...(binding.partition !== undefined ? { args: binding.partition } : {}),
+    }
+  }
+  return { projection, stamps }
+}
+
+/** Re-resolve a stored placement's cell stamps against CURRENT
+ *  storage — the refetch half of the bound-cell contract. A stamp
+ *  without explicit args re-derives the partition from the cell's own
+ *  `partition` callback against the refetch's request scope (the same
+ *  derivation the original in-body resolve used). A cell id the
+ *  process no longer knows (HMR unload) is omitted — the producer's
+ *  requirement check surfaces it explicitly if it was required. */
+async function projectionFromStamps(
+  stamps: Readonly<Record<string, { cellId: string; args?: CellArgs }>>,
+): Promise<ResolvedCellBindings> {
+  const projection: Record<string, unknown> = {}
+  const out: Record<string, { cellId: string; args?: CellArgs }> = {}
+  for (const [name, stamp] of Object.entries(stamps)) {
+    const handle = getCellById(stamp.cellId)
+    if (handle === undefined) continue
+    const resolved = await handle.resolve(stamp.args)
+    projection[name] = resolved.value
+    out[name] = stamp
+  }
+  return { projection, stamps: out }
 }
 
 function defaultModuleRewrite(srcOrigin: string): (path: string) => string {
@@ -147,6 +235,7 @@ export async function RemoteFrame({
   capability,
   namespace,
   grant,
+  cells,
 }: RemoteFrameProps): Promise<ReactNode> {
   // Resolve `url` to an absolute form. `fetch` in the server runtime
   // doesn't accept bare-path inputs — and the origin decides whether
@@ -184,6 +273,7 @@ export async function RemoteFrame({
     ns,
     namespace,
     capability,
+    cells: resolveCellBindings(cells),
     grants: normalizeEmbedGrants(grant),
     depth: embedDepthOf(hostRequest.headers) + 1,
   })
@@ -214,6 +304,11 @@ async function EmbedRefetch({
     ns: source.ns,
     namespace: source.namespace,
     capability: source.capability as Capability | undefined,
+    // Bound cells RE-RESOLVE at refetch time — the stamps name the
+    // cells, current storage supplies the values. Replaying the
+    // original projected values would freeze the embed at placement-
+    // time host state.
+    cells: source.cells ? await projectionFromStamps(source.cells) : null,
     grants: source.grant ? new Set(source.grant) : null,
     depth: embedDepthOf(getRequest().headers) + 1,
     partials: id,
@@ -225,6 +320,8 @@ async function embedPage(args: {
   ns: string
   namespace?: string
   capability?: Capability
+  /** Normalized bound-cell bindings (`null` = none bound). */
+  cells: ResolvedCellBindings | null
   /** Canonical grant set (`null` = ungoverned, full trust). */
   grants: ReadonlySet<string> | null
   depth: number
@@ -260,9 +357,23 @@ async function embedPage(args: {
   const hostScopeHeader = hostRequest.headers.get("x-test-scope")
   if (hostScopeHeader) requestHeaders["x-test-scope"] = hostScopeHeader
 
+  // Bound-cell projection rides the request BODY (values may be
+  // large; header lines have hard ceilings), which makes the fetch a
+  // POST — the cells header, not the method, is the producer's
+  // dispatch signal (`parseRenderRequest` keys on the render header
+  // either way).
+  let body: string | undefined
+  if (args.cells !== null) {
+    requestHeaders[EMBED_CELLS_HEADER] = "1"
+    requestHeaders["content-type"] = "application/json;charset=utf-8"
+    body = JSON.stringify({ cells: args.cells.projection })
+  }
+
   const response = await fetch(fetchUrl.href, {
+    method: body === undefined ? "GET" : "POST",
     headers: requestHeaders,
     credentials: "omit",
+    ...(body !== undefined ? { body } : {}),
   })
   if (!response.ok || !response.body) {
     throw new Error(
@@ -307,6 +418,9 @@ async function embedPage(args: {
           // Replayed on refetch so a granted placement can never be
           // re-fetched wider than it was placed.
           ...(args.grants !== null ? { grant: [...args.grants] } : {}),
+          // Cell STAMPS (id + partition), never values — a refetch
+          // re-resolves against current storage.
+          ...(args.cells !== null ? { cells: args.cells.stamps } : {}),
         }
         for (const [id, ser] of Object.entries(raw)) {
           const snap = deserializeSnapshot(ser)
@@ -361,6 +475,22 @@ async function embedPage(args: {
     rewriteFlightStream(segment.body, pipeline),
   )
   if (args.grants !== null) {
+    // Under the Interactive grant the spliced (inert) payload mounts
+    // inside the HOST-bundle interaction bridge: a client component of
+    // the host's own module graph (RemoteFrame's JSX is encoded by the
+    // HOST encoder — no remote module crosses) that wires the
+    // vocabulary's interactive tags to the REMOTE's cells and actions
+    // by DOM delegation. See `lib/embed-interactive.tsx`.
+    const inner = args.grants.has("interactive") ? (
+      <EmbedInteractiveBridge
+        origin={fetchUrl.origin}
+        capability={args.capability !== undefined ? encodeCapability(args.capability) : null}
+      >
+        {payload.root}
+      </EmbedInteractiveBridge>
+    ) : (
+      payload.root
+    )
     // The host-defined box a granted embed renders inside. The
     // framework stamps the containment (blast-radius ceiling —
     // `contain: strict` = size/layout/paint; the Layout grant is what
@@ -372,7 +502,7 @@ async function embedPage(args: {
         "data-grant": encodeEmbedGrants(args.grants),
         style: { display: "block", contain: "strict" },
       },
-      payload.root,
+      inner,
     )
   }
   return payload.root
@@ -418,6 +548,9 @@ export function remote<Cap = void>(opts: {
      *  host drives that variant from a wrapper parton's tracked
      *  reads. */
     searchParams?: Record<string, string>
+    /** Bound cells — RESOLVED in the enclosing parton's body; see
+     *  `RemoteFrameProps.cells`. */
+    cells?: Record<string, ResolvedCell<unknown>>
   } & (Cap extends void ? { capability?: never } : { capability: Cap }),
 ) => Promise<ReactNode> {
   return async function RemoteBinding(props) {
@@ -430,6 +563,7 @@ export function remote<Cap = void>(opts: {
       capability: (props as { capability?: Capability }).capability,
       namespace: opts.namespace,
       grant: opts.grant,
+      cells: props.cells,
     })
   }
 }

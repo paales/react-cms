@@ -206,6 +206,13 @@ export type PageSnapshotSource = {
    *  replayed on refetch so a granted placement can never re-fetch
    *  wider than it was placed. Absent = ungoverned (full trust). */
   grant?: readonly string[]
+  /** Bound-cell stamps for the placement's `cells` bindings — cell id
+   *  + resolved partition args per binding NAME. A refetch RE-RESOLVES
+   *  each stamp against current storage (never replays the projected
+   *  value — the value was a snapshot of host state, and the refetch
+   *  must carry the CURRENT one). In-memory only; `serializeSnapshot`
+   *  drops `source` wholesale, so stamps never cross a wire. */
+  cells?: Readonly<Record<string, { cellId: string; args?: Record<string, unknown> }>>
 }
 
 export type SnapshotSource = PageSnapshotSource

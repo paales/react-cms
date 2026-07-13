@@ -84,8 +84,15 @@ export function parseRenderRequest(request: Request): RenderRequest {
   // embed (`<RemoteFrame>` — see `lib/page-embed.ts`): return Flight,
   // not an HTML document. The URL stays the ordinary page URL, so
   // match gates, tracked reads, and route keying all evaluate the
-  // page itself.
-  if (!isPost && request.headers.get(HEADER_RSC_RENDER) === "1") {
+  // page itself. A POST carrying the same header on a plain page URL
+  // (never the `_.rsc` action postfix) is the SAME request kind with a
+  // bound-cell projection in its body (`x-parton-embed-cells` — cell
+  // values may exceed any header ceiling, so they ride the body); the
+  // header, not the method, is the dispatch signal either way.
+  if (
+    request.headers.get(HEADER_RSC_RENDER) === "1" &&
+    (!isPost || !url.pathname.endsWith(URL_POSTFIX))
+  ) {
     return { isRsc: true, isAction: false, request, url }
   }
   // The `_.rsc` postfix marks exactly one request kind: an action POST

@@ -80,12 +80,54 @@ export const EMBED_NS_HEADER = "x-parton-embed-ns"
  *  admit, never a promise the producer keeps. */
 export const EMBED_GRANT_HEADER = "x-parton-embed-grant"
 
+/** Marks an embed request that carries a bound-cell projection in its
+ *  BODY (the request is then a POST — headers have hard size ceilings
+ *  and projected cell values may be arbitrarily large; a page's cart
+ *  easily exceeds a header line). Value is always `"1"`; the body is
+ *  UTF-8 JSON `{ cells: { <name>: <value> } }`. Present exactly when
+ *  the host's call site bound cells (`<RemoteFrame cells>`). */
+export const EMBED_CELLS_HEADER = "x-parton-embed-cells"
+
+// ─── Remote interaction + remoteCell endpoints (wire paths) ───────────
+// Framework-owned endpoints `createRemoteHandler` serves on a producer
+// (the app must configure `remote: { name }` — publication is opt-in
+// at the app level like the manifest). Defined here because this
+// module is the embed wire-grammar home and is import-safe on the
+// client (the interaction bridge posts to `write`/`invoke` from the
+// host browser).
+
+/** POST — a capability-scoped cell write from an interactive embed.
+ *  Body `{cell, partition, value}`; the ordinary write pipeline runs
+ *  (shape validation, `write` canonicalisation, `writeGuard` — which
+ *  composes with the capability via `getCapability()`). */
+export const REMOTE_CELL_WRITE_PATH = "/__remote/cells/write"
+
+/** POST — invoke a remote-hosted embed action (`embedAction` on the
+ *  producer). Body `{action, payload}`. */
+export const REMOTE_ACTION_INVOKE_PATH = "/__remote/actions/invoke"
+
+/** POST — server-to-server wake subscription on a producer's
+ *  PUBLISHED cells (the remoteCell attach). Body `{cells: [ids]}`;
+ *  response is a held NDJSON stream of committed-bump batches
+ *  (`{selectors: [...]}` lines — doorbells, never values). */
+export const REMOTE_CELL_ATTACH_PATH = "/__remote/cells/attach"
+
+/** GET — read a published cell's value (`?cell=<id>&args=<json>`).
+ *  The store-is-truth read path a remoteCell doorbell triggers. */
+export const REMOTE_CELL_VALUE_PATH = "/__remote/cells/value"
+
+/** Capability header name, restated here for client-safe imports (the
+ *  canonical definition sits in `runtime/capability.ts`, which pulls
+ *  `node:async_hooks` and cannot load in a browser bundle). */
+export const CAPABILITY_HEADER_NAME = "x-parton-capability"
+
 /** A capability grant name. The capability carries a grant SET, not a
- *  ladder — see docs/notes/remote-frame-arc.md § Trust. v1 ships the
- *  Paint tier only; the arc's further members (`interactive`,
- *  `layout`, `style`, `client`, `url`) join this union as their
- *  increments land. */
-export type EmbedGrant = "paint"
+ *  ladder — see docs/notes/remote-frame-arc.md § Trust. Shipped:
+ *  `paint` (pull-only vocabulary) and `interactive` (paint plus the
+ *  vocabulary's interactive members bound to cells and actions the
+ *  remote hosts). The arc's further members (`layout`, `style`,
+ *  `client`, `url`) join this union as their increments land. */
+export type EmbedGrant = "paint" | "interactive"
 
 /** Normalize a call-site `grant` value to the canonical set form.
  *  `undefined` → `null`: an ungoverned (full-trust) embed — today's

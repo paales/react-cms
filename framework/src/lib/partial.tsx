@@ -72,6 +72,7 @@ import {
   parseCookies,
 } from "../runtime/context.ts"
 import { HEADER_RSC_RENDER, stripFrameworkParams } from "../runtime/request.tsx"
+import { _getBoundCellProjection } from "../runtime/capability.ts"
 import {
   parseSelector as parseInvalidationSelector,
   queryMatchingTs,
@@ -167,6 +168,7 @@ export type PartialOptions<V> = Pick<
   | "fpSkip"
   | "selector"
   | "capabilityType"
+  | "cells"
 >
 
 /** The serializable subset of a spec's render props — what its
@@ -267,6 +269,20 @@ interface InternalSpecConfig<V> {
    *  `remote-types.ts` (served at `/__remote/types.d.ts`). Omit if
    *  the spec doesn't read capability values. */
   capabilityType?: string
+  /** Bound-cell REQUIREMENTS for embed renders of this spec — the
+   *  inward half of state across the boundary (the remote's manifest
+   *  declaration; `docs/reference/remote-frame.md` § Bound cells).
+   *  The host binds cells explicitly at its call site
+   *  (`<RemoteFrame cells={{cart: cartCell}}>`); the projected VALUES
+   *  cross with the embed request, and this declaration is the
+   *  runtime enforcement: on an embed render a missing REQUIRED
+   *  binding throws (an explicit produce-side failure the host
+   *  surfaces at its boundary), and only DECLARED names cross the
+   *  spec boundary — the Render reads them via `getBoundCells()`.
+   *  Standalone (non-embed) visits of the page enforce nothing and
+   *  read `{}` — an embeddable page stays browsable by itself.
+   *  Advertised on the remote manifest. */
+  cells?: Record<string, { required?: boolean }>
 }
 
 /**
@@ -1475,6 +1491,32 @@ function createSpecComponent<V>(
       }
       params = verdict.params
     }
+    // Bound-cell requirements (the inward state contract). On an
+    // embed render of a cell-declaring spec the request's projection
+    // is FILTERED to the declared names (an undeclared binding does
+    // not cross the spec boundary) and every `required` name must be
+    // present — a missing one throws HERE, before the body runs: the
+    // explicit produce-side failure the host surfaces at its own
+    // boundary, never a render against silent nulls. Standalone
+    // (non-embed) visits enforce nothing and read `{}`, so an
+    // embeddable page stays browsable by itself.
+    let boundCells: Readonly<Record<string, unknown>> | undefined
+    if (opts.cells !== undefined) {
+      const isEmbedRender = embedDepthOf(getRequest().headers) > 0
+      const projection = isEmbedRender ? (_getBoundCellProjection() ?? {}) : {}
+      const filtered: Record<string, unknown> = {}
+      for (const [name, req] of Object.entries(opts.cells)) {
+        if (Object.prototype.hasOwnProperty.call(projection, name)) {
+          filtered[name] = projection[name]
+        } else if (isEmbedRender && req.required === true) {
+          throw new Error(
+            `parton "${spec.id}": required bound cell "${name}" was not bound by the ` +
+              `embedding host (declare it at the call site: <RemoteFrame cells={{ ${name}: … }}>)`,
+          )
+        }
+      }
+      boundCells = filtered
+    }
     // Stamp the self-context now that the frame-resolved request + match
     // params are known — server-hooks (`cookie()` / `searchParam()` /
     // `param()`, `tag()`, inline `localCell`) read them off it. See
@@ -1487,6 +1529,7 @@ function createSpecComponent<V>(
       params,
       phase: "schema",
       wakeHints: {},
+      ...(boundCells !== undefined ? { boundCells } : {}),
     }
     _setCurrentParton(self)
     // matchKey identifies the rendered variant for client-side
@@ -2200,6 +2243,7 @@ function buildSpecComponent<V extends object, Extra = Record<string, unknown>>(
     addressable,
     capabilityType: options.capabilityType,
     fpSkip: options.fpSkip,
+    cells: options.cells,
   })
 
   // Attach `.props` as a phantom field. The runtime value is

@@ -243,6 +243,16 @@ export interface CellInterface<T, A extends CellArgs = CellArgs> {
    *  committing it back over the optimistic value) is pure waste. See
    *  `docs/reference/cells.md` § "Deferred (stream-only) writes". */
   readonly deferred?: boolean
+  /** Cross-process publication — the outward half of state across the
+   *  boundary (`docs/reference/remote-frame.md` § remoteCell). `true`
+   *  (or a capability guard returning `true`) lets another parton
+   *  process ATTACH to this cell's committed bumps and READ its value
+   *  through the producer's `/__remote/cells/*` endpoints
+   *  (`createRemoteHandler` — the app must configure `remote`). A
+   *  guard callback authorizes each attach/read against the caller's
+   *  presented capability bag. Absent/false ⇒ never served across the
+   *  boundary (403). */
+  readonly publish?: boolean | ((capability: Record<string, unknown>) => boolean)
 }
 
 /**
@@ -340,6 +350,17 @@ const cellRegistry = new Map<string, CellInterface<unknown>>()
 
 export function getCellById(id: string): CellInterface<unknown> | undefined {
   return cellRegistry.get(id)
+}
+
+/** Ids of every PUBLISHED cell (`publish` set) — the remote
+ *  manifest's `publishes` inventory. Guard callbacks count as
+ *  published (per-capability authorization happens at the attach). */
+export function _listPublishedCellIds(): string[] {
+  const out: string[] = []
+  for (const cell of cellRegistry.values()) {
+    if (cell.publish !== undefined && cell.publish !== false) out.push(cell.id)
+  }
+  return out.sort()
 }
 
 /** Type predicate — works on module handles and resolved cells. */
@@ -892,6 +913,9 @@ export interface LocalCellOpts<S extends CellShapeSpec, T = ValueOfShape<S>> {
    *  storage (so the value is visible across connections without
    *  hitting disk) for cursor / presence broadcast. */
   deferred?: boolean
+  /** Publish this cell across the process boundary (remoteCell) —
+   *  see `CellInterface.publish`. Default: never served (403). */
+  publish?: boolean | ((capability: Record<string, unknown>) => boolean)
 }
 
 /**
@@ -955,7 +979,21 @@ export function localCell<S extends CellShapeSpec, T = ValueOfShape<S>>(
   if (typeof keyOrOpts === "string") {
     return resolveInlineLocalCell<S, T>(keyOrOpts, inlineOpts as InlineLocalCellOpts<S, T>)
   }
-  const opts = keyOrOpts
+  return registerCell(_buildLocalCellHandle(keyOrOpts))
+}
+
+/**
+ * Build a module-form local-cell handle WITHOUT registering it in the
+ * process cell registry. Framework-internal: `remoteCell`
+ * (`runtime/remote-cell.ts`) builds its host-side read handle here —
+ * the handle's id must equal the REMOTE cell's id (selector identity
+ * across the boundary), and registering it would claim that id in
+ * THIS process's registry (write actions, endpoint lookups) for a
+ * cell this process doesn't own.
+ */
+export function _buildLocalCellHandle<S extends CellShapeSpec, T = ValueOfShape<S>>(
+  opts: LocalCellOpts<S, T>,
+): LocalCell<T> {
   const shape = shapeFromSpec(opts.shape)
   const validate = makeValidator<T>(opts.id, shape)
   const partitionFn = normalizePartition(opts.partition)
@@ -981,8 +1019,9 @@ export function localCell<S extends CellShapeSpec, T = ValueOfShape<S>>(
     write: opts.write,
     writeGuard: opts.writeGuard,
     deferred: opts.deferred,
+    publish: opts.publish,
   }
-  return registerCell(handle)
+  return handle
 }
 
 async function resolveInlineLocalCell<S extends CellShapeSpec, T = ValueOfShape<S>>(

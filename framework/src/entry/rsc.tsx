@@ -54,7 +54,7 @@ import {
   wrapStreamWithCommitOnly,
   wrapStreamWithFpTrailer,
 } from "../lib/fp-trailer.ts"
-import { embedDepthOf, embedNamespaceOf } from "../lib/page-embed.ts"
+import { EMBED_CELLS_HEADER, embedDepthOf, embedNamespaceOf } from "../lib/page-embed.ts"
 import { computeRouteKey, partialFromSnapshot } from "../lib/partial.tsx"
 import {
   _readSnapshotsForRoute,
@@ -72,7 +72,13 @@ import {
   drainAttachRefusal,
   installDrainOnSigterm,
 } from "../runtime/drain.ts"
-import { CAPABILITY_HEADER, decodeCapability, runWithCapability } from "../runtime/capability.ts"
+import {
+  CAPABILITY_HEADER,
+  decodeCapability,
+  runWithBoundCellProjection,
+  runWithCapability,
+  type Capability,
+} from "../runtime/capability.ts"
 import {
   _actionSuppressesCommit,
   _captureCommitHandle,
@@ -351,6 +357,27 @@ export function createRscHandler(config: RscHandlerConfig): {
   ): Promise<Response> {
     const request = renderRequest.request
     const capability = decodeCapability(request.headers.get(CAPABILITY_HEADER))
+    // The bound-cell projection — host-resolved values of the cells
+    // the placement bound (`<RemoteFrame cells>`). Rides the embed
+    // POST's BODY (values may be large; headers have hard ceilings),
+    // flagged by the cells header. Malformed → no projection: the
+    // spec-level requirement check then fails any REQUIRED binding
+    // explicitly instead of rendering against silent nulls.
+    let boundCells: Record<string, unknown> | null = null
+    if (request.headers.get(EMBED_CELLS_HEADER) === "1") {
+      try {
+        const body = (await request.json()) as { cells?: Record<string, unknown> }
+        if (body && typeof body === "object" && body.cells && typeof body.cells === "object") {
+          boundCells = body.cells
+        }
+      } catch {
+        boundCells = null
+      }
+    }
+    const inEmbedScope = <T,>(fn: () => T): T =>
+      runWithCapability(capability as Capability, () =>
+        boundCells === null ? fn() : runWithBoundCellProjection(boundCells, fn),
+      )
     const commit = _captureCommitHandle()
     const partialsParam =
       embedDepthOf(request.headers) > 0 ? renderRequest.url.searchParams.get("partials") : null
@@ -391,7 +418,7 @@ export function createRscHandler(config: RscHandlerConfig): {
             seenIds: new Set(),
           },
           () =>
-            runWithCapability(capability, () =>
+            inEmbedScope(() =>
               renderToReadableStream<RscPayload>({ root }, { onError: onRscRenderError }),
             ),
         )
@@ -419,7 +446,7 @@ export function createRscHandler(config: RscHandlerConfig): {
         }
         return own
       }
-      stream = runWithCapability(capability, () =>
+      stream = inEmbedScope(() =>
         renderToReadableStream<RscPayload>({ root: <Root /> }, { onError: onRscRenderError }),
       )
     }

@@ -39,15 +39,17 @@ interface RemoteFrameProps {
   capability?: Capability
   namespace?: string
   grant?: EmbedGrant | readonly EmbedGrant[]
+  cells?: Record<string, ResolvedCell<unknown>>
 }
 ```
 
-| Prop         | Notes                                                                                                                                                                                                                                                                                                                                                    |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`        | The page URL to embed. Absolute URL (cross-origin) or same-origin path; relative paths resolve against the current request's URL.                                                                                                                                                                                                                        |
-| `capability` | Host-declared values the embedded render can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header and decoded into scope on the embed-flagged page render.                                                                                                                                |
-| `namespace`  | Human prefix for the embed's refetch **labels** in the host registry (`magento` turns the embedded page's `stocks` label into `magento:stocks`), so host-side selectors are self-describing across remotes. Identity does not depend on it — see below. Set automatically by `parton add` bindings.                                                      |
-| `grant`      | Trust grant for the embedded payload — a grant **set** (a bare name is the singleton set). Omitted = full trust: the payload splices as-is. Present = enforced at splice time by the tier rewriter; v1 ships `"paint"`. See [Grants](#grants--the-paint-tier). Replayed on targeted refetch, so a placement can never re-fetch wider than it was placed. |
+| Prop         | Notes                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`        | The page URL to embed. Absolute URL (cross-origin) or same-origin path; relative paths resolve against the current request's URL.                                                                                                                                                                                                                                                      |
+| `capability` | Host-declared values the embedded render can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header and decoded into scope on the embed-flagged page render.                                                                                                                                                              |
+| `namespace`  | Human prefix for the embed's refetch **labels** in the host registry (`magento` turns the embedded page's `stocks` label into `magento:stocks`), so host-side selectors are self-describing across remotes. Identity does not depend on it — see below. Set automatically by `parton add` bindings.                                                                                    |
+| `grant`      | Trust grant for the embedded payload — a grant **set** (a bare name is the singleton set). Omitted = full trust: the payload splices as-is. Present = enforced at splice time by the tier rewriter; shipped grants are `"paint"` and `"interactive"`. See [Grants](#grants--the-paint-tier). Replayed on targeted refetch, so a placement can never re-fetch wider than it was placed. |
+| `cells`      | Bound cells — the **inward** state contract. RESOLVED cells only, keyed by the names the remote's spec declares; the projected **values** cross with the embed request. See [Bound cells](#bound-cells--inward-state).                                                                                                                                                                 |
 
 ## How an embed renders
 
@@ -190,16 +192,85 @@ Wire shape: `x-parton-capability: <base64url JSON>`
 Empty/missing/malformed decodes to `{}`. Signed capability tokens are
 filed in IDEAS.md; v1 is trust-the-network.
 
+## Bound cells — inward state
+
+State crosses the boundary **inward as bound cells, never ambient**:
+the remote's spec declares requirements, the host binds explicitly at
+the call site, and the projected **values** cross with the embed
+request. Nothing crosses without appearing in the host's source; the
+remote never sees a session token, a cell handle, or the host's
+storage — it sees values.
+
+The remote declares its requirements on the spec (`cells` — the
+manifest advertises them):
+
+```tsx
+// Remote (e2e-magento) — /remote/cart-note
+const MagentoCartNote = parton(
+  async function Render(_: RenderArgs) {
+    const { cart, locale } = getBoundCells() // exactly the declared names
+    // …
+  },
+  {
+    selector: "cart-note",
+    match: "/remote/cart-note",
+    cells: { cart: { required: true }, locale: {} },
+  },
+)
+```
+
+The host resolves its cell **in the parton body** and binds the
+resolved view:
+
+```tsx
+// Host
+const cart = await hostCart.resolve() // the read IS the dependency
+;<MagentoCartNote cells={{ cart }} />
+```
+
+The contract:
+
+- **Resolved cells only.** `cells` takes `ResolvedCell`s — the
+  in-body `await cell.resolve(args)` that produced one is what records
+  the partition-scoped `cell:` dep on the ENCLOSING parton. A
+  host-side write therefore moves that parton's fp, re-runs its body,
+  and the re-embed projects fresh values — re-projection is the
+  ordinary dep machinery, no new subscription. Passing an unresolved
+  handle or `.with()` binding throws with the fix (resolving inside
+  the frame could not record the dep, which would be silent
+  staleness).
+- **Values ride the request body.** Bindings make the embed fetch a
+  POST (`x-parton-embed-cells: 1`, JSON body `{cells: {name: value}}`)
+  — projected values may be arbitrarily large, and header lines have
+  hard ceilings. Without bindings the fetch stays the ordinary GET.
+- **The declaration is the runtime enforcement.** On an embed render,
+  a missing `required` binding **throws before the body runs** — the
+  explicit produce-side failure surfaces at the host placement's
+  boundary as the parton's error card (the page around it keeps
+  working). An UNDECLARED binding never crosses `getBoundCells()`.
+  Standalone visits of the page enforce nothing and read `{}` — an
+  embeddable page stays browsable by itself.
+- **Refetch re-resolves, never replays.** The placement's snapshot
+  source stamps each binding's cell id + partition; a targeted refetch
+  re-resolves them against CURRENT storage, so a focused re-embed
+  always projects the live host value.
+- **Typegen is deferred DX.** gql.tada-style typed bindings generated
+  from the manifest's `cells` inventory are the planned DX layer; the
+  runtime declaration above is the load-bearing contract.
+
+Worked example: `/bound-cells-demo` (host) embedding e2e-magento's
+`/remote/cart-note`, spec `e2e/bound-cells.spec.ts`.
+
 ## Grants — the Paint tier
 
 Trust is a payload constraint verified at splice time, not a property
 of a route: any page can be embedded at any tier, and the grant
 decides which rows survive. The capability carries a grant **set**
-(`EmbedGrant`); v1 ships the **Paint** preset — pull-only server
-output into framework-vetted components. Below the Client tier there
-is **zero remote module loading**: the payload may reference only the
-[vocabulary](#the-vocabulary), whose tags resolve entirely from the
-host's own bundle.
+(`EmbedGrant`); shipped presets are **Paint** — pull-only server
+output into framework-vetted components — and **Interactive** (below).
+Below the Client tier there is **zero remote module loading**: the
+payload may reference only the [vocabulary](#the-vocabulary), whose
+tags resolve entirely from the host's own bundle.
 
 ```tsx
 <RemoteFrame url="http://localhost:5181/remote/paint-summary" grant="paint" />
@@ -253,6 +324,71 @@ wears a violet the standalone page doesn't), contraband dropped
 (dev-marker / prod-silent, structured log line in both), district tint,
 world hygiene.
 
+### The Interactive grant
+
+`grant="interactive"` is Paint's constraints **plus** the vocabulary's
+interactive members — components that bind to **cells and actions the
+remote hosts**. The wire stays set-shaped: an interactive tag carries
+audited attributes NAMING a cell or action (never a module ref, never
+a Flight action id — the tier rewriter strips those below the Client
+tier), and the **host-bundle interaction bridge** — a client component
+`RemoteFrame` mounts inside the embed box — wires the behavior by DOM
+delegation. The remote decides WHAT is writable/invocable; the host's
+own bundle owns the code that does the writing.
+
+```tsx
+// Remote — the page binds ITS cells/actions:
+const qty = await qtyCell.resolve()
+<TextField cell={qty} label="Quantity" />
+<Button action="place-bid">…</Button>
+
+// Remote — the invocable surface is an explicit registry:
+embedAction("place-bid", async () => {
+  await bidCell.update((v) => v + 50)
+})
+
+// Host — the install carries the grant:
+<RemoteFrame url="…/remote/interactive-panel" grant="interactive" />
+```
+
+The pieces:
+
+- **Action refs are namespaced to the remote origin structurally**:
+  a tag carries only the bare name; the bridge posts it to the origin
+  the placement was spliced from (`POST /__remote/actions/invoke`), so
+  a payload can never route an invocation to a third origin. The
+  invocable surface is exactly the producer's `embedAction` registry —
+  unknown names 404; an action's optional `guard(capability, payload)`
+  refuses with 403 before the handler runs.
+- **Cell writes ride the ordinary pipeline.** A `TextField` edit POSTs
+  `{cell, partition, value}` to the remote's `/__remote/cells/write`:
+  shape validation, `write` canonicalisation, and the cell's
+  **`writeGuard`** all run — the guard composes with the capability
+  (`getCapability()` resolves the presented bag), so _who may write_
+  stays a property of the cell. Every bridge POST carries the
+  placement's capability header.
+- **Optimistic self-echo is mandatory** — writes cross a network hop
+  and the UI must not wait. A `TextField`'s `<input>` is UNCONTROLLED
+  (the DOM is the optimistic value, shown at keystroke); writes flush
+  through a per-cell single-inflight, replace-coalescing queue (the
+  `useCell().input()` discipline); a `Button` holds `data-pending`
+  for the hop. The SERVER echo is one coalesced
+  `reload({selector: "@self"})` after the queue drains: the enclosing
+  host parton re-renders and the fresh remote render replaces the
+  spliced content in place.
+- **Authoring rule:** an interactive embed must sit inside an
+  **addressable host parton** — `@self` is the bridge's refresh
+  target. The bridge stamps `data-interactive-ready` on its wrapper
+  once its listeners are live (the embed's DOM streams in before the
+  bridge hydrates) — the explicit signal specs and tools wait on.
+- Under a plain Paint grant the SAME interactive rows **degrade in
+  place** like any non-vocabulary row — a placement's grant, not the
+  payload, decides interactivity.
+
+Worked example: `/interactive-tier-demo` (host) embedding
+e2e-magento's `/remote/interactive-panel` under both grants, spec
+`e2e/interactive-tier.spec.ts`.
+
 ## The vocabulary
 
 The framework-shipped, framework-vetted component set a
@@ -288,6 +424,16 @@ inert `data-testid`):
 | `Image`   | `img`            | `src` (**absolute http(s) only** — relative would resolve against the host origin), `alt`, `width`, `height`, `loading`, `decoding` |
 | `Divider` | `parton-divider` | —                                                                                                                                   |
 
+Interactive members — admitted only when the placement's grant set
+holds `interactive` (the audit table marks them `grant:
+"interactive"`); under plain Paint they degrade like any
+non-vocabulary row:
+
+| Component   | Tag                          | Audited props                                                                                                                                                                                  |
+| ----------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TextField` | `parton-textfield` + `input` | wrapper: `cell-id`, `cell-partition` (explicit partition JSON), `label`; inner input: `name`, `type` (`text/number`), `defaultValue` (the uncontrolled optimistic value), `min`, `max`, `step` |
+| `Button`    | `parton-button`              | `action` (bare `embedAction` name — the bridge namespaces it to the placement's origin), `payload` (opaque JSON the producer's handler validates)                                              |
+
 The audit lives ONCE, centrally, in the `VOCABULARY` table
 (`framework/src/lib/vocabulary.tsx`): the components serialize their
 props through it (emit side) and the tier rewriter re-validates every
@@ -306,9 +452,74 @@ properties, which inherit straight through the containment boundary:
 </section>
 ```
 
-Interactive members (TextField, Form, Tabs, links) belong to the
-Interactive grant — a later increment; Paint carries no interactivity
-at all.
+Paint itself carries no interactivity at all — the interactive members
+above exist only for placements granted `interactive`. Further members
+(Form, Tabs, links) join the table as real embed surfaces need them.
+
+## remoteCell — outward state
+
+State crosses the boundary **outward as remoteCell**: a remote
+PUBLISHES a cell, and a host process holds a read-only handle whose
+freshness rides the same doorbell contract the in-process bridge seam
+uses (`setInvalidationBridge` — the seam's second caller). The store
+is the truth; the remote's process is that store's edge.
+
+```ts
+// Remote — publication is opt-in per cell:
+export const magentoBid = localCell({
+  id: "magento.bid",
+  shape: "number",
+  initial: 100,
+  publish: true, // or (capability) => boolean — per-caller authorization
+})
+
+// Host — a read-only handle on the remote's cell:
+const bid = remoteCell<number>({
+  origin: "http://localhost:5181",
+  id: "magento.bid", // the remote's wire id — selector identity crosses verbatim
+  initial: 0,
+  capability: { tier: "gold" }, // presented on attach + every read
+})
+
+// Host parton — an ordinary read; the dep records like a local cell's:
+const current = await bid.resolve()
+```
+
+The contract:
+
+- **The attach is a server-to-server wake subscription.** On the
+  handle's first resolve the host POSTs
+  `/__remote/cells/attach` (`{cells: [ids]}` + the capability header)
+  and holds the NDJSON response: one `{selectors: […]}` line per
+  committed bump batch on the remote — `cell:<id>?<partition>`
+  strings, **doorbells, never values**. Auth is per cell against its
+  `publish` declaration; any unpublished (or unknown — existence is
+  not disclosed) id refuses the whole attach with 403.
+- **A doorbell drops, re-emits, and lets the read pull.** The host
+  transport drops its cached row(s) for the named partitions, then
+  re-emits the batch through `deliverInvalidationBumps` — the bridge
+  seam's ordinary inbound path (fresh local ts, wake-index delivery),
+  so every host parton whose recorded deps name the cell re-renders,
+  held connections laning it live. The re-render's `resolve()` misses
+  the dropped row and the handle's loader GETs
+  `/__remote/cells/value?cell=<id>&args=<json>` — the value-read
+  path. Values are fetched only when something actually re-reads
+  them; a doorbell nobody renders costs one dropped row.
+- **Failure degrades, never corrupts.** A torn attach stream
+  reconnects with backoff (batches missed while down degrade to the
+  next doorbell). A 403 is permanent for the handle (its capability is
+  fixed at construction): logged once, reads fail explicitly.
+- **Read-only.** Writes belong to the owning process — reach them
+  through an interactive embed's actions/cell writes, or an app-level
+  API. The handle is deliberately NOT in the host's cell registry
+  (the id names the REMOTE's cell).
+- The manifest advertises publications (`publishes: [ids]`); the
+  attach/value endpoints exist only when the producer configures
+  `remote: { name }` on `createRscHandler`.
+
+Worked example: `/remote-cell-demo` (host) reading e2e-magento's
+`magento.bid` live across the two dev processes, spec
+`e2e/remote-cell.spec.ts`.
 
 ## Typed bindings
 
@@ -355,7 +566,11 @@ The manifest lists every addressable spec; a spec whose `match`
 carries a **static pathname** (a literal URLPattern — no params, no
 wildcards) advertises it as `path`, and the CLI generates bindings
 only for those. A nested addressable parton with no page of its own
-(reached via its parent page's trailer) advertises `path: null`.
+(reached via its parent page's trailer) advertises `path: null`. Each
+spec also advertises its bound-cell requirements (`cells` — the
+declaration the host binds against), and the manifest's top-level
+`publishes` lists the ids of every cell the app publishes across the
+boundary (the remoteCell inventory).
 
 ## Frame navigation (navigating within an embed)
 
@@ -428,6 +643,18 @@ measured, not yet warranted.
   `--parton-*` custom properties) and a mixed page whose raw `<div>`
   and client component degrade in place (`paint-tier.spec.ts` also
   asserts zero non-image browser traffic to the remote origin).
+- **`/interactive-tier-demo`** — e2e-magento's interactive panel under
+  `grant="interactive"` (quantity TextField → the remote's cell; bid
+  Button → the remote's `place-bid` embedAction) and the SAME page
+  under `grant="paint"`, its interactive rows degraded.
+- **`/bound-cells-demo`** — a host cart cell bound into
+  `/remote/cart-note` (`cells={{cart}}`); a host-side write
+  re-projects the embed; a sibling placement with no binding shows the
+  produce-side required-cell failure at its own boundary.
+- **`/remote-cell-demo`** — a read-only `remoteCell` on e2e-magento's
+  published `magento.bid`: a write committed in the remote process
+  lands on the host page live (doorbell → value re-read → held-stream
+  lane).
 - **The embassy district** (website world, west of the origin) — the
   in-world Paint-tier exhibit: a self-embed of `/embassy/bulletin`
   under `grant="paint"`, world-themed, with a contraband row degraded

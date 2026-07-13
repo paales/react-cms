@@ -85,6 +85,12 @@ export interface CurrentParton {
    *  stores it on the snapshot — so post-registration writes are visible
    *  to consumers. The wrapper owns the instance. */
   readonly wakeHints: WakeHints
+  /** The embed request's bound-cell values, FILTERED to this spec's
+   *  declared `cells` requirements (an undeclared binding never
+   *  crosses the spec boundary). Stamped by the wrapper on embed
+   *  renders of a cell-declaring spec; read by `getBoundCells()`.
+   *  `undefined` for specs without a `cells` declaration. */
+  readonly boundCells?: Readonly<Record<string, unknown>>
 }
 
 /**

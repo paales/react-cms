@@ -51,3 +51,33 @@ export const MagentoPaintMixed = remote({
   namespace: NAMESPACE,
   grant: "paint",
 })
+
+// Interactive-tier surface (increment 5). The same page bound twice:
+// the interactive install, and a paint-granted install proving the
+// interactive rows degrade under the narrower grant.
+export const MagentoInteractivePanel = remote({
+  origin: ORIGIN,
+  path: "/remote/interactive-panel",
+  namespace: NAMESPACE,
+  grant: "interactive",
+})
+
+export const MagentoInteractivePanelPaint = remote({
+  origin: ORIGIN,
+  path: "/remote/interactive-panel",
+  namespace: NAMESPACE,
+  grant: "paint",
+})
+
+// Bound-cells surface — declares `cells: { cart: required, locale }`;
+// the host binds RESOLVED cells at the call site. Ungoverned (full
+// trust): bound cells are orthogonal to grants.
+export const MagentoCartNote = remote({
+  origin: ORIGIN,
+  path: "/remote/cart-note",
+  namespace: NAMESPACE,
+})
+
+/** The remote origin, for host modules that address it directly
+ *  (the remote-cell demo's `remoteCell({origin})`). */
+export const MAGENTO_ORIGIN = ORIGIN

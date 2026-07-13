@@ -79,6 +79,38 @@ export function getEmbedGrants(): ReadonlySet<string> | null {
   return embedGrantsOf(request.headers)
 }
 
+// ─── Bound-cell projection (inward state) ───────────────────────────
+
+/**
+ * The bound-cell PROJECTION an embed request carried — the host-
+ * resolved VALUES of the cells the call site bound
+ * (`<RemoteFrame cells={{cart: cartCell}}>`). Rides the embed POST's
+ * body (values may be large — see `EMBED_CELLS_HEADER` in
+ * `lib/page-embed.ts`), decoded by the entry into this ALS scope for
+ * the whole embed render.
+ *
+ * This is the RAW page-scoped projection. Author code never reads it
+ * directly: a parton declares its requirements via the spec's `cells`
+ * option and reads the DECLARED subset through `getBoundCells()`
+ * (`lib/server-hooks.ts`) — an undeclared binding does not cross the
+ * spec boundary, and a missing required one fails the render
+ * explicitly. Framework-internal.
+ */
+const boundCellsAls = new AsyncLocalStorage<Record<string, unknown>>()
+
+/** Run `fn` with an embed request's decoded bound-cell projection in
+ *  scope. Entry-internal (the embed render branch). */
+export function runWithBoundCellProjection<T>(projection: Record<string, unknown>, fn: () => T): T {
+  return boundCellsAls.run(projection, fn)
+}
+
+/** The active embed render's raw projection, or `null` when the
+ *  request carried none. Framework-internal — the spec pipeline
+ *  filters it per declaration. */
+export function _getBoundCellProjection(): Record<string, unknown> | null {
+  return boundCellsAls.getStore() ?? null
+}
+
 /** Encode for the wire. Base64url over a UTF-8 JSON encoding. */
 export function encodeCapability(cap: Capability): string {
   const json = JSON.stringify(cap)

@@ -4,13 +4,17 @@ How `<RemoteFrame>` turns an ordinary page response into a spliceable
 subtree. The author-facing contract is
 [`../reference/remote-frame.md`](../reference/remote-frame.md); this
 page is the mechanism. Code: `framework/src/lib/page-embed.ts` (wire
-protocol + rewriter + identity helpers + the grant grammar),
-`lib/remote-frame.tsx` (the consumer), the embed branches in
-`lib/partial.tsx` (`PartialRoot`, the id mint, the bare emission,
-`partialFromSnapshot`) and `entry/rsc.tsx` (`handleEmbedRender`),
-`lib/snapshot-trailer.ts` (the registration payload),
-`lib/tier-rewrite.ts` (grant enforcement + violation policy),
-`lib/vocabulary.tsx` (the vetted tag set + audit table).
+protocol + rewriter + identity helpers + the grant grammar + the
+`/__remote` endpoint paths), `lib/remote-frame.tsx` (the consumer +
+bound-cell projection), the embed branches in `lib/partial.tsx`
+(`PartialRoot`, the id mint, the bare emission, the `cells`
+requirement gate, `partialFromSnapshot`) and `entry/rsc.tsx`
+(`handleEmbedRender`), `lib/snapshot-trailer.ts` (the registration
+payload), `lib/tier-rewrite.ts` (grant enforcement + violation
+policy), `lib/vocabulary.tsx` (the vetted tag set + audit table),
+`lib/embed-interactive.tsx` (the Interactive grant's host-bundle
+bridge), `runtime/embed-actions.ts` (the invocable-action registry),
+`runtime/remote-cell.ts` (the host half of remoteCell).
 
 ## The request — explicit headers, an ordinary URL
 
@@ -27,8 +31,12 @@ Plus `x-parton-capability` when the call site declares one,
 `x-parton-embed-grant` when it declares a `grant` (the comma-joined,
 sorted grant set — a STATEMENT the producer uses to render its
 embed-surface variant; enforcement is the host's tier rewriter,
-below), and the test harness's `x-test-scope` forward.
-`credentials: "omit"` always.
+below), `x-parton-embed-cells: 1` when it binds cells — the request
+is then a **POST** whose JSON body carries the projected values
+(`{cells: {name: value}}`; values may exceed any header ceiling, so
+they ride the body; `parseRenderRequest` keys on the render header
+either way, never the method) — and the test harness's `x-test-scope`
+forward. `credentials: "omit"` always.
 All `x-parton-*` headers are stripped from the vary-facing header
 surface, so app code (and `headers` match gates) never see them.
 
@@ -62,8 +70,19 @@ Flight GET. Two shapes, one response contract:
   never fail).
 
 Both shapes decode the capability header into `getCapability()`
-scope (`runWithCapability` around the stream build), and both wrap
-the stream as:
+scope (`runWithCapability` around the stream build) — and, on a
+cells-flagged POST, the body's projection into the bound-cell scope
+(`runWithBoundCellProjection`, `runtime/capability.ts`). The
+projection is PAGE-scoped and raw; the SPEC boundary is where it
+narrows: a cell-declaring parton (`cells` option) filters it to its
+declared names before stamping `boundCells` onto the current-parton
+context (`getBoundCells()` reads it), and on an embed render a
+missing `required` name throws before the body runs — the parton's
+own error containment ships the failure as its error card, which is
+what the host splices. Standalone renders skip both the filter's
+enforcement and the projection (`{}`). A malformed projection body
+decodes to none — required checks then fail explicitly rather than
+rendering against silent nulls. Both shapes wrap the stream as:
 
 ```
 renderToReadableStream({ root })
@@ -108,7 +127,10 @@ page holding a live connection would otherwise park it open.
 
 Trailer handling registers each snapshot into the HOST's request
 registry — labels prefixed with the human `namespace` when given, and
-`source: {kind: "page", url, ns, namespace?, capability?}` stamped —
+`source: {kind: "page", url, ns, namespace?, capability?, cells?}`
+stamped (`cells` holds per-binding STAMPS — cell id + resolved
+partition, never the projected values; in-memory only, since
+`serializeSnapshot` drops `source` wholesale) —
 under `deferCommitUntil`, so the host's stream wrappers hold commit
 until registration lands (route-hint writes visible before the
 response goes out; selector refetch never hits a registry miss).
@@ -157,17 +179,17 @@ head/meta/hint strip is tier zero); `moduleRefRewriter` is never in a
 granted pipeline — below the Client tier zero remote modules load,
 same- or cross-origin. Stateful per stream (mint one per response):
 
-| Row / element                                        | Action                                                                                                                                                                                                                                                                           |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `I` import rows                                      | Dropped; id → module path recorded in the module ledger. `virtual:vite-rsc/*` specifiers (the css-dedup helper beside the page root — bundler head plumbing whose managed `link`s died at tier zero) go to a SILENT ledger instead.                                              |
-| `D` / `W` rows                                       | Dropped — the remote's debug channel (dev-only; raw pre-audit props, source paths, `$E` sources). Makes dev splice like prod.                                                                                                                                                    |
-| symbol rows (`"$S…"`)                                | Ledgered + passed; admission is decided at the element that uses one.                                                                                                                                                                                                            |
-| vocabulary tags (the `VOCABULARY` table)             | Props re-audited: audited attrs re-validated through `sanitizeVocabAttr` (a bad value drops the ATTR), `children` walked, everything else stripped. Re-emitted as a bare 4-tuple — stripping the dev builds' trailing debug-ref entries is what orphans the debug metadata rows. |
-| `react.suspense` / `react.fragment` element types    | Pass (structural — streaming pacing and grouping, no code).                                                                                                                                                                                                                      |
-| any other element type / disallowed symbol           | **Violation** — degrade in place.                                                                                                                                                                                                                                                |
-| element referencing a dropped module (type or value) | **Violation** (`offense: "module"`); a silent-ledger (plumbing) reference degrades quietly.                                                                                                                                                                                      |
-| vocabulary element with outlined (`"$n"`) props      | **Violation** (`offense: "opaque-props"`) — unauditable row-locally; same safe direction as tier zero's outlined-singleton rule.                                                                                                                                                 |
-| unresolvable element-type reference                  | Degrades WITHOUT a log — reachable only from debug metadata (owner/source refs in type position); real content types are tags, symbols, or module refs, and both ledgers flush before use (format-canary-pinned).                                                                |
+| Row / element                                        | Action                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `I` import rows                                      | Dropped; id → module path recorded in the module ledger. `virtual:vite-rsc/*` specifiers (the css-dedup helper beside the page root — bundler head plumbing whose managed `link`s died at tier zero) go to a SILENT ledger instead.                                                                                                                                                                                                                                                                                                              |
+| `D` / `W` rows                                       | Dropped — the remote's debug channel (dev-only; raw pre-audit props, source paths, `$E` sources). Makes dev splice like prod.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| symbol rows (`"$S…"`)                                | Ledgered + passed; admission is decided at the element that uses one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| vocabulary tags (the `VOCABULARY` table)             | Admission is GRANT-GATED per tag: a member carrying a `grant` requirement (the interactive set — `parton-textfield`, `input`, `parton-button`) survives only a splice whose grant set holds it; under plain Paint it degrades like a non-member. Admitted tags' props re-audited: audited attrs re-validated through `sanitizeVocabAttr` (a bad value drops the ATTR), `children` walked, everything else stripped. Re-emitted as a bare 4-tuple — stripping the dev builds' trailing debug-ref entries is what orphans the debug metadata rows. |
+| `react.suspense` / `react.fragment` element types    | Pass (structural — streaming pacing and grouping, no code).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| any other element type / disallowed symbol           | **Violation** — degrade in place.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| element referencing a dropped module (type or value) | **Violation** (`offense: "module"`); a silent-ledger (plumbing) reference degrades quietly.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| vocabulary element with outlined (`"$n"`) props      | **Violation** (`offense: "opaque-props"`) — unauditable row-locally; same safe direction as tier zero's outlined-singleton rule.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| unresolvable element-type reference                  | Degrades WITHOUT a log — reachable only from debug metadata (owner/source refs in type position); real content types are tags, symbols, or module refs, and both ledgers flush before use (format-canary-pinned).                                                                                                                                                                                                                                                                                                                                |
 
 **Violation policy — degrade + loud, one function.**
 `tierViolationPolicy` is the single flip point: the offending element
@@ -262,12 +284,86 @@ registration.
 `_pageEmbedRefetch(id, source)` — a focused re-embed of
 `source.url + ?partials=<id>` with the STORED `ns` (never re-derived:
 the refetch runs outside the placement's tree position) and stored
-capability, at `embedDepthOf(current) + 1`. Host lanes, broadcast
-probes, and the entry's own focused path all route through
+capability, at `embedDepthOf(current) + 1`. Bound-cell stamps are
+RE-RESOLVED against current storage (`projectionFromStamps` — a stamp
+without explicit args re-derives the partition from the cell's own
+callback against the refetch's request scope), so a focused re-embed
+always projects the LIVE host value — replaying the placement-time
+projection would freeze the embed at stale host state. Host lanes,
+broadcast probes, and the entry's own focused path all route through
 `partialFromSnapshot`, so every refetch consumer gets embed routing
 for free. Same-origin, this means producer-side invalidations
 (shared process registry) lane focused re-embeds onto held host
 connections with zero extra machinery.
+
+## The interaction bridge (Interactive grant)
+
+`RemoteFrame` mounts `EmbedInteractiveBridge`
+(`lib/embed-interactive.tsx`, `"use client"` — a HOST-bundle client
+reference: the frame's JSX is encoded by the host encoder, so no
+remote module is involved) inside the embed box when the grant set
+holds `interactive`, wrapping the spliced payload in a
+`display: contents` `parton-embed-interactive` element. Mechanics:
+
+- **DOM delegation, names off audited attributes.** One `input` and
+  one `click` listener on the wrapper. An input inside
+  `parton-textfield[cell-id]` queues a write of the field's DOM value
+  at the tag's explicit `cell-partition` (JSON — the browser has no
+  session of the remote to derive one from); a `parton-button[action]`
+  click invokes the bare action name. Both POST to the placement's
+  ORIGIN (a prop RemoteFrame stamped server-side) with the placement's
+  encoded capability header — the origin namespace is structural, not
+  parsed off the payload.
+- **Write queue = the `useCell().input()` discipline**: per
+  (cell, partition), single-inflight + replace-coalesce — rapid typing
+  costs one round-trip at a time and only the latest value sends. The
+  input itself is UNCONTROLLED (`defaultValue` on the wire), so the
+  DOM is the optimistic value and a server refresh at the same tree
+  position never clobbers the user's in-progress text.
+- **The server echo is `reload({selector: "@self"})`** — coalesced to
+  one fire per settled burst, only when every queue drained (a reload
+  under a still-pending newer value would echo older server state).
+  `@self` resolves through `PartialIdContext` to the enclosing host
+  parton, whose re-render re-embeds the page — hence the authoring
+  rule that interactive embeds sit inside an addressable parton.
+- **`data-interactive-ready`** on the wrapper is the wired signal
+  (set in the same effect that attaches the listeners, removed on
+  cleanup): the embed's DOM streams in and paints before this client
+  component hydrates, so observers wait on the marker, never timing.
+
+## The `/__remote` interaction + cell endpoints
+
+`createRemoteHandler` (mounted only when the app configures
+`remote: { name }`) serves the producer half; all four run inside
+`runWithRequestAsync` + `runWithCapability` so cell partitions,
+`writeGuard`s, and action guards see the caller's scope and presented
+capability:
+
+| Endpoint                        | Contract                                                                                                                                                                                                                                                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /__remote/cells/write`    | `{cell, partition, value}` → `writeOneCell` in an invalidation transaction — the ordinary choke point (shape validation → 400, `writeGuard` deny → 403, unknown id → 404). Open-by-default like every cell write; `writeGuard` + capability is the per-cell lock.                                           |
+| `POST /__remote/actions/invoke` | `{action, payload}` → the `embedAction` registry (`runtime/embed-actions.ts`). Unknown name → 404; `guard(capability, payload)` false → 403 before the handler; the handler runs in an invalidation transaction (one bump batch, throw discards). The payload is untrusted input the handler owns.          |
+| `POST /__remote/cells/attach`   | `{cells: [ids]}` → per-id `publish` check against the presented capability (any refusal 403s the whole attach; unknown ids refuse identically — existence undisclosed). Response: held NDJSON — an acceptance line, then one `{selectors}` line per committed bump batch, filtered to the subscribed names. |
+| `GET /__remote/cells/value`     | `?cell=<id>&args=<json>` → same publish check → `resolveCellValue` at the EXPLICIT partition (loader runs on a cold slot) → `{value}`.                                                                                                                                                                      |
+
+The attach's feed is `_addCommittedBumpObserver`
+(`invalidation-registry.ts`) — an observer SET beside the single-slot
+bridge tap, same delivery contract (one batch per synchronous commit
+section, strictly post-commit, inbound applies suppressed), so an open
+subscription and an installed `setInvalidationBridge` coexist.
+
+Host side, `remoteCell` (`runtime/remote-cell.ts`) holds the attach
+loop (first resolve starts it; 1s-backoff reconnect; 403 is permanent
+for the handle — same capability, same answer): per doorbell it drops
+the matching row(s) of its PRIVATE cache adapter (per-handle, scope ×
+partition — never the app's persistent storage; the drop spans every
+scope because bumps are scope-agnostic) and re-emits the batch via
+`deliverInvalidationBumps` under origin `remote-cell:<origin>`. The
+handle itself is an UNREGISTERED local-cell handle
+(`_buildLocalCellHandle` — registering would claim the remote's id in
+this process's write registry) whose loader GETs the value endpoint,
+forwarding the ambient request's `x-test-scope` the way the embed
+fetch does.
 
 ## Isolation
 

@@ -244,6 +244,13 @@ let applyingInbound = false
 /** Locally committed selectors awaiting the tap — drained by
  *  `flushBridgeTap` at the end of each synchronous commit section. */
 let outboundBatch: ParsedSelector[] = []
+/** Additional committed-batch observers beside the (single-slot)
+ *  bridge tap — one per open server-to-server cell subscription (the
+ *  remoteCell attach endpoint, `runtime/remote-endpoints.tsx`). Same
+ *  delivery contract as the tap: one batch per synchronous commit
+ *  section, strictly after the commits, local bumps only (inbound
+ *  applies are suppressed at collection like the tap's). */
+const committedBumpObservers = new Set<(batch: readonly ParsedSelector[]) => void>()
 
 /** Register the outbound bump tap. Framework-internal — installed by
  *  `setInvalidationBridge` in `invalidation-bridge.ts`. */
@@ -251,18 +258,38 @@ export function _setInvalidationBridgeTap(
   tap: ((batch: readonly ParsedSelector[]) => void) | null,
 ): void {
   bridgeTap = tap
-  if (tap === null) outboundBatch = []
+  if (tap === null && committedBumpObservers.size === 0) outboundBatch = []
+}
+
+/** Add a committed-bump observer; returns its disposer. Unlike the
+ *  bridge tap this is a SET — every open cell subscription holds one. */
+export function _addCommittedBumpObserver(
+  observer: (batch: readonly ParsedSelector[]) => void,
+): () => void {
+  committedBumpObservers.add(observer)
+  return () => {
+    committedBumpObservers.delete(observer)
+    if (bridgeTap === null && committedBumpObservers.size === 0) outboundBatch = []
+  }
 }
 
 function flushBridgeTap(): void {
   if (outboundBatch.length === 0) return
   const batch = outboundBatch
   outboundBatch = []
-  if (bridgeTap === null) return
-  try {
-    bridgeTap(batch)
-  } catch {
-    // A broken bridge must never take the local commit down with it.
+  if (bridgeTap !== null) {
+    try {
+      bridgeTap(batch)
+    } catch {
+      // A broken bridge must never take the local commit down with it.
+    }
+  }
+  for (const observer of [...committedBumpObservers]) {
+    try {
+      observer(batch)
+    } catch {
+      // Same posture per observer.
+    }
   }
 }
 
@@ -427,7 +454,9 @@ function commitOne(parsed: ParsedSelector): void {
   if (tsBridge !== null && !applyingInbound && parsed.name.startsWith(CELL_NAME_PREFIX)) {
     tsBridge.stamp(parsed.name, key, ts)
   }
-  if (bridgeTap !== null && !applyingInbound) outboundBatch.push(parsed)
+  if ((bridgeTap !== null || committedBumpObservers.size > 0) && !applyingInbound) {
+    outboundBatch.push(parsed)
+  }
   deliverBump(parsed.name, key, parsed.constraints)
   maybeSweepEntries()
 }

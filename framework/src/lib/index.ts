@@ -51,6 +51,7 @@ export {
   staleUntil,
   time,
   registerDepKind,
+  getBoundCells,
 } from "./server-hooks.ts"
 export { tag, getCurrentParton, type CurrentParton } from "./current-parton.ts"
 

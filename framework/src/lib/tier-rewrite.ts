@@ -203,9 +203,16 @@ export function createTierRewriter(opts: {
     const key = typeof value[2] === "string" ? value[2] : null
     const props = value[3]
 
-    // Reserved-tag / audited-HTML vocabulary member.
+    // Reserved-tag / audited-HTML vocabulary member. Admission is
+    // grant-gated per tag: a member carrying a `grant` requirement
+    // (the interactive set) survives only a splice whose grant set
+    // holds it — under plain Paint it degrades exactly like any
+    // non-vocabulary row.
     if (!type.startsWith("$")) {
-      if (Object.prototype.hasOwnProperty.call(VOCABULARY, type)) {
+      const spec = Object.prototype.hasOwnProperty.call(VOCABULARY, type)
+        ? VOCABULARY[type]
+        : undefined
+      if (spec !== undefined && (spec.grant === undefined || opts.grants.has(spec.grant))) {
         return auditVocab(type, key, props)
       }
       return degrade("element", type, key)

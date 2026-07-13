@@ -155,6 +155,26 @@ export function session(): { readonly id: string } {
   return { id: getSessionId() ?? "" }
 }
 
+/**
+ * Read the bound-cell VALUES an embedding host projected into this
+ * spec's render — the inward half of state across the boundary
+ * (`docs/reference/remote-frame.md` § Bound cells). Returns exactly
+ * the names the spec DECLARED via its `cells` option (an undeclared
+ * binding never crosses; a missing `required` one already failed the
+ * render before the body ran), so the bag's shape is the declaration's.
+ * Standalone (non-embed) visits — and specs without a `cells`
+ * declaration — read `{}`: an embeddable page stays browsable by
+ * itself and branches on absence.
+ *
+ * Not a tracked read: the projection is part of the embed REQUEST
+ * (like `getCapability()`), and freshness is the HOST's placement —
+ * its `cells` binding records the cell dep, so a host-side write
+ * re-projects the embed with fresh values.
+ */
+export function getBoundCells(): Readonly<Record<string, unknown>> {
+  return getCurrentParton()?.boundCells ?? {}
+}
+
 /** Resolve a parton's visibility from the connection's current visible
  *  set — the read behind the spec-level `cull` option. One carrier:
  *  the live connection's session set (seeded from the attach

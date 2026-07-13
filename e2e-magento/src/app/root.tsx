@@ -7,6 +7,8 @@ import {
   MagentoStockTicker,
 } from "./remote-specs.tsx"
 import { MagentoPaintMixed, MagentoPaintSummary } from "./paint-specs.tsx"
+import { MagentoInteractivePanel } from "./interactive-specs.tsx"
+import { MagentoCartNote } from "./bound-specs.tsx"
 
 /** The showcase landing content — gated to `/` so the embeddable
  *  `/remote/*` pages carry only their own parton in the body. */
@@ -48,6 +50,7 @@ export function Root() {
             <>
               <MagentoPaintSummary />
               <MagentoPaintMixed />
+              <MagentoInteractivePanel />
             </>
           ) : (
             <main>
@@ -60,6 +63,8 @@ export function Root() {
               {/* Paint-tier surfaces stay browsable standalone. */}
               <MagentoPaintSummary />
               <MagentoPaintMixed />
+              <MagentoInteractivePanel />
+              <MagentoCartNote />
             </main>
           )}
         </body>

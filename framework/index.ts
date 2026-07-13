@@ -190,6 +190,23 @@ export {
   type RemoteManifestSpec,
 } from "./src/runtime/remote-endpoints.tsx"
 
+// ── Embed actions (producer side of the Interactive grant) ─────────────
+// Named server functions interactive embeds of this app may invoke —
+// the explicit invocable surface below the Client tier (no Flight
+// action id ever crosses a granted splice).
+export { embedAction, type EmbedActionOptions } from "./src/runtime/embed-actions.ts"
+
+// ── remoteCell (host side — outward state across the boundary) ─────────
+// A read-only handle on a cell another parton process PUBLISHES
+// (`publish` on the cell definition): server-to-server wake attach +
+// doorbell re-emission through `deliverInvalidationBumps` + on-demand
+// value reads. See `docs/reference/remote-frame.md` § remoteCell.
+export {
+  remoteCell,
+  type RemoteCellHandle,
+  type RemoteCellOpts,
+} from "./src/runtime/remote-cell.ts"
+
 // `__cellWrite` (a server action) is deliberately NOT re-exported
 // here. `"use client"` files calling it must deep-import from
 // `@parton/framework/runtime/cell-actions.ts` — see the

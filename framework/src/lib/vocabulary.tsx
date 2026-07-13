@@ -44,6 +44,7 @@
  */
 
 import { createElement, type ReactNode } from "react"
+import type { ResolvedCell } from "./cell.ts"
 
 // ─── The audit table ───────────────────────────────────────────────────
 
@@ -61,6 +62,11 @@ export interface VocabTagSpec {
   /** Whether the tag renders children. `false` → the rewriter drops
    *  the `children` prop outright (img, divider). */
   children: boolean
+  /** The grant a payload must carry for this tag to survive the
+   *  splice. Absent = admitted under EVERY vocabulary-constrained
+   *  grant (the Paint baseline). `"interactive"` members degrade
+   *  under a plain Paint grant exactly like a non-vocabulary row. */
+  grant?: "interactive"
 }
 
 const SPACE = { kind: "enum", values: ["none", "xs", "sm", "md", "lg"] } as const
@@ -125,9 +131,63 @@ export const VOCABULARY: Record<string, VocabTagSpec> = {
     attrs: { "data-testid": TEST_ID },
     children: false,
   },
-  // The one plain-HTML member: an image paints nothing as a custom
-  // element, so Image emits a real `img` — with the smallest audited
-  // surface that still renders one.
+  // ── Interactive members (the Interactive grant) ─────────────────
+  // Same ref encoding as the paint set — reserved tags, audited
+  // attrs, zero remote code — but they name CELLS and ACTIONS the
+  // REMOTE hosts, and the HOST-bundle interaction bridge
+  // (`lib/embed-interactive.tsx`, mounted by RemoteFrame under an
+  // Interactive grant) wires the behavior by DOM delegation. The
+  // remote controls what is writable/invocable; the host controls the
+  // code that does the writing; the wire carries names and values.
+  "parton-textfield": {
+    attrs: {
+      // The remote cell this field writes: wire id + the RESOLVED
+      // partition args as JSON (explicit — the browser's write POST
+      // carries no remote session to derive a partition from).
+      "cell-id": { kind: "text", maxLength: 256 },
+      "cell-partition": { kind: "text", maxLength: 2048 },
+      label: { kind: "text", maxLength: 256 },
+      "data-testid": TEST_ID,
+    },
+    children: true,
+    grant: "interactive",
+  },
+  // The field's actual control — a real `<input>`, audited like `img`
+  // (the other plain-HTML member). `defaultValue` (React's uncontrolled
+  // form) keeps the element user-owned between server refreshes: the
+  // optimistic local value is the DOM's, never clobbered by a re-render
+  // of the same position.
+  input: {
+    attrs: {
+      name: { kind: "text", maxLength: 128 },
+      type: { kind: "enum", values: ["text", "number"] },
+      defaultValue: { kind: "text", maxLength: 1024 },
+      min: { kind: "int", min: -1_000_000_000, max: 1_000_000_000 },
+      max: { kind: "int", min: -1_000_000_000, max: 1_000_000_000 },
+      step: { kind: "int", min: 1, max: 1_000_000_000 },
+      "data-testid": TEST_ID,
+    },
+    children: false,
+    grant: "interactive",
+  },
+  "parton-button": {
+    attrs: {
+      // Remote-hosted action NAME (`embedAction` on the producer).
+      // The bridge namespaces it to the placement's remote ORIGIN at
+      // invoke time — a payload can only ever reach actions of the
+      // origin it was spliced from.
+      action: { kind: "text", maxLength: 128 },
+      // Static invoke payload, JSON-encoded. Audited as opaque text;
+      // the PRODUCER validates it inside its action handler.
+      payload: { kind: "text", maxLength: 2048 },
+      "data-testid": TEST_ID,
+    },
+    children: true,
+    grant: "interactive",
+  },
+  // A plain-HTML member: an image paints nothing as a custom element,
+  // so Image emits a real `img` — with the smallest audited surface
+  // that still renders one.
   img: {
     attrs: {
       src: { kind: "src" },
@@ -321,6 +381,82 @@ export function Divider(props: CommonProps = {}): ReactNode {
   return vocab("parton-divider", { "data-testid": props["data-testid"] })
 }
 
+// ─── Interactive members (the Interactive grant) ──────────────────────
+
+/**
+ * Text/number field bound to a cell THIS app hosts (`parton-textfield`
+ * wrapping an audited `input`) — Interactive grant only; degrades
+ * under Paint. Pass the RESOLVED cell:
+ *
+ *     const qty = await qtyCell.resolve()
+ *     <TextField cell={qty} label="Quantity" type="number" />
+ *
+ * The wire carries the cell's id, its resolved partition (explicit
+ * JSON — the host browser's write POST has no session of this app to
+ * derive one from), and the current value as the input's uncontrolled
+ * default. The host's interaction bridge writes edits back to THIS
+ * app's `/__remote/cells/write` endpoint — capability-scoped, through
+ * the ordinary write pipeline (`writeGuard` included) — with
+ * display-local-first optimistic echo: the DOM input is the
+ * optimistic value, the server echo lands on the bridge's refresh.
+ */
+export function TextField(
+  props: {
+    cell: ResolvedCell<string | number>
+    label?: string
+    type?: "text" | "number"
+    min?: number
+    max?: number
+    step?: number
+    name?: string
+  } & CommonProps,
+): ReactNode {
+  return vocab(
+    "parton-textfield",
+    {
+      "cell-id": props.cell.id,
+      "cell-partition": JSON.stringify(props.cell.partition ?? {}),
+      label: props.label,
+      "data-testid": props["data-testid"],
+    },
+    vocab("input", {
+      name: props.name,
+      type: props.type ?? "text",
+      defaultValue: String(props.cell.value ?? ""),
+      min: props.min,
+      max: props.max,
+      step: props.step,
+      "data-testid": props["data-testid"] ? `${props["data-testid"]}-input` : undefined,
+    }),
+  )
+}
+
+/**
+ * Action button (`parton-button`) — Interactive grant only; degrades
+ * under Paint. Names an action THIS app hosts (`embedAction` on the
+ * producer); the host's interaction bridge invokes it against this
+ * app's origin (`/__remote/actions/invoke`) with the placement's
+ * capability, holding `data-pending` while the hop is in flight and
+ * refreshing the embed on settle for the server echo.
+ */
+export function Button(
+  props: {
+    action: string
+    payload?: Record<string, string | number | boolean | null>
+    children?: ReactNode
+  } & CommonProps,
+): ReactNode {
+  return vocab(
+    "parton-button",
+    {
+      action: props.action,
+      payload: props.payload !== undefined ? JSON.stringify(props.payload) : undefined,
+      "data-testid": props["data-testid"],
+    },
+    props.children,
+  )
+}
+
 // ─── The host-side stylesheet ──────────────────────────────────────────
 
 /**
@@ -373,6 +509,11 @@ parton-heading[level="2"]{font-size:var(--parton-heading-size-2,1.25rem)}
 parton-heading[level="3"]{font-size:var(--parton-heading-size-3,1.05rem)}
 parton-heading[level="4"]{font-size:var(--parton-heading-size-4,.9rem)}
 parton-divider{display:block;border-block-start:1px solid var(--parton-divider-color,color-mix(in srgb,currentColor 20%,transparent))}
+parton-textfield{display:flex;flex-direction:column;gap:var(--parton-gap-xs,.25rem);font-size:var(--parton-text-size-sm,.8rem)}
+parton-textfield[label]::before{content:attr(label);color:var(--parton-text-muted-color,color-mix(in srgb,currentColor 55%,transparent))}
+parton-textfield input{box-sizing:border-box;width:100%;padding:.375rem .5rem;font:inherit;color:inherit;background:var(--parton-field-background,transparent);border:1px solid var(--parton-field-border-color,color-mix(in srgb,currentColor 25%,transparent));border-radius:var(--parton-field-radius,.375rem)}
+parton-button{display:inline-flex;align-items:center;justify-content:center;gap:var(--parton-gap-xs,.25rem);padding:.375rem .75rem;cursor:pointer;user-select:none;font-size:var(--parton-text-size-sm,.8rem);color:var(--parton-button-color,inherit);background:var(--parton-button-background,color-mix(in srgb,currentColor 10%,transparent));border:1px solid var(--parton-button-border-color,color-mix(in srgb,currentColor 25%,transparent));border-radius:var(--parton-button-radius,.375rem)}
+parton-button[data-pending]{opacity:.55;pointer-events:none}
 parton-tier-violation{display:block;padding:.375rem .5rem;border:1px dashed #dc2626;border-radius:.25rem;color:#dc2626;font-family:ui-monospace,monospace;font-size:.7rem}
 parton-tier-violation::before{content:"tier violation (" attr(data-offense) "): " attr(data-type)}
 `.trim()

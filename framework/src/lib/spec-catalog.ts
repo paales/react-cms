@@ -57,6 +57,11 @@ export interface SpecCatalogEntry {
    *  broadcast-lane eligibility classifier (`lib/broadcast.ts`), which
    *  keeps such specs per-connection. */
   fpSkip?: boolean
+  /** Bound-cell requirements for embed renders — the spec's `cells`
+   *  option, advertised on the remote manifest so a host knows what
+   *  to bind (`docs/reference/remote-frame.md` § Bound cells).
+   *  Runtime enforcement lives in the spec pipeline, not here. */
+  cells?: Record<string, { required?: boolean }>
 }
 
 const specCatalog = new Map<string, SpecCatalogEntry>()

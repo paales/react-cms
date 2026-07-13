@@ -13,6 +13,9 @@ import { CacheStreamingDemoPage } from "./pages/cache-streaming-demo.tsx"
 import { RemoteFrameDemoPage, RemoteHostedPages } from "./pages/remote-frame-demo.tsx"
 import { RemoteFrameCrossOriginDemoPage } from "./pages/remote-frame-crossorigin-demo.tsx"
 import { PaintTierDemoPage } from "./pages/paint-tier-demo.tsx"
+import { InteractiveTierDemoPage } from "./pages/interactive-tier-demo.tsx"
+import { BoundCellsDemoPage, BoundCellsMissingSection } from "./pages/bound-cells-demo.tsx"
+import { RemoteCellDemoPage } from "./pages/remote-cell-demo.tsx"
 import {
   EmbedDemoPage,
   EmbedDuplicateDemoPage,
@@ -69,6 +72,10 @@ export function Root() {
             <RemoteHostedPages />
             <RemoteFrameCrossOriginDemoPage />
             <PaintTierDemoPage />
+            <InteractiveTierDemoPage />
+            <BoundCellsDemoPage />
+            <BoundCellsMissingSection />
+            <RemoteCellDemoPage />
             <EmbedDemoPage />
             <EmbedNestedDemoPage />
             <EmbedSelfDemoPage />
