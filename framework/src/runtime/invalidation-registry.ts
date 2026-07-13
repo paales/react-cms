@@ -205,6 +205,83 @@ interface InvalidationTransaction {
 
 const transactionContext = new AsyncLocalStorage<InvalidationTransaction>()
 
+// ─── The bridge tap (cross-process doorbell) ──────────────────────────
+//
+// A multi-process deployment forwards committed bumps between the
+// processes sharing one store. The registry's side of that seam is two
+// hooks (the public surface — origin ids, wire encoding, transports —
+// lives in `invalidation-bridge.ts`):
+//
+//   - OUTBOUND: every locally committed entry is collected and handed
+//     to the tap as one batch per synchronous commit section — one
+//     `refreshSelector` call, one transaction flush (so an `atomic()`
+//     is exactly one batch), one driver tick. `commitOne` runs strictly
+//     after the value writes landed (the write pipeline's
+//     publish-after-commit ordering; `atomic()` flushes its overlay
+//     before the transaction commits), so a batch handed to the tap is
+//     always re-readable from the store by every receiver.
+//   - INBOUND: `_applyInboundInvalidations` commits remotely produced
+//     bumps through the SAME `commitOne` — fresh LOCAL ts (timestamps
+//     are process-local timelines; see the epoch), same wake-index /
+//     deadline-wheel / delivery fan-out — with two suppressions:
+//     no row stamp (the writer's commit already stamped the row with
+//     ITS authoritative ts; overwriting it with a foreign-timeline
+//     value would break the writer's evict verification and inject
+//     this process's timeline into every peer's restore path), and no
+//     re-publish (a forwarded bump forwarded again would ping-pong
+//     between two bridged processes regardless of origin ids — the
+//     origin id only suppresses transport-level echo of one's OWN
+//     bumps).
+//
+// The inbound entry is therefore UNBACKED by construction (its ts
+// never matches the row's) — evict-exempt, bounded like every entry by
+// live (name × constraints) cardinality. Restore-from-row stays the
+// query-time freshness path for selectors no doorbell has materialized
+// here yet.
+
+let bridgeTap: ((batch: readonly ParsedSelector[]) => void) | null = null
+let applyingInbound = false
+/** Locally committed selectors awaiting the tap — drained by
+ *  `flushBridgeTap` at the end of each synchronous commit section. */
+let outboundBatch: ParsedSelector[] = []
+
+/** Register the outbound bump tap. Framework-internal — installed by
+ *  `setInvalidationBridge` in `invalidation-bridge.ts`. */
+export function _setInvalidationBridgeTap(
+  tap: ((batch: readonly ParsedSelector[]) => void) | null,
+): void {
+  bridgeTap = tap
+  if (tap === null) outboundBatch = []
+}
+
+function flushBridgeTap(): void {
+  if (outboundBatch.length === 0) return
+  const batch = outboundBatch
+  outboundBatch = []
+  if (bridgeTap === null) return
+  try {
+    bridgeTap(batch)
+  } catch {
+    // A broken bridge must never take the local commit down with it.
+  }
+}
+
+/** Commit remotely produced bumps into the local registry — the
+ *  inbound half of the bridge seam. Same commit path as a local bump
+ *  (wake index, deadline gating, sweep), minus the row stamp and the
+ *  re-publish (see the bridge-tap contract above). Idempotent in the
+ *  doorbell sense: a duplicate or late batch advances the entries' ts
+ *  again, which triggers a re-read + fp compare downstream — wasted
+ *  re-render at worst, never wrongness. */
+export function _applyInboundInvalidations(selectors: readonly ParsedSelector[]): void {
+  applyingInbound = true
+  try {
+    for (const p of selectors) commitOne(p)
+  } finally {
+    applyingInbound = false
+  }
+}
+
 // ─── Selector parsing ─────────────────────────────────────────────────
 
 /**
@@ -318,6 +395,7 @@ export function refreshSelector(spec: string | string[]): void {
     for (const p of parsed) tx.pending.push(p)
   } else {
     for (const p of parsed) commitOne(p)
+    flushBridgeTap()
   }
 }
 
@@ -343,10 +421,13 @@ function commitOne(parsed: ParsedSelector): void {
   // contract: row ts ≡ entry ts, so evicting the entry loses nothing.
   // Stamping at COMMIT time (not at storage-write time) is what keeps
   // an atomic batch coherent: the overlay flushes values first, then
-  // each selector's single committed ts lands on its row.
-  if (tsBridge !== null && parsed.name.startsWith(CELL_NAME_PREFIX)) {
+  // each selector's single committed ts lands on its row. An INBOUND
+  // bridge bump never stamps: the writer's own commit stamped the row
+  // with its authoritative ts (bridge-tap contract above).
+  if (tsBridge !== null && !applyingInbound && parsed.name.startsWith(CELL_NAME_PREFIX)) {
     tsBridge.stamp(parsed.name, key, ts)
   }
+  if (bridgeTap !== null && !applyingInbound) outboundBatch.push(parsed)
   deliverBump(parsed.name, key, parsed.constraints)
   maybeSweepEntries()
 }
@@ -789,6 +870,7 @@ export async function runInvalidationTransaction<T>(fn: () => Promise<T>): Promi
   try {
     const result = await transactionContext.run(tx, fn)
     for (const p of tx.pending) commitOne(p)
+    flushBridgeTap()
     return result
   } catch (err) {
     // Discard tx.pending — it's local to this scope and not visible
@@ -833,6 +915,7 @@ export function _flushPendingInvalidations(): void {
   if (!tx) return
   for (const p of tx.pending) commitOne(p)
   tx.pending = []
+  flushBridgeTap()
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────
@@ -1041,6 +1124,7 @@ export function _clearInvalidationRegistry(): void {
   entryCount = 0
   sweepRetryAt = 0
   evictedFloorByName.clear()
+  outboundBatch = []
   mintEpoch()
 }
 

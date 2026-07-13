@@ -342,6 +342,74 @@ a **cache over storage** — evictable and restorable, lossless:
   process-memory only: gone on restart, cold re-record — over-fetch,
   never stale.
 
+## The bridge seam (cross-process bumps)
+
+`invalidation-bridge.ts` is the single seam through which committed
+bumps cross a process boundary — the same-trust broker bus (N
+processes of one app over one shared store) today, the cross-trust
+remoteCell channel attach later; designed once for both. The framework
+exposes the seam; the transport (a TCP broker, a Redis channel, a
+server-to-server attach) stays with the deployment.
+
+```ts
+setInvalidationBridge({ publish(batch) }) // outbound — install per process
+deliverInvalidationBumps(batch)           // inbound — the transport calls this
+invalidationBridgeOrigin()                // this process's origin id
+// batch: { origin: string, selectors: string[] }  — the selector grammar,
+// nothing else. The bus is a doorbell, never a payload.
+```
+
+- **Outbound — publish-after-commit, batched per commit section.**
+  `commitOne` collects each locally committed selector; the registry
+  hands the collection to the bridge as ONE batch at the end of each
+  synchronous commit section (a solo `refreshSelector`, a transaction
+  flush — so an `atomic()` is exactly one batch — or a driver tick's
+  `_flushPendingInvalidations`). `commitOne` runs strictly after the
+  value writes landed (the write pipeline commits storage first; the
+  `atomic()` overlay flushes before its transaction commits), so every
+  batch a receiver sees is already re-readable from the shared store.
+  A throwing transport never takes the local commit down (the tap is
+  try/caught); a rolled-back transaction publishes nothing.
+
+- **Inbound — the same path as a local commit.** A delivered batch
+  commits through `commitOne` itself: entries compact per
+  (name, constraints) pair, the wake index delivers the touched parton
+  ids, the deadline wheel and park gating apply unchanged — a bridge
+  bump is indistinguishable downstream from a local one. Bumps are
+  at-least-once and unordered by contract; applying a duplicate or
+  late batch advances the entry ts again, which triggers a re-read +
+  fp compare — wasted re-render at worst, never wrongness.
+
+- **The ts posture: the wire carries no timestamps, and inbound never
+  stamps.** Registry timelines are process-local (the epoch declares
+  them non-comparable), so an inbound bump mints a fresh LOCAL ts —
+  neither a wire ts nor the row's persisted ts could be a valid local
+  timestamp, and non-cell selectors have no row at all. The row's
+  `ts` column keeps the WRITER's stamp untouched: re-stamping with a
+  foreign-timeline value would break the writer's evict verification
+  (`readTs === entry.ts`) and inject the receiver's timeline into
+  every peer's restore path. Consequences: a doorbell-minted entry is
+  unbacked (evict-exempt, bounded like all entries by live key
+  cardinality), and restore-from-row remains the query-time freshness
+  path for selectors no doorbell has materialized locally — with the
+  floor-raise backstop absorbing foreign row timestamps. The only
+  stale window is a LOST doorbell against a live local entry, which is
+  exactly what the transport's at-least-once contract excludes; a
+  reconnect window degrades the peer to over-fetch on its next
+  doorbell or restore, never to wrongness.
+
+- **Loopback — two explicit guards, no heuristics.** Every process
+  mints an origin id; `deliverInvalidationBumps` drops batches
+  carrying its own (transports may echo to all subscribers freely).
+  And inbound applies are never re-collected for publish
+  (`applyingInbound`), so two bridged processes can't ping-pong a
+  forwarded bump even though a forward would carry a new origin.
+
+The harness (`experiments/multi-process/`) runs the seam end-to-end
+over two real processes + one SQLite store; the seam's unit contract
+lives in `runtime/__tests__/invalidation-bridge.rsc.test.ts`. Design
+and measurements: [`../notes/bridge-seam.md`](../notes/bridge-seam.md).
+
 ## LRU bound
 
 The variant store is bounded by **spec topology** — finitely many

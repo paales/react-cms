@@ -1,0 +1,11 @@
+{
+  "name": "@parton/mp-harness-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deliberately tiny parton app for the multi-process harness — one counter cell over a shared SQLite store, plus the JSON-lines bus transport wired into the framework's invalidation-bridge seam. Not a workspace: every dependency resolves from the repo's hoisted node_modules (see ../README.md).",
+  "scripts": {
+    "build": "vite build",
+    "preview": "vite preview"
+  }
+}

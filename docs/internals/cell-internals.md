@@ -641,6 +641,11 @@ ordering only in-process — its disk image lags the bump by the
 debounce window, which is exactly why it cannot back a multi-process
 deployment.
 
+Cross-process, the bump itself travels through the invalidation
+bridge (`setInvalidationBridge` — selectors only, batched per commit
+section, published strictly after the store commit): see
+[`registry-internals.md`](./registry-internals.md#the-bridge-seam-cross-process-bumps).
+
 ### The invalidation ts rides the row
 
 Each row can carry the `ts` of the bump that committed it — stored in

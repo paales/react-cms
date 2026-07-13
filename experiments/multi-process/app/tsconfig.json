@@ -1,0 +1,10 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@parton/framework": ["../../../framework/index.ts"],
+      "@parton/framework/*": ["../../../framework/src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

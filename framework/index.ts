@@ -79,6 +79,20 @@ export {
   parseSelectors,
 } from "./src/runtime/invalidation-registry.ts"
 
+// ── Invalidation bridge (cross-process doorbell seam) ───────────────────
+// The deployment-level seam a multi-process app wires its bump
+// transport into: `setInvalidationBridge` publishes committed bump
+// batches, `deliverInvalidationBumps` applies received ones. Selectors
+// only — values live in the shared store (`setCellStorage`), never on
+// the bus. The transport itself stays with the deployment.
+export {
+  setInvalidationBridge,
+  deliverInvalidationBumps,
+  invalidationBridgeOrigin,
+  type InvalidationBridge,
+  type InvalidationBumpBatch,
+} from "./src/runtime/invalidation-bridge.ts"
+
 // ── Cell storage (pluggable backend) ────────────────────────────────────
 export {
   getCellStorage,
