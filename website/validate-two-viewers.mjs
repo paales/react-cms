@@ -25,7 +25,7 @@
 import { spawn } from "node:child_process"
 import { chromium } from "playwright"
 
-const PORT = process.env.PORT ?? 5187
+const PORT = process.env.PORT ?? 5192
 const BASE = `http://localhost:${PORT}`
 const MODE = process.argv.includes("--dev") ? "dev" : "preview"
 

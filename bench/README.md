@@ -548,3 +548,18 @@ Each run APPENDS to the committed artifact
 `bench/results/world-idle-cpu.json` (git SHA, node version, viewport,
 phase averages), so the corner-idle number is directly comparable
 across commits — the regression substrate for the wake path.
+
+## The CI tripwire — guarding the ledger, not measuring
+
+`node bench/idle-cpu-tripwire.mjs` (a step in the CI world-gate job)
+asserts the **latest committed** default-geometry entry (2560×1440, no
+query) has `cornerIdle` below 15% and `afterClose` below 5%. The
+committed artifact is the tripwire's **input**: measurement still
+happens on dev machines — CI runners can't measure CPU meaningfully
+(shared cores, uncontrolled load) — so CI guards the ledger instead. A
+regression that slips into the committed history (a re-measure after a
+wake-path change, committed without reading the number) trips visibly
+rather than silently becoming the new baseline. The ceilings are
+generous on purpose: healthy runs sit at ~4–12% / ~0.5–5%; the
+pathology class the phases exist to catch is a saturated core (~100%),
+not machine variance.

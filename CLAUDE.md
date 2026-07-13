@@ -204,6 +204,20 @@ node website/validate-no-ws.mjs  # CAPABILITY-GATE gate: every in-repo app now
                         # the flag is the control). Run after any
                         # auto-upgrade / capability-gate change: `yarn build`
                         # first (builds e2e-testing).
+node website/validate-two-viewers.mjs # BROADCAST-LANE gate: TWO independent
+                        # browser contexts on ONE world (default transport)
+                        # — both stay live at their cadences, one viewer's
+                        # scroll never disturbs the other's position/content/
+                        # pulses. Run after any broadcast-lane / delivery-
+                        # plane change: `yarn build:website` first.
+node website/validate-scroll-stress.mjs # ADVERSARIAL-SCROLL gate: drives the
+                        # dense world (?chunk=128, 2560×1440) through bursts,
+                        # reversals, backtracks, diagonals; after every stop
+                        # the hole detector asserts the viewport converges —
+                        # no missing chunk coords, no quad placeholders, only
+                        # 1-2 known-transient shells that clear. Advisory in
+                        # CI while the backtrack-hole residual is open.
+                        # `yarn build:website` first.
 ```
 
 `yarn test` and `yarn test:e2e` cover disjoint suites — **both must
