@@ -175,16 +175,16 @@ export function PartialsClient({ children }: PartialsClientProps) {
   //      body" regression.
   //
   //   2. The cache-populating walk in `cacheFromStreamingChildren` calls
-  //      `unwrapLazy(node)`, which returns `null` for unresolved Flight
-  //      lazies (the form unrendered partial wrappers take while their
-  //      chunks are still in flight). `deriveTemplate` likewise walks
-  //      past lazies. In a production build the streamed children
-  //      contain exactly those lazies — so a cache-walk-then-render
+  //      `unwrapLazy(node)`, which classifies unresolved Flight chunks
+  //      (the form unrendered partial wrappers take while their
+  //      rows are still in flight) as pending and stops. `deriveTemplate`
+  //      likewise walks past them. In a production build the streamed children
+  //      contain exactly those pending chunks — so a cache-walk-then-render
   //      path on the server outputs an EMPTY tree where the partial
   //      wrappers should have rendered, and the SSR HTML loses every
   //      partial body. Letting React see `children` directly preserves
-  //      the lazies and resolves them through React's native Suspense /
-  //      streaming machinery the way the bypass intended.
+  //      the deferred nodes and resolves them through React's native
+  //      Suspense / streaming machinery the way the bypass intended.
   //
   // Symmetry note for hydration: the browser path returns
   // `<Fragment>{...rendered}</Fragment>` (an explicit Fragment from

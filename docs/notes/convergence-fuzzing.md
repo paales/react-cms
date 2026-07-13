@@ -25,7 +25,10 @@ fixture app), `framework/src/lib/__tests__/fuzz-convergence.rsc.test.tsx`
 (the CI budget + env knobs). The findings ledger is at the bottom —
 the v1 harness found two real framework bug classes on its first day,
 and fixing them exposed three more the old classifier had lumped in.
-F1–F7 are FIXED. Every seed runs as an ordinary case: the CI budget is
+F1–F8 are FIXED (F8 was found in the FIELD, not by the fuzzer — it
+lives in the layer the v1 model deliberately does not run; see the
+model-gap note under "What it does NOT cover").
+Every seed runs as an ordinary case: the CI budget is
 fully clean and any failure there is a new finding. The post-F7 long
 runs are ZERO findings at every budget tried (3000×20, 1000×50 from a
 distinct seed range, 500×50 — the last after fixing a harness
@@ -180,7 +183,18 @@ partons, wrongly-parked partons, cull-state divergence), variant
 identity, and leaf fp bookkeeping (mirror drift that would fp-skip to
 a wrong confirm later).
 
-**What it does NOT cover (v1), honestly**: byte-identical bodies
+**What it does NOT cover (v1), honestly**: the REAL client merge
+IMPLEMENTATION — the model applies the commit RULES to per-id
+records; `cacheFromStreamingChildren` / `substituteNested` /
+`_commitPartonLane` never run, so a bug in the walks themselves can
+never surface as an oracle mismatch (the F8 class: the wire extractor
+resolves `$@` outlined promise rows structurally, so the model saw
+content the real walks could not reach — and the fixture has no async
+Render body, so no `$@` row even crosses the fuzz wire). Found
+instances get a deterministic regression family beside the fuzzer
+driving the real walks against real Flight decodes
+(`async-parent-nested-heal.rsc.test.tsx`); running the real merge
+layer against the wire is the v2/v3 direction. Also out: byte-identical bodies
 (only stamps compare — wrapper DOM, ordering, and non-stamp content
 are out); parked variants' retained content (allowed stale by
 contract — the flip-in revalidation is its healer, and flip actions
@@ -492,6 +506,51 @@ wrap, write b=8]`; seed 5722 — same shape). Mechanism: one drain
   own lane is the guaranteed carrier. Deterministic regression (both
   shrunk sequences, red without the fix):
   `framework/src/lib/__tests__/rival-lane-heal.rsc.test.tsx`.
+
+- **F8 — FIXED: outlined promise children are invisible to the real
+  merge walks (found in the FIELD — the website's auction-lot bug —
+  not by the fuzzer; the model gap that let it survive is ledgered
+  here).** An ASYNC Render body reaches its `<PartialErrorBoundary>`
+  wrapper as a raw Promise (`partial.tsx` wraps
+  `spec.Render(renderProps)`'s return value directly), so Flight
+  ships the wrapper's children as an OUTLINED PROMISE ROW
+  (`"children":"$@N"`), which the client decodes to a Flight CHUNK —
+  an instrumented thenable, not a React lazy. The merge walks
+  (`cacheFromStreamingChildren`, `substituteNested`,
+  `harvestPartialIds`, `deriveTemplate`) only unwrapped lazies, so
+  everything behind the promise was outside the merge layer's reach:
+  a nested addressable child's cache entry never landed from any
+  payload containing its async parent, and a parent lane that
+  fp-skipped the child committed a wrapper whose `<i data-partial>`
+  hole mounted through React's NATIVE thenable resolution — the
+  child's own lane bytes sat in `_currentPagePartials` under the
+  exactly-matching `(id, matchKey)` key while the DOM kept the hole
+  indefinitely (and the payload prune's harvest, equally blind, could
+  drop nested entries behind async parents). **Fix** (`unwrapLazy` +
+  the lane-commit re-walk, `partial-cache.ts`): the walks read the
+  decoded chunk's OWN settlement record — the Flight client's
+  `status`/`value` protocol, which is also the instrumentation
+  `use()` writes onto plain thenables — descending fulfilled chunks,
+  forcing a `resolved_model` chunk's synchronous init through its own
+  `.then()` (the same forcing a lazy's `_init` gets), classifying
+  in-flight chunks `LAZY_PENDING` (which already poisons the
+  `substituteNested` wrapper memo, so no stale entry survives the
+  pending→fulfilled transition), and capturing pending chunks so
+  `_commitPartonLane` re-walks its payload on settlement,
+  generation-guarded (`_commitPartonLaneProgressive` now delegates —
+  a producer body is the always-pending-at-first-walk case of the
+  same commit). **Why the fuzzer missed it:** the v1 client model
+  never runs the real walks — it applies commit rules to per-id
+  records, and `fuzz-wire.ts` resolves `$@` rows structurally, so the
+  model "saw" content the real merge layer could not reach; the
+  fixture also has no async Render body, so no `$@` row ever crossed
+  the fuzz wire. The gap is recorded under "What it does NOT cover".
+  Deterministic regression (real Flight encode→decode, real commit
+  walk + template substitution, red without the fix):
+  `framework/src/lib/__tests__/async-parent-nested-heal.rsc.test.tsx`;
+  thenable-arm unit coverage (memo poisoning, plain-thenable
+  instrumentation, rejected-chunk opacity) beside the memo tests in
+  `partial-cache-substitute.test.tsx`.
 
 - **Browser-level finding — FIXED (client merge layer): the flip-in
   confirm against a stated holding whose CONTENT the client already

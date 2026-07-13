@@ -1,7 +1,12 @@
 import React, { type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { substituteNested, harvestPartialIds } from "../partial-cache.ts"
+import {
+  cacheFromStreamingChildren,
+  harvestPartialIds,
+  substituteNested,
+  type LazyWalkStats,
+} from "../partial-cache.ts"
 import type { PartialCache } from "../partial-client-state.ts"
 import { PartialErrorBoundary } from "../partial-error-boundary.tsx"
 
@@ -293,6 +298,147 @@ describe("substituteNested — memoization", () => {
 })
 
 type ReactElementWithChildren = React.ReactElement<{ children?: ReactNode }>
+
+// ─── Outlined promise children (async Render bodies) ────────────────
+//
+// An async Render body reaches its PartialErrorBoundary wrapper as a
+// raw Promise, which Flight ships as an outlined `$@` row and the
+// client decodes to a chunk — an instrumented thenable with
+// `status`/`value` fields, NOT a React lazy. The walks read that
+// settlement record; these builders mirror the chunk shape the same
+// way `makeLazy` mirrors the lazy shape.
+
+/** A Flight-chunk-shaped instrumented thenable: pending until
+ *  `resolve()` flips its own `status`/`value` record. */
+function makeChunk() {
+  const listeners: Array<(v: unknown) => void> = []
+  const chunk = {
+    status: "pending",
+    value: null as ReactNode,
+    reason: null as unknown,
+    then(res?: (v: unknown) => void) {
+      if (chunk.status === "fulfilled") {
+        res?.(chunk.value)
+        return
+      }
+      if (typeof res === "function") listeners.push(res)
+    },
+  }
+  return {
+    node: chunk as unknown as ReactNode,
+    resolve(value: ReactNode) {
+      chunk.status = "fulfilled"
+      chunk.value = value
+      for (const l of listeners.splice(0)) l(value)
+    },
+  }
+}
+
+describe("substituteNested — outlined promise children", () => {
+  it("descends a fulfilled thenable and substitutes the placeholder inside", () => {
+    const chunk = makeChunk()
+    chunk.resolve(<section>{placeholder("inner", "")}</section>)
+    const outer = wrapper("outer", "", chunk.node)
+    const cache = makeCache([
+      ["outer", "", outer],
+      ["inner", "", wrapper("inner", "", <div data-testid="inner-fresh" />)],
+    ])
+
+    const markup = html(substituteNested(outer, cache, "outer|"))
+    expect(
+      markup,
+      "a hole behind an async body's fulfilled promise children must substitute",
+    ).toContain('data-testid="inner-fresh"')
+  })
+
+  it("never memoizes a walk that saw a pending thenable — the resolve heals without a cache write", () => {
+    const chunk = makeChunk()
+    const outer = wrapper("outer", "", <section>{chunk.node}</section>)
+    const cache = makeCache([
+      ["outer", "", outer],
+      ["inner", "", wrapper("inner", "", <div data-testid="inner-fresh" />)],
+    ])
+
+    const out1 = substituteNested(outer, cache, "outer|")
+    expect(out1, "pending promise children leave the tree untouched").toBe(outer)
+    // The thenable settles WITHOUT any cache write — a memoized pending
+    // walk would have no dep to invalidate it and serve the stale tree
+    // forever.
+    chunk.resolve(<div>{placeholder("inner", "")}</div>)
+    const out2 = substituteNested(outer, cache, "outer|")
+    expect(out2, "the walk after resolution must reach the newly-visible hole").not.toBe(outer)
+    expect(html(out2)).toContain('data-testid="inner-fresh"')
+  })
+
+  it("treats a rejected thenable as opaque — left in place for the error boundary", () => {
+    const rejected = {
+      status: "rejected",
+      reason: new Error("body threw"),
+      then() {},
+    } as unknown as ReactNode
+    const outer = wrapper("outer", "", rejected)
+    const cache = makeCache([["outer", "", outer]])
+    // No throw, no substitution attempt into the rejection.
+    expect(substituteNested(outer, cache, "outer|")).toBe(outer)
+  })
+
+  it("instruments a plain (uninstrumented) thenable so its settlement is readable later", async () => {
+    const plain = Promise.resolve(<div>{placeholder("inner", "")}</div>)
+    const outer = wrapper("outer", "", plain as unknown as ReactNode)
+    const cache = makeCache([
+      ["outer", "", outer],
+      ["inner", "", wrapper("inner", "", <div data-testid="inner-fresh" />)],
+    ])
+
+    const out1 = substituteNested(outer, cache, "outer|")
+    expect(out1, "an unsettled plain promise leaves the tree untouched").toBe(outer)
+    await plain
+    const out2 = substituteNested(outer, cache, "outer|")
+    expect(html(out2), "the recorded settlement must be readable on the next walk").toContain(
+      'data-testid="inner-fresh"',
+    )
+  })
+})
+
+describe("cacheFromStreamingChildren — outlined promise children", () => {
+  it("caches a nested wrapper and marks holes seen behind fulfilled promise children", () => {
+    const chunk = makeChunk()
+    chunk.resolve(
+      <section>
+        {wrapper("nested", "mkN", <div />)}
+        {placeholder("skipped", "mkS")}
+      </section>,
+    )
+    const outer = wrapper("outer", "", chunk.node)
+    const cache: PartialCache = new Map()
+    const seen = new Map<string, Set<string>>()
+    const stats: LazyWalkStats = { pending: 0, thenables: [] }
+    cacheFromStreamingChildren(outer, cache, seen, stats)
+
+    expect(stats.pending).toBe(0)
+    expect(
+      cache.get("nested")?.get("mkN"),
+      "the nested wrapper behind the promise must get its own cache entry",
+    ).toBeDefined()
+    expect(seen.get("skipped"), "the hole behind the promise must be marked seen").toEqual(
+      new Set(["mkS"]),
+    )
+  })
+
+  it("counts a pending promise child and captures it as the re-walk signal", () => {
+    const chunk = makeChunk()
+    const outer = wrapper("outer", "", chunk.node)
+    const cache: PartialCache = new Map()
+    const stats: LazyWalkStats = { pending: 0, thenables: [] }
+    cacheFromStreamingChildren(outer, cache, new Map(), stats)
+
+    expect(stats.pending).toBe(1)
+    expect(
+      stats.thenables,
+      "the pending thenable itself is the settlement signal to re-walk on",
+    ).toContain(chunk.node)
+  })
+})
 
 describe("harvestPartialIds", () => {
   it("collects wrapper and placeholder (id, matchKey) pairs, including nested ones", () => {

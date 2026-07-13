@@ -328,7 +328,19 @@ any selector-routing logic that could replace it.
    (wrapper + nested entries + fingerprints), the lane's fp updates,
    then a notify that schedules a `startTransition` re-render of
    `PartialsClient` — `renderTemplate` / `substituteNested` swap the
-   fresh subtree in place. No whole-payload `setPayload` is involved,
+   fresh subtree in place. The walks see through BOTH deferred Flight
+   forms — `$L` lazies and `$@` outlined promise rows (an ASYNC
+   Render body's children cross as a raw Promise, so everything
+   inside — nested wrappers, fp-skip holes — sits behind one):
+   `unwrapLazy` reads the decoded chunk's own settlement record
+   (`status`/`value`), descending fulfilled chunks and classifying
+   in-flight ones pending. A walk that stopped at a pending chunk
+   captures it and RE-WALKS the same payload when it settles,
+   generation-guarded per parton (a newer commit supersedes it;
+   producer lanes are the always-pending-at-first-walk case of the
+   same mechanism — `_commitPartonLaneProgressive` delegates to it).
+   Covered by `async-parent-nested-heal.rsc.test.tsx` (fuzz ledger
+   entry F8). No whole-payload `setPayload` is involved,
    so a lane commit can never remount the page shell. The commit is
    also the moment the delivery seq the emission carried is RECORDED
    — the channel transport acks the contiguous commit watermark

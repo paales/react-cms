@@ -468,51 +468,152 @@ function substituteIntoChildren(
 
 const LAZY_SYMBOL_STR = "Symbol(react.lazy)"
 
-/** Sentinel returned by `unwrapLazy` when the lazy is pending — distinct
- *  from `null` (which signaled "unwrap failed, drop the node"). Callers
- *  who recognise this keep the original lazy in place so React's native
- *  Suspense machinery resolves it; callers who don't recognise it fall
- *  back to the legacy "drop" behaviour. */
+/** Sentinel returned by `unwrapLazy` when the deferred node is pending —
+ *  distinct from `null` (which signaled "unwrap failed, drop the node").
+ *  Callers who recognise this keep the original node in place so React's
+ *  native Suspense machinery resolves it; callers who don't recognise it
+ *  fall back to the legacy "drop" behaviour. */
 export const LAZY_PENDING = Symbol("partial-client.lazyPending")
 
 /**
- * Unwrap a raw lazy reference at the tree level.
+ * Unwrap a deferred Flight node at the tree level — BOTH deferred
+ * forms the wire produces:
  *
- * Returns the resolved value when the lazy is fulfilled; `LAZY_PENDING`
- * when the underlying chunk is still in flight; `null` when the lazy
- * errored (treated as opaque).
+ *   - a React lazy (`$L<row>` — nested chunks of a streaming decode);
+ *   - a raw thenable (`$@<row>` — an outlined promise row). This is
+ *     how every ASYNC Render body crosses the wire: `partial.tsx`
+ *     wraps `spec.Render(renderProps)`'s returned Promise directly as
+ *     the `<PartialErrorBoundary>`'s children, so the whole body —
+ *     including any nested partial wrappers and fp-skip placeholders —
+ *     sits behind the promise. A walk that can't see through it leaves
+ *     everything inside outside the merge layer's reach: nested cache
+ *     entries never land, and a hole committed inside the promise
+ *     mounts through React's native thenable resolution where
+ *     `substituteNested` can never heal it.
+ *
+ * Returns the resolved value when fulfilled; `LAZY_PENDING` while the
+ * underlying chunk is in flight; `null` on rejection (treated as
+ * opaque — React's error boundary owns it).
  *
  * The pending sentinel matters for streaming hydration: the cache-walk
  * (`cacheFromStreamingChildren`) and the template-derive
- * (`deriveTemplate`) both encounter Flight lazies while early chunks
- * are still arriving. Treating pending the same as "drop" silently
- * loses the partial wrapper inside the lazy — the cache never gets
+ * (`deriveTemplate`) both encounter deferred nodes while chunks are
+ * still arriving. Treating pending the same as "drop" silently
+ * loses the partial wrapper inside — the cache never gets
  * an entry, the template emits a bare placeholder, and `renderTemplate`
  * leaves an empty `<i hidden>` in the DOM. Returning a distinct
  * sentinel lets each caller decide: skip caching this round (the
- * lazy will be cached on a re-render when it resolves) but keep the
- * lazy in the rendered output so React resolves it natively.
+ * node is re-walked when its chunk settles) but keep it in the
+ * rendered output so React resolves it natively.
  */
 export function unwrapLazy(node: unknown): unknown {
   if (node == null || typeof node !== "object") return node
   const n = node as any
-  if (typeof n.$$typeof !== "symbol") return node
-  if (n.$$typeof.toString() !== LAZY_SYMBOL_STR) return node
-  const payload = n._payload
-  if (payload && payload._status === 1) return payload._result
-  try {
-    const init = n._init
-    if (typeof init === "function") {
-      const result = init(payload)
-      // init returned synchronously — fulfilled.
-      return result
+  if (typeof n.$$typeof === "symbol") {
+    if (n.$$typeof.toString() !== LAZY_SYMBOL_STR) return node
+    const payload = n._payload
+    if (payload && payload._status === 1) return payload._result
+    try {
+      const init = n._init
+      if (typeof init === "function") {
+        const result = init(payload)
+        // init returned synchronously — fulfilled.
+        return result
+      }
+    } catch (e) {
+      // A thenable throw is React's "pending" signal for lazy refs.
+      // Anything else is an error we treat as opaque.
+      if (e && typeof e === "object" && typeof (e as PromiseLike<unknown>).then === "function") {
+        return LAZY_PENDING
+      }
     }
-  } catch (e) {
-    // A thenable throw is React's "pending" signal for lazy refs.
-    // Anything else is an error we treat as opaque.
-    if (e && typeof e === "object" && typeof (e as PromiseLike<unknown>).then === "function") {
+    return null
+  }
+  if (typeof n.then === "function") return unwrapThenable(n as InstrumentedThenable)
+  return node
+}
+
+/** A thenable carrying its own settlement record — the Flight client's
+ *  chunk protocol (`ReactPromise.status`/`.value`/`.reason`), which is
+ *  also the instrumentation React's `use()` writes onto plain
+ *  thenables. The status field is the real signal the walks read; no
+ *  shape is guessed. */
+interface InstrumentedThenable extends PromiseLike<unknown> {
+  status?: string
+  value?: unknown
+  reason?: unknown
+}
+
+function noop(): void {}
+
+/**
+ * The thenable arm of `unwrapLazy`: read the node's own settlement.
+ *
+ *   - `"fulfilled"` → the resolved value (`.value` is only meaningful
+ *     in this state — a pending Flight chunk repurposes the field for
+ *     its listener list).
+ *   - `"rejected"` → `null` (opaque, same as an errored lazy).
+ *   - `"resolved_model"` / `"resolved_module"` → the chunk's bytes are
+ *     already here but the model is uninitialized; the Flight client
+ *     initializes SYNCHRONOUSLY inside `.then()` (the same forcing
+ *     `unwrapLazy` does via a lazy's `_init`), so subscribe and
+ *     re-read.
+ *   - no status at all (a plain thenable) → instrument it exactly as
+ *     React's `use()` does, so its eventual settlement is readable by
+ *     the re-walk its capture schedules.
+ *   - anything else (`"pending"`, `"blocked"`, `"cyclic"`, `"halted"`)
+ *     → `LAZY_PENDING`.
+ */
+function unwrapThenable(t: InstrumentedThenable): unknown {
+  switch (t.status) {
+    case "fulfilled":
+      return t.value
+    case "rejected":
+      return null
+    case "resolved_model":
+    case "resolved_module": {
+      t.then(noop, noop)
+      // `.then` initialized the chunk synchronously — re-read the record.
+      const settled = t.status as string
+      if (settled === "fulfilled") return t.value
+      if (settled === "rejected") return null
       return LAZY_PENDING
     }
+    case undefined: {
+      t.status = "pending"
+      t.then(
+        (value) => {
+          if (t.status === "pending") {
+            t.status = "fulfilled"
+            t.value = value
+          }
+        },
+        (reason) => {
+          if (t.status === "pending") {
+            t.status = "rejected"
+            t.reason = reason
+          }
+        },
+      )
+      // A custom thenable may settle synchronously inside `then`.
+      if ((t.status as string) === "fulfilled") return t.value
+      if ((t.status as string) === "rejected") return null
+      return LAZY_PENDING
+    }
+    default:
+      return LAZY_PENDING
+  }
+}
+
+/** The awaitable behind a node `unwrapLazy` classified `LAZY_PENDING`:
+ *  a pending thenable IS its own settlement signal; a pending lazy's
+ *  is its `_payload` chunk. */
+function pendingAwaitable(node: unknown): PromiseLike<unknown> | null {
+  const n = node as { then?: unknown; _payload?: unknown }
+  if (typeof n.then === "function") return node as PromiseLike<unknown>
+  const payload = n._payload
+  if (payload != null && typeof (payload as PromiseLike<unknown>).then === "function") {
+    return payload as PromiseLike<unknown>
   }
   return null
 }
@@ -526,12 +627,14 @@ export function unwrapLazy(node: unknown): unknown {
  * walk that DID complete is still safe to keep (any wrappers that were
  * walked are cached).
  *
- * `thenables` collects each pending lazy's underlying Flight chunk (a
- * thenable), so the caller can re-walk THIS payload the moment its
- * rows land (`PartialsClient`'s `scheduleRewalkOnResolve`) instead of
- * hoping a later render re-walks it. Without that, a payload
- * superseded before any re-render loses its still-streaming wrappers
- * permanently — the bytes arrived but never reached the cache.
+ * `thenables` collects each pending node's settlement signal — a
+ * pending lazy's underlying Flight chunk, a pending outlined-promise
+ * row itself — so the caller can re-walk THIS payload the moment its
+ * rows land (`PartialsClient`'s `scheduleRewalkOnResolve`, the lane
+ * commits' re-walk) instead of hoping a later render re-walks it.
+ * Without that, a payload superseded before any re-render loses its
+ * still-streaming wrappers permanently — the bytes arrived but never
+ * reached the cache.
  */
 export interface LazyWalkStats {
   pending: number
@@ -559,13 +662,15 @@ export interface LazyWalkStats {
  * content), the client can still find the nested partial's content
  * by id — otherwise `substituteNested` produces an empty hole.
  *
- * Why we can descend safely: during streaming, inner async chunks
- * arrive as Flight lazies. Walking past a lazy forces React's
- * lazy-init — which is fine because the lazy will resolve
- * eventually, and our walk of the lazy's contents just searches for
+ * Why we can descend safely: during streaming, inner async content
+ * arrives as Flight lazies (`$L`) and outlined promise rows (`$@` —
+ * an async Render body's children). Walking past one forces its
+ * initialization — which is fine because the chunk will resolve
+ * eventually, and our walk of its contents just searches for
  * more partial wrappers (no side effects). `unwrapLazy` returns
- * null for pending lazies, so we stop cleanly if a lazy hasn't
- * resolved yet.
+ * `LAZY_PENDING` for in-flight chunks, so we stop cleanly (recording
+ * the pending count + settlement signal into `stats`) when the bytes
+ * aren't here yet.
  *
  * Placeholders (`<i data-partial hidden>`) are skipped — the
  * existing cache entry from a prior render is the thing we want.
@@ -588,12 +693,10 @@ export function cacheFromStreamingChildren(
   if (unwrapped !== node) {
     if (unwrapped === LAZY_PENDING && stats) {
       stats.pending++
-      // Capture the in-flight Flight chunk so the caller can re-walk
-      // this payload when the row lands (see LazyWalkStats).
-      const payload = (node as { _payload?: unknown })._payload
-      if (payload != null && typeof (payload as PromiseLike<unknown>).then === "function") {
-        ;(stats.thenables ??= []).push(payload as PromiseLike<unknown>)
-      }
+      // Capture the in-flight chunk so the caller can re-walk this
+      // payload when the row lands (see LazyWalkStats).
+      const awaitable = pendingAwaitable(node)
+      if (awaitable != null) (stats.thenables ??= []).push(awaitable)
     }
     // Errored OR pending lazy — can't descend to find wrappers. The
     // template-derive keeps the lazy in place so React resolves it
@@ -707,20 +810,27 @@ export function treeHasPendingLazy(node: ReactNode): boolean {
  *
  * The walk is synchronous, so the cache write set (outer wrapper +
  * every nested entry) lands atomically before the notify — a template
- * re-render never observes a half-written commit. Callers pass a
- * fully-delivered payload (the lane body closed at its `muxend`), so
- * the walk sees resolved content; a placeholder root (the lane's
- * parton fp-skipped server-side) walks to a no-op.
+ * re-render never observes a half-written commit. A fully-delivered
+ * body (the lane closed at its `muxend`) can still hold rows whose
+ * DECODE is not initialized yet — an outlined promise row blocked on
+ * a client-module import, a chunk referencing a later-settling row —
+ * so any walk that stops at a pending chunk schedules a RE-WALK of
+ * this same payload for the moment the captured chunks settle,
+ * generation-guarded (a newer commit for the parton supersedes it; a
+ * late re-walk of an older body must never overwrite newer content).
+ * A placeholder root (the lane's parton fp-skipped server-side) walks
+ * to a no-op.
  *
  * The notify rides the lane flush quantum by default (one template
  * re-render per animation frame — see `notifyLaneCommitCoalesced`);
  * two classes notify immediately instead: `urgent` commits — lanes
- * servicing an in-flight user statement — and FIRST FILLS (the walk
- * stored content into an empty slot: a flip-in's body replacing the
- * skeleton the user is looking at, a fresh instance's first bytes).
- * Either way the cache walk, live-tree fold and fp updates run NOW:
- * acks and loss reports key off those, so the quantum never shifts
- * anything observable server-side.
+ * servicing an in-flight user statement (first walk only; the
+ * resolve-time re-walks are streaming arrival) — and FIRST FILLS (the
+ * walk stored content into an empty slot: a flip-in's body replacing
+ * the skeleton the user is looking at, a fresh instance's first
+ * bytes). Either way the cache walk, live-tree fold and fp updates
+ * run NOW: acks and loss reports key off those, so the quantum never
+ * shifts anything observable server-side.
  */
 export function _commitPartonLane(
   node: ReactNode,
@@ -728,14 +838,16 @@ export function _commitPartonLane(
   partonId?: string,
   opts?: { urgent?: boolean },
 ): void {
-  // A full-body commit supersedes any in-flight progressive re-walks
-  // for the same parton — a late re-walk of an older body must never
-  // overwrite this newer content.
+  // A full-body commit supersedes any in-flight re-walks for the same
+  // parton — a late re-walk of an older body must never overwrite
+  // this newer content.
+  let generation: number | undefined
   if (partonId !== undefined) {
-    _laneCommitGeneration.set(partonId, (_laneCommitGeneration.get(partonId) ?? 0) + 1)
+    generation = (_laneCommitGeneration.get(partonId) ?? 0) + 1
+    _laneCommitGeneration.set(partonId, generation)
   }
   const seen = new Map<string, Set<string>>()
-  const stats: LazyWalkStats = { pending: 0 }
+  const stats: LazyWalkStats = { pending: 0, thenables: [] }
   cacheFromStreamingChildren(node, getCurrentPagePartials(), seen, stats)
   // The committed subtree is part of the DISPLAYED tree the moment the
   // notify's transition re-renders the template — its ids join the
@@ -747,58 +859,67 @@ export function _commitPartonLane(
   if (fpUpdates) _applyFpUpdates(fpUpdates)
   if (opts?.urgent === true || stats.firstFill === true) notifyLaneCommit()
   else notifyLaneCommitCoalesced()
+  // The supersede guard is what makes a re-walk safe; a caller that
+  // named no parton gets exactly the one walk.
+  if (partonId !== undefined && generation !== undefined) {
+    scheduleLaneRewalk(partonId, generation, node, stats)
+  }
 }
 
 /** Per-parton lane commit generation — the supersede guard for the
- *  progressive commit's resolve-time re-walks. */
+ *  lane commits' resolve-time re-walks. */
 const _laneCommitGeneration = new Map<string, number>()
+
+/**
+ * Re-walk a committed lane payload each time its captured pending
+ * chunks settle, until the walk completes or a newer commit for the
+ * parton supersedes it. Each re-walk is streaming arrival and rides
+ * the lane flush quantum unless it surfaces a FIRST FILL (a
+ * late-resolving row carrying a slot's first content —
+ * paint-blocking, same as the commit's own exemption). Lane walks
+ * always run outside React's render lifecycle — the same class of
+ * walk the commit does at drain, repeated per settlement.
+ */
+function scheduleLaneRewalk(
+  partonId: string,
+  generation: number,
+  node: ReactNode,
+  stats: LazyWalkStats,
+): void {
+  const thenables = stats.thenables ?? []
+  if (stats.pending === 0 || thenables.length === 0) return
+  void Promise.allSettled(thenables.map((t) => Promise.resolve(t))).then(() => {
+    if (_laneCommitGeneration.get(partonId) !== generation) return
+    const seen = new Map<string, Set<string>>()
+    const next: LazyWalkStats = { pending: 0, thenables: [] }
+    cacheFromStreamingChildren(node, getCurrentPagePartials(), seen, next)
+    // Same live-tree fold as the commit — each re-walk may surface
+    // newly-resolved ids.
+    _addLiveTreeIds(seen.keys())
+    if (next.firstFill === true) notifyLaneCommit()
+    else notifyLaneCommitCoalesced()
+    scheduleLaneRewalk(partonId, generation, node, next)
+  })
+}
 
 /**
  * Commit a PRODUCER lane payload progressively: the body is still
  * streaming (its `muxend` comes only at producer resolve), so the
- * one-shot walk `_commitPartonLane` relies on would stop at the first
- * pending Flight lazy and cache nothing. Instead: walk what has
- * resolved, commit it (the template substitutes the wrapper; React
- * suspends on the pending rows — the producer's Suspense fallback),
- * and RE-WALK this same payload each time its captured pending chunks
- * land, until the walk completes or a newer commit for the parton
- * supersedes it (a later lane body's content must never be
- * overwritten by an older body's late re-walk). Lane walks always run
- * outside React's render lifecycle — the same class of walk
- * `_commitPartonLane` already does at drain, repeated per resolve.
- *
- * Only the FIRST walk's notify honors `urgent` (the initial content of
- * a lane servicing a user statement); the resolve-time re-walks are
- * streaming arrival — producer tokens, late rows — and ride the lane
- * flush quantum unless they surface a FIRST FILL (a late-resolving row
- * carrying a slot's first content — paint-blocking, same as the
- * one-shot commit's exemption).
+ * first walk stops at the producer's pending rows, commits what has
+ * resolved (the template substitutes the wrapper; React suspends on
+ * the pending rows — the producer's Suspense fallback), and the
+ * commit's re-walk scheduling picks up each settlement. This is the
+ * same commit `_commitPartonLane` runs — the producer body is just
+ * the case where the pending set is guaranteed non-empty at first
+ * walk; the trailer's fp updates are applied by the caller when the
+ * body closes.
  */
 export function _commitPartonLaneProgressive(
   partonId: string,
   node: ReactNode,
   opts?: { urgent?: boolean },
 ): void {
-  const generation = (_laneCommitGeneration.get(partonId) ?? 0) + 1
-  _laneCommitGeneration.set(partonId, generation)
-  let firstWalk = true
-  const walk = (): void => {
-    if (_laneCommitGeneration.get(partonId) !== generation) return
-    const stats: LazyWalkStats = { pending: 0, thenables: [] }
-    const seen = new Map<string, Set<string>>()
-    cacheFromStreamingChildren(node, getCurrentPagePartials(), seen, stats)
-    // Same live-tree fold as `_commitPartonLane` — each progressive
-    // re-walk may surface newly-resolved ids.
-    _addLiveTreeIds(seen.keys())
-    if ((firstWalk && opts?.urgent === true) || stats.firstFill === true) notifyLaneCommit()
-    else notifyLaneCommitCoalesced()
-    firstWalk = false
-    const thenables = stats.thenables ?? []
-    if (stats.pending > 0 && thenables.length > 0) {
-      void Promise.allSettled(thenables.map((t) => Promise.resolve(t))).then(walk)
-    }
-  }
-  walk()
+  _commitPartonLane(node, null, partonId, opts)
 }
 
 /**
