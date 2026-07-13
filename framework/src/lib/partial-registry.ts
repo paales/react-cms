@@ -32,6 +32,7 @@ import type { ReactNode } from "react"
 import {
   _deferRegistryCommit,
   _isWarmRender,
+  _renderRegistrationCapture,
   _setRegistryCommit,
   getRequest,
   getScope,
@@ -417,6 +418,11 @@ export function registerPartial(id: string, snapshot: PartialSnapshot): void {
   snapshot._seq = ++registrationSeq
   // Byte-silent origin marker — see `PartialSnapshot.warmed`.
   if (_isWarmRender()) snapshot.warmed = true
+  // Per-render capture: a lane render's own registrations, readable by
+  // its trailer flush + drain promote even when a RIVAL same-drain
+  // render of the same id registers later and wins the canonical merge
+  // (fuzz class F7 — see `_activeRenderRegistrations`).
+  _renderRegistrationCapture()?.set(id, snapshot)
   const variantKey = variantKeyOf(snapshot)
   const ctx = registryAls.getStore()
   if (ctx) {
@@ -528,6 +534,23 @@ export function lookupPartial(id: string, culled?: boolean): PartialSnapshot | u
   const variantKey = hint?.get(id)
   if (!variantKey) return undefined
   return withStatePreference(store.partials.get(id), variantKey)
+}
+
+/**
+ * The active render's OWN registration map (typed) — the lane probe's
+ * per-iteration capture, or `null` outside one. Two concurrent lane
+ * renders can both cover an id (a cullable wrapper's flip-in lane and
+ * its addressable child's own bump lane in one drain); each commits a
+ * rival registration and the canonical store keeps the LAST-registered
+ * — but the client commits lane bodies in WIRE order, which can
+ * differ. A lane's trailer heal (`from` must be the fp its own body
+ * emitted) and its drain promote (the delivery's holdings must be what
+ * its own emission established) read through this map so each lane
+ * describes ITS render, never the rival's (fuzz class F7,
+ * docs/notes/convergence-fuzzing.md).
+ */
+export function _activeRenderRegistrations(): ReadonlyMap<string, PartialSnapshot> | null {
+  return _renderRegistrationCapture() as ReadonlyMap<string, PartialSnapshot> | null
 }
 
 /**

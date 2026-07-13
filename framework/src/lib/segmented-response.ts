@@ -1299,13 +1299,24 @@ async function driveLaneStream(
         // its cold `from` (the client's `_applyFpUpdates` rule) instead
         // of landing slotless and un-evictable by a later variant.
         const laneHeals: FpUpdatesPayload = {}
+        // This render's OWN snapshot registrations, captured through
+        // the probe scope. Rival same-drain renders can cover one id
+        // (a cullable wrapper's flip-in lane and its addressable
+        // child's own bump lane) and the canonical merge keeps the
+        // LAST-registered — but the client commits lane bodies in
+        // WIRE order. The trailer flush and the drain promote below
+        // both read through this map so this delivery's heals and
+        // holdings describe THIS render's emissions (fuzz class F7).
+        const renderRegistrations = new Map<string, PartialSnapshot>()
         // Per-iteration producer attribution: the render runs inside a
         // nested probe scope so `markConnectionLive()` marks THIS lane
         // (lane renders share one request store — the store-level flag
         // can't attribute across concurrent pumps). The probe also pins
-        // the iteration's visibility moment (`pinnedVisible` above).
+        // the iteration's visibility moment (`pinnedVisible` above) and
+        // installs the registration capture.
         const probe = _createConnectionLiveProbe(
           pinnedVisible === undefined ? undefined : { visible: pinnedVisible },
+          renderRegistrations,
         )
         // The seq announced on the wire this iteration — a producer
         // lane announces EARLY (`muxlive`, the moment the render marks
@@ -1375,7 +1386,12 @@ async function driveLaneStream(
           }
           const chunks: Uint8Array[] = []
           const heals: FpUpdatesPayload = {}
-          const bodyProbe = _createConnectionLiveProbe()
+          // The shared body's own registration capture — its flush
+          // heals must describe ITS render too (the slot's heals fold
+          // into every consumer's mirror as that connection's word on
+          // the id), though a shared render's registrations are the
+          // canonical winners in the common case.
+          const bodyProbe = _createConnectionLiveProbe(undefined, new Map<string, unknown>())
           let ended: "drained" | "producer" | "torn"
           try {
             ended = await bodyProbe.run(() =>
@@ -1681,12 +1697,17 @@ async function driveLaneStream(
         // walk per drain. The parked check reads the iteration's PINNED
         // set: whether the render shipped a body is a render-time fact,
         // and a flip landing between render and drain must not move the
-        // claim (the flip's own resolution covers the delta).
+        // claim (the flip's own resolution covers the delta). The walk
+        // reads snapshots through the render's OWN registrations: this
+        // delivery carried THIS render's bytes, so its claims — and the
+        // record a later drop report would revoke — must name this
+        // body's fps, not a rival same-drain registration's (F7).
         promoteSnapshotsToCachedOverride(
           id,
           (tid, mk, fp) => carried.push([tid, mk, fp]),
           session,
           pinnedVisible,
+          renderRegistrations,
         )
         // The flush's warm heals fold in NOW, after the slots exist: the
         // `to` fp joins the slot holding its `from` (dropping when the
@@ -3236,6 +3257,17 @@ export function promoteSnapshotsToCachedOverride(
   // (see `pumpLane`); the parked check reads it instead of the live
   // session set, so the claim describes what the render SHIPPED.
   pinnedVisible?: ReadonlySet<string> | null,
+  // The render's OWN registration map (the lane probe's per-iteration
+  // capture). When provided, the scoped walk resolves each id's
+  // snapshot through it first: a rival same-drain render of a covered
+  // id can win the canonical merge, and claiming the rival's fp here
+  // would credit this delivery with bytes it did not carry — the
+  // client's commit of this body establishes THIS render's fps, and a
+  // drop report against this delivery must revoke exactly those (fuzz
+  // class F7). Ids this render did not register fall back to
+  // canonical (a broadcast-consumed body renders nothing of its own —
+  // consume-time validation pins canonical to the published render).
+  renderRegistrations?: ReadonlyMap<string, PartialSnapshot> | null,
 ): void {
   let request: Request
   let scope: string
@@ -3296,17 +3328,24 @@ export function promoteSnapshotsToCachedOverride(
   // parent→children index resolves the subtree directly; filtering the
   // whole bucket by `parentPath` here was O(route) per lane drain, a
   // standing tax at world density (hundreds of cadences over a
-  // thousands-strong bucket).
+  // thousands-strong bucket). Each id resolves through the render's
+  // own registrations first (see the parameter note above); own
+  // entries also extend the membership, so an id the render carried
+  // is claimed even when a rival registration moved its canonical
+  // placement out of this subtree's index.
   if (withinId !== undefined) {
-    const self = snapshots.get(withinId)
-    if (self) promote(withinId, self)
+    const own = renderRegistrations ?? null
+    const ids = new Set<string>([withinId])
     const subtree = _readRouteDescendants(scope, routeKey).get(withinId)
-    if (subtree) {
-      for (const id of subtree) {
-        if (id === withinId) continue
-        const snap = snapshots.get(id)
-        if (snap) promote(id, snap)
+    if (subtree) for (const id of subtree) ids.add(id)
+    if (own) {
+      for (const [rid, rsnap] of own) {
+        if (rid === withinId || rsnap.parentPath.includes(withinId)) ids.add(rid)
       }
+    }
+    for (const id of ids) {
+      const snap = own?.get(id) ?? snapshots.get(id)
+      if (snap) promote(id, snap)
     }
     return
   }

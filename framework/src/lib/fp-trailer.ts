@@ -26,6 +26,7 @@
 import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
 import {
+  _activeRenderRegistrations,
   _drainPendingDefers,
   _readRouteDescendants,
   _readSnapshotsForRoute,
@@ -506,6 +507,17 @@ export function wrapStreamWithFpTrailer(
     // Outside a request context — trailer just won't fire.
   }
   deferRequestRegistryCommit()
+  // The render's OWN registrations (the lane probe's per-iteration
+  // capture, present exactly when this wrap is a lane's — wrap time is
+  // inside the probe scope). The scoped flush fold reads snapshots
+  // through it so each heal's `from` is the fp THIS body emitted: a
+  // rival same-drain render of a covered id can win the canonical
+  // merge while the client's last-committed copy is this render's —
+  // a canonical `from` would then match no client holding and strand
+  // the copy under a stale tag (fuzz class F7). Whole-tree renders
+  // never carry a capture (no rival exists across a tear/quiesce
+  // boundary) and keep the canonical fold.
+  const renderRegs = opts?.flushScopeId !== undefined ? _activeRenderRegistrations() : null
 
   // Cumulative fp-update map for this response. Every emission — the
   // settle-time entries and the flush safety net — sends the WHOLE map,
@@ -557,6 +569,17 @@ export function wrapStreamWithFpTrailer(
         for (const id of subtree) {
           const snap = all.get(id)
           if (snap) snapshots.set(id, snap)
+        }
+      }
+      // Overlay the render's own registrations: for every id this
+      // render registered inside its scope, the heal describes THIS
+      // body's emission (own `emittedFp` as `from`, own dep record for
+      // the recompute), not the canonical merge a rival may have won.
+      // Ids the render didn't touch keep the canonical fallback.
+      if (renderRegs !== null) {
+        for (const [rid, rsnap] of renderRegs) {
+          if (rid !== withinId && !rsnap.parentPath.includes(withinId)) continue
+          snapshots.set(rid, rsnap)
         }
       }
       if (snapshots.size === 0) return false

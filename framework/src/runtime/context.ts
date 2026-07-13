@@ -119,6 +119,20 @@ interface RequestStore {
    *  segment driver opens a connection session iff a statement is
    *  bound. Absent on every other request (actions, SSR documents). */
   attachStatement?: AttachStatementHandle | null
+  /** Per-render registration capture — the lane probe installs a map
+   *  here so every `registerPartial` under this render is attributable
+   *  to THIS render, not just to the canonical merge. Two rival
+   *  same-drain renders of one parton (a wrapper's flip-in lane and
+   *  the child's own bump lane) commit rival registrations whose
+   *  canonical winner is the LAST-registered — while the client
+   *  commits lane bodies in WIRE order, which can differ. A lane's
+   *  trailer heal and drain promote must therefore describe the
+   *  render's OWN emissions (fuzz class F7). Opaque here (the snapshot
+   *  shape is `../lib/partial-registry.ts`'s — same structural
+   *  discipline as `ConnectionSessionHandle`); typed readers live in
+   *  that module. Absent on whole-tree renders (covering renders tear
+   *  or trail open lanes, so no rival exists there). */
+  renderRegistrations?: Map<string, unknown>
 }
 
 /** The slice of a connection session the request context carries —
@@ -420,12 +434,19 @@ export async function _runWithPinnedVisible<T>(
   return requestContext.run(pinned, fn)
 }
 
-export function _createConnectionLiveProbe(pin?: {
-  visible: ReadonlySet<string> | null
-}): ConnectionLiveProbe {
+export function _createConnectionLiveProbe(
+  pin?: {
+    visible: ReadonlySet<string> | null
+  },
+  /** Per-render registration capture (see
+   *  `RequestStore.renderRegistrations`) — the caller owns the typed
+   *  map and reads it back after the run (the drain promote). */
+  registrations?: Map<string, unknown>,
+): ConnectionLiveProbe {
   const parent = getStore()
   const probe: RequestStore = Object.create(parent) as RequestStore
   probe.connectionLive = false
+  if (registrations !== undefined) probe.renderRegistrations = registrations
   if (pin !== undefined && parent.connectionSession != null) {
     probe.connectionSession = {
       visible: pin.visible,
@@ -439,6 +460,14 @@ export function _createConnectionLiveProbe(pin?: {
       Object.prototype.hasOwnProperty.call(probe, "connectionLive") &&
       probe.connectionLive === true,
   }
+}
+
+/** The active render's registration-capture map, if a lane probe
+ *  installed one (see `RequestStore.renderRegistrations`). Written by
+ *  `registerPartial`; read (typed) via
+ *  `_activeRenderRegistrations` in `../lib/partial-registry.ts`. */
+export function _renderRegistrationCapture(): Map<string, unknown> | null {
+  return requestContext.getStore()?.renderRegistrations ?? null
 }
 
 // ─── Deferred-commit accounting ─────────────────────────────────────

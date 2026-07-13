@@ -373,6 +373,29 @@ points on the registry timeline). Covered by
 ([`docs/notes/convergence-fuzzing.md`](../notes/convergence-fuzzing.md)
 finding F1).
 
+**A lane's heals and promote describe its OWN registrations (the
+capture discipline).** One drain can render one parton TWICE — a
+cullable wrapper's flip-in lane covers its addressable child while the
+child's parked-era bump lanes it directly — and the two renders commit
+RIVAL snapshot registrations, of which the canonical store keeps only
+the LAST-registered. The client, though, commits lane bodies in WIRE
+order, which can differ from registration order. So each lane
+iteration's probe installs a per-render registration capture
+(`_createConnectionLiveProbe` in `runtime/context.ts`;
+`registerPartial` writes through it), and both consumers of the
+render's emissions read snapshots through that map
+(`_activeRenderRegistrations`): the scoped trailer flush computes each
+heal's `from` off the fp THIS body emitted (a canonical `from` can
+match no client holding, permanently stranding the last-committed copy
+under a stale tag — fuzz finding F7, fp-only), and the drain promote
+claims — and records on the delivery, for the drop-report revocation's
+sake — exactly the fps this body carried. Both rivals heal to the
+shared warm fp, so whichever body the client commits last has a
+matching heal. Whole-tree renders carry no capture (covering renders
+tear or trail open lanes — no rival exists) and keep the canonical,
+route-wide fold. Covered by `rival-lane-heal.rsc.test.tsx` and the
+fuzzer (finding F7).
+
 **Renders describe ONE visibility moment (the pin discipline).** Every
 lane iteration and every covering segment on a held connection
 (navigation, reconcile) runs under a visibility set PINNED at its

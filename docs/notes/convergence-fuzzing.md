@@ -25,10 +25,11 @@ fixture app), `framework/src/lib/__tests__/fuzz-convergence.rsc.test.tsx`
 (the CI budget + env knobs). The findings ledger is at the bottom —
 the v1 harness found two real framework bug classes on its first day,
 and fixing them exposed three more the old classifier had lumped in.
-F1–F6 are FIXED; F7 (the rival-lane fp bookkeeping drift, split out of
-the old F6 tally) is OPEN — fp-only, stamps converge in every observed
-run. Every seed runs as an ordinary case: the CI budget is fully clean
-and any failure there is a new finding.
+F1–F7 are FIXED. Every seed runs as an ordinary case: the CI budget is
+fully clean and any failure there is a new finding. The post-F7 long
+runs are ZERO findings at every budget tried (3000×20, 1000×50 from a
+distinct seed range, 500×50 — the last after fixing a harness
+settle-terminator hole, seed 336 below).
 
 ## The action alphabet
 
@@ -133,20 +134,27 @@ causality with a SENTINEL parton — a cell reader whose bump (a real
 3. A window containing ONLY the sentinel event proves the wake found
    nothing else pending. Quiesced.
 
-One deterministic wrinkle: only a sentinel LANE terminates a settle
-window — a covering whole-tree segment never does, even one carrying
-the current tick's stamp. A segment is a navigation/refetch consume,
-and scheduled work legitimately TRAILS it: the statement's forced
-lanes start only after the region reopens, and a bump landing
+Two deterministic wrinkles. First: only a sentinel LANE terminates a
+settle window — a covering whole-tree segment never does, even one
+carrying the current tick's stamp. A segment is a navigation/refetch
+consume, and scheduled work legitimately TRAILS it: the statement's
+forced lanes start only after the region reopens, and a bump landing
 mid-render stays pending (the driver's coverage cursor anchors before
 the render begins — the F1 fix) with its lane following the segment.
 The settle re-states the bump with a fresh tick on every segment
 arrival (keyed on the segment itself, never a timer) and counts the
 occurrence (`sentinelRebumps`) as a diagnostic; the fresh tick's lane
 is the sound terminator, because the wake that lanes it drains the one
-pending set and every earlier-announced lane serializes ahead of it.
-A 20s watchdog exists as pure failure detection (a hang is a finding,
-not a wait).
+pending set. Second: the terminator counts only once the model's
+contiguous watermark COVERS its delivery seq. Lane OPENINGS can
+reorder relative to delivery seqs — two adjacent wakes' pumps race
+their first chunks onto the wire, so the sentinel's lane can surface
+ahead of an earlier-seq lane still in the pipe — and terminating on it
+would leave that delivery unconsumed (the seed-336 harness finding
+below). The seq gap is the real signal: every minted seq reaches the
+wire (a body's seq entry, a torn-consume, or a `seqvoid`), so the
+settle drains until the gap closes. A 20s watchdog exists as pure
+failure detection (a hang is a finding, not a wait).
 
 ### The oracle render and the comparison
 
@@ -263,11 +271,14 @@ hold, and F6). Post-F1 runs: 3000 × 20 → 2980 clean / 20 findings,
 1000 × 50 → 993 clean / 7 — the "F6" tally, which the F6 fix in turn
 split into TWO roots. Post-F6-fix runs: 3000 × 20 → **2999 clean / 1**
 (seed 2153), 1000 × 50 from a distinct seed range → **999 clean / 1**
-(seed 5722) — both residuals the one OPEN family (F7, fp-only,
-~0.03–0.1% of sequences); zero watchdogs, zero parity trips, zero
-harness failures. The formerly-pinned seeds (9, 18 → F1; 10 → F2;
-1381, 1016 → F6) run as ordinary cases and the CI budget (seeds 1–25)
-is fully clean.
+(seed 5722) — both residuals the F7 family (fp-only, ~0.03–0.1% of
+sequences); zero watchdogs, zero parity trips, zero harness failures.
+Post-F7-fix runs (with the seed-336 settle-terminator harness fix):
+3000 × 20 → **3000 clean / 0**, 1000 × 50 from the distinct seed range
+→ **1000 clean / 0**, 500 × 50 from seed 1 → **500 clean / 0** — zero
+findings of any class. The formerly-pinned seeds (9, 18 → F1; 10 → F2;
+1381, 1016 → F6; 2153, 5722 → F7; 336 → the settle terminator) run as
+ordinary cases and the CI budget (seeds 1–25) is fully clean.
 
 - **F1 — FIXED: the covering-segment missed-update window
   (staleness).** `handleNavigation` (`segmented-response.ts`) — and
@@ -438,49 +449,84 @@ cull-b+out cull-a, flip out cull-b, flip in cull-b]` — fp-only).
   Deterministic regression (both members, red without the fixes):
   `framework/src/lib/__tests__/drop-report-heal.rsc.test.tsx`.
 
-- **F7 — OPEN: rival same-drain renders strand a mis-tagged fp
-  (split out of the old F6 tally — pre-existing, fp-only).**
-  ~0.03–0.1% of sequences; stamps converge in every observed run
+- **F7 — FIXED: rival same-drain renders strand a mis-tagged fp
+  (split out of the old F6 tally — pre-existing, fp-only).** Was
+  ~0.03–0.1% of sequences; stamps converged in every observed run
   (representative shrunk repros: seed 2153 `[flip out wrap, flip out
 a + in wrap, settle, flip out wrap, write b=7, flip out b + in
 wrap, write b=8]`; seed 5722 — same shape). Mechanism: one drain
   can start a flip-in lane for a cullable WRAPPER and a bump lane for
   its addressable CHILD (the child's parked-era delivery unparks with
   the wrapper's flip) — two concurrent renders of the child commit
-  RIVAL registrations, each lane's trailer heal computes its `from`
+  RIVAL registrations, each lane's trailer heal computed its `from`
   off the canonical (last-registered) emission rather than its own
   body's, and the client commits the lane bodies in WIRE order, which
   can differ from registration order — so the client's last-committed
-  child emission carries a fp no heal's `from` matches, stranding the
+  child emission carried a fp no heal's `from` matched, stranding the
   (content-correct) copy under a stale tag: over-fetch and mirror
-  bookkeeping drift, never staleness. Direction: "describe the
-  render" one level deeper — the lane's flush heals and drain promote
-  should walk the RENDER'S OWN registrations (the commit handle's
-  pending set), not the canonical merge; alternatively the client's
-  heal application could go slot-based instead of fp-equality (the
-  client merge layer's side). NOT fixable by collapsing the child
-  into the ancestor's same-drain lane: a direct flip-in's verdict
-  runs against the client's stated tokens, which an earlier flush
-  heal may have retagged PAST the child's parked-era bump (the flush
-  recompute folds live invalidation timestamps — the inv-ts sibling
-  of the F6 alias, sound for unparked readers only because their
-  bump always lanes), so the ancestor can CONFIRM while the child's
-  change never ships — tried, and seed 824 turned the fp-only drift
-  into real staleness; reverted. The child's own lane is the
-  guaranteed carrier.
+  bookkeeping drift, never staleness. **Fix:** "describe the render"
+  one level deeper — the per-render registration capture. Each lane
+  iteration's probe installs a registration map
+  (`_createConnectionLiveProbe` in `runtime/context.ts`;
+  `registerPartial` writes through `_renderRegistrationCapture`), and
+  both consumers of a lane render's emissions read snapshots through
+  it (`_activeRenderRegistrations`, `partial-registry.ts`): the
+  trailer flush's scoped fold (`wrapStreamWithFpTrailer` /
+  `foldUpdates`, fp-trailer.ts) computes each heal's `from` off the
+  fp THIS body emitted, and the drain promote
+  (`promoteSnapshotsToCachedOverride`, segmented-response.ts) claims
+  — and records on the delivery, for the F6 revocation's sake —
+  exactly the fps this body carried. Both rivals heal to the shared
+  warm fp, so whichever body the client commits last has a matching
+  heal. Whole-tree renders carry no capture (covering renders tear or
+  trail open lanes — no rival exists) and keep the canonical fold;
+  the broadcast publisher's body probe carries its own. NOT fixable
+  by collapsing the child into the ancestor's same-drain lane: a
+  direct flip-in's verdict runs against the client's stated tokens,
+  which an earlier flush heal may have retagged PAST the child's
+  parked-era bump (the flush recompute folds live invalidation
+  timestamps — the inv-ts sibling of the F6 alias, sound for unparked
+  readers only because their bump always lanes), so the ancestor can
+  CONFIRM while the child's change never ships — tried, and seed 824
+  turned the fp-only drift into real staleness; reverted. The child's
+  own lane is the guaranteed carrier. Deterministic regression (both
+  shrunk sequences, red without the fix):
+  `framework/src/lib/__tests__/rival-lane-heal.rsc.test.tsx`.
 
-- **Browser-level observation (unshrunk, root unconfirmed):**
-  `website/validate-scroll-stress.mjs` intermittently (~1 in 6 runs
-  post-F6-fix; also red at the pre-fix HEAD) fails its RE-ENTRY
-  batteries (diagonalBack / southCruise / longHaulReturn) with
-  persistent 2×2 chunk holes inside quad-tile blocks — previously-
-  visited-then-parked territory only; forward exploration always
-  converges. The F6 fix does not heal it, and the world sends no
-  `url` frames, so the as-of race cannot be its root; the quad-tile
-  parent / chunk-child shape matches F7's wrapper/child geometry
-  (a quad flip-in confirming past its children's parked-era state),
-  but that is a hypothesis — needs a v1 fixture extension or a
-  shrink of its own.
+- **Browser-level finding — ROOT-CAUSED, open (client merge layer):
+  the flip-in confirm against a stated holding whose CONTENT the
+  client already evicted.** `website/validate-scroll-stress.mjs`
+  intermittently (~1 in 3 runs) fails its RE-ENTRY batteries
+  (diagonalBack / southCruise / zigzag / longHaulReturn backtracks)
+  with persistent 2×2 chunk holes inside stuck quad-tile placeholders
+  — previously-visited-then-parked territory only. NOT F7 (the F7 fix
+  does not heal it) and NOT a server-lane bug. The instrumented chain
+  (server flip/lane traces + client IO/controller/transport hooks,
+  one stuck quad end-to-end): the client's re-entry flip-in statement
+  carried `cached` tokens for the quad (`cached#=2` — `cachedTokensFor`
+  reads `_currentPageFingerprints`), the server honored the claim and
+  CONFIRMED with the zero-byte placeholder (878-byte lane) — but the
+  client's CONTENT for the quad was already gone (evicted from the
+  client cache during the scroll churn while its fp tokens survived),
+  so the confirm restored nothing and the skeleton stood. The
+  deadlock is total and mutual: the controller's baseline says
+  in-view (the flip resolved), the session set holds the id, the
+  server mirror holds the confirmed fp — no delta exists anywhere, so
+  nothing re-states or re-lanes until an unrelated out/in cycle whose
+  statement happens to carry `cached#=0` (then the server renders
+  fresh and heals instantly — observed) or the 30s reconcile. The
+  regression detector (`_visibilityContentRegressed`) never fires:
+  there is no content→skeleton TRANSITION to observe — the content
+  was destroyed while parked, before the confirm. The bug is the
+  client's holdings statement lying: a content eviction (the cache
+  pool's `evictOldest` cap path over parked entries) must either
+  purge the id's advertised fp tokens (`partial-client-state.ts`) or
+  ride upstream as an eviction report (the `AckFrame.evicted`
+  machinery the clobber healer already uses) so the flip's lane
+  renders instead of confirming. Client merge layer
+  (`partial-cache.ts` / `partial-client-state.ts` / the pair) — not
+  fixed here (concurrently owned surface); the scroll-stress CI step
+  stays ADVISORY until this lands.
 
 - **Harness finding (fixed alongside F1): a covering segment is not
   a quiescence proof.** The settle protocol formerly terminated a
@@ -491,6 +537,26 @@ wrap, write b=8]`; seed 5722 — same shape). Mechanism: one drain
   segment), so terminating on it dropped trailing lanes from the
   model and mis-reported the server. Only a sentinel LANE terminates
   now (§Quiescence).
+
+- **Harness finding (seed 336): the settle terminator must wait out
+  the seq gap.** Surfaced by a 500 × 50 deep run as a stamp+fp
+  "staleness" on fz-inner (shrunk: `[write b=1, four flips, navigate
+  same-url, flip in wrap, write b=19, settle, flip out cull-a, write
+b=21]`, timing-sensitive ~1-in-few runs). Driver-side tracing proved
+  the server SHIPPED everything: the b=21 bump laned fz-inner as
+  delivery seq 12 and the settle's sentinel as seq 13 — but the two
+  pumps raced their FIRST chunks onto the wire, the sentinel's lane
+  OPENED first, and the model (which consumes lanes in open order)
+  terminated the settle on it with seq 12 still in the pipe. The
+  model's own watermark held the evidence (wedged at 11, gap at 12);
+  the real client decodes lanes concurrently and commits every
+  arrival, so no framework bug exists. **Fix (harness):** the sentinel
+  lane terminates a settle round only once the contiguous watermark
+  covers its delivery seq; a gapped terminator keeps draining (the
+  gap-filler is in flight — every minted seq reaches the wire as a
+  body, a torn-consume, or a `seqvoid`), and a genuinely-lost seq
+  hangs into the watchdog, surfacing as a real finding instead of a
+  silent under-read. See §Quiescence.
 
 - **Harness finding: an ANNOUNCED torn lane must consume PROCESSED.**
   The model's torn-lane path dropped the body without consuming its

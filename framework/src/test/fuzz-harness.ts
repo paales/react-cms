@@ -535,30 +535,59 @@ export async function runSequence(
             debug?.(`settle round ${round} tick=${tick}`)
             await fixture.bumpSentinel(scope, currentUrl, tick)
             let sawOther = false
+            // The round's terminator: the sentinel LANE carrying the
+            // current tick (the wake that lanes it drained the one
+            // pending set) — but only once the contiguous watermark
+            // covers its delivery seq. Lane OPENINGS can reorder
+            // relative to delivery seqs: two adjacent wakes' pumps race
+            // their FIRST chunks onto the wire, so the sentinel's lane
+            // can surface ahead of an earlier-seq lane still in the
+            // pipe — terminating on it would leave that delivery
+            // unconsumed and mis-report the server as stale (a model
+            // artifact; the real client decodes lanes concurrently and
+            // commits every arrival). The seq gap is the real signal:
+            // every minted seq reaches the wire (a body's seq entry, a
+            // torn-consume, or a `seqvoid`), so draining to coverage is
+            // bounded — a genuinely-lost seq is a wedged watermark,
+            // which the watchdog surfaces as a finding.
+            let terminatorSeq: number | null = null
+            let sawTerminator = false
             while (true) {
               const ev = await nextEvent()
               const hasCurrentStamp = await applyEvent(ev, tick)
-              // Only a sentinel LANE terminates the window: the wake
-              // that lanes it drained the one pending set, and every
-              // lane announced before the bump serializes ahead of it.
-              if (hasCurrentStamp && ev.kind === "lane") break
-              sawOther = true
-              // A whole-tree SEGMENT never terminates — even one
-              // carrying the current stamp. It is a covering render (a
-              // navigation/refetch consume), and scheduled work can
-              // TRAIL it: the statement's forced lanes start only after
-              // the region reopens, and a bump landing mid-render stays
-              // pending (the coverage cursor anchors before the render
-              // begins) with its lane following. Re-state the bump with
-              // a fresh tick (deterministic — triggered by the
-              // segment's own arrival, never a timer) so the loop
-              // watches exactly one current tick; counted as a
-              // diagnostic.
-              if (ev.kind === "segment") {
-                tick = ++sentinelTick
-                result.sentinelRebumps++
-                debug?.(`settle re-bump tick=${tick} (covering segment)`)
-                await fixture.bumpSentinel(scope, currentUrl, tick)
+              if (hasCurrentStamp && ev.kind === "lane") {
+                sawTerminator = true
+                terminatorSeq = ev.seq
+              } else {
+                sawOther = true
+                // A whole-tree SEGMENT never terminates — even one
+                // carrying the current stamp. It is a covering render (a
+                // navigation/refetch consume), and scheduled work can
+                // TRAIL it: the statement's forced lanes start only after
+                // the region reopens, and a bump landing mid-render stays
+                // pending (the coverage cursor anchors before the render
+                // begins) with its lane following. Re-state the bump with
+                // a fresh tick (deterministic — triggered by the
+                // segment's own arrival, never a timer) so the loop
+                // watches exactly one current tick; counted as a
+                // diagnostic. A stale terminator (an older tick's lane)
+                // no longer terminates: `hasCurrentStamp` compares the
+                // fresh tick.
+                if (ev.kind === "segment") {
+                  tick = ++sentinelTick
+                  result.sentinelRebumps++
+                  debug?.(`settle re-bump tick=${tick} (covering segment)`)
+                  await fixture.bumpSentinel(scope, currentUrl, tick)
+                  sawTerminator = false
+                  terminatorSeq = null
+                }
+              }
+              if (sawTerminator) {
+                advanceWatermark()
+                if (terminatorSeq === null || watermark >= terminatorSeq) break
+                debug?.(
+                  `settle terminator seq=${terminatorSeq} gapped (watermark=${watermark}) — draining`,
+                )
               }
             }
             await maybeAck(true)

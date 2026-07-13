@@ -171,14 +171,17 @@ jobs:
       - name: Validate two-viewer broadcast (one world, two live contexts)
         run: node website/validate-two-viewers.mjs
 
-      # ADVISORY while the backtrack-hole residual is open: the adversarial
-      # battery reproducibly catches persistent holes (missing chunk coords
-      # + quad placeholders, 2×2 quad-tile blocks) on the sequences that
-      # re-enter previously-visited-then-parked territory (diagonalBack,
-      # longHaulReturn) at ?chunk=128, plus an occasional stray
-      # /__parton/channel 404 — roughly 1-in-3 runs fully green on current
-      # main. Flip this to a hard gate (drop continue-on-error) once the
-      # residual is fixed and three consecutive local runs hold green.
+      # ADVISORY while the backtrack-hole residual is open — root-caused
+      # (docs/notes/convergence-fuzzing.md, the browser-level finding): a
+      # re-entry flip-in states `cached` tokens for a quad whose CONTENT
+      # the client cache already evicted while parked; the server's honest
+      # confirm then restores nothing and the skeleton stands (no delta
+      # anywhere, so nothing re-lanes until an unrelated flip cycle or the
+      # reconcile). The fix is client-side (the eviction must purge the
+      # advertised fp tokens or report upstream — partial-cache.ts /
+      # partial-client-state.ts). Flip this to a hard gate (drop
+      # continue-on-error) once that lands and six consecutive local runs
+      # hold green.
       - name: Validate scroll stress (adversarial bursts / reversals / backtracks — advisory)
         continue-on-error: true
         run: node website/validate-scroll-stress.mjs
