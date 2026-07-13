@@ -570,6 +570,20 @@ Rules:
   last-write-wins IS the intent. Reach for `update` exactly when
   `next` reads `current`.
 
+**The worked example — the auction district.** The website world
+(`website/src/app/world/auction*.{ts,tsx}`) ships the forcing caller:
+a 2×2 block of lots one chunk east of the origin, one `auction-lot`
+cell partitioned per lot id, every bid a
+`lotBidCell.with({ lot }).update(...)` adding `BID_STEP` to the amount
+and 1 to the count — so a lost update is arithmetically visible. The
+lot bodies are viewer-independent (bound-cell prop only, no
+session/cookie/viewport reads), so N watchers of one lot share ONE
+broadcast lane. `website/validate-bidding.mjs` proves the contract
+end-to-end: a 50-bid storm from two browser contexts composes exactly
+(zero lost updates), a third watcher counts server renders off the lot
+body's log line (one shared render, not one per connection), and a
+neighbouring lot's partition stays untouched.
+
 ### Transactional multi-write — `atomic(fn)`
 
 Writes live in plain `"use server"` functions that import cells and

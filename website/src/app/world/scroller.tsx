@@ -100,6 +100,12 @@ export function WorldScroller({ children, chunkPx }: { children: ReactNode; chun
     let lastPointer = { x: 0, y: 0 }
     const onPointerDown = (e: PointerEvent) => {
       if (e.pointerType !== "mouse") return
+      // Interactive world content owns its clicks: a pan started on a
+      // control would capture the pointer, and capture retargets the
+      // click to the scroller — the control never fires (the auction
+      // district's BID button). Pan starts on ground, never on controls.
+      if (e.target instanceof Element && e.target.closest("button, a, input, select, textarea"))
+        return
       dragging = true
       lastPointer = { x: e.clientX, y: e.clientY }
       scroller.setPointerCapture(e.pointerId)

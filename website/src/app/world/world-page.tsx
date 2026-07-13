@@ -1,4 +1,5 @@
 import { parton, searchParam, type RenderArgs } from "@parton/framework"
+import { AuctionDistrict } from "./auction-lot.tsx"
 import { DEFAULT_CHUNK_PX, GEOMETRIES, geometryFor, QUAD_ROOT_PX } from "./constants.ts"
 import { defineQuadTree, type QuadLevel } from "./quad.tsx"
 import { WorldScroller } from "./scroller.tsx"
@@ -46,10 +47,14 @@ export const WorldPage = parton(
       }
     }
     // The default geometry's scroller carries no prop, so a bare URL's
-    // wire is exactly the historical one.
+    // wire is exactly the historical one. The auction district rides
+    // this page parton (not the chunks) as an overlay layer at plane
+    // coordinates — see ./auction-lot.tsx for why the lots' lanes
+    // must not nest under the chunks.
     return (
       <WorldScroller {...(geo.chunkPx === DEFAULT_CHUNK_PX ? {} : { chunkPx: geo.chunkPx })}>
         {roots}
+        <AuctionDistrict />
       </WorldScroller>
     )
   },

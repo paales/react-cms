@@ -210,6 +210,17 @@ node website/validate-two-viewers.mjs # BROADCAST-LANE gate: TWO independent
                         # scroll never disturbs the other's position/content/
                         # pulses. Run after any broadcast-lane / delivery-
                         # plane change: `yarn build:website` first.
+node website/validate-bidding.mjs # COMPOSED-WRITE gate: the auction district —
+                        # THREE browser contexts on ONE lot; a 50-bid
+                        # storm from two of them must compose exactly
+                        # (`cell.update` — zero lost updates, final
+                        # amount/bids to the digit), every viewer
+                        # converges on screen, the third watcher's
+                        # render-line count proves the bid lane fanned
+                        # out as ONE broadcast render, and a neighbour
+                        # lot's partition stays untouched. Run after
+                        # any cell-write / broadcast change:
+                        # `yarn build:website` first.
 node website/validate-scroll-stress.mjs # ADVERSARIAL-SCROLL gate: drives the
                         # dense world (?chunk=128, 2560×1440) through bursts,
                         # reversals, backtracks, diagonals; after every stop

@@ -74,6 +74,37 @@ export const FLAKY_DISTRICT = {
 export const inFlakyDistrict = (x: number, y: number): boolean =>
   x >= FLAKY_DISTRICT.x0 && x < FLAKY_DISTRICT.x1 && y >= FLAKY_DISTRICT.y0 && y < FLAKY_DISTRICT.y1
 
+/**
+ * The auction district — the composed-write contract's forcing caller
+ * (`docs/reference/cells.md` § Composed write): a 2×2 block of lots
+ * whose current-high-bid cells every viewer shares; each bid is a
+ * `cell.update(fn)` so concurrent bids COMPOSE instead of clobbering
+ * (see `./auction.ts`, proven by `website/validate-bidding.mjs`).
+ *
+ * A PLANE-coordinate box, so every geometry (`?chunk=`) shares the
+ * same visual region. Placed one chunk east of the origin — inside the
+ * cold-seed viewport's edge, so the district is visible on boot.
+ * Unlike the flaky district it renders HEALTHY content and is
+ * quiescent unless someone bids, so sitting on the standing
+ * validators' east path costs only its (small) card bytes — no error
+ * cards, no extra observers, no ticking lanes. Chunks inside the box
+ * carry only the district TINT; the lot cards themselves ride the
+ * page parton's overlay layer (`auction-lot.tsx`).
+ */
+export const AUCTION_DISTRICT = {
+  x0: CENTER_PX + 512,
+  x1: CENTER_PX + 1536,
+  y0: CENTER_PX - 512,
+  y1: CENTER_PX + 512,
+} as const
+
+/** Is the plane-coordinate box origin `(x, y)` inside the district? */
+export const inAuctionDistrict = (x: number, y: number): boolean =>
+  x >= AUCTION_DISTRICT.x0 &&
+  x < AUCTION_DISTRICT.x1 &&
+  y >= AUCTION_DISTRICT.y0 &&
+  y < AUCTION_DISTRICT.y1
+
 /** The whitelisted chunk sizes. 512 is the default (and the only one
  *  a bare URL ever serves); 256/128 are density stress geometries. */
 export const CHUNK_SIZES = [512, 256, 128] as const

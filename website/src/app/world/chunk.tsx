@@ -5,6 +5,7 @@ import { ChunkShell } from "./chunk-shell.tsx"
 import {
   CHUNK_FLIP_MARGIN_PX,
   FLAKY_DISTRICT,
+  inAuctionDistrict,
   inFlakyDistrict,
   seedIntersects,
   type WorldGeometry,
@@ -48,13 +49,22 @@ export type ChunkComponent = (props: ChunkPos) => React.ReactNode | Promise<Reac
  * (`<StaleBadge>` reads it) and re-attempts on the capped backoff; a
  * chunk that has never rendered good bytes shows the bounded error
  * card until a retry lands. See `docs/reference/errors.md`.
+ *
+ * The AUCTION DISTRICT only TINTS here: district chunks carry the
+ * `chunk--auction` class so the region reads as a place, but the lot
+ * cards themselves live on the page parton's overlay layer
+ * (`<AuctionDistrict>` in ./auction-lot.tsx) — a lot's bid lane must
+ * ride its own viewer-independent parton, decoupled from this chunk's
+ * per-viewer cull gate and beat-cadence lanes.
  */
 export function defineWorldChunk(geo: WorldGeometry): ChunkComponent {
   const pulse = definePulse(geo)
   return parton(
     async function WorldChunkRender({ cx, cy }: ChunkPos & RenderArgs) {
       const clock = time()
-      const flaky = inFlakyDistrict(geo.chunkOrigin(cx), geo.chunkOrigin(cy))
+      const gx = geo.chunkOrigin(cx)
+      const gy = geo.chunkOrigin(cy)
+      const flaky = inFlakyDistrict(gx, gy)
       if (flaky) {
         const outage = flakyOutage(cx, cy, clock.now)
         if (outage.failing) {
@@ -68,16 +78,11 @@ export function defineWorldChunk(geo: WorldGeometry): ChunkComponent {
       // producer. The beat declaration is the whole cadence machinery.
       const alive = Math.max(0, clock.now - anchor.value)
       expires(pulse.nextBeat(cx, cy, clock.now))
-      const isDistrictCorner =
-        flaky &&
-        geo.chunkOrigin(cx) === FLAKY_DISTRICT.x0 &&
-        geo.chunkOrigin(cy) === FLAKY_DISTRICT.y0
+      const isDistrictCorner = flaky && gx === FLAKY_DISTRICT.x0 && gy === FLAKY_DISTRICT.y0
+      const auction = inAuctionDistrict(gx, gy)
+      const modifier = flaky ? " chunk--flaky" : auction ? " chunk--auction" : ""
       return (
-        <div
-          className={flaky ? "chunk chunk--flaky" : "chunk"}
-          data-testid={`chunk-${cx},${cy}`}
-          data-loaded
-        >
+        <div className={`chunk${modifier}`} data-testid={`chunk-${cx},${cy}`} data-loaded>
           <span className="chunk__coord">
             {cx},{cy}
           </span>
@@ -123,6 +128,7 @@ function OriginCard() {
       </p>
       <p className="card__hint">WASD / drag / scroll</p>
       <p className="card__hint">flaky district: south-west ↙</p>
+      <p className="card__hint">auction district: east →</p>
     </div>
   )
 }

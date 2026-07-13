@@ -242,6 +242,62 @@ body {
   letter-spacing: 0;
 }
 
+/* ── Auction district — the composed-write demo (auction.ts) ── */
+
+.chunk--auction {
+  background: rgb(88 166 255 / 0.04);
+  box-shadow: inset 0 0 0 1px rgb(88 166 255 / 0.18);
+}
+
+/* The lot overlay layer sits above the chunks at plane coordinates.
+   Pointer events stay off on the layer and boxes (ground between
+   cards still pans); each card re-enables them for its button. */
+.auction-layer {
+  position: absolute;
+  pointer-events: none;
+}
+
+.lot-box {
+  position: absolute;
+  pointer-events: none;
+}
+
+.lot-box .card {
+  pointer-events: auto;
+}
+
+.card--lot .card__title {
+  color: var(--light-blue);
+}
+
+.lot__amount {
+  margin: 0 0 var(--tile);
+  font-size: calc(2 * var(--tile));
+  line-height: calc(2 * var(--tile));
+  font-weight: 700;
+  color: var(--light-blue);
+}
+
+.lot__bids {
+  color: var(--ink-dim);
+}
+
+.lot__bid {
+  display: block;
+  margin: 0 0 var(--tile);
+  padding: calc(var(--tile) / 4) var(--tile);
+  font: inherit;
+  letter-spacing: 0;
+  color: var(--light-blue);
+  background: rgb(88 166 255 / 0.08);
+  border: 1px solid var(--light-blue);
+  cursor: pointer;
+}
+
+.lot__bid:active {
+  background: rgb(88 166 255 / 0.3);
+}
+
 /* ── Content cards — tile-aligned ── */
 
 .card {
