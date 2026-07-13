@@ -38,6 +38,7 @@ import {
   _createConnectionLiveProbe,
   _getAttachStatement,
   _getCachedOverride,
+  _runWithPinnedVisible,
   _runWithWarmRenderScope,
   _runWithWarmRequestScope,
   _setCachedOverride,
@@ -1258,6 +1259,18 @@ async function driveLaneStream(
       while (!closed && !tearingLanesForNav && !runtime.cancelled) {
         runtime.dirty = false
         runtime.producer = false
+        // The iteration's visibility MOMENT — the set the render, the
+        // fp-skip verdict, the flush recompute, AND the drain promote
+        // below all describe. Captured before the render and pinned via
+        // the probe scope: a `visible` statement landing mid-iteration
+        // must not retag this render's emitted fp with a state its rows
+        // do not carry (the flush-alias member of fuzz class F6 — an
+        // out-flip ships no covering lane, so an aliased heal would
+        // stand as the connection's last word on the id). The statement
+        // that landed gets its own resolution — an in-flip lanes, and a
+        // wake on this open lane marks it dirty, so the NEXT iteration
+        // re-captures the moved set.
+        const pinnedVisible = session !== null ? session.visible : undefined
         const snap = lookupPartial(id)
         if (!snap) {
           // An assigned consequence seq for a parton that no longer
@@ -1289,8 +1302,11 @@ async function driveLaneStream(
         // Per-iteration producer attribution: the render runs inside a
         // nested probe scope so `markConnectionLive()` marks THIS lane
         // (lane renders share one request store — the store-level flag
-        // can't attribute across concurrent pumps).
-        const probe = _createConnectionLiveProbe()
+        // can't attribute across concurrent pumps). The probe also pins
+        // the iteration's visibility moment (`pinnedVisible` above).
+        const probe = _createConnectionLiveProbe(
+          pinnedVisible === undefined ? undefined : { visible: pinnedVisible },
+        )
         // The seq announced on the wire this iteration — a producer
         // lane announces EARLY (`muxlive`, the moment the render marks
         // live) so the client commits progressively; a normal lane
@@ -1662,8 +1678,16 @@ async function driveLaneStream(
         // from this render; walking the whole route map per drain is
         // O(route) churn for entries the drain didn't touch. The same
         // walk records the delivery's holdings — one pass, no second
-        // walk per drain.
-        promoteSnapshotsToCachedOverride(id, (tid, mk, fp) => carried.push([tid, mk, fp]), session)
+        // walk per drain. The parked check reads the iteration's PINNED
+        // set: whether the render shipped a body is a render-time fact,
+        // and a flip landing between render and drain must not move the
+        // claim (the flip's own resolution covers the delta).
+        promoteSnapshotsToCachedOverride(
+          id,
+          (tid, mk, fp) => carried.push([tid, mk, fp]),
+          session,
+          pinnedVisible,
+        )
         // The flush's warm heals fold in NOW, after the slots exist: the
         // `to` fp joins the slot holding its `from` (dropping when the
         // slot fp-skipped away), then rides this delivery's holdings so
@@ -1911,42 +1935,58 @@ async function driveLaneStream(
   // missed), and reopen the lanes region. Only at quiesce (no open
   // lanes: a `next` delimiter would tear them client-side) and only
   // with room in the delivery window (the segment IS a delivery).
-  const emitReconcileSegment = async (): Promise<boolean> => {
-    if (!enqueue(nextMarker)) return false
-    let deliverySeq: number | null = null
-    if (session !== null) {
-      deliverySeq = ++session.deliverySeq
-      if (!enqueue(segmentDeliverySeqEntry(deliverySeq, session.consumedNavSeq))) return false
-    }
-    const reader = renderFullSegment().getReader()
-    try {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (value && value.byteLength > 0) {
-          if (!(await awaitDemand())) {
-            await reader.cancel(DRIVER_CANCEL_REASON).catch(() => {})
-            return false
-          }
-          if (!enqueue(value)) {
-            await reader.cancel(DRIVER_CANCEL_REASON).catch(() => {})
-            return false
+  //
+  // The whole pass — render, trailer flush, drain promote — runs under
+  // a PINNED visibility moment captured at render start
+  // (`_runWithPinnedVisible`), the same discipline as a lane iteration:
+  // a `visible` statement landing while the segment streams must not
+  // retag emitted fps with a state the rows do not carry (the segment
+  // member of fuzz class F6 — the statement's own flip resolution
+  // covers the delta).
+  const emitReconcileSegment = (): Promise<boolean> => {
+    const pinnedVisible = session !== null ? session.visible : null
+    return _runWithPinnedVisible(pinnedVisible, async () => {
+      if (!enqueue(nextMarker)) return false
+      let deliverySeq: number | null = null
+      if (session !== null) {
+        deliverySeq = ++session.deliverySeq
+        if (!enqueue(segmentDeliverySeqEntry(deliverySeq, session.consumedNavSeq))) return false
+      }
+      const reader = renderFullSegment().getReader()
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (value && value.byteLength > 0) {
+            if (!(await awaitDemand())) {
+              await reader.cancel(DRIVER_CANCEL_REASON).catch(() => {})
+              return false
+            }
+            if (!enqueue(value)) {
+              await reader.cancel(DRIVER_CANCEL_REASON).catch(() => {})
+              return false
+            }
           }
         }
+      } finally {
+        reader.releaseLock()
       }
-    } finally {
-      reader.releaseLock()
-    }
-    if (!(await awaitDemand())) return false
-    if (!enqueue(settledMarker)) return false
-    if (session !== null) session.firstDeliverySettledAt ??= Date.now()
-    const tokens: Array<readonly [string, string, string]> = []
-    promoteSnapshotsToCachedOverride(undefined, (id, mk, fp) => tokens.push([id, mk, fp]), session)
-    if (session !== null && deliverySeq !== null) {
-      _recordDelivery(session, deliverySeq, tokens, session.consumedNavSeq)
-    }
-    if (!enqueue(nextMarker)) return false
-    return enqueue(lanesMarker)
+      if (!(await awaitDemand())) return false
+      if (!enqueue(settledMarker)) return false
+      if (session !== null) session.firstDeliverySettledAt ??= Date.now()
+      const tokens: Array<readonly [string, string, string]> = []
+      promoteSnapshotsToCachedOverride(
+        undefined,
+        (id, mk, fp) => tokens.push([id, mk, fp]),
+        session,
+        pinnedVisible,
+      )
+      if (session !== null && deliverySeq !== null) {
+        _recordDelivery(session, deliverySeq, tokens, session.consumedNavSeq)
+      }
+      if (!enqueue(nextMarker)) return false
+      return enqueue(lanesMarker)
+    })
   }
 
   // ── Navigation segments ──
@@ -1970,7 +2010,19 @@ async function driveLaneStream(
   // on the wire; the next `next` delimiter closes an empty, stale
   // segment and the client consumes its processed-drop ack without
   // handing React a partial payload.
-  const emitNavSegment = async (): Promise<"done" | "superseded" | "closed"> => {
+  // Runs under a PINNED visibility moment (`_runWithPinnedVisible`,
+  // captured per attempt at render start) — the same discipline as a
+  // lane iteration and the reconcile: a `visible` statement landing
+  // while the navigation segment streams must not retag its emitted
+  // fps with a state the rows do not carry (fuzz class F6's segment
+  // member; the statement's own flip resolution covers the delta).
+  const emitNavSegment = (): Promise<"done" | "superseded" | "closed"> => {
+    const pinnedVisible = session !== null ? session.visible : null
+    return _runWithPinnedVisible(pinnedVisible, () => emitNavSegmentPinned(pinnedVisible))
+  }
+  const emitNavSegmentPinned = async (
+    pinnedVisible: ReadonlySet<string> | null,
+  ): Promise<"done" | "superseded" | "closed"> => {
     if (!enqueue(nextMarker)) return "closed"
     let deliverySeq: number | null = null
     if (session !== null) {
@@ -2074,7 +2126,12 @@ async function driveLaneStream(
     if (!enqueue(settledMarker)) return "closed"
     if (session !== null) session.firstDeliverySettledAt ??= Date.now()
     const tokens: Array<readonly [string, string, string]> = []
-    promoteSnapshotsToCachedOverride(undefined, (id, mk, fp) => tokens.push([id, mk, fp]), session)
+    promoteSnapshotsToCachedOverride(
+      undefined,
+      (id, mk, fp) => tokens.push([id, mk, fp]),
+      session,
+      pinnedVisible,
+    )
     if (session !== null && deliverySeq !== null) {
       _recordDelivery(session, deliverySeq, tokens, consumedSeq)
     }
@@ -2397,11 +2454,13 @@ async function driveLaneStream(
             ? "visibility"
             : session !== null && session.pendingCookieChanges.size > 0
               ? "cookie"
-              : laneDrainedPending
-                ? "lane-drained"
-                : windowDirty.size > 0 && !deliveryWindowExceeded()
-                  ? "window"
-                  : null
+              : session !== null && session.pendingDropHeals.size > 0
+                ? "drop-heal"
+                : laneDrainedPending
+                  ? "lane-drained"
+                  : windowDirty.size > 0 && !deliveryWindowExceeded()
+                    ? "window"
+                    : null
     let wake: SegmentWake | null = latchedWake()
     while (wake === null && (pendingPreloadWarm() || pendingWarmStatement())) {
       // About to park with an unconsumed warm intent or telemetry
@@ -2637,6 +2696,31 @@ async function driveLaneStream(
         if (!touched.includes(id)) touched.push(id)
       }
     }
+    // Drop-report heals — ids from deliveries the client reported
+    // DROPPED (`pendingDropHeals`, queued by the ack apply alongside
+    // `revokeDroppedDelivery`). Each id that still snapshots unparked
+    // lanes FORCED: the covering render that phantom-confirmed the
+    // dropped content fired synchronously at the consume — before the
+    // report could arrive — and its drain promote re-claimed the fp
+    // AFTER the revocation, so only an explicit render (fp-skip and
+    // the defer gate yield) reliably re-ships what the client actually
+    // lost. Parked or route-departed ids drop here — their credit is
+    // revoked, so the flip-in revalidation / return navigation's
+    // covering render re-renders them anyway. Drained regardless of
+    // which arm won (the report's wake shares the flip arm), like
+    // cookies.
+    if (session !== null && session.pendingDropHeals.size > 0) {
+      const heals = [...session.pendingDropHeals]
+      session.pendingDropHeals.clear()
+      for (const id of _escalateToLaneCarriers(
+        heals.filter((h) => snapshots.has(h)),
+        snapshots,
+      )) {
+        if (isParkedOnConnection(id, snapshots, session)) continue
+        forcedLaneIds.add(id)
+        if (!touched.includes(id)) touched.push(id)
+      }
+    }
     // The delivery-plane drain — ONE pending set carries both event
     // sources (bumps delivered by the inverted wake index at commit
     // time; due `expires()` boundaries fired by the connection's
@@ -2745,6 +2829,18 @@ async function driveLaneStream(
     // the canonical store as of NOW (with every prior lane's commit
     // applied) instead of the initial segment's memoized fold base.
     enterRequestRegistry(routeKey, "cache")
+    // A touched id lanes on its OWN even when a touched ANCESTOR's
+    // lane re-renders it inside its subtree. Collapsing into the
+    // ancestor is NOT sound: a direct flip-in's verdict runs against
+    // the client's stated tokens, and an earlier lane's flush heal may
+    // have retagged them PAST the descendant's parked-era bump (the
+    // flush recompute folds live invalidation timestamps — a bump
+    // landing between a render and its flush advances the heal beyond
+    // what the rows carry), so the ancestor can CONFIRM while the
+    // descendant's change never shipped. The descendant's own lane is
+    // the guaranteed carrier. The cost is the rival-registration
+    // bookkeeping drift ledgered as F7
+    // (docs/notes/convergence-fuzzing.md) — fp-only, never content.
     for (const id of touched) startLane(id)
   }
   // Release demand-parked pumps before waiting the lanes out — the
@@ -2773,18 +2869,20 @@ const VISIBILITY_WAKE = Symbol("visibility-wake")
 const DEGRADE_WAKE = Symbol("degrade-wake")
 
 /** Which arm woke a segment/lane wait. `false` closes the stream.
- *  `"window"`, `"navigation"` and `"frame-navigation"` are minted only
- *  by the lane driver's wait-entry latch (an ack freed the delivery
- *  window / a url frame latched while the driver was busy); the wait
- *  itself never returns them — a url frame's wake fires the flip arms,
- *  and the loop's pending-nav checks preempt regardless of the winning
- *  arm. `"degrade"` is the never-acked deadline. */
+ *  `"window"`, `"navigation"`, `"frame-navigation"` and `"drop-heal"`
+ *  are minted only by the lane driver's wait-entry latch (an ack freed
+ *  the delivery window / a url frame or drop report latched while the
+ *  driver was busy); the wait itself never returns them — a url
+ *  frame's / ack's wake fires the flip arms, and the loop's latch
+ *  checks preempt regardless of the winning arm. `"degrade"` is the
+ *  never-acked deadline. */
 type SegmentWake =
   | false
   | "bump"
   | "lane-drained"
   | "visibility"
   | "cookie"
+  | "drop-heal"
   | "window"
   | "navigation"
   | "frame-navigation"
@@ -2928,13 +3026,19 @@ async function waitForSegmentWake(options?: SegmentWakeOptions): Promise<Segment
  * staleness-free: every bump that lands while parked moves the
  * in-state fp, so the flip-in revalidation's skip check can only miss
  * (re-render fresh), never false-match.
+ *
+ * `visibleOverride` substitutes the session's live set — a lane
+ * drain's pinned visibility moment (see `pumpLane`), so the promote's
+ * parked check describes the same state the render read. `undefined`
+ * (absent) reads the live set.
  */
 function isParkedOnConnection(
   id: string,
   snapshots: ReadonlyMap<string, PartialSnapshot>,
   session: ConnectionSession | null,
+  visibleOverride?: ReadonlySet<string> | null,
 ): boolean {
-  const visible = session?.visible
+  const visible = visibleOverride !== undefined ? visibleOverride : session?.visible
   if (visible == null) return false
   const snap = snapshots.get(id)
   if (!snap) return false
@@ -3128,6 +3232,10 @@ export function promoteSnapshotsToCachedOverride(
   // culled pair/skeleton, never body bytes (see the promote's
   // shipped-only discipline below).
   session?: ConnectionSession | null,
+  // A lane drain's pinned visibility moment — the set the render read
+  // (see `pumpLane`); the parked check reads it instead of the live
+  // session set, so the claim describes what the render SHIPPED.
+  pinnedVisible?: ReadonlySet<string> | null,
 ): void {
   let request: Request
   let scope: string
@@ -3178,7 +3286,7 @@ export function promoteSnapshotsToCachedOverride(
     // content the client never received. Its real holdings entered the
     // mirror when it actually shipped; the flip-in revalidation is its
     // catch-up.
-    if (session != null && isParkedOnConnection(id, snapshots, session)) return
+    if (session != null && isParkedOnConnection(id, snapshots, session, pinnedVisible)) return
     promoteSlotFpToOverride(override, id, snap.matchKey, snap.emittedFp)
     onToken?.(id, snap.matchKey, snap.emittedFp)
   }

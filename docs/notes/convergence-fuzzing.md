@@ -25,9 +25,10 @@ fixture app), `framework/src/lib/__tests__/fuzz-convergence.rsc.test.tsx`
 (the CI budget + env knobs). The findings ledger is at the bottom —
 the v1 harness found two real framework bug classes on its first day,
 and fixing them exposed three more the old classifier had lumped in.
-F1–F5 are FIXED; F6 (the optimistic-mirror drop-report race) is OPEN.
-Every seed runs as an ordinary case: the CI budget is fully clean and
-any failure there is a new finding.
+F1–F6 are FIXED; F7 (the rival-lane fp bookkeeping drift, split out of
+the old F6 tally) is OPEN — fp-only, stamps converge in every observed
+run. Every seed runs as an ordinary case: the CI budget is fully clean
+and any failure there is a new finding.
 
 ## The action alphabet
 
@@ -258,12 +259,15 @@ zero harness failures): 500 × 20 actions (4.6s — 435 clean / 51 F1 /
 seed range (17s — 780 / 132 / 88). The old stamp-based classifier
 lumped every staleness shape into "F1"; fixing the cursor revealed
 that tally spanned FIVE distinct roots (F1, F4, F5, the parity-oracle
-hold, and F6). Post-fix runs: 3000 × 20 → 2980 clean / 20 findings,
-1000 × 50 → 993 clean / 7 — **every remaining finding is the one OPEN
-family (F6), ~0.6% of sequences; zero watchdogs, zero parity trips,
-zero harness failures.** The formerly-pinned seeds (9, 18 → F1;
-10 → F2) run as ordinary cases and the CI budget (seeds 1–25) is
-fully clean.
+hold, and F6). Post-F1 runs: 3000 × 20 → 2980 clean / 20 findings,
+1000 × 50 → 993 clean / 7 — the "F6" tally, which the F6 fix in turn
+split into TWO roots. Post-F6-fix runs: 3000 × 20 → **2999 clean / 1**
+(seed 2153), 1000 × 50 from a distinct seed range → **999 clean / 1**
+(seed 5722) — both residuals the one OPEN family (F7, fp-only,
+~0.03–0.1% of sequences); zero watchdogs, zero parity trips, zero
+harness failures. The formerly-pinned seeds (9, 18 → F1; 10 → F2;
+1381, 1016 → F6) run as ordinary cases and the CI budget (seeds 1–25)
+is fully clean.
 
 - **F1 — FIXED: the covering-segment missed-update window
   (staleness).** `handleNavigation` (`segmented-response.ts`) — and
@@ -375,35 +379,108 @@ navigate "/alpha?q=y"]` → `fz-gated` confirmed at the ATTACH state
   ordering — the delivery path was correct; the oracle was
   over-strict.
 
-- **F6 — OPEN: the optimistic mirror outruns the client's drop
-  reports (the e7dd068 residue).** ~0.5% of sequences at the CI
-  action mix (fp-only bookkeeping drift AND bounded staleness
-  shapes; representative shrunk repros: seed 1381
-  `[flip out cull-b, flip in cull-b+cull-a, flip in cull-b, flip
-wrap, flip cull-b]` — fp-only; seed 1016
+- **F6 — FIXED: the optimistic mirror outruns the client's drop
+  reports (the e7dd068 residue).** Was ~0.6% of sequences at the CI
+  action mix; two members, one discipline (representative shrunk
+  repros: seed 1016
   `[write a=1, write b=2, flip out b+a, flip in b, write b=3,
-refetch fz-shared]` — stamp). Mechanism: a lane that drains onto
-  the wire is promoted into the optimistic mirror at drain; when the
-  client's as-of guard then drops it (a navigation/refetch statement
-  advanced its navigation point while the lane was in flight), the
-  drop report — even flushed promptly — cannot beat the covering
-  segment that renders synchronously AT the consume, so that render's
-  fp-skip verdict can confirm the dropped delivery's phantom; the
-  later `ack.dropped` eviction removes the tokens but re-lanes
-  nothing, so a wrongly-confirmed copy stands until an unrelated bump
-  or the 30s reconcile. This is the accepted residue of the e7dd068
-  design (client-reported drops instead of the inferred nav-consume
-  prune — the inference killed fp-skip across navigation entirely).
-  Direction: on an `ack.dropped` eviction, re-queue the dropped
-  delivery's UNPARKED ids for a fresh lane (the shape `evicted`
-  already uses) — converts the race into one extra lane after the
-  report, and the drop report is the real signal. A second, smaller
-  member of the family: a whole-stream flush heal can alias
-  post-render drift (a visibility flip or bump landing between a
-  row's render and the stream's flush retags the emitted fp with a
-  state the row does not carry) — same "describe the render, not the
-  flush moment" discipline, applied to `computeWarmFps`' drifting
-  inputs.
+refetch fz-shared]` — stamp; seed 1381
+  `[flip out cull-b, write b=1, refetch fz-inner, flip in
+cull-b+out cull-a, flip out cull-b, flip in cull-b]` — fp-only).
+
+  The AS-OF DROP member: a lane that drains onto the wire is promoted
+  into the optimistic mirror at drain; when the client's as-of guard
+  then drops it (a navigation/refetch statement advanced its
+  navigation point while the lane was in flight), the drop report —
+  even flushed promptly — cannot beat the covering segment that
+  renders synchronously AT the consume, so that render's fp-skip
+  verdict confirms the dropped delivery's phantom — and the covering
+  segment's own drain promote re-claims the fp AFTER any revocation
+  the report could run (its delivery record does not even exist when
+  the report arrives), so no purge alone can stop the re-claim from
+  folding into the acked layer on the covering ack. **Fix**
+  (`applyAckFrame` / `revokeDroppedDelivery` in
+  `connection-session.ts`; the `pendingDropHeals` drain in
+  `segmented-response.ts`): a `dropped` seq's tokens are revoked from
+  every layer — optimistic, acked, and still-pending delivery
+  records' derivative claims — AND every dropped id re-queues for a
+  FORCED heal lane (fp-skip and the defer gate yield, the refetch
+  contract), so fresh bytes ship within one delivery no matter what
+  claims the covering render re-established. The prevention
+  alternative (the covering segment's verdict excluding
+  unacked-older-as-of promotions) was weighed and rejected: it taxes
+  the COMMON path — committed-then-navigated deliveries, up to a full
+  lazy-ack window of them per navigation, would re-ship on every
+  channel navigation — to prevent a rare race, and it re-derives
+  "dropped" from `asOf < navSeq`, exactly the inference the e7dd068
+  design rejected. The heal keeps the common path untouched and pays
+  one forced lane per actually-dropped delivery.
+
+  The FLUSH-ALIAS member: the trailer flush recompute
+  (`computeWarmFps`) re-reads the connection's LIVE visible set, so a
+  `visible` statement landing between a row's render and the stream's
+  flush retagged the emitted fp with a state the row does not carry —
+  and an out-flip ships no covering lane, so the aliased heal stood as
+  the connection's last word, permanently mis-tagging the client's
+  holding. **Fix**: every lane iteration and every covering segment
+  render (navigation, reconcile) runs under a PINNED visibility
+  moment captured at render start (`_createConnectionLiveProbe`'s
+  pin / `_runWithPinnedVisible` in `runtime/context.ts`), and the
+  drain promote's parked check reads the same pin — render, verdict,
+  flush recompute, and promote all describe ONE set; the statement
+  that landed mid-render gets its own resolution (an in-flip lanes; a
+  wake on the open lane re-captures at the dirty re-render). The
+  initial whole-tree segment is NOT pinned (PartialRoot installs the
+  cached override during that render — a nested store would strand
+  the install; the v1 harness cannot race segment 0, and the boot
+  exposure is bounded by the flip resolution + reconcile).
+
+  Deterministic regression (both members, red without the fixes):
+  `framework/src/lib/__tests__/drop-report-heal.rsc.test.tsx`.
+
+- **F7 — OPEN: rival same-drain renders strand a mis-tagged fp
+  (split out of the old F6 tally — pre-existing, fp-only).**
+  ~0.03–0.1% of sequences; stamps converge in every observed run
+  (representative shrunk repros: seed 2153 `[flip out wrap, flip out
+a + in wrap, settle, flip out wrap, write b=7, flip out b + in
+wrap, write b=8]`; seed 5722 — same shape). Mechanism: one drain
+  can start a flip-in lane for a cullable WRAPPER and a bump lane for
+  its addressable CHILD (the child's parked-era delivery unparks with
+  the wrapper's flip) — two concurrent renders of the child commit
+  RIVAL registrations, each lane's trailer heal computes its `from`
+  off the canonical (last-registered) emission rather than its own
+  body's, and the client commits the lane bodies in WIRE order, which
+  can differ from registration order — so the client's last-committed
+  child emission carries a fp no heal's `from` matches, stranding the
+  (content-correct) copy under a stale tag: over-fetch and mirror
+  bookkeeping drift, never staleness. Direction: "describe the
+  render" one level deeper — the lane's flush heals and drain promote
+  should walk the RENDER'S OWN registrations (the commit handle's
+  pending set), not the canonical merge; alternatively the client's
+  heal application could go slot-based instead of fp-equality (the
+  client merge layer's side). NOT fixable by collapsing the child
+  into the ancestor's same-drain lane: a direct flip-in's verdict
+  runs against the client's stated tokens, which an earlier flush
+  heal may have retagged PAST the child's parked-era bump (the flush
+  recompute folds live invalidation timestamps — the inv-ts sibling
+  of the F6 alias, sound for unparked readers only because their
+  bump always lanes), so the ancestor can CONFIRM while the child's
+  change never ships — tried, and seed 824 turned the fp-only drift
+  into real staleness; reverted. The child's own lane is the
+  guaranteed carrier.
+
+- **Browser-level observation (unshrunk, root unconfirmed):**
+  `website/validate-scroll-stress.mjs` intermittently (~1 in 6 runs
+  post-F6-fix; also red at the pre-fix HEAD) fails its RE-ENTRY
+  batteries (diagonalBack / southCruise / longHaulReturn) with
+  persistent 2×2 chunk holes inside quad-tile blocks — previously-
+  visited-then-parked territory only; forward exploration always
+  converges. The F6 fix does not heal it, and the world sends no
+  `url` frames, so the as-of race cannot be its root; the quad-tile
+  parent / chunk-child shape matches F7's wrapper/child geometry
+  (a quad flip-in confirming past its children's parked-era state),
+  but that is a hypothesis — needs a v1 fixture extension or a
+  shrink of its own.
 
 - **Harness finding (fixed alongside F1): a covering segment is not
   a quiescence proof.** The settle protocol formerly terminated a

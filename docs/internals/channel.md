@@ -162,7 +162,7 @@ Frame kinds shipped:
 | Kind        | Carries                                                                                                                                                                                                                                                                                                                                                | Server effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `visible`   | `{changed, visible, cached?}` — the visibility statement: flipped ids, the wholesale snapshot, the client's actual holdings for the changed ids                                                                                                                                                                                                        | Applied to the connection session; flipped-IN partons lane on the EXISTING stream (never on this response)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `ack`       | `{delivered, dropped?, evicted?}` — the highest CONTIGUOUSLY committed delivery seq (cumulative), the seqs within the newly-acked range the client received but did NOT hold (its as-of guard dropped them), and the parton IDS whose committed content the client has since DESTROYED (pool-cap / cull-park eviction, page prune, a clobbered pair)   | Advances the session's ack watermark, folds each covered delivery's fps into the ACKED mirror layer — UNLESS its seq is `dropped`, which EVICTS the delivery's optimistic promotions instead — frees the unacked delivery window (the parked driver wakes), and — any ack frame at all — proves the duplex (`firstAckReceived`, the never-acked degrade's off-switch). `evicted` ids lose EVERY credit layer (acked, optimistic, pending-record tokens) AFTER the fold, watermark advance or not — the loss statement that keeps later renders from confirming ghosts (§the four rules)                                                                                                                                                                                            |
+| `ack`       | `{delivered, dropped?, evicted?}` — the highest CONTIGUOUSLY committed delivery seq (cumulative), the seqs within the newly-acked range the client received but did NOT hold (its as-of guard dropped them), and the parton IDS whose committed content the client has since DESTROYED (pool-cap / cull-park eviction, page prune, a clobbered pair)   | Advances the session's ack watermark, folds each covered delivery's fps into the ACKED mirror layer — UNLESS its seq is `dropped`, which REVOKES the delivery's `(id, fp)` claims from every layer (optimistic, acked, still-pending records) AND queues each dropped id for a FORCED heal lane (`pendingDropHeals` — fp-skip yields, fresh bytes within one delivery; §the four rules) — frees the unacked delivery window (the parked driver wakes), and — any ack frame at all — proves the duplex (`firstAckReceived`, the never-acked degrade's off-switch). `evicted` ids lose EVERY credit layer (acked, optimistic, pending-record tokens) AFTER the fold, watermark advance or not — the loss statement that keeps later renders from confirming ghosts (§the four rules) |
 | `detach`    | `{atPark?}`                                                                                                                                                                                                                                                                                                                                            | Explicit close: the parked driver wakes, the drive loop exits, the session closes. Best-effort by nature (sent on `pagehide` via keepalive fetch); the keepalive timeout remains the backstop. `atPark` softens it to the transport handover's GRACEFUL wind-down: the loop exits at its next FULL PARK — nothing latched, no open lanes — so everything in flight is served first (open lanes drain and commit, latched statements get their covering renders) and the close tears nothing on either side                                                                                                                                                                                                                                                                         |
 | `telemetry` | `{viewport: {w,h}, scroll: {x,y,vx,vy}, at}` — the client's scroll context: container box, position, velocity (px/s), performance-clock timestamp                                                                                                                                                                                                      | Replaces the session's `telemetry` slot, latest-wins by envelope seq. NOTHING else: no invalidation, no wake, never a render — the channel carries freshness statements, and telemetry is CONTEXT, not a dependency. Consumers read the slot when awake for their own reasons (the warm pass — see §Telemetry)                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `url`       | `{url, intent, frame?}` — a URL statement for a scope the client owns: absent `frame`, the WINDOW URL (a `?__force=` overlay names a refetch's forced targets); present, the named FRAME's URL (the frame path's segments). `intent` is the history semantic (`push`/`replace`/`silent` — descriptive: the client's history work is done by send time) | Same-origin-validated (`400` the envelope on a cross-origin target — a violation, nothing applies). WINDOW scope: LATCHED on the session (newest seq wins; a seq at or below the consumed navigation is a stale restatement, a no-op — retransmit idempotence); the driver consumes it navigation-FIRST at wait entry and answers with a whole-tree payload segment, then forced-target lanes — §Navigation rides the channel. FRAME scope: the session frame URL is written AT THE ENDPOINT (the same store `?__frame=` writes through — and the one channel response that can mint the session cookie; an anonymous binding rebinds in place); the render latches per frame key and the driver lanes the frame's targets on the open region — §Frames ride the channel           |
@@ -355,14 +355,32 @@ live connection — is two layers, not one:
 
 Four rules keep the layers truthful:
 
-- **Held vs dropped is CLIENT-reported, never server-inferred.** Every
-  newly-acked delivery folds into the acked layer UNLESS the ack names
-  its seq in `dropped` (`AckFrame.dropped`) — a delivery the client
-  RECEIVED but did not HOLD, because its as-of guard
-  (`_channelDeliveryCommittable`) found it rendered as-of a navigation
-  point the client had already left. A dropped seq is EVICTED from the
-  optimistic layer (`applyAckFrame`, against the same override the
-  driver's renders read, linked onto the session) and never folds. Only
+- **Held vs dropped is CLIENT-reported, never server-inferred — and a
+  drop always heals.** Every newly-acked delivery folds into the acked
+  layer UNLESS the ack names its seq in `dropped` (`AckFrame.dropped`)
+  — a delivery the client RECEIVED but did not HOLD, because its as-of
+  guard (`_channelDeliveryCommittable`) found it rendered as-of a
+  navigation point the client had already left. A dropped seq's
+  `(id, fp)` claims are REVOKED from every layer
+  (`revokeDroppedDelivery` in `connection-session.ts`: the optimistic
+  override the driver's renders read, the acked layer, and derivative
+  claims inside still-pending delivery records — a later emission that
+  fp-skip-CONFIRMED the dropped content re-claimed the pair, and the
+  client committing that confirm committed a zero-byte placeholder,
+  never the content) and never fold. Revocation alone cannot converge
+  the client, though: the covering render that phantom-confirmed the
+  dropped content fired synchronously at the consume — before the
+  report could arrive — and its own drain promote re-claims the fp
+  AFTER the purge (its delivery record does not yet exist when the
+  report lands). So every dropped id ALSO queues for a FORCED heal
+  lane (`pendingDropHeals`, drained at the driver's next wake): fp-skip
+  and the defer gate yield, fresh bytes ship within one delivery, and
+  the wrongly-confirmed copy never waits on an unrelated bump or the
+  reconcile (fuzz finding F6 —
+  [`../notes/convergence-fuzzing.md`](../notes/convergence-fuzzing.md);
+  regression `drop-report-heal.rsc.test.tsx`). Parked or
+  route-departed ids skip the heal — their revoked credit makes the
+  flip-in revalidation / return navigation re-render them anyway. Only
   the client knows which arrivals its live navigation superseded, so it
   says so; the server does not guess from `asOf < navSeq` (that gate
   could not tell "committed then navigated — HELD, parked" from
@@ -578,7 +596,9 @@ The pieces:
   a return nav ships placeholders with no intervening ack — the mirror
   retention IS what makes fp-skip fire across navigation. A phantom is
   removed only when the client explicitly reports the delivery
-  DROPPED (`ack.dropped`, above): the server can't infer a drop from
+  DROPPED (`ack.dropped`, above — which also queues the dropped ids
+  for a forced heal lane, since the covering segment's confirm beat
+  the report by construction): the server can't infer a drop from
   `asOf < navSeq` (that gate can't distinguish held-then-navigated from
   navigated-then-dropped), so it doesn't try. Consume moves the request
   state and reopens lanes; it never touches the mirror.
@@ -1401,7 +1421,12 @@ which the CI environment cannot host.
   `ack-evicted.rsc.test.tsx` (the `evicted` loss statement: both
   mirror layers + pending-record purge, non-advancing-ack apply,
   strict decode, and the in-view re-lane — the eviction envelope
-  alone re-ships fresh bytes), `content-loss-report.test.ts` +
+  alone re-ships fresh bytes), `drop-report-heal.rsc.test.tsx` (the
+  `dropped` statement's F6 race: a drop report arriving after the
+  covering render's phantom confirm → full revocation + one FORCED
+  heal lane, no phantom in the acked layer; and the pinned-visibility
+  flush — an out-flip landing mid-lane never retags the in-state
+  body), `content-loss-report.test.ts` +
   `cull-pair-regression.test.tsx` (the client side: destruction
   sites reporting as passengers, the pair's regression detector
   driving, the baseline reset re-arming the flip),

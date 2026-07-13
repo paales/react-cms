@@ -371,6 +371,19 @@ export function _clearConnectionLive(): void {
  * `connectionLive` field. `live()` reads exactly that own field, so a
  * stale flag on the parent store (the whole-tree segment that handed
  * off to the lane loop may have marked live) never bleeds in.
+ *
+ * `pin` fixes the iteration's VISIBILITY MOMENT: the probe presents a
+ * session handle whose `visible` is the set captured at iteration
+ * start, so the render's cull gates, the fp-skip verdict, and the
+ * flush recompute (`computeWarmFps`' store-and-reread) all describe
+ * ONE state — the render's. Without it, a `visible` statement landing
+ * between a row's render and the stream's flush retags the emitted fp
+ * with a state the row does not carry (an out-flip has no covering
+ * lane to supersede the aliased heal, so the client's holding stays
+ * mis-tagged — fuzz class F6, docs/notes/convergence-fuzzing.md). The
+ * handle keeps live references for everything else (cookies overlay,
+ * acked layer): only visibility is replaced wholesale per statement,
+ * so only visibility needs the pin.
  */
 export interface ConnectionLiveProbe {
   /** Run one lane render iteration inside the probe's scope. */
@@ -379,10 +392,47 @@ export interface ConnectionLiveProbe {
   live(): boolean
 }
 
-export function _createConnectionLiveProbe(): ConnectionLiveProbe {
+/**
+ * Run `fn` inside a nested request scope whose connection session
+ * presents `visible` as the connection's visible set — the segment
+ * driver's per-render visibility PIN (the same handle shape the lane
+ * probe's `pin` builds). A covering render (navigation segment,
+ * reconcile) and its trailer flush must describe ONE visibility
+ * moment — the render's — or a `visible` statement landing mid-stream
+ * retags emitted fps with a state the rows do not carry (fuzz class
+ * F6). Everything else falls through the prototype chain: the live
+ * cookies overlay, the acked layer, the cached override PartialRoot
+ * already installed, request identity. No-op (runs `fn` directly)
+ * when the request has no connection session to pin.
+ */
+export async function _runWithPinnedVisible<T>(
+  visible: ReadonlySet<string> | null,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const parent = getStore()
+  if (parent.connectionSession == null) return fn()
+  const pinned: RequestStore = Object.create(parent) as RequestStore
+  pinned.connectionSession = {
+    visible,
+    cookies: parent.connectionSession.cookies,
+    ackedFps: parent.connectionSession.ackedFps,
+  }
+  return requestContext.run(pinned, fn)
+}
+
+export function _createConnectionLiveProbe(pin?: {
+  visible: ReadonlySet<string> | null
+}): ConnectionLiveProbe {
   const parent = getStore()
   const probe: RequestStore = Object.create(parent) as RequestStore
   probe.connectionLive = false
+  if (pin !== undefined && parent.connectionSession != null) {
+    probe.connectionSession = {
+      visible: pin.visible,
+      cookies: parent.connectionSession.cookies,
+      ackedFps: parent.connectionSession.ackedFps,
+    }
+  }
   return {
     run: (fn) => requestContext.run(probe, fn),
     live: () =>

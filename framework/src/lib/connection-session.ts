@@ -281,6 +281,22 @@ export interface ConnectionSession {
       readonly asOf: number
     }
   >
+  /** Parton ids from client-DROPPED deliveries awaiting their heal
+   *  lane. A dropped delivery's content may have been phantom-
+   *  CONFIRMED by the covering render that fired synchronously at the
+   *  navigation consume (the drop report cannot beat it), leaving the
+   *  client's superseded copy standing as the connection's last word.
+   *  The driver drains these at its next wake and lanes each id that
+   *  still snapshots unparked as a FORCED (explicit) render — fp-skip
+   *  yields, so the heal re-ships fresh bytes regardless of what the
+   *  covering render's re-claims put back in the mirror — healing in
+   *  one delivery instead of waiting on an unrelated bump or the
+   *  whole-tree reconcile: the F6 fuzz class
+   *  (docs/notes/convergence-fuzzing.md). Parked or route-departed
+   *  ids drop at the drain — their credit is revoked
+   *  (`revokeDroppedDelivery`), so the flip-in revalidation / return
+   *  navigation re-renders them anyway. */
+  readonly pendingDropHeals: Set<string>
   /** The connection's optimistic mirror layer — the SAME
    *  `CachedOverride` object the driver's renders read and promote into
    *  (`_getCachedOverride()` in the driver's request scope), linked here
@@ -466,6 +482,7 @@ export function _openConnectionSession(
     ackedDeliverySeq: 0,
     firstAckReceived: false,
     pendingDeliveries: new Map(),
+    pendingDropHeals: new Set(),
     cachedOverride: null,
     ephemeralStorage: null,
     ackedFps: new Map(),
@@ -573,10 +590,19 @@ function foldAckedTokens(
  * Each newly-acked delivery FOLDS into the acked layer (a client-proven
  * holding) — UNLESS the ack names its seq in `dropped`: the client
  * received but did not hold that delivery (it had navigated past its
- * as-of), so its optimistic promotions are EVICTED and it never becomes
- * acked evidence. The drop is the client's explicit statement, not a
- * server inference: only the client knows which arrivals its live
- * navigation point superseded.
+ * as-of), so its promotions are REVOKED (`revokeDroppedDelivery` — the
+ * optimistic layer, the acked layer, and every still-pending record's
+ * derivative claims) and it never becomes acked evidence. The drop is
+ * the client's explicit statement, not a server inference: only the
+ * client knows which arrivals its live navigation point superseded.
+ * Every dropped id also queues on `pendingDropHeals` for a FORCED
+ * heal lane: the covering render that fires synchronously at the
+ * consume can phantom-confirm the dropped content before the report
+ * arrives — and its drain promote re-claims the fp AFTER this
+ * revocation runs — so only an explicit render (fp-skip yields)
+ * reliably converges the client. An id the covering render actually
+ * re-rendered fresh gets a redundant re-ship — over-delivery, never
+ * staleness; drops only occur on navigation races.
  *
  * The frame's `evicted` ids apply AFTER the fold — and regardless of
  * whether the watermark advanced (an eviction with no new commits is
@@ -595,17 +621,27 @@ function foldAckedTokens(
 function applyAckFrame(session: ConnectionSession, frame: AckFrame, seq: number): boolean {
   session.firstAckReceived = true
   const advanced = frame.delivered > session.ackedDeliverySeq
+  let healQueued = false
   if (advanced) {
     session.ackedDeliverySeq = frame.delivered
     const dropped = frame.dropped
+    // Insertion order is drain order, which preserves causality: a
+    // confirm's claim derives from a promote that happened at the
+    // dropped delivery's own drain, so the dropped record is always
+    // iterated BEFORE any record carrying a derivative claim — the
+    // revocation's pending-record purge strips those claims before
+    // their own fold could land them in the acked layer.
     for (const [pending, record] of session.pendingDeliveries) {
-      if (pending <= frame.delivered) {
-        if (dropped !== undefined && dropped.includes(pending)) {
-          evictOverrideTokens(session, record.tokens)
-        } else {
-          foldAckedTokens(session, record.tokens)
+      if (pending > frame.delivered) continue
+      session.pendingDeliveries.delete(pending)
+      if (dropped !== undefined && dropped.includes(pending)) {
+        revokeDroppedDelivery(session, record.tokens)
+        for (const [id] of record.tokens) {
+          session.pendingDropHeals.add(id)
+          healQueued = true
         }
-        session.pendingDeliveries.delete(pending)
+      } else {
+        foldAckedTokens(session, record.tokens)
       }
     }
   }
@@ -620,7 +656,7 @@ function applyAckFrame(session: ConnectionSession, frame: AckFrame, seq: number)
       requeued = true
     }
   }
-  return advanced || requeued
+  return advanced || requeued || healQueued
 }
 
 /**
@@ -656,22 +692,57 @@ function evictClientHoldings(session: ConnectionSession, ids: readonly string[])
   }
 }
 
-/** Remove a dropped delivery's optimistic promotions from the mirror —
- *  the client received the delivery but held none of it, so its fps and
- *  slot entries must not survive as phantom holdings the fp-skip verdict
- *  could match. Operates on the SAME override object the driver's
- *  renders read (linked onto the session at install), reachable from the
- *  channel endpoint's separate request scope. No-op before the driver
- *  installs one. */
-function evictOverrideTokens(
+/**
+ * Revoke a client-DROPPED delivery's mirror credit. The client
+ * received the delivery but held none of it (its as-of guard dropped
+ * it — a navigation superseded the render), so every claim of the
+ * delivery's `(id, fp)` pairs must fall:
+ *
+ *   - the OPTIMISTIC promotions the drain made at emit time (the
+ *     override is the SAME object the driver's renders read, linked
+ *     onto the session at install — reachable from the channel
+ *     endpoint's separate request scope; no-op before the link);
+ *   - any ACKED-layer fold of the same pair — a later emission that
+ *     fp-skip-CONFIRMED the dropped content re-claimed the pair in
+ *     its own delivery record (the promote reads the registry's
+ *     `emittedFp`, which the dropped render established), and the
+ *     client committing that emission committed a zero-byte
+ *     placeholder, never the content;
+ *   - the same pair inside still-PENDING delivery records, so a later
+ *     ack can never re-fold it.
+ *
+ * The revocation alone cannot make the mirror truthful, though: the
+ * covering render that phantom-confirmed the dropped content fires
+ * synchronously at the navigation consume — BEFORE the report can
+ * arrive — and its own drain promote re-claims the registry's
+ * `emittedFp` (created AFTER this purge ran, so no scan here can
+ * reach it). That is why the caller also queues every dropped id for
+ * a FORCED heal lane (`pendingDropHeals`): explicit renders bypass
+ * the fp-skip verdict entirely, so the heal re-ships fresh bytes no
+ * matter what claims stand, and its drain promote + eventual ack then
+ * re-credit content the client actually holds. The purge's remaining
+ * role is the gap: no OTHER render between the report and the heal
+ * may confirm off the revoked evidence. A purged claim that was in
+ * fact a genuine re-ship of identical bytes costs one over-render,
+ * never staleness.
+ */
+function revokeDroppedDelivery(
   session: ConnectionSession,
   tokens: ReadonlyArray<readonly [string, string, string]>,
 ): void {
   const override = session.cachedOverride
-  if (!override) return
   for (const [id, mk, fp] of tokens) {
-    override.fingerprints.get(id)?.delete(fp)
-    if (mk !== "") override.slots.get(id)?.get(mk)?.delete(fp)
+    override?.fingerprints.get(id)?.delete(fp)
+    if (mk !== "") override?.slots.get(id)?.get(mk)?.delete(fp)
+    session.ackedFps.get(id)?.delete(fp)
+    session.ackedSlots.get(id)?.get(mk)?.delete(fp)
+    for (const [seq, record] of session.pendingDeliveries) {
+      if (!record.tokens.some(([tid, , tfp]) => tid === id && tfp === fp)) continue
+      session.pendingDeliveries.set(seq, {
+        tokens: record.tokens.filter(([tid, , tfp]) => !(tid === id && tfp === fp)),
+        asOf: record.asOf,
+      })
+    }
   }
 }
 
