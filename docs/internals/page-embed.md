@@ -4,11 +4,13 @@ How `<RemoteFrame>` turns an ordinary page response into a spliceable
 subtree. The author-facing contract is
 [`../reference/remote-frame.md`](../reference/remote-frame.md); this
 page is the mechanism. Code: `framework/src/lib/page-embed.ts` (wire
-protocol + rewriter + identity helpers), `lib/remote-frame.tsx` (the
-consumer), the embed branches in `lib/partial.tsx` (`PartialRoot`,
-the id mint, `partialFromSnapshot`) and `entry/rsc.tsx`
-(`handleEmbedRender`), `lib/snapshot-trailer.ts` (the registration
-payload).
+protocol + rewriter + identity helpers + the grant grammar),
+`lib/remote-frame.tsx` (the consumer), the embed branches in
+`lib/partial.tsx` (`PartialRoot`, the id mint, the bare emission,
+`partialFromSnapshot`) and `entry/rsc.tsx` (`handleEmbedRender`),
+`lib/snapshot-trailer.ts` (the registration payload),
+`lib/tier-rewrite.ts` (grant enforcement + violation policy),
+`lib/vocabulary.tsx` (the vetted tag set + audit table).
 
 ## The request — explicit headers, an ordinary URL
 
@@ -21,8 +23,12 @@ ever inferred from URL shape:
 | `x-parton-embed-depth` | `hostDepth + 1` | This render is an embed at depth N. `PartialRoot` branches on it; the recursion guard counts with it.                                                                                                           |
 | `x-parton-embed-ns`    | `e~<hash>`      | The placement namespace the producer folds into every effective parton id it mints (see Identity below).                                                                                                        |
 
-Plus `x-parton-capability` when the call site declares one, and the
-test harness's `x-test-scope` forward. `credentials: "omit"` always.
+Plus `x-parton-capability` when the call site declares one,
+`x-parton-embed-grant` when it declares a `grant` (the comma-joined,
+sorted grant set — a STATEMENT the producer uses to render its
+embed-surface variant; enforcement is the host's tier rewriter,
+below), and the test harness's `x-test-scope` forward.
+`credentials: "omit"` always.
 All `x-parton-*` headers are stripped from the vary-facing header
 surface, so app code (and `headers` match gates) never see them.
 
@@ -136,9 +142,71 @@ re-encode. Unwrap with outlined props (dedup) drops the element —
 the safe direction for a singleton.
 
 The payload's root row is the entry contract `{root, …}`; the
-consumer decodes and returns `.root`. Cross-origin, the pipeline
-composes `moduleRefRewriter` after the slice (same-origin skips it —
-origin equality, not URL shape).
+consumer decodes and returns `.root`. Cross-origin, an UNGOVERNED
+pipeline composes `moduleRefRewriter` after the slice (same-origin
+skips it — origin equality, not URL shape). A granted embed replaces
+that arm entirely — see the tier rewriter below.
+
+## The tier rewriter (grants)
+
+`createTierRewriter` (`lib/tier-rewrite.ts`) is the enforcement for a
+vocabulary-constrained grant set (`client ∉ grants` — v1: Paint,
+`grantsVocabularyConstrained` in `page-embed.ts`). It composes onto
+the ONE splice pipeline after `pageEmbedRewriter` (the shipped
+head/meta/hint strip is tier zero); `moduleRefRewriter` is never in a
+granted pipeline — below the Client tier zero remote modules load,
+same- or cross-origin. Stateful per stream (mint one per response):
+
+| Row / element                                        | Action                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `I` import rows                                      | Dropped; id → module path recorded in the module ledger. `virtual:vite-rsc/*` specifiers (the css-dedup helper beside the page root — bundler head plumbing whose managed `link`s died at tier zero) go to a SILENT ledger instead.                                              |
+| `D` / `W` rows                                       | Dropped — the remote's debug channel (dev-only; raw pre-audit props, source paths, `$E` sources). Makes dev splice like prod.                                                                                                                                                    |
+| symbol rows (`"$S…"`)                                | Ledgered + passed; admission is decided at the element that uses one.                                                                                                                                                                                                            |
+| vocabulary tags (the `VOCABULARY` table)             | Props re-audited: audited attrs re-validated through `sanitizeVocabAttr` (a bad value drops the ATTR), `children` walked, everything else stripped. Re-emitted as a bare 4-tuple — stripping the dev builds' trailing debug-ref entries is what orphans the debug metadata rows. |
+| `react.suspense` / `react.fragment` element types    | Pass (structural — streaming pacing and grouping, no code).                                                                                                                                                                                                                      |
+| any other element type / disallowed symbol           | **Violation** — degrade in place.                                                                                                                                                                                                                                                |
+| element referencing a dropped module (type or value) | **Violation** (`offense: "module"`); a silent-ledger (plumbing) reference degrades quietly.                                                                                                                                                                                      |
+| vocabulary element with outlined (`"$n"`) props      | **Violation** (`offense: "opaque-props"`) — unauditable row-locally; same safe direction as tier zero's outlined-singleton rule.                                                                                                                                                 |
+| unresolvable element-type reference                  | Degrades WITHOUT a log — reachable only from debug metadata (owner/source refs in type position); real content types are tags, symbols, or module refs, and both ledgers flush before use (format-canary-pinned).                                                                |
+
+**Violation policy — degrade + loud, one function.**
+`tierViolationPolicy` is the single flip point: the offending element
+resolves to nothing (never blocks — siblings keep painting), one
+structured `[parton] tier-violation {url, grants, offense, type}`
+line fires (deduped per distinct (offense, type) per splice — dev
+payloads duplicate every content element into debug metadata rows the
+rewriter can't tell apart from content), and in DEV a visible
+`<parton-tier-violation data-offense data-type>` marker (styled by
+the vocabulary stylesheet) takes the element's place; prod returns
+`null`. Changing the policy (block, fully silent, custom overlay) is
+an edit to that one function.
+
+**The host-defined box.** A granted embed's decoded subtree is
+wrapped in `<parton-embed-box data-grant="…">` with inline
+`contain: strict` — the blast-radius ceiling (the Layout grant is
+what will drop `size` containment). The host owns the box's
+dimensions via CSS; size containment means content never sizes it.
+
+**Producer cooperation — the bare emission.** The grant header also
+reaches the producer, and `createSpecComponent` (partial.tsx) reads
+it (`embedGrantsOf` + `grantsVocabularyConstrained`): under a
+vocabulary-constrained render a parton emits its body BARE — no
+`PartialErrorBoundary` client wrapper, no Activity parking or
+placeholders (a match miss renders `null`), no cull machinery, no
+defer activator, no `Cache` wrap, and NO registration (empty
+snapshots trailer — pull-only, nothing is independently
+refetchable). Suspense stays, so within-embed streaming pacing
+survives; descendants still scope through `ParentContext`. This is
+cooperation, not enforcement — a producer that ships the apparatus
+anyway just gets it degraded at the splice (the boundary is a module
+ref). App shells branch the same way via `getEmbedGrants()`
+(capability.ts — reads the header off the request scope) to keep raw
+chrome elements off the surface; `e2e-magento`'s `Root` is the
+reference.
+
+The grant is stamped into the snapshot `source`
+(`grant: readonly string[]`) and replayed by `_pageEmbedRefetch`, so
+a granted placement can never re-fetch wider than it was placed.
 
 ## Recursion — a marker, never a throw
 

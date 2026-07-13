@@ -12,6 +12,7 @@ import { CacheDemoPage } from "./pages/cache-demo.tsx"
 import { CacheStreamingDemoPage } from "./pages/cache-streaming-demo.tsx"
 import { RemoteFrameDemoPage, RemoteHostedPages } from "./pages/remote-frame-demo.tsx"
 import { RemoteFrameCrossOriginDemoPage } from "./pages/remote-frame-crossorigin-demo.tsx"
+import { PaintTierDemoPage } from "./pages/paint-tier-demo.tsx"
 import {
   EmbedDemoPage,
   EmbedDuplicateDemoPage,
@@ -67,6 +68,7 @@ export function Root() {
             <RemoteFrameDemoPage />
             <RemoteHostedPages />
             <RemoteFrameCrossOriginDemoPage />
+            <PaintTierDemoPage />
             <EmbedDemoPage />
             <EmbedNestedDemoPage />
             <EmbedSelfDemoPage />

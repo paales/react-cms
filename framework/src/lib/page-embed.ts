@@ -71,6 +71,71 @@ export const EMBED_DEPTH_HEADER = "x-parton-embed-depth"
  *  collision-free across duplicate embeds and self-embedding. */
 export const EMBED_NS_HEADER = "x-parton-embed-ns"
 
+/** Grant-set request header for an embed render. Present exactly when
+ *  the host's call site declared a `grant` (`<RemoteFrame grant>`);
+ *  value is the comma-joined, sorted grant-name set. The producer
+ *  reads it (`getEmbedGrants()` in `runtime/capability.ts`) to render
+ *  its embed-surface variant; the HOST's tier rewriter is the
+ *  enforcement — the header is a statement of what the splice will
+ *  admit, never a promise the producer keeps. */
+export const EMBED_GRANT_HEADER = "x-parton-embed-grant"
+
+/** A capability grant name. The capability carries a grant SET, not a
+ *  ladder — see docs/notes/remote-frame-arc.md § Trust. v1 ships the
+ *  Paint tier only; the arc's further members (`interactive`,
+ *  `layout`, `style`, `client`, `url`) join this union as their
+ *  increments land. */
+export type EmbedGrant = "paint"
+
+/** Normalize a call-site `grant` value to the canonical set form.
+ *  `undefined` → `null`: an ungoverned (full-trust) embed — today's
+ *  tier-zero behavior, nothing on the wire. */
+export function normalizeEmbedGrants(
+  grant: EmbedGrant | readonly EmbedGrant[] | undefined,
+): ReadonlySet<string> | null {
+  if (grant === undefined) return null
+  const set = new Set<string>(typeof grant === "string" ? [grant] : grant)
+  return set
+}
+
+/** Wire form: sorted, comma-joined — order-independent equality. */
+export function encodeEmbedGrants(grants: ReadonlySet<string>): string {
+  return [...grants].sort().join(",")
+}
+
+/** The grant set an embed render carries, or `null` for an ungoverned
+ *  render (no header — full trust, tier zero). Unknown grant names
+ *  are preserved: a newer host's grant must not silently widen on an
+ *  older producer, and set membership is the only operation. */
+export function embedGrantsOf(headers: Headers): ReadonlySet<string> | null {
+  const raw = headers.get(EMBED_GRANT_HEADER)
+  if (raw === null) return null
+  const names = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return new Set(names)
+}
+
+/** Whether a grant set constrains the payload to the framework
+ *  vocabulary. Below the Client tier there is ZERO remote module
+ *  loading — the payload may reference only framework-vetted
+ *  components the host resolves from its own bundle — so the
+ *  predicate is `client ∉ grants`. `null` (ungoverned) is
+ *  unconstrained. */
+export function grantsVocabularyConstrained(grants: ReadonlySet<string> | null): boolean {
+  return grants !== null && !grants.has("client")
+}
+
+/** Element type of the host-defined box a GRANTED embed renders
+ *  inside. The framework stamps `contain: strict` inline (size /
+ *  layout / paint containment — the Paint tier's blast-radius
+ *  ceiling; the Layout grant is what will drop `size`); the HOST owns
+ *  the box's dimensions via CSS (`parton-embed-box { … }` — size
+ *  containment means content never sizes it). Carries the grant set
+ *  as `data-grant`. */
+export const EMBED_BOX_TAG = "parton-embed-box"
+
 /** Hard cap on embed nesting. A page that embeds itself terminates
  *  deterministically: each hop increments the depth header, and the
  *  `RemoteFrame` at depth `MAX_EMBED_DEPTH` renders the inert

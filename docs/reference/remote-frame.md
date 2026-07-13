@@ -12,7 +12,6 @@ could visit is embeddable, which also means an app can embed
 ```tsx
 import { RemoteFrame } from "@parton/framework"
 import { Suspense } from "react"
-
 ;<Suspense fallback={<Spinner />}>
   <RemoteFrame
     url="https://stripe.example/remote/payment-form"
@@ -39,14 +38,16 @@ interface RemoteFrameProps {
   url: string
   capability?: Capability
   namespace?: string
+  grant?: EmbedGrant | readonly EmbedGrant[]
 }
 ```
 
-| Prop         | Notes                                                                                                                                                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`        | The page URL to embed. Absolute URL (cross-origin) or same-origin path; relative paths resolve against the current request's URL.                                                                                                                                                                   |
-| `capability` | Host-declared values the embedded render can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header and decoded into scope on the embed-flagged page render.                                                                           |
-| `namespace`  | Human prefix for the embed's refetch **labels** in the host registry (`magento` turns the embedded page's `stocks` label into `magento:stocks`), so host-side selectors are self-describing across remotes. Identity does not depend on it — see below. Set automatically by `parton add` bindings. |
+| Prop         | Notes                                                                                                                                                                                                                                                                                                                                                    |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`        | The page URL to embed. Absolute URL (cross-origin) or same-origin path; relative paths resolve against the current request's URL.                                                                                                                                                                                                                        |
+| `capability` | Host-declared values the embedded render can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header and decoded into scope on the embed-flagged page render.                                                                                                                                |
+| `namespace`  | Human prefix for the embed's refetch **labels** in the host registry (`magento` turns the embedded page's `stocks` label into `magento:stocks`), so host-side selectors are self-describing across remotes. Identity does not depend on it — see below. Set automatically by `parton add` bindings.                                                      |
+| `grant`      | Trust grant for the embedded payload — a grant **set** (a bare name is the singleton set). Omitted = full trust: the payload splices as-is. Present = enforced at splice time by the tier rewriter; v1 ships `"paint"`. See [Grants](#grants--the-paint-tier). Replayed on targeted refetch, so a placement can never re-fetch wider than it was placed. |
 
 ## How an embed renders
 
@@ -189,6 +190,109 @@ Wire shape: `x-parton-capability: <base64url JSON>`
 Empty/missing/malformed decodes to `{}`. Signed capability tokens are
 filed in IDEAS.md; v1 is trust-the-network.
 
+## Grants — the Paint tier
+
+Trust is a payload constraint verified at splice time, not a property
+of a route: any page can be embedded at any tier, and the grant
+decides which rows survive. The capability carries a grant **set**
+(`EmbedGrant`); v1 ships the **Paint** preset — pull-only server
+output into framework-vetted components. Below the Client tier there
+is **zero remote module loading**: the payload may reference only the
+[vocabulary](#the-vocabulary), whose tags resolve entirely from the
+host's own bundle.
+
+```tsx
+<RemoteFrame url="http://localhost:5181/remote/paint-summary" grant="paint" />
+```
+
+Under a grant:
+
+- The host's tier rewriter (composed onto the one splice pipeline)
+  drops every client-module import and re-audits every element row
+  against the vocabulary table. Non-vocabulary rows **degrade, never
+  block**: the row resolves to nothing, one structured
+  `[parton] tier-violation {…}` line lands in the host log (deduped
+  per distinct offense per splice), and in DEV a visible
+  `<parton-tier-violation>` marker takes the element's place — prod
+  degrades silently. The rest of the page keeps painting.
+- The spliced content renders inside a **host-defined box** — a
+  `<parton-embed-box data-grant="paint">` element the framework stamps
+  with `contain: strict`. Size containment means content never sizes
+  the box: the host MUST give it dimensions
+  (`parton-embed-box { height: … }`). The Layout grant (future) is
+  what drops `size` containment.
+- The grant also crosses to the producer as the
+  `x-parton-embed-grant` header — a statement, never the enforcement.
+  The producer reads it with `getEmbedGrants()` (main barrel) to
+  render its **embed-surface variant** — e.g. skip the app shell
+  chrome that would otherwise degrade at the splice (see
+  `e2e-magento/src/app/root.tsx`). The framework itself consults it
+  the same way: a parton rendering under a vocabulary-constrained
+  grant emits its body **bare** — no client boundary, no Activity
+  parking, no placeholders, no snapshot registration (pull-only:
+  nothing is independently refetchable). A match miss renders `null`.
+- No capability values are implied — `grant` and `capability` are the
+  two halves of the capability: what the render may READ vs what its
+  payload may REFERENCE. v1 grants are unsigned trust-the-network
+  declarations, like the capability bag.
+
+## The vocabulary
+
+The framework-shipped, framework-vetted component set a
+vocabulary-constrained payload may reference. Server components — the
+remote imports them from the deep path (deliberately not the main
+barrel; names like `Text` are too generic to spray into the package
+namespace):
+
+```tsx
+import { Stack, Row, Text, Heading } from "@parton/framework/lib/vocabulary.tsx"
+```
+
+Their rendered output is a closed set of reserved custom-element tags
+with audited attributes — that tag grammar IS the ref encoding: a
+remote's Flight row names a vocabulary component by tag, and the tag
+resolves from the **host's** bundle (the `<VocabularyStyles/>`
+stylesheet the host renders once). No module reference ever crosses.
+The remote controls content, the host controls appearance, neither
+controls the other's code (precedent: Shopify admin UI extensions).
+
+v1 components and their full audited prop surfaces (everything else
+is stripped — no `style`/`className`, no event props, no
+`dangerouslySetInnerHTML` reachability; every tag also admits an
+inert `data-testid`):
+
+| Component | Tag              | Audited props                                                                                                                       |
+| --------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `Stack`   | `parton-stack`   | `gap` (`none/xs/sm/md/lg`), `align` (`start/center/end/stretch/baseline`)                                                           |
+| `Row`     | `parton-row`     | `gap`, `align`, `justify` (`start/center/end/between`), `wrap`                                                                      |
+| `Box`     | `parton-box`     | `padding` (space scale), `tone` (`default/subtle/emphasis`)                                                                         |
+| `Text`    | `parton-text`    | `size` (`xs/sm/md/lg`), `tone` (`default/muted/strong/positive/critical`), `align`                                                  |
+| `Heading` | `parton-heading` | `level` (1–4; emits `role="heading"` + `aria-level`)                                                                                |
+| `Image`   | `img`            | `src` (**absolute http(s) only** — relative would resolve against the host origin), `alt`, `width`, `height`, `loading`, `decoding` |
+| `Divider` | `parton-divider` | —                                                                                                                                   |
+
+The audit lives ONCE, centrally, in the `VOCABULARY` table
+(`framework/src/lib/vocabulary.tsx`): the components serialize their
+props through it (emit side) and the tier rewriter re-validates every
+row against it (enforce side) — a hand-crafted payload gains nothing
+the components couldn't emit. A bad attribute value drops the
+attribute, never the element.
+
+**Host styling.** The host renders `<VocabularyStyles/>` once
+(hoisted + deduped) and themes via `--parton-*` CSS custom
+properties, which inherit straight through the containment boundary:
+
+```tsx
+<VocabularyStyles />
+<section style={{ "--parton-text-color": "rgb(190,24,93)", "--parton-gap-md": "14px" }}>
+  <MagentoPaintSummary />
+</section>
+```
+
+Interactive members (TextField, Form, Tabs, links) belong to the
+Interactive grant — a later increment; Paint carries no interactivity
+at all.
+
 ## Typed bindings
 
 `yarn parton add <name> <origin>` fetches the remote's manifest and
@@ -205,9 +309,11 @@ export const MagentoPaymentSummary = remote<PaymentCap>({
 })
 ```
 
-A binding is origin + **page path** (+ capability type). The
-`searchParams` prop appends to the page URL, so a wrapper parton can
-drive the embedded page's variant from a tracked read:
+A binding is origin + **page path** + **grant set** (+ capability
+type) — the grant is a property of the install, not of each call site
+(`remote({ …, grant: "paint" })`). The `searchParams` prop appends to
+the page URL, so a wrapper parton can drive the embedded page's
+variant from a tracked read:
 
 ```tsx
 <MagentoCheckoutStep searchParams={{ step }} />
@@ -245,6 +351,10 @@ frames are untouched. See
 embed-specific.
 
 ## Module references (cross-origin)
+
+Module references exist only on **ungoverned** (full-trust) embeds —
+below the Client tier the tier rewriter drops every import row, so
+none of the following applies to a granted frame.
 
 Flight serializes client-component imports as module paths. Same
 origin, the host bundle owns them — no rewrite. Cross-origin,
@@ -296,6 +406,11 @@ measured, not yet warranted.
 - **`/remote-frame-crossorigin-demo`** — embeds four `e2e-magento`
   pages (port 5181) via typed bindings, including a capability-scoped
   payment summary and a frame-navigated checkout step.
+- **`/paint-tier-demo`** — two `e2e-magento` pages under
+  `grant="paint"`: a vocabulary-only summary (host-themed via
+  `--parton-*` custom properties) and a mixed page whose raw `<div>`
+  and client component degrade in place (`paint-tier.spec.ts` also
+  asserts zero non-image browser traffic to the remote origin).
 - **`/embed-econ`** / **`/embed-econ-inline`** — the economics
   measurement surfaces.
 
@@ -307,5 +422,6 @@ measured, not yet warranted.
 - [`cache.md`](./cache.md) — caching options on embedded specs (the
   cache lives at the producer, not the host).
 - [`../notes/remote-frame-arc.md`](../notes/remote-frame-arc.md) —
-  the federation arc: trust tiers, vocabulary, bound cells,
-  remoteCell (design; increments 3+).
+  the federation arc: the trust-tier table, bound cells, remoteCell
+  (design; the Interactive/Layout/Style/Client/URL grants are later
+  increments — Paint is shipped, above).

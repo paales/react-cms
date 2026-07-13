@@ -1,11 +1,12 @@
 import "./styles.css"
-import { PartialRoot, parton } from "@parton/framework"
+import { PartialRoot, getEmbedGrants, parton } from "@parton/framework"
 import {
   MagentoCheckoutStep,
   MagentoGreeting,
   MagentoPaymentSummary,
   MagentoStockTicker,
 } from "./remote-specs.tsx"
+import { MagentoPaintMixed, MagentoPaintSummary } from "./paint-specs.tsx"
 
 /** The showcase landing content — gated to `/` so the embeddable
  *  `/remote/*` pages carry only their own parton in the body. */
@@ -25,6 +26,15 @@ const ShowcaseHome = parton(
 )
 
 export function Root() {
+  // The embed-surface variant: a vocabulary-constrained grant (Paint)
+  // admits no raw HTML wrappers, so the shell chrome (`<main>` below)
+  // would degrade at the host's splice — and take the page's content
+  // subtree with it. The producer knows the grant it's rendering
+  // under (`getEmbedGrants()` — decoded off the embed request), so it
+  // renders just the paint surfaces, bare. Full-trust renders (and
+  // ordinary browser visits) keep the showcase shell.
+  const grants = getEmbedGrants()
+  const paintSurface = grants !== null && !grants.has("client")
   return (
     <PartialRoot>
       <html lang="en">
@@ -34,14 +44,24 @@ export function Root() {
           <title>e2e-magento — showcase</title>
         </head>
         <body>
-          <main>
-            <ShowcaseHome />
-            {/* Embeddable pages — each spec's `match` is its page. */}
-            <MagentoGreeting />
-            <MagentoCheckoutStep />
-            <MagentoPaymentSummary />
-            <MagentoStockTicker />
-          </main>
+          {paintSurface ? (
+            <>
+              <MagentoPaintSummary />
+              <MagentoPaintMixed />
+            </>
+          ) : (
+            <main>
+              <ShowcaseHome />
+              {/* Embeddable pages — each spec's `match` is its page. */}
+              <MagentoGreeting />
+              <MagentoCheckoutStep />
+              <MagentoPaymentSummary />
+              <MagentoStockTicker />
+              {/* Paint-tier surfaces stay browsable standalone. */}
+              <MagentoPaintSummary />
+              <MagentoPaintMixed />
+            </main>
+          )}
         </body>
       </html>
     </PartialRoot>

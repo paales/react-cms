@@ -30,6 +30,8 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks"
+import { embedGrantsOf } from "../lib/page-embed.ts"
+import { getRequest } from "./context.ts"
 
 export type CapabilityValue = string | number | boolean | null
 export type Capability = Record<string, CapabilityValue>
@@ -50,6 +52,31 @@ export function getCapability(): Capability {
  */
 export function runWithCapability<T>(cap: Capability, fn: () => T): T {
   return capabilityAls.run(cap, fn)
+}
+
+/**
+ * The grant SET this render carries, or `null` for an ungoverned
+ * render (an ordinary page view, or an embed with no `grant` at the
+ * call site — full trust). The other half of the capability: the
+ * value bag above says what the render may READ, the grant set says
+ * what its payload may REFERENCE. Read straight off the embed
+ * request's `x-parton-embed-grant` header (`lib/page-embed.ts` owns
+ * the wire grammar) — no second ALS, the request scope IS the scope.
+ *
+ * Producer-side this is informational — render the embed-surface
+ * variant (`getEmbedGrants()?.has("paint")` → skip the app chrome);
+ * the framework's own parton pipeline consults it the same way to
+ * emit bare, boundary-free bodies. Enforcement lives with the HOST's
+ * tier rewriter at splice time.
+ */
+export function getEmbedGrants(): ReadonlySet<string> | null {
+  let request: Request
+  try {
+    request = getRequest()
+  } catch {
+    return null
+  }
+  return embedGrantsOf(request.headers)
 }
 
 /** Encode for the wire. Base64url over a UTF-8 JSON encoding. */

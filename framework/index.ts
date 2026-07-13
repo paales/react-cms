@@ -152,7 +152,20 @@ export {
 } from "./src/runtime/session.ts"
 
 // ── Capability scoping (RemoteFrame) ───────────────────────────────────
-export { getCapability, type Capability, type CapabilityValue } from "./src/runtime/capability.ts"
+// `getEmbedGrants` is the grant half of the capability: the value bag
+// says what an embedded render may READ, the grant set what its
+// payload may REFERENCE (`docs/reference/remote-frame.md` § Grants).
+// A producer branches on it to render its embed-surface variant. The
+// vocabulary components themselves are a deliberate deep-path surface
+// (`@parton/framework/lib/vocabulary.tsx`) — names like `Text` are
+// too generic for the package namespace.
+export {
+  getCapability,
+  getEmbedGrants,
+  type Capability,
+  type CapabilityValue,
+} from "./src/runtime/capability.ts"
+export type { EmbedGrant } from "./src/lib/page-embed.ts"
 
 // ── Remote endpoint dispatch (host side of <RemoteFrame>) ──────────────
 export {

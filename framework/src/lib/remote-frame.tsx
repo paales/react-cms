@@ -45,7 +45,7 @@
  *   </Suspense>
  */
 
-import type { ReactNode } from "react"
+import { createElement, type ReactNode } from "react"
 import { createFromReadableStream } from "./flight-runtime.ts"
 import {
   composeRewriters,
@@ -55,15 +55,22 @@ import {
 } from "./flight-rewrite.ts"
 import { splitSegments } from "./fp-trailer-split.ts"
 import {
+  EMBED_BOX_TAG,
   EMBED_DEPTH_HEADER,
+  EMBED_GRANT_HEADER,
   EMBED_LIMIT_ATTR,
   EMBED_NS_HEADER,
   MAX_EMBED_DEPTH,
   embedDepthOf,
   embedNamespaceFor,
   embedNamespaceOf,
+  encodeEmbedGrants,
+  grantsVocabularyConstrained,
+  normalizeEmbedGrants,
   pageEmbedRewriter,
+  type EmbedGrant,
 } from "./page-embed.ts"
+import { createTierRewriter } from "./tier-rewrite.ts"
 import { ParentContext } from "./partial-context.ts"
 import { deferCommitUntil, registerPartial, type PageSnapshotSource } from "./partial-registry.ts"
 import { getPartialState } from "./partial-request-state.ts"
@@ -92,6 +99,17 @@ export interface RemoteFrameProps {
    *  for debuggable registry ids. Identity does NOT depend on it —
    *  the placement namespace disambiguates on its own. */
   namespace?: string
+  /** Trust grant for the embedded payload — a grant SET (a name is
+   *  shorthand for the singleton set). Omitted = full trust: the
+   *  payload splices as-is (today's behavior). Present = the tier
+   *  rewriter enforces it at splice time: below the Client tier only
+   *  the framework vocabulary survives (`grant="paint"` — no client
+   *  modules load, non-vocabulary rows degrade per the violation
+   *  policy), and the spliced content renders inside a host-defined
+   *  `<parton-embed-box>` with `contain: strict`. The grant also
+   *  crosses as a request header so the producer can render its
+   *  embed-surface variant — a statement, never the enforcement. */
+  grant?: EmbedGrant | readonly EmbedGrant[]
 }
 
 function defaultModuleRewrite(srcOrigin: string): (path: string) => string {
@@ -128,6 +146,7 @@ export async function RemoteFrame({
   url,
   capability,
   namespace,
+  grant,
 }: RemoteFrameProps): Promise<ReactNode> {
   // Resolve `url` to an absolute form. `fetch` in the server runtime
   // doesn't accept bare-path inputs — and the origin decides whether
@@ -165,6 +184,7 @@ export async function RemoteFrame({
     ns,
     namespace,
     capability,
+    grants: normalizeEmbedGrants(grant),
     depth: embedDepthOf(hostRequest.headers) + 1,
   })
 }
@@ -194,6 +214,7 @@ async function EmbedRefetch({
     ns: source.ns,
     namespace: source.namespace,
     capability: source.capability as Capability | undefined,
+    grants: source.grant ? new Set(source.grant) : null,
     depth: embedDepthOf(getRequest().headers) + 1,
     partials: id,
   })
@@ -204,6 +225,8 @@ async function embedPage(args: {
   ns: string
   namespace?: string
   capability?: Capability
+  /** Canonical grant set (`null` = ungoverned, full trust). */
+  grants: ReadonlySet<string> | null
   depth: number
   /** Focused refetch target — appended as `?partials=<id>` so the
    *  producer renders just that parton from its own registry. */
@@ -224,6 +247,9 @@ async function embedPage(args: {
   }
   if (args.capability !== undefined) {
     requestHeaders[CAPABILITY_HEADER] = encodeCapability(args.capability)
+  }
+  if (args.grants !== null) {
+    requestHeaders[EMBED_GRANT_HEADER] = encodeEmbedGrants(args.grants)
   }
   // Requests spawned on behalf of a scoped request inherit its scope:
   // the test harness partitions process-wide server state per
@@ -278,6 +304,9 @@ async function embedPage(args: {
           ...(args.capability !== undefined
             ? { capability: args.capability as Record<string, unknown> }
             : {}),
+          // Replayed on refetch so a granted placement can never be
+          // re-fetched wider than it was placed.
+          ...(args.grants !== null ? { grant: [...args.grants] } : {}),
         }
         for (const [id, ser] of Object.entries(raw)) {
           const snap = deserializeSnapshot(ser)
@@ -296,10 +325,15 @@ async function embedPage(args: {
   registration.catch(() => {})
   deferCommitUntil(registration)
 
-  // Module-ref rewriting auto-derives from the origin pair: the host's
-  // bundle owns same-origin modules; a cross-origin payload's relative
-  // module paths are rewritten to absolute URLs at the remote origin
-  // so the host browser can dynamically import them.
+  // Rewriter pipeline — grant first, then origin. A vocabulary-
+  // constrained grant (no `client` member — v1: Paint) composes the
+  // tier rewriter onto the slice: no module-ref rewriting at ALL,
+  // same- or cross-origin — below the Client tier zero remote modules
+  // load, and the tier rewriter drops every `I` row outright.
+  // Ungoverned embeds keep the origin rule: the host's bundle owns
+  // same-origin modules; a cross-origin payload's relative module
+  // paths are rewritten to absolute URLs at the remote origin so the
+  // host browser can dynamically import them.
   const sameOrigin = (() => {
     try {
       return new URL(hostRequest.url).origin === fetchUrl.origin
@@ -307,9 +341,18 @@ async function embedPage(args: {
       return false
     }
   })()
-  const pipeline: RowRewriter = sameOrigin
-    ? pageEmbedRewriter
-    : composeRewriters(pageEmbedRewriter, moduleRefRewriter(defaultModuleRewrite(fetchUrl.origin)))
+  const vocabularyConstrained = grantsVocabularyConstrained(args.grants)
+  const pipeline: RowRewriter = vocabularyConstrained
+    ? composeRewriters(
+        pageEmbedRewriter,
+        createTierRewriter({ grants: args.grants!, url: args.url }),
+      )
+    : sameOrigin
+      ? pageEmbedRewriter
+      : composeRewriters(
+          pageEmbedRewriter,
+          moduleRefRewriter(defaultModuleRewrite(fetchUrl.origin)),
+        )
 
   // A page payload's root row is the entry contract `{ root, … }`
   // (the same shape every app entry renders for the browser client);
@@ -317,6 +360,21 @@ async function embedPage(args: {
   const payload = await createFromReadableStream<{ root: ReactNode }>(
     rewriteFlightStream(segment.body, pipeline),
   )
+  if (args.grants !== null) {
+    // The host-defined box a granted embed renders inside. The
+    // framework stamps the containment (blast-radius ceiling —
+    // `contain: strict` = size/layout/paint; the Layout grant is what
+    // will drop `size`); the HOST owns the box's dimensions via CSS on
+    // the tag — size containment means the content never sizes it.
+    return createElement(
+      EMBED_BOX_TAG,
+      {
+        "data-grant": encodeEmbedGrants(args.grants),
+        style: { display: "block", contain: "strict" },
+      },
+      payload.root,
+    )
+  }
   return payload.root
 }
 
@@ -349,6 +407,10 @@ export function remote<Cap = void>(opts: {
   origin: string
   path: string
   namespace?: string
+  /** Trust grant baked into the binding — see `RemoteFrameProps.grant`.
+   *  A binding is origin + page path + grant set (+ capability type);
+   *  the grant is a property of the INSTALL, not of each call site. */
+  grant?: EmbedGrant | readonly EmbedGrant[]
 }): (
   props: {
     /** Optional URL search params appended to the embedded page URL.
@@ -367,6 +429,7 @@ export function remote<Cap = void>(opts: {
       url: url.href,
       capability: (props as { capability?: Capability }).capability,
       namespace: opts.namespace,
+      grant: opts.grant,
     })
   }
 }

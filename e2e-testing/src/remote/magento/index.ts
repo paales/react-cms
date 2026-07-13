@@ -34,3 +34,20 @@ export const MagentoStocks = remote({
   path: "/remote/magento-stocks",
   namespace: NAMESPACE,
 })
+
+// Paint-tier surfaces — grant baked into the binding (a binding is
+// origin + page path + grant set; the grant is a property of the
+// install). Hand-extended pending manifest tier claims.
+export const MagentoPaintSummary = remote({
+  origin: ORIGIN,
+  path: "/remote/paint-summary",
+  namespace: NAMESPACE,
+  grant: "paint",
+})
+
+export const MagentoPaintMixed = remote({
+  origin: ORIGIN,
+  path: "/remote/paint-mixed",
+  namespace: NAMESPACE,
+  grant: "paint",
+})

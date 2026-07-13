@@ -46,6 +46,7 @@ const ROUTES = [
   "/chat-notes",
   "/remote-frame-demo",
   "/remote-frame-crossorigin-demo",
+  "/paint-tier-demo",
 ] as const
 
 test("warm every route on the fresh dev server", async ({ page }) => {

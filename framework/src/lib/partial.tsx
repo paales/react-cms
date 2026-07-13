@@ -41,7 +41,9 @@ import {
   EMBED_BODY_TAG,
   applyEmbedNamespace,
   embedDepthOf,
+  embedGrantsOf,
   embedNamespaceOf,
+  grantsVocabularyConstrained,
   stripEmbedNamespace,
 } from "./page-embed.ts"
 import {
@@ -1407,6 +1409,17 @@ function createSpecComponent<V>(
     // converge on the same prefixed identity.
     const embedNs = embedNamespaceOf(getRequest().headers)
     const id = embedNs !== null ? applyEmbedNamespace(embedNs, mintedId) : mintedId
+    // Vocabulary-constrained embed render (a grant set without
+    // `client` — the Paint tier and everything below the Client
+    // grant): the payload may carry no client modules, so the whole
+    // interactive parton apparatus — the PartialErrorBoundary client
+    // wrapper, Activity parking, placeholders, defer activators, cull
+    // skeletons, snapshot registration — must not emit. The branch
+    // points below collapse this render to the bare body. This is the
+    // producer rendering its embed-surface VARIANT; enforcement stays
+    // with the host's tier rewriter, which would strip all of it
+    // anyway (degrading the parton wholesale instead of painting it).
+    const vocabConstrained = grantsVocabularyConstrained(embedGrantsOf(getRequest().headers))
     // Server-hooks called within this parton's render read its own
     // identity from the rendering task (`getCurrentParton`); `tag()` and
     // tracked reads (`cookie()`, `searchParam()`) accumulate into these
@@ -1443,6 +1456,9 @@ function createSpecComponent<V>(
     if (spec.match) {
       const verdict = spec.match.evaluate(ourRequest)
       if (!verdict.matched) {
+        // Vocabulary-constrained: no client, no parking — a miss is
+        // simply not on this surface. Render nothing.
+        if (vocabConstrained) return null
         // A cullable spec parks pair-shaped. Its skeleton carries only
         // the call-site props (no match params — the match missed);
         // it never shows while hidden, and a restore-by-navigation
@@ -1557,7 +1573,11 @@ function createSpecComponent<V>(
     // The seed runs inside the parton's tracking context, so an
     // anchor-driven seed's `searchParam()` reads record as deps and
     // re-resolve the gate when the anchor moves.
-    const cullConfig = !hasOuterChildren && keepalive ? (opts.cull ?? null) : null
+    // Culling is viewport-driven CLIENT machinery (skeleton component
+    // refs, visibility reports) — inert on a vocabulary-constrained
+    // surface, where the body always runs.
+    const cullConfig =
+      !hasOuterChildren && keepalive && !vocabConstrained ? (opts.cull ?? null) : null
     let pairEmit: PairEmit | null = null
     let culled = false
     /** Whether the request carries a MEASURED visible set — gates the
@@ -1849,7 +1869,11 @@ function createSpecComponent<V>(
       fingerprintMatches &&
       !hasOuterChildren &&
       !coldRecordMissing &&
-      !snapshotExpired
+      !snapshotExpired &&
+      // A placeholder is a client-cache substitution instruction — no
+      // client crosses a vocabulary-constrained splice. (Unreachable
+      // in practice: an embed fetch carries no cached manifest.)
+      !vocabConstrained
 
     if (state) {
       // No uniqueness checks. Selectors are flat labels with fan-out
@@ -1879,6 +1903,26 @@ function createSpecComponent<V>(
       ...(effectiveInstanceId !== undefined ? { __instanceId: effectiveInstanceId } : {}),
     } as V & RenderArgs
     const fallback = opts.fallback ?? null
+
+    // ── Vocabulary-constrained emission ──
+    // The body renders BARE: no client boundary, no Activity, no
+    // Cache wrap (byte-cache replay is a producer-side concern the
+    // pull-only surface doesn't need yet), and no registration —
+    // nothing on this surface is independently refetchable, so
+    // shipping snapshots would only invite a refetch that can't
+    // hydrate. Suspense stays (a structural symbol the tier rewriter
+    // admits), so within-embed streaming pacing survives. Descendant
+    // partons still scope under this one via ParentContext and take
+    // this same branch.
+    if (vocabConstrained) {
+      self.phase = "render"
+      const bare: ReactNode = spec.Render(renderProps)
+      return (
+        <ParentContext value={childCtx}>
+          {fallback != null ? <Suspense fallback={fallback}>{bare}</Suspense> : bare}
+        </ParentContext>
+      )
+    }
 
     if (shouldSkip) {
       // Wrap the placeholder in `<Activity mode="visible">` so the
@@ -1926,7 +1970,9 @@ function createSpecComponent<V>(
       )
     }
 
-    if (opts.defer && !isExplicit) {
+    // Defer activators are client components — a vocabulary-
+    // constrained render falls through to the bare body instead.
+    if (opts.defer && !isExplicit && !vocabConstrained) {
       const defer = opts.defer
       const dormant =
         defer === true

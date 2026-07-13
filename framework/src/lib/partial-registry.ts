@@ -202,6 +202,10 @@ export type PageSnapshotSource = {
    *  refetched snapshot's labels re-register with the same prefix. */
   namespace?: string
   capability?: Record<string, unknown>
+  /** Grant set the placement declared (`<RemoteFrame grant>`) —
+   *  replayed on refetch so a granted placement can never re-fetch
+   *  wider than it was placed. Absent = ungoverned (full trust). */
+  grant?: readonly string[]
 }
 
 export type SnapshotSource = PageSnapshotSource
