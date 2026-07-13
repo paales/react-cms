@@ -1014,8 +1014,8 @@ Each segment's bytes look like:
 The tags split into two grammatical roles. **Milestones** (`settled`,
 `next`, `lanes`, `mux`, `muxend`) are phase transitions: they end the
 segment's body block. **Entries** (`fp`, `url`, `conn`, `seq`,
-`applied`, `muxlive`, `seqvoid`, any future data tag) carry data and
-may appear ANYWHERE —
+`applied`, `muxlive`, `seqvoid`, `drain`, any future data tag) carry
+data and may appear ANYWHERE —
 interleaved between Flight rows, not just after the body. The server exploits that for
 settle-time trailer emission: every parton's subtree settlement is
 observable (the `SettleScope` refcount in the Flight patch — see
@@ -1052,7 +1052,11 @@ skipped, counted PROCESSED by the client so the contiguous ack
 watermark can pass them. Lane `seq`/`muxlive` bodies carry an
 optional ` nav=<n>` token naming the FRAME url statement whose
 consume spawned the lane — the frame fire's milestone correlation
-([`channel.md`](./channel.md) §Frames ride the channel).
+([`channel.md`](./channel.md) §Frames ride the channel). `drain`
+(zero body) is the deploy shutdown's explicit reattach signal: the
+process is draining, the stream will close cleanly at its next full
+park, and the client re-attaches the moment it settles
+([`channel.md`](./channel.md) §Deploy-and-drain).
 
 The client's `splitSegments` consumes body bytes until a `\xFF`
 (UTF-8 invalid → never inside Flight payload), reads the marker with

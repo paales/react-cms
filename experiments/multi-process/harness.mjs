@@ -89,7 +89,10 @@ const backends = BACKEND_PORTS.map((port) => ({ port, child: null }))
 
 function spawnBackend(i) {
   const b = backends[i]
-  if (b.child && b.child.exitCode === null) return
+  // Alive = neither exited NOR signal-killed. A SIGKILLed child has
+  // `exitCode: null` with `signalCode: "SIGKILL"` — checking exitCode
+  // alone would refuse to respawn after an ungraceful kill.
+  if (b.child && b.child.exitCode === null && b.child.signalCode === null) return
   const env = {
     ...process.env,
     NODE_ENV: "production",
@@ -263,6 +266,19 @@ function forwardOnce(req, res, body, index, cookiePin, repin) {
       (up) => {
         recordStat(rec)
         rec.status = up.statusCode ?? 502
+        // An EXPLICIT drain refusal (503 + x-parton-drain — the backend
+        // received its deploy signal and stopped accepting live
+        // attaches). The request body is fully buffered, so replaying
+        // it against the next backend is safe: report the attempt as
+        // failed and let the outer loop fail over + re-pin. This is the
+        // deployment-side half of the drain contract — a real LB does
+        // the same off its health checks.
+        if (up.statusCode === 503 && up.headers["x-parton-drain"] !== undefined) {
+          rec.endMs = Date.now()
+          up.resume()
+          resolve({ ok: false, err: new Error("backend draining") })
+          return
+        }
         const outHeaders = {}
         for (const [k, v] of Object.entries(up.headers)) {
           if (!HOP_BY_HOP.has(k.toLowerCase())) outHeaders[k] = v

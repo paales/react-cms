@@ -36,7 +36,11 @@ client-facing `Host` header is preserved through the proxy
 (virtual-host style) — the framework's live-attach endpoint verifies
 `Origin` against the request URL, so a Host rewrite would 403 every
 attach. Responses stream through chunk-for-chunk; request bodies are
-buffered so a dead pinned backend fails over transparently. Every
+buffered so a dead pinned backend fails over transparently — and so an
+EXPLICIT drain refusal (`503` + `x-parton-drain` from a backend that
+received its deploy signal) replays the buffered attach against the
+next backend and re-pins, the deployment-side half of the framework's
+deploy-and-drain contract. Every
 response carries `x-lb-backend`, and the proxy records per-request
 byte counts (`/__harness/stats`) — the failover measurement's ruler.
 
@@ -65,11 +69,12 @@ node experiments/multi-process/harness.mjs
 One worker, no parallelism — the scenarios share cross-process state
 on purpose.
 
-| Spec | Scenario |
-|---|---|
-| `bus.spec.ts` | The bridge end-to-end: a write in process A reaches a live viewer attached to process B (doorbell → registry commit → wake index → lane), both directions. A broker spy asserts every relayed line is exactly `{origin, selectors}` — zero values on the wire. |
-| `contention.spec.ts` | 100 concurrent `cell.update(fn)` increments interleaved across both processes land exactly 100 (the SQLite CAS composes; the prototype's scenario D demonstrated the OPPOSITE over cells.json). |
-| `failover.spec.ts` | SIGTERM the pinned backend mid-session while writes keep flowing through the survivor. Measures (does not design around): auto-recovery time, DOM update gap, reattach count, document reloads, committed-write survival, held-stream byte cost either side of the kill. |
+| Spec                 | Scenario                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bus.spec.ts`        | The bridge end-to-end: a write in process A reaches a live viewer attached to process B (doorbell → registry commit → wake index → lane), both directions. A broker spy asserts every relayed line is exactly `{origin, selectors}` — zero values on the wire.                                                                                                                                                                        |
+| `contention.spec.ts` | 100 concurrent `cell.update(fn)` increments interleaved across both processes land exactly 100 (the SQLite CAS composes; the prototype's scenario D demonstrated the OPPOSITE over cells.json).                                                                                                                                                                                                                                       |
+| `drain.spec.ts`      | Deploy-and-drain (workstream 3's gate): SIGTERM the pinned backend with a write IN FLIGHT on it. Proves no visible tear (the DOM gap must beat the ungraceful ~1.9s baseline — measured ~0.3s), the in-flight write commits and answers, zero document reloads, live on the survivor afterward; records the reattach's full-price whole-tree cost. Numbers: [`docs/notes/deploy-and-drain.md`](../../docs/notes/deploy-and-drain.md). |
+| `failover.spec.ts`   | SIGKILL the pinned backend mid-session while writes keep flowing through the survivor — the ungraceful crash-class baseline the drain is compared against (SIGTERM is the graceful path now). Measures: auto-recovery time, DOM update gap, reattach count, document reloads, committed-write survival, held-stream byte cost either side of the kill.                                                                                |
 
 ## Prototype lineage
 

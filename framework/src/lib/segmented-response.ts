@@ -72,6 +72,7 @@ import {
   takeConnectionNavigation,
 } from "./connection-session.ts"
 import { getEphemeralCellStorage } from "../runtime/cell-storage.ts"
+import { isDraining } from "../runtime/drain.ts"
 import { RenderCancelledError } from "../runtime/errors.ts"
 import {
   _acquireBroadcastRoute,
@@ -90,6 +91,7 @@ import {
   type FpUpdatesPayload,
   TAG_CONNECTION_ID,
   TAG_DELIVERY_SEQ,
+  TAG_DRAIN,
   TAG_LANES_OPEN,
   TAG_MUX_LIVE,
   TAG_NEXT_SEGMENT,
@@ -762,6 +764,11 @@ function openLiveConnectionSession(): ConnectionSession | null {
   // never clears it), so the one-shot link stays valid across every
   // segment and lane.
   session.ephemeralStorage = getEphemeralCellStorage()
+  // A drain that began while this attach was already past the refusal
+  // gate: mark the fresh session directly (beginDrain's fan-out ran
+  // before it existed), so the drive's first wake-loop entry announces
+  // the drain and winds down instead of holding to the force-close.
+  if (isDraining()) session.drainRequested = true
   return session
 }
 
@@ -1039,6 +1046,10 @@ async function driveLaneStream(
   // milestones off it).
   const laneNavSeqs = new Map<string, number>()
   let closed = false
+  // The deploy drain's per-connection announcement latch: the `drain`
+  // wire entry ships exactly once, at the first wake after `beginDrain`
+  // marked the session.
+  let drainAnnounced = false
 
   // ── Consequence-seq bookkeeping ──
   // An action's reservation (`_reserveActionConsequences`) assigns a
@@ -2445,6 +2456,21 @@ async function driveLaneStream(
   // holding a goner for the keepalive window. A degraded session
   // (never-acked) exits the same way: the driver stops holding.
   while (!closed && session?.detached !== true && session?.degradedReason == null) {
+    // The deploy drain (`beginDrain` in runtime/drain.ts marked the
+    // session and fired the wake arms): announce the `drain` wire
+    // entry ONCE — the client's explicit reattach-on-close signal; a
+    // closed socket alone never means drain — and convert the drive to
+    // the graceful wind-down the transport handover uses. From here
+    // the loop serves everything in flight (open lanes re-arm the
+    // park check through the lane-drained wake, latched statements get
+    // their covering renders) and the full-park exit below closes the
+    // stream cleanly; the client's settle re-fires the attach, landing
+    // on a surviving process.
+    if (session !== null && session.drainRequested && !drainAnnounced) {
+      drainAnnounced = true
+      enqueue(buildMarker(TAG_DRAIN, 0))
+      session.windDownAtPark = true
+    }
     // The never-acked degrade deadline: armed only while the FIRST
     // ack is outstanding after the first delivery-seq'd emission
     // settled — the moment the client's ack obligation began (see
@@ -2873,8 +2899,19 @@ async function driveLaneStream(
   // lanes: its `atPark` exit fires only at a full park.
   session?.cancelListeners.delete(onCancelScope)
   stopping = true
+  // The drain deadline force-closed this session with lanes still open:
+  // report the drop explicitly (never a silent loss — the client's
+  // reattach whole-tree render is the heal) and abort EVERY lane's
+  // render read below, not just producers' — a loader-wedged normal
+  // lane must not hold the exiting process.
+  const drainForced = session?.drainForced === true
+  if (drainForced && lanes.size > 0) {
+    console.warn(
+      `[parton] drain: connection ${session!.id} force-closed with ${lanes.size} unsettled lane(s): ${[...lanes.keys()].join(", ")}`,
+    )
+  }
   for (const runtime of lanes.values()) {
-    if (runtime.producer) {
+    if (runtime.producer || drainForced) {
       runtime.cancelled = true
       runtime.abortRead?.()
     }

@@ -74,6 +74,7 @@ import { fetchTransport, getChannelTransport } from "./channel-transport.ts"
 import {
   TAG_CONNECTION_ID,
   TAG_DELIVERY_SEQ,
+  TAG_DRAIN,
   TAG_MUX_LIVE,
   TAG_SEQ_VOID,
   TAG_UPSTREAM_APPLIED,
@@ -559,6 +560,29 @@ function scheduleReattach(): void {
     reattachTimer = null
     _requestAttachNow()
   }, delay)
+}
+
+/** Retry cadence after an EXPLICIT drain refusal (`x-parton-drain` on
+ *  the attach response — the server is deploy-draining). Short and
+ *  fixed: the refusal means "come back, elsewhere or in a moment" —
+ *  either the deployment's proxy routes the next attempt to a
+ *  surviving process, or the draining process exits within its own
+ *  deadline and the retry lands on its replacement. Never exponential
+ *  (this is not a broken path) and naturally bounded: once the process
+ *  exits, a failed attempt is an ordinary transient on the standard
+ *  arbitration. */
+const DRAIN_RETRY_MS = 500
+
+function scheduleDrainRetry(): void {
+  if (reattachTimer !== null) return
+  if (typeof setTimeout === "undefined") {
+    _requestAttachNow()
+    return
+  }
+  reattachTimer = setTimeout(() => {
+    reattachTimer = null
+    _requestAttachNow()
+  }, DRAIN_RETRY_MS)
 }
 
 /** The client's navigation point — the envelope seq of its latest url
@@ -1424,6 +1448,22 @@ export function _channelWireEntry(tag: string, body: Uint8Array): void {
     }
     return
   }
+  if (tag === TAG_DRAIN) {
+    // The server stated it is DRAINING (deploy shutdown): the held
+    // stream will serve everything in flight and close cleanly at its
+    // next full park. Arm the one-shot reattach-on-close — the same
+    // flag the transport handover uses — so the settle re-fires the
+    // attach IMMEDIATELY (through the deployment's proxy it lands on a
+    // surviving process; the fire-time manifest presents holdings the
+    // wound-down stream fully served) instead of waiting out the
+    // heartbeat interval. The explicit frame is the signal: a closed
+    // socket alone never means drain. Action POSTs hold through the
+    // close→establish gap on the handover machinery
+    // (`_channelHandoverSettled`), so an in-flight write is never
+    // silently dropped to unattached semantics.
+    reattachOnClose = true
+    return
+  }
   if (tag !== TAG_CONNECTION_ID) return
   _channelEstablished(new TextDecoder().decode(body))
 }
@@ -1734,7 +1774,10 @@ export function _channelEstablished(connection: string): void {
  *  NOT first-ack-fail is never a failure. The heartbeat calls this when
  *  its fire's `finished` settles; fires are strictly sequential, so the
  *  settling connection's id is the current one. */
-export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
+export function _channelConnectionClosed(opts?: {
+  aborted?: boolean
+  drainRefused?: boolean
+}): void {
   if (typeof document !== "undefined") {
     document.documentElement.removeAttribute("data-parton-live")
   }
@@ -1756,6 +1799,16 @@ export function _channelConnectionClosed(opts?: { aborted?: boolean }): void {
   // can never pass. Release: the reattach's whole-tree render carries
   // the consequences (over-fetch, never a frozen overlay).
   releaseAllConsequenceGates()
+
+  // An EXPLICIT drain refusal (`x-parton-drain` on the attach response
+  // — the server is deploy-draining): retry promptly on a short fixed
+  // cadence and NEVER count it toward the degrade bound — the path is
+  // not broken, the process is leaving. Pending interaction records
+  // stay latched and ride the retry's attach (the ordinary subsume).
+  if (opts?.drainRefused === true) {
+    scheduleDrainRetry()
+    return
+  }
 
   const establishmentFailed = !established && opts?.aborted !== true
   const pendingInteraction =

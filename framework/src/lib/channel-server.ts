@@ -26,6 +26,7 @@
  */
 
 import { runWithRequestAsync } from "../runtime/context.ts"
+import { isDraining } from "../runtime/drain.ts"
 import { HEADER_RSC_RENDER } from "../runtime/request.tsx"
 import {
   type AttachStatement,
@@ -33,6 +34,7 @@ import {
   decodeAttachStatement,
   decodeChannelEnvelope,
 } from "./channel-protocol.ts"
+import { buildMarker, TAG_DRAIN } from "./fp-trailer-marker.ts"
 import {
   _resolveBoundSession,
   applyEnvelopeToSession,
@@ -146,6 +148,17 @@ export async function driveChannelSocket(
   socket.onMessage((data) => {
     if (!attached) {
       attached = true
+      // A draining process refuses the NEW attach explicitly — the
+      // socket twin of the fetch endpoint's `503` + `x-parton-drain`:
+      // the `drain` wire entry states it (the client re-attaches
+      // promptly, landing on a surviving process), then the socket
+      // closes with no session ever opened.
+      if (isDraining()) {
+        socket.send(buildMarker(TAG_DRAIN, 0))
+        socket.close()
+        resolveDone()
+        return
+      }
       const statement = decodeStatement(data)
       if (statement === null || !sameOriginAttach(statement, origin)) {
         socket.close()
@@ -292,6 +305,14 @@ export async function driveChannelWebTransport(
     if (!attached) {
       attached = true
       driveStarted = true
+      // The WebTransport twin of the WS refusal above: state the drain
+      // and close — no session opens on a draining process.
+      if (isDraining()) {
+        void writer.write(buildMarker(TAG_DRAIN, 0)).catch(() => {})
+        teardown()
+        resolveDone()
+        return
+      }
       const statement = decodeStatement(line)
       if (statement === null || !sameOriginAttach(statement, origin)) {
         teardown()

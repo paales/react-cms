@@ -12,6 +12,7 @@ import { _anyCullObservers } from "./cull-park.ts"
 import { _takeLiveCatchupAnchor } from "./partial-client-state.ts"
 import { _onFirstMeasurement, _visibilityMeasured, _visibleSetIds } from "./visibility.tsx"
 import { getNavigation } from "../runtime/navigation-api.ts"
+import { NavigationError } from "../runtime/navigation-error.ts"
 
 /** Default interval between periodic re-fires. While a streaming
  *  connection is already open, the interval tick is a no-op. */
@@ -163,15 +164,21 @@ export function LivePageHeartbeat({ intervalMs = DEFAULT_INTERVAL_MS }: Props = 
       )
       finished
         .then(
-          () => false,
+          () => ({ aborted: false, drainRefused: false }),
           // Our own supersede (the navigate abort, teardown) is never a
           // degrade signal — the transport's close arbitration needs to
-          // know the difference.
-          (err) => err instanceof Error && err.name === "AbortError",
+          // know the difference. A drain refusal (the explicit
+          // `x-parton-drain` on a refused attach — the server is
+          // deploy-draining) is its own class: retried promptly, never
+          // counted.
+          (err) => ({
+            aborted: err instanceof Error && err.name === "AbortError",
+            drainRefused: err instanceof NavigationError && err.drainRefusal === true,
+          }),
         )
-        .then((aborted) => {
+        .then(({ aborted, drainRefused }) => {
           inFlight = null
-          _channelConnectionClosed({ aborted })
+          _channelConnectionClosed({ aborted, drainRefused })
         })
     }
 

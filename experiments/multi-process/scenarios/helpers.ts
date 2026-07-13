@@ -86,12 +86,15 @@ export async function resetProxyStats(request: APIRequestContext): Promise<void>
 // ─── App endpoints (direct-to-backend, bypassing affinity) ─────────────
 
 /** POST /__mp/update on a SPECIFIC backend; returns the committed
- *  value (CAS-final). */
+ *  value (CAS-final). `delayMs` makes the endpoint sleep BEFORE the
+ *  write — the drain scenario's deliberate in-flight window. */
 export async function updateOn(
   request: APIRequestContext,
   backend: number,
+  opts: { delayMs?: number } = {},
 ): Promise<{ value: number; pid: number }> {
-  const res = await request.post(`${BACKEND_URLS[backend]}/__mp/update`)
+  const delay = opts.delayMs !== undefined ? `?delay=${opts.delayMs}` : ""
+  const res = await request.post(`${BACKEND_URLS[backend]}/__mp/update${delay}`)
   if (!res.ok()) throw new Error(`update on backend ${backend} failed: ${res.status()}`)
   return (await res.json()) as { value: number; pid: number }
 }

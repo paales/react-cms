@@ -125,3 +125,40 @@ SQLite adapter carries the values; this seam carries the doorbells).
 Suites at landing: `yarn typecheck` green; rsc tier 77 files / 453
 tests green (bridge suite included); node tier green; the harness
 suite 4/4.
+
+## Drain results (2026-07-13) — the deliberate half, measured
+
+Deploy-and-drain landed (research→PoC workstream 3 —
+[`deploy-and-drain.md`](./deploy-and-drain.md), mechanism in
+[`../internals/channel.md`](../internals/channel.md)
+§ Deploy-and-drain), designed around exactly what the failover
+measurement above said is lost. Side-by-side on the same harness,
+same 4 writes/s cadence (`scenarios/drain.spec.ts`; the failover
+scenario moved to SIGKILL so the ungraceful crash-class baseline
+stays measured — SIGTERM is now the graceful path):
+
+- **The visible gap**: drain (SIGTERM) recovery **473ms**, longest
+  DOM update gap **313ms** — vs the ungraceful baseline's ~2.1s /
+  ~1.9s. The win is structural: the `drain` wire frame makes the
+  client reattach the moment its wound-down stream settles, while the
+  old process is STILL UP — one attach POST, one proxy-absorbed drain
+  refusal (503 + `x-parton-drain`, retried against the survivor), no
+  proxy connect-failure detection in the path at all. Zero document
+  reloads, zero DOM regression, both worlds.
+- **The in-flight window CLOSES**: a write the doomed process had
+  SEEN but not committed at SIGTERM (a 300ms-delayed update) commits
+  AND its response flushes before the exit — the entry's request
+  gauge holds quiescence until response bodies fully stream out. The
+  ungraceful path never had this (only the proxy's buffered-body
+  replay).
+- **Full-price re-render, bounded and confirmed**: the drained
+  re-attach's held stream cost 14,368B/3.7s vs the initial attach's
+  11,455B/3.2s — the cold process's whole-tree render, ≈ one initial
+  attach per viewer per deploy. Fp portability across processes is
+  confirmed ABSENT (fps fold per-process invalidation timestamps), so
+  the manifest misses and the cold-record posture over-fetches, never
+  stale; values ride the store, unchanged.
+- **Sessions**: per the store config — the in-memory default dies
+  with the process (frames reset to initial URLs on the survivor); a
+  shared `SqliteSessionStore` carries them. The drain surfaces the
+  split rather than papering over it.

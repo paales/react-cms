@@ -66,6 +66,12 @@ import { runWithPartialState } from "../lib/partial-request-state.ts"
 import { _reserveActionConsequences, createSegmentedResponse } from "../lib/segmented-response.ts"
 import { wrapStreamWithSnapshotTrailer } from "../lib/snapshot-trailer.ts"
 import { warmCmsCache } from "../runtime/cms-runtime.ts"
+import {
+  _drainRequestSettled,
+  _drainRequestStarted,
+  drainAttachRefusal,
+  installDrainOnSigterm,
+} from "../runtime/drain.ts"
 import { CAPABILITY_HEADER, decodeCapability, runWithCapability } from "../runtime/capability.ts"
 import {
   _actionSuppressesCommit,
@@ -107,6 +113,13 @@ export interface RscHandlerConfig {
    *  `/__test/clear-caches` endpoint, alongside the framework's own
    *  cache / registry / session / cell clearing. */
   clearCaches?: (scope: string | "all") => void | Promise<void>
+  /** Deploy-and-drain wiring (`runtime/drain.ts`). By default the
+   *  factory wires SIGTERM → `beginDrain` → exit: new attaches get the
+   *  explicit drain refusal, every held connection gets the `drain`
+   *  wire frame and settles (bounded by `deadlineMs`, default
+   *  `DEFAULT_DRAIN_DEADLINE_MS`), then the process exits. `false`
+   *  opts out — the app's own supervisor calls `beginDrain()` itself. */
+  drain?: false | { deadlineMs?: number }
 }
 
 export function createRscHandler(config: RscHandlerConfig): {
@@ -166,6 +179,14 @@ export function createRscHandler(config: RscHandlerConfig): {
     // reads it off the statement and lanes the targets after the
     // region opens.
     if (request.method === "POST" && url.pathname === ATTACH_ENDPOINT) {
+      // A draining process stops accepting NEW attaches — the explicit
+      // `503` + `x-parton-drain` refusal (a drain-aware proxy retries
+      // the buffered attach against a surviving backend; the client
+      // transport retries promptly, never counting it toward the
+      // degrade bound). Envelopes, action POSTs and document GETs keep
+      // serving for the whole drain window, so in-flight work lands.
+      const refusal = drainAttachRefusal()
+      if (refusal !== null) return refusal
       if (!isSameOriginPost(request)) return new Response(null, { status: 403 })
       let statement: AttachStatement | null
       try {
@@ -620,8 +641,40 @@ export function createRscHandler(config: RscHandlerConfig): {
     })
   }
 
+  // The deploy signal: SIGTERM → drain (refuse attaches, settle lanes,
+  // signal reattach) → exit. Framework-wired so every app gets it with
+  // zero plumbing; `drain: false` opts out for apps whose supervisor
+  // owns the shutdown and calls `beginDrain()` itself.
+  if (config.drain !== false) {
+    installDrainOnSigterm(config.drain)
+  }
+
+  // The drain's in-flight gauge: every request the process has SEEN is
+  // counted until its response BODY fully streams out (not merely until
+  // the handler resolves — a Response object exists before its bytes
+  // reach the socket), so a drain begun mid-request (a write racing the
+  // deploy signal) waits for the response to actually leave — the
+  // "in-flight actions land" half of the drain window (bounded by the
+  // deadline). A held attach stream converges too: its body ends at the
+  // drain's own wind-down.
+  const gaugedHandler = async (request: Request): Promise<Response> => {
+    _drainRequestStarted()
+    let response: Response
+    try {
+      response = await handler(request)
+    } catch (err) {
+      _drainRequestSettled()
+      throw err
+    }
+    if (response.body === null) {
+      _drainRequestSettled()
+      return response
+    }
+    return new Response(gaugedResponseBody(response.body), response)
+  }
+
   return {
-    fetch: handler,
+    fetch: gaugedHandler,
     handleChannelSocket: createChannelServer({ Root }).handleSocket,
   }
 }
@@ -711,6 +764,43 @@ export function createWebTransportServer(config: { Root: ComponentType }): {
       await driveChannelWebTransport(stream, request, renderOnce)
     },
   }
+}
+
+/** Pass a response body through while holding the drain's in-flight
+ *  gauge until it fully streams out — settle exactly once, on end,
+ *  error, or cancel (the consumer went away; nothing more will leave). */
+function gaugedResponseBody(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = body.getReader()
+  let settled = false
+  const settleOnce = (): void => {
+    if (settled) return
+    settled = true
+    _drainRequestSettled()
+  }
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      let result: ReadableStreamReadResult<Uint8Array>
+      try {
+        result = await reader.read()
+      } catch (err) {
+        settleOnce()
+        controller.error(err)
+        return
+      }
+      if (result.done) {
+        settleOnce()
+        try {
+          controller.close()
+        } catch {}
+        return
+      }
+      controller.enqueue(result.value)
+    },
+    cancel(reason) {
+      settleOnce()
+      return reader.cancel(reason)
+    },
+  })
 }
 
 // Production strips the message off a render error and ships only a

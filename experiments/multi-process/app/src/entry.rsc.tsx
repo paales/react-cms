@@ -24,6 +24,11 @@ if (process.env.MP_BUS) {
  *   POST /__mp/update  → counter.update(n => n + 1); returns the
  *                        committed value (CAS-final — a retry's
  *                        recompute is what lands in `value`).
+ *                        `?delay=<ms>` (≤ 2000) sleeps BEFORE the
+ *                        write — the drain scenario's in-flight
+ *                        window: a request the process has SEEN but
+ *                        not yet committed when the deploy signal
+ *                        lands must still commit and answer.
  *   GET  /__mp/value   → the current stored value (a peek at the
  *                        shared store through THIS process's handle).
  */
@@ -32,6 +37,8 @@ async function harnessEndpoints(request: Request): Promise<Response | null> {
   if (!url.pathname.startsWith("/__mp/")) return null
   const { result } = await runWithRequestAsync(request, async () => {
     if (url.pathname === "/__mp/update" && request.method === "POST") {
+      const delay = Math.min(Number(url.searchParams.get("delay") ?? 0) || 0, 2000)
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay))
       let committed = 0
       await counter.update((n) => {
         committed = n + 1

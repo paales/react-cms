@@ -249,6 +249,21 @@ export interface ConnectionSession {
    *  lanes, nothing latched), so everything in flight is served and
    *  the close tears nothing. */
   windDownAtPark: boolean
+  /** The process began its deploy drain (`beginDrain` in
+   *  `runtime/drain.ts` marked every open session). The driver's next
+   *  wake announces the `drain` wire entry ONCE — the client's explicit
+   *  reattach-on-close signal — and converts the drive to the same
+   *  full-park wind-down `windDownAtPark` runs: lanes settle, latched
+   *  statements get their covering renders, the stream closes cleanly. */
+  drainRequested: boolean
+  /** The drain DEADLINE elapsed with this session still open
+   *  (`_forceCloseDrainingSessions`). Set alongside `detached`; the
+   *  drive's exit path aborts EVERY open lane's render read (not just
+   *  producers') — a loader-wedged lane must not hold the exiting
+   *  process — and reports the dropped lanes explicitly (never a silent
+   *  loss). The client's torn-lane handling self-heals on the
+   *  reattach's whole-tree render. */
+  drainForced: boolean
   /** Last minted DELIVERY seq — the per-connection monotonic counter
    *  every payload segment and lane emission carries as its `seq`
    *  entry (the ack currency). Minted by the driver at emission. */
@@ -478,6 +493,8 @@ export function _openConnectionSession(
     flipWakes: new Set(),
     detached: false,
     windDownAtPark: false,
+    drainRequested: false,
+    drainForced: false,
     deliverySeq: 0,
     ackedDeliverySeq: 0,
     firstAckReceived: false,
@@ -767,6 +784,66 @@ export function _closeConnectionSession(id: string): void {
     })
   }
   sessions.delete(id)
+  for (const listener of [...sessionClosedListeners]) listener()
+}
+
+// ─── Deploy drain (the session half — orchestration in runtime/drain.ts) ──
+
+/** Fired after every session close — how `beginDrain` observes the
+ *  process reaching zero open connections without polling. */
+const sessionClosedListeners = new Set<() => void>()
+
+/** Register a session-close listener; returns its disposer. */
+export function _onConnectionSessionClosed(listener: () => void): () => void {
+  sessionClosedListeners.add(listener)
+  return () => {
+    sessionClosedListeners.delete(listener)
+  }
+}
+
+/** Open live connections in this process, every scope — the drain's
+ *  settle condition. */
+export function _openConnectionSessionCount(): number {
+  return sessions.size
+}
+
+/**
+ * Mark EVERY open session (all scopes — the drain is process-wide, a
+ * deploy replaces the whole process) drain-requested and wake its
+ * driver: the next wake announces the `drain` wire entry and converts
+ * the drive to the full-park wind-down. Returns how many sessions were
+ * marked.
+ */
+export function _drainAllConnectionSessions(): number {
+  let marked = 0
+  for (const session of sessions.values()) {
+    if (!session.drainRequested) {
+      session.drainRequested = true
+      marked += 1
+    }
+    for (const wake of [...session.flipWakes]) wake()
+  }
+  return marked
+}
+
+/**
+ * The drain deadline's teeth: every session still open is force-closed
+ * — `detached` exits the drive loop at its wake, `drainForced` makes
+ * the exit path abort EVERY open lane's render read (a loader-wedged
+ * lane must not hold the exiting process). Returns the force-closed
+ * session ids — the caller reports them; a lane dropped here is never
+ * a silent loss (the driver logs each connection's undrained lanes,
+ * and the client's reattach whole-tree render is the heal).
+ */
+export function _forceCloseDrainingSessions(): string[] {
+  const forced: string[] = []
+  for (const session of sessions.values()) {
+    forced.push(session.id)
+    session.drainForced = true
+    session.detached = true
+    for (const wake of [...session.flipWakes]) wake()
+  }
+  return forced
 }
 
 // ─── The handover locker ─────────────────────────────────────────────

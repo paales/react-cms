@@ -30,6 +30,7 @@ import {
   CHANNEL_WS_ENDPOINT,
   CHANNEL_WT_ENDPOINT,
   type ChannelEnvelope,
+  DRAIN_REFUSAL_HEADER,
 } from "./channel-protocol.ts"
 import { TAG_CONNECTION_ID } from "./fp-trailer-marker.ts"
 import { splitSegments } from "./fp-trailer-split.ts"
@@ -103,6 +104,10 @@ export const fetchTransport: ChannelTransport = {
         kind: "http",
         url: ATTACH_ENDPOINT,
         status: response.status,
+        // The explicit deploy-drain refusal (the header, never the bare
+        // status): the close arbitration retries promptly without
+        // counting toward the degrade bound.
+        ...(response.headers.get(DRAIN_REFUSAL_HEADER) !== null ? { drainRefusal: true } : {}),
       })
     }
     return { body: response.body }

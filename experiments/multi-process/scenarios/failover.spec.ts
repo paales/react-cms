@@ -15,9 +15,9 @@ import {
 
 /**
  * Failover MEASUREMENT (the prototype's E, extended per research→PoC
- * workstream 3: "measure before designing"). SIGTERM the pinned
- * process mid-session while writes keep flowing through the survivor,
- * and record what is lost TODAY:
+ * workstream 3: "measure before designing"). Kill the pinned process
+ * UNGRACEFULLY mid-session while writes keep flowing through the
+ * survivor, and record what is lost:
  *
  *   - whether committed writes survive (they must — the shared SQLite
  *     store is the truth; this is the hard assertion),
@@ -28,9 +28,11 @@ import {
  *     window),
  *   - what visibly tears (DOM regression, document reloads).
  *
- * The numbers land in docs/notes/bridge-seam.md; the resume-contract
- * design (drain, reattach handshake, ack-watermark replay) is
- * explicitly NOT designed here.
+ * The numbers land in docs/notes/bridge-seam.md. The kill signal is
+ * SIGKILL: since deploy-and-drain landed, SIGTERM is the GRACEFUL path
+ * (the framework's drain handler settles lanes and signals reattach —
+ * measured by drain.spec.ts); this scenario stays the ungraceful
+ * crash-class baseline the drain is compared against.
  */
 
 interface Sample {
@@ -59,7 +61,10 @@ function sampleCounter(page: Page, samples: Sample[]): { stop: () => Promise<voi
   }
 }
 
-test("SIGTERM the pinned backend mid-session: measure the tear", async ({ browser, request }) => {
+test("SIGKILL the pinned backend mid-session: measure the ungraceful tear", async ({
+  browser,
+  request,
+}) => {
   test.setTimeout(180_000)
   await restartBackends(request, [0, 1], { resetStore: true })
   await resetProxyStats(request)
@@ -114,8 +119,8 @@ test("SIGTERM the pinned backend mid-session: measure the tear", async ({ browse
   // ── The kill ─────────────────────────────────────────────────────────
   const attachCountBeforeKill = attachStarts.length
   const tKill = Date.now()
-  await killBackend(request, 0, "SIGTERM")
-  console.log(`[failover] backend 0 SIGTERMed at t=0 (dom=${preKillDomValue})`)
+  await killBackend(request, 0, "SIGKILL")
+  console.log(`[failover] backend 0 SIGKILLed at t=0 (dom=${preKillDomValue})`)
 
   // Committed writes survive: the survivor reads the doomed process's
   // last committed value (and everything before it) from the store.

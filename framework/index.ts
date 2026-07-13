@@ -93,6 +93,20 @@ export {
   type InvalidationBumpBatch,
 } from "./src/runtime/invalidation-bridge.ts"
 
+// ── Deploy-and-drain ────────────────────────────────────────────────────
+// The graceful half of process shutdown: refuse new attaches, settle
+// every held connection (the `drain` wire frame signals the client's
+// prompt reattach), exit. `createRscHandler` wires SIGTERM → drain
+// automatically (`drain: false` opts out); `beginDrain` is the seam an
+// app-owned supervisor calls itself. See docs/internals/channel.md
+// § Deploy-and-drain.
+export {
+  beginDrain,
+  isDraining,
+  DEFAULT_DRAIN_DEADLINE_MS,
+  type DrainResult,
+} from "./src/runtime/drain.ts"
+
 // ── Cell storage (pluggable backend) ────────────────────────────────────
 export {
   getCellStorage,

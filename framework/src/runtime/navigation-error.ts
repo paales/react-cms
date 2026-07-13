@@ -36,12 +36,19 @@ export interface NavigationErrorInit {
   readonly status?: number
   readonly cause?: unknown
   readonly message?: string
+  /** The response carried the explicit drain-refusal header
+   *  (`x-parton-drain` — the server is deploy-draining and refused a
+   *  NEW live attach). The channel's close arbitration retries such a
+   *  fire promptly and never counts it toward the degrade bound. Set
+   *  only by the attach transports; never inferred from a bare status. */
+  readonly drainRefusal?: boolean
 }
 
 export class NavigationError extends Error {
   readonly kind: NavigationErrorKind
   readonly url: string
   readonly status?: number
+  readonly drainRefusal?: boolean
 
   constructor(init: NavigationErrorInit) {
     super(init.message ?? defaultMessage(init.kind, init.url, init.status), {
@@ -51,6 +58,7 @@ export class NavigationError extends Error {
     this.kind = init.kind
     this.url = init.url
     this.status = init.status
+    if (init.drainRefusal === true) this.drainRefusal = true
   }
 }
 

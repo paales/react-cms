@@ -936,6 +936,89 @@ shows the old remote content for at most one reconcile interval —
 bounded staleness that self-corrects at the next whole-tree pass.
 See [`../reference/remote-frame.md`](../reference/remote-frame.md).
 
+## Deploy-and-drain
+
+A deploy replaces the process, and the architecture holds one long
+connection per viewer to it — so SIGTERM is a first-class protocol
+moment, not an error path. `beginDrain()`
+(`framework/src/runtime/drain.ts`; barrel-exported next to the
+invalidation bridge) runs the graceful half; `createRscHandler` wires
+`SIGTERM → beginDrain → exit` automatically (`drain: false` opts out,
+`drain: {deadlineMs}` tunes the bound — default
+`DEFAULT_DRAIN_DEADLINE_MS`, 5s). The lifecycle:
+
+- **Stop accepting attaches — explicitly.** While draining, a NEW
+  attach answers `503` + `x-parton-drain: 1` (`DRAIN_REFUSAL_HEADER`
+  in `channel-protocol.ts`); the full-duplex drivers write the `drain`
+  wire entry and close the socket with no session opened. The HEADER is
+  the statement — a bare 503 is never read as drain. A drain-aware
+  proxy retries the buffered attach POST against a surviving backend
+  (the multi-process harness's does); the client transport marks the
+  failure `NavigationError.drainRefusal` and the close arbitration
+  retries on a short fixed cadence (`DRAIN_RETRY_MS`, 500ms) WITHOUT
+  counting toward the degrade bound — the path is not broken, the
+  process is leaving. Everything else keeps serving for the whole
+  window: envelopes, action POSTs, document GETs — in-flight writes
+  land.
+- **Signal + settle every held connection.** `beginDrain` marks every
+  open session (`_drainAllConnectionSessions`) and wakes its driver;
+  the driver's next wake writes the `drain` wire entry ONCE (a
+  zero-body entry in the `\xFF` marker grammar — `TAG_DRAIN`; the
+  producer writes the signal, a closed socket alone never means drain)
+  and converts the drive to the SAME full-park wind-down the transport
+  handover's `atPark` detach uses: open lanes drain and commit,
+  latched statements get their covering renders, the stream closes
+  CLEANLY. Client-side, the `drain` entry arms the handover's one-shot
+  reattach-on-close: the stream's settle re-fires the attach
+  IMMEDIATELY — no heartbeat-interval wait — with the fire-time
+  manifest (complete, since the wound-down stream served everything
+  first) and `since: null` (the new process's registry is a new
+  timeline; the anchor would be refused). Action POSTs hold through
+  the close→establish gap on the handover machinery
+  (`_channelHandoverSettled`). Through the deployment's sticky proxy
+  the reattach lands on a surviving process BEFORE the old one exits —
+  that ordering is what deletes the ungraceful failover's ~1.9s
+  visible gap (measured: ~0.3s, `docs/notes/deploy-and-drain.md`).
+- **Quiescence, then the deadline.** The drain resolves when the
+  process is quiescent — zero open sessions AND zero in-flight
+  requests. Requests are gauged by the entry (`_drainRequestStarted` /
+  `_drainRequestSettled` around the handler, held until the response
+  BODY fully streams out), so a write the process has SEEN commits and
+  its response flushes before the exit. The `deadlineMs` bound is the
+  module's one explicit time signal — it IS the contract (a deploy
+  must complete): at the deadline every remaining session is
+  force-closed (`detached` + `drainForced`; the drive's exit path
+  aborts EVERY open lane's render read, not just producers' — a
+  wedged loader must not hold the exiting process) and the drop is
+  REPORTED (a process-level `console.warn` naming the connections,
+  plus each driver's per-connection lane detail) — never silent. A
+  force-closed lane's body ends on the cancel path (muxend, no
+  delivery announcement), so the client's decode settles without
+  committing; the reattach's whole-tree render is the heal.
+- **Exit.** After quiescence (or the deadline) and a best-effort cell
+  storage `flush()` (the dev JSON store's debounce window must not
+  ride into the kill; the SQLite adapter's commits are already
+  synchronous), the SIGTERM wiring hands the signal to whatever it
+  displaced. `installDrainOnSigterm` takes SIGTERM over at install —
+  Vite's dev/preview handler destroys every open socket and exits
+  within the same tick, which would tear the drain frame off the wire
+  — and re-invokes the displaced listeners after the drain (they close
+  the http server and exit), or exits itself when there were none.
+  SIGINT (Ctrl-C) is untouched.
+
+What drain does NOT do: migrate state. Values live in the shared cell
+store and survive by construction; the client re-warms in one attach
+whose whole-tree render is the bounded full-price cost (per-process
+registry/fps are not fp-portable across processes — invalidation
+timestamps fold into the fp on a per-process timeline, so the
+manifest's fps miss and the cold-record posture over-fetches, never
+stale). SESSIONS (frame URLs) follow the configured `SessionStore`:
+on the default in-memory store they die with the process — the new
+process renders every frame at its initial URL — while a shared
+`setSessionStore(new SqliteSessionStore(...))` carries them across
+the deploy. Drain surfaces that split honestly instead of hiding it;
+the session cookie itself always survives (it lives in the browser).
+
 ## The endpoint runs in a request scope
 
 `createRscHandler` dispatches `POST /__parton/channel` before app
@@ -1438,6 +1521,12 @@ which the CI environment cannot host.
   `cull-pair-regression.test.tsx` (the client side: destruction
   sites reporting as passengers, the pair's regression detector
   driving, the baseline reset re-arming the flip),
+  `drain.rsc.test.tsx` (deploy-and-drain server half: the `drain`
+  entry announced once + the clean full-park close, an in-flight lane
+  settling before the close, the explicit 503 + `x-parton-drain`
+  refusal and the WS driver's drain-entry refusal, the deadline
+  force-closing a wedged lane with the loss reported, and the fan-out
+  race — a session opened mid-drain self-marks at open),
   `live-catchup.rsc.test.tsx` (the attach statement: anchor catch-up,
   attach-only anchor, body-manifest/URL-manifest verdict equivalence,
   the uncapped body manifest), `attach-rebind.rsc.test.tsx` (the
@@ -1492,7 +1581,10 @@ which the CI environment cannot host.
   channel-vs-discrete routing with the surviving issue-seq claim),
   `channel-telemetry.test.ts` (the lossy producer: newest-wins, no
   self-scheduled traffic, drop on fail, never buffered; the strict
-  decoder), `attach-dispatch.test.ts` (statement decoder grammar
+  decoder), `drain-client.test.ts` (the `drain` wire entry arming the
+  one-shot reattach-on-close; drain-refused closes retrying on the
+  fixed cadence, never counting toward the degrade bound),
+  `attach-dispatch.test.ts` (statement decoder grammar
   incl. `applied`; attach/action marker dispatch),
   `refetch-attach.test.ts` (the manifest cap split by transport).
 - rsc tier additions for the frame/cancel/producer/consequence

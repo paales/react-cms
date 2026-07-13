@@ -73,6 +73,16 @@ export const CHANNEL_WS_ENDPOINT = "/__parton/ws"
  *  ([[channel-server]]). */
 export const CHANNEL_WT_ENDPOINT = "/__parton/wt"
 
+/** Response header on a REFUSED attach while the process drains (deploy
+ *  shutdown — `runtime/drain.ts`). The refusal is `503` + this header:
+ *  the explicit "come back elsewhere" statement, never inferable from a
+ *  bare status (a 503 without it is an ordinary overload). A
+ *  drain-aware proxy retries the buffered attach against another
+ *  backend on it; the client transport marks the failure
+ *  `drainRefusal` so the close arbitration retries promptly and never
+ *  counts it toward the degrade bound. */
+export const DRAIN_REFUSAL_HEADER = "x-parton-drain"
+
 /** Max delivery seqs a connection may have in flight past the client's
  *  cumulative ack before the driver stops opening lanes — the server's
  *  backpressure gate (sizing rationale at [[segmented-response]]'s

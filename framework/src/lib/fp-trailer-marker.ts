@@ -210,6 +210,19 @@ export const TAG_MUX_LIVE = "muxlive"
  *  pass it (a silent gap would wedge the unacked window and hold
  *  every consequence gate forever). */
 export const TAG_SEQ_VOID = "seqvoid"
+/** The server process is DRAINING (deploy shutdown — SIGTERM). Zero
+ *  body. Written once per held connection by the segment driver the
+ *  moment the drain begins; the drive then converts to the graceful
+ *  wind-down (the transport handover's atPark machinery): open lanes
+ *  drain and commit, latched statements get their covering renders,
+ *  and the stream closes CLEANLY at the next full park. The client
+ *  arms a one-shot reattach-on-close — the settle re-fires the attach
+ *  immediately (through the deployment's proxy it lands on a surviving
+ *  process) instead of waiting out the heartbeat interval. The frame
+ *  is the explicit signal: a closed socket alone never means drain
+ *  (the producer writes the signal — the done-marker rule). See
+ *  `runtime/drain.ts` and docs/internals/channel.md § Deploy-and-drain. */
+export const TAG_DRAIN = "drain"
 
 /**
  * Body shape of an `fp` trailer entry (JSON). Maps each spec id whose
