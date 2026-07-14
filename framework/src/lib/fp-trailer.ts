@@ -182,6 +182,15 @@ function computeWarmFps(
     folds.set(ancestorId, `|desc=${hash(parts.join(","))}`)
   }
 
+  // Ids culled on this response — their bodies shipped skeletons and
+  // every DESCENDANT body below them never ran. Same discipline as the
+  // gate check below: a snapshot that did not render here is parked,
+  // not drifted, so healing it would retag the client's parked copy
+  // (held inside the culled ancestor's content) with a state it does
+  // not carry — the next flip-in would then CONFIRM stale content.
+  const culledIds = new Set<string>()
+  for (const [id, snap] of snapshots) if (snap.culled) culledIds.add(id)
+
   const warm = new Map<string, string>()
   for (const [id, snap] of snapshots) {
     if (!snap.emittedFp) continue
@@ -190,6 +199,10 @@ function computeWarmFps(
     // variant, not a drifted one — no warm fp, no heal (see the
     // SideData note above).
     if (!side.gatePassed) continue
+    // Culled-ancestor descendant: body never ran on this response —
+    // no warm fp, no heal (the culled instance ITSELF still heals:
+    // its skeleton render is a real render of the culled variant).
+    if (snap.parentPath.some((aid) => aid !== id && culledIds.has(aid))) continue
     warm.set(
       id,
       recomputeFpWithFold(

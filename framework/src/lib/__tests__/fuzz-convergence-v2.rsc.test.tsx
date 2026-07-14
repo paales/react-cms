@@ -221,17 +221,15 @@ describe("v2 pinned regression seeds", () => {
     })
   }
 
-  // OPEN finding (seed 77) — server-side, outside the v2 change's
-  // territory: the fp-trailer flush recompute (`computeWarmFps`) heals
-  // a snapshot whose ANCESTOR was culled on the response — the body
-  // never ran, yet the descendant's fp is retagged with the new
-  // request state, so the parked copy advertises a state it does not
-  // carry and the next flip-in CONFIRMS stale content. The F2
-  // discipline ("a gate-failed snapshot gets no warm fp") needs a
-  // culled-ancestor sibling. `it.fails` flips RED when the fix lands —
-  // promote this to an ordinary pinned case then.
-  it.fails(
-    "OPEN seed 77 — culled-ancestor descendant retagged by the flush recompute",
+  // Pinned regression (seed 77, F13): the fp-trailer flush recompute
+  // (`computeWarmFps`) healed a snapshot whose ANCESTOR was culled on
+  // the response — the body never ran, yet the descendant's fp was
+  // retagged with the new request state, so the parked copy advertised
+  // a state it did not carry and the next flip-in CONFIRMED stale
+  // content. Fixed by the culled-ancestor sibling of the F2 gate
+  // discipline in computeWarmFps.
+  it(
+    "seed 77 — a culled-ancestor descendant gets no heal from the flush recompute",
     async () => {
       const actions: FuzzActionV2[] = [
         { kind: "flip", ids: ["fz-wrap"], delivery: { hold: 0, order: "trailer-first" } },

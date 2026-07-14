@@ -33,16 +33,15 @@ framework bug classes on its first day, and fixing them exposed three
 more the old classifier had lumped in. F1–F8 are FIXED (F8 was found
 in the FIELD, not by the fuzzer — it lives in the layer the v1 model
 deliberately does not run; v2 exists to close exactly that gap and
-found four more real merge-layer classes on ITS first day: F9–F12,
-all fixed, plus one OPEN server-side finding, seed 77 below).
+found five more real classes on ITS first day: F9–F12 in the merge
+layer and F13 server-side (seed 77 below), all fixed.
 Every seed runs as an ordinary case: the CI budgets are
 fully clean and any failure there is a new finding. The post-F7 v1
 long runs are ZERO findings at every budget tried (3000×20, 1000×50
 from a distinct seed range, 500×50 — the last after fixing a harness
-settle-terminator hole, seed 336 below). The post-F12 v2 long runs:
-500×20 (seeds 1–500) → 499 clean / 1 (seed 77, the open class),
-500×30 (seeds 10000+) → **500 / 0**, 1000×20 (seeds 50000+) → 998 / 2
-(both the seed-77 class).
+settle-terminator hole, seed 336 below). The post-F13 v2 runs:
+seeds 1–500, 10000+ (×30), and 50000+ budgets all fully clean —
+including the 50500–51000 window that held both seed-77 siblings.
 
 ## The action alphabet
 
@@ -838,23 +837,23 @@ node+rsc suites are untouched by them.
   streaming is de-advertised conservatively). Over-fetch on tears,
   never a standing blank. Pinned seed 90305.
 
-- **OPEN (seed 77) — the flush recompute retags a culled-ancestor
-  descendant (staleness on flip-in; server-side, F2's sibling).**
-  `computeWarmFps` heals every route snapshot under the flush
-  request — including a descendant whose ANCESTOR was culled on this
-  response: the descendant's body never ran, yet its fp is recomputed
-  under the new request state and the heal retags the client's parked
-  copy (held inside the culled ancestor's content) with a state it
-  does not carry. The next flip-in's verdict then legitimately
-  CONFIRMS the mis-tagged copy: `[flip out wrap, navigate cross-state,
-  flip in wrap]` shows the pre-nav descendant state (~0.2% of v2
-  trials; seeds 77/50507/50925 all shrink to this shape). The F2
-  discipline ("a gate-failed snapshot gets NO warm fp — nothing
-  rendered, there is no drift to heal") needs a culled-ancestor
-  sibling in `computeWarmFps` (fp-trailer.ts — outside the v2
-  change's territory, so ledgered instead of fixed). Pinned
-  `it.fails` in `fuzz-convergence-v2.rsc.test.tsx`; flip it to an
-  ordinary case with the fix.
+- **F13 (seed 77) — the flush recompute retags a culled-ancestor
+  descendant (staleness on flip-in; server-side, F2's sibling).
+  FIXED.** `computeWarmFps` healed every route snapshot under the
+  flush request — including a descendant whose ANCESTOR was culled on
+  this response: the descendant's body never ran, yet its fp was
+  recomputed under the new request state and the heal retagged the
+  client's parked copy (held inside the culled ancestor's content)
+  with a state it does not carry. The next flip-in's verdict then
+  legitimately CONFIRMED the mis-tagged copy: `[flip out wrap,
+  navigate cross-state, flip in wrap]` showed the pre-nav descendant
+  state (~0.2% of v2 trials; seeds 77/50507/50925 all shrink to this
+  shape). Fix: the culled-ancestor sibling of the F2 discipline ("a
+  snapshot that did not render here gets NO warm fp") in
+  `computeWarmFps` (fp-trailer.ts) — a snapshot with any culled
+  ancestor on its parentPath is skipped by the heal; the culled
+  instance ITSELF still heals (its skeleton render is a real render
+  of the culled variant). Pinned as an ordinary case, seed 77.
 
 - **Harness finding: delivering a pre-nav lane's rows after the
   covering segment is not a real interleaving.** An early v2 draft
