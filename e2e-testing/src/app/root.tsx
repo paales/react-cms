@@ -32,6 +32,7 @@ import { StreamingDemoPage } from "./pages/streaming-demo.tsx"
 import { LanesDemoPage } from "./pages/lanes-demo.tsx"
 import { DeferredDemoPage } from "./pages/deferred-demo.tsx"
 import { CursorsPage } from "./pages/cursors.tsx"
+import { HmrProbePage } from "./pages/hmr-probe.tsx"
 import { FormsDemoPage } from "./pages/forms-demo.tsx"
 import { GuardedNotePage } from "./pages/guarded-note.tsx"
 import { FramesDemoPage } from "./pages/frames-demo.tsx"
@@ -94,6 +95,7 @@ export function Root() {
             <LanesDemoPage />
             <DeferredDemoPage />
             <CursorsPage />
+            <HmrProbePage />
             <FormsDemoPage />
             <GuardedNotePage />
             <FramesDemoPage />

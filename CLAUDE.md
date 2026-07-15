@@ -241,6 +241,16 @@ node website/validate-embassy.mjs # EMBASSY-DISTRICT gate: the world's
                         # tint, world hygiene. Run after any
                         # embed / grant / vocabulary change:
                         # `yarn build:website` first.
+node e2e-testing/validate-hmr.mjs # DEV-HMR LIVE-EDIT gate: boots its own
+                        # dev server (:5327), rewrites /hmr-probe's
+                        # source through every transport phase
+                        # (fetch-era, consecutive, post-WS-upgrade,
+                        # framework-file edit, reload) and asserts the
+                        # browser updates LIVE — plain AND byte-cached
+                        # partons. No build step. Run after any change
+                        # to the HMR wiring, channel drives, or the fp
+                        # formula (docs/internals/render-pipeline.md
+                        # § Dev HMR).
 ```
 
 `yarn test` and `yarn test:e2e` cover disjoint suites — **both must
@@ -278,8 +288,13 @@ Operational notes that save hours:
   assertions. `preview-all.sh` detaches its vite grandchildren, so to
   restart cleanly kill the whole `yarn preview:all` tree (or the port
   holders on `:5173` / `:5181`), not just the yarn shim.
-- HMR dispose hooks clear cache + registry on edits — server restarts
-  are rarely needed during dev.
+- Server-code edits reach connected pages LIVE (no reload): a dev-only
+  code-version term moves every fp on an rsc-graph edit, held drives
+  detach (the client reattaches through a fresh entry import), and the
+  `rsc:update` silent renav carries the fresh bodies — see
+  `docs/internals/render-pipeline.md` § Dev HMR. Full-reload dispose
+  hooks still clear cache + registry; server restarts are rarely
+  needed during dev.
 
 ## Data layer
 

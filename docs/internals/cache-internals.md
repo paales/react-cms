@@ -267,5 +267,9 @@ parallel runs don't contend.
 ## HMR + clear
 
 `vite:beforeFullReload` fires `_clearCache()` to drop every scope.
-Test-only `/__test/clear-caches` endpoint forwards a per-request scope
-token (or `?all=1` for everything).
+Incremental HMR edits never clear the cache — they don't need to: the
+cache key includes the fp, and the dev-only code-version term
+([`render-pipeline.md`](./render-pipeline.md) § Dev HMR) moves every
+fp on a server-code edit, so post-edit renders miss and old entries
+age out. Test-only `/__test/clear-caches` endpoint forwards a
+per-request scope token (or `?all=1` for everything).

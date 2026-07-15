@@ -36,6 +36,7 @@ import {
 import { computeRouteKey } from "./partial.tsx"
 import { getSpecById } from "./spec-catalog.ts"
 import { evalDepKeys } from "./server-hooks.ts"
+import { codeVersionKey } from "./code-version.ts"
 import {
   _consumePendingUrlUpdate,
   _setSettleTrailerSink,
@@ -319,8 +320,14 @@ function recomputeFpWithFold(
   const schemaKey = snap.schemaKey ?? ""
   const invalidationTs = queryMatchingTs(snap.labels ?? [], constraintSurface)
   const invalidationKey = invalidationTs > 0 ? `|inv=${invalidationTs}` : ""
+  // `codeVersionKey()` mirrors the live formula's dev-only `|code=N`
+  // term (see lib/code-version.ts). Both read the scope's PINNED
+  // version — this recompute runs inside the same drive scope as the
+  // render it heals, so the warm fp names the graph that rendered,
+  // never a counter an edit moved past it (which would retag stale
+  // client bytes with current fps and freeze them in).
   const ownStructuralFp = hash(
-    `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKey}${propsKey}${invalidationKey}${depsKey}`,
+    `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKey}${propsKey}${invalidationKey}${codeVersionKey()}${depsKey}`,
   )
   return hash(`${ownStructuralFp}${ambientFrameKey}${fold}`)
 }

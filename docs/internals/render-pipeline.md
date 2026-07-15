@@ -655,6 +655,9 @@ The fp folds in:
 - spec id
 - match params (`matchKey` plus their stable-stringified values,
   the `vary=` term)
+- DEV ONLY: the serving graph's code version (`|code=N`,
+  `lib/code-version.ts`) — empty until the first HMR edit, always
+  empty in prod/tests. See _Dev HMR — code identity_ below.
 - the prior render's recorded dep keys, re-read at the current
   request (store-and-reread) — cookies, search params, headers,
   pathname / `match()` reads, session, visibility, tags, and custom
@@ -849,6 +852,59 @@ all), and the client's `setServerCallback` skips the commit
 `returnValue`. The change reaches the page over the held live
 connection instead. See [`streaming.md`](./streaming.md) § "Deferred
 (stream-only) writes".
+
+## Dev HMR — code identity
+
+The fp folds request dimensions, invalidation timestamps, and
+descendant deps — an HMR edit to a Render body moves none of them, so
+without a code term the client's advertised fps keep matching after an
+edit, the server honestly fp-skips, and the browser keeps the old
+code's output. Dev adds the explicit signal; prod is byte-identical to
+a world without it (the fold is DEV-gated and nothing ever bumps the
+counter there). The moving parts:
+
+- **The bump** (`lib/code-version.ts`). The rsc module runner's
+  `vite:beforeUpdate` with any `js-update` IS the "server code
+  changed" signal — the globalThis-backed process counter increments.
+  `beforeUpdate` (not after) is load-bearing: the self-accepting rsc
+  entry re-evaluates while the update applies, and that evaluation's
+  birth-version capture must see the new count.
+- **The pin** (`_pinCodeVersion`, `runtime/context.ts`).
+  `createRscHandler` / `createChannelServer` capture the counter at
+  ENTRY EVALUATION — atomic with the import that built their graph —
+  and pin it into every request scope they open. `codeVersionKey()`
+  (the `|code=N` fp term, folded by the live formula AND the
+  fp-trailer recompute) reads the pin, so a drive's fps always name
+  the graph that renders them. Folding the global instead would let an
+  edit-orphaned drive's trailer retag the client's stale bytes with
+  current fps — the fresh graph would then fp-skip forever (fps are
+  content-independent).
+- **Held-drive retirement** (`lib/connection-session.ts`). A held
+  drive (fetch live stream, WS socket) renders the module graph
+  captured at ITS attach; per-request re-imports never freshen it. The
+  bump's `vite:afterUpdate` twin detaches every open session — the
+  drive exits at its wake WITHOUT serving latched statements (serving
+  them would emit old-graph content), the stream/socket closes
+  cleanly. A session whose scope's pinned version is already behind
+  the counter at creation (an edit landed mid-attach, after the sweep)
+  is born detached — nothing else would ever retire it.
+- **The client** (`entry/browser.tsx` on `rsc:update`). Arms the
+  one-shot reattach-on-close (`_channelArmReattachOnClose`) — the
+  detach's close is expected, so re-establishment is immediate instead
+  of waiting out the heartbeat interval — then states the current URL
+  silent. The reattach imports the entry fresh; the catch-up's fps
+  (new code version) mismatch everything the page advertises, so it
+  delivers fresh bodies. Byte-cache keys include the fp, so `cache:`
+  partons miss too. Net: an edit reaches every connected page in
+  ~100 ms with no reload.
+
+The manual gate is `node e2e-testing/validate-hmr.mjs` — boots a dev
+server, edits `/hmr-probe`'s source through every transport phase
+(fetch-era, consecutive, post-WS-upgrade, framework-file edit,
+reload), and asserts both a plain and a byte-cached parton update
+live. Not in CI: it edits files on disk against a self-owned dev
+server. Run it after touching the HMR wiring, the channel drives, or
+the fp formula.
 
 ## Stream-driven commit timing
 

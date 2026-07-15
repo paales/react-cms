@@ -82,10 +82,12 @@ import {
 import {
   _actionSuppressesCommit,
   _captureCommitHandle,
+  _pinCodeVersion,
   getFrameworkControl,
   getScope,
   runWithRequestAsync,
 } from "../runtime/context.ts"
+import { currentCodeVersion } from "../lib/code-version.ts"
 import { reportServerRenderError } from "../runtime/errors.ts"
 import { runInvalidationTransaction } from "../runtime/invalidation-registry.ts"
 import { createRemoteHandler } from "../runtime/remote-endpoints.tsx"
@@ -134,6 +136,13 @@ export function createRscHandler(config: RscHandlerConfig): {
 } {
   const { Root, notFound: NotFound } = config
 
+  // The serving graph's birth version (dev HMR): captured at ENTRY
+  // evaluation — atomic with the module import that built this
+  // handler's graph — and pinned into every request scope the handler
+  // opens, so fps fold the graph that actually renders, never a
+  // process counter a concurrent edit moved past it. Always 0 in prod.
+  const graphCodeVersion = currentCodeVersion()
+
   /** Static remote-metadata dispatch — OPTIONS,
    *  /__remote/manifest.json, /__remote/types.d.ts. */
   const remoteHandler = config.remote
@@ -165,9 +174,10 @@ export function createRscHandler(config: RscHandlerConfig): {
     // interaction can mint Set-Cookie (the held stream's headers are
     // long gone by the time a frame arrives).
     if (request.method === "POST" && url.pathname === CHANNEL_ENDPOINT) {
-      const { result, cookies } = await runWithRequestAsync(request, () =>
-        handleChannelPost(request),
-      )
+      const { result, cookies } = await runWithRequestAsync(request, () => {
+        _pinCodeVersion(graphCodeVersion)
+        return handleChannelPost(request)
+      })
       for (const cookie of cookies) {
         result.headers.append("set-cookie", cookie)
       }
@@ -222,9 +232,10 @@ export function createRscHandler(config: RscHandlerConfig): {
       headers.set(HEADER_RSC_RENDER, "1")
       const renderRequest = new Request(stated, { headers })
       await warmCmsCache()
-      const { result: response, cookies } = await runWithRequestAsync(renderRequest, () =>
-        handleAttach(statement),
-      )
+      const { result: response, cookies } = await runWithRequestAsync(renderRequest, () => {
+        _pinCodeVersion(graphCodeVersion)
+        return handleAttach(statement)
+      })
       for (const cookie of cookies) {
         response.headers.append("set-cookie", cookie)
       }
@@ -291,9 +302,10 @@ export function createRscHandler(config: RscHandlerConfig): {
     const renderRequest = parseRenderRequest(request)
     await warmCmsCache()
 
-    const { result: response, cookies } = await runWithRequestAsync(renderRequest.request, () =>
-      handleRequest(renderRequest),
-    )
+    const { result: response, cookies } = await runWithRequestAsync(renderRequest.request, () => {
+      _pinCodeVersion(graphCodeVersion)
+      return handleRequest(renderRequest)
+    })
 
     for (const cookie of cookies) {
       response.headers.append("set-cookie", cookie)
@@ -723,9 +735,14 @@ export function createRscHandler(config: RscHandlerConfig): {
 export function createChannelServer(config: { Root: ComponentType }): {
   handleSocket(socket: ChannelSocket, request: Request): Promise<void>
 } {
+  // Same birth-version capture as `createRscHandler` — the drive pins
+  // it into the attach scope so a held socket's fps stay at the graph
+  // that renders them (dev HMR; see lib/code-version.ts).
+  const graphCodeVersion = currentCodeVersion()
   const renderOnce = channelRenderOnce(config.Root)
   return {
-    handleSocket: (socket, request) => driveChannelSocket(socket, request, renderOnce),
+    handleSocket: (socket, request) =>
+      driveChannelSocket(socket, request, renderOnce, graphCodeVersion),
   }
 }
 
@@ -775,6 +792,7 @@ export interface WebTransportServerSession {
 export function createWebTransportServer(config: { Root: ComponentType }): {
   handleSession(session: WebTransportServerSession, request: Request): Promise<void>
 } {
+  const graphCodeVersion = currentCodeVersion()
   const renderOnce = channelRenderOnce(config.Root)
   return {
     handleSession: async (session, request) => {
@@ -788,7 +806,7 @@ export function createWebTransportServer(config: { Root: ComponentType }): {
       } finally {
         reader.releaseLock()
       }
-      await driveChannelWebTransport(stream, request, renderOnce)
+      await driveChannelWebTransport(stream, request, renderOnce, graphCodeVersion)
     },
   }
 }

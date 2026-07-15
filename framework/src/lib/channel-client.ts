@@ -616,6 +616,19 @@ export function _channelAbortLiveStream(): void {
  *  `_channelConnectionClosed`. */
 let reattachOnClose = false
 
+/** Arm the one-shot reattach-on-close for a close the client KNOWS is
+ *  coming (dev HMR: `rsc:update` announced a server-code edit, and the
+ *  server detaches every held drive whose module graph the edit
+ *  orphaned — `lib/connection-session.ts`). Without the arm that close
+ *  looks benign and the re-establishment waits out the heartbeat
+ *  interval; armed, the settle re-fires the attach immediately and the
+ *  fresh graph's catch-up delivers the new code. No-op with no
+ *  established connection — the caller's navigation statement requests
+ *  its own attach in that case. */
+export function _channelArmReattachOnClose(): void {
+  if (_getLiveConnectionId() !== null) reattachOnClose = true
+}
+
 // ─── The transport handover (fetch → WebSocket) ──────────────────────
 //
 // The auto-upgrade swaps the transport UNDER the channel with no gap

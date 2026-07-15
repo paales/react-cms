@@ -53,6 +53,7 @@
 
 import {
   type CachedOverride,
+  _pinnedCodeVersion,
   _setAttachStatement,
   _setCachedOverride,
   _setConnectionSession,
@@ -60,6 +61,7 @@ import {
   getRequest,
   getScope,
 } from "../runtime/context.ts"
+import { currentCodeVersion } from "./code-version.ts"
 import type { CellStorage } from "../runtime/cell-storage.ts"
 import { getSessionId, setSessionFrameUrl } from "../runtime/session.ts"
 import {
@@ -527,6 +529,19 @@ export function _openConnectionSession(
     consumedNavSeq: 0,
     consumedNavStreaming: false,
   }
+  // Dev HMR — the born-stale gate: a session whose serving graph
+  // (`_pinnedCodeVersion`, pinned by the handler that opened this
+  // scope) is already behind the process counter was established by a
+  // drive an edit orphaned MID-ATTACH — the bump's detach sweep below
+  // ran before this session existed, so nothing else would ever retire
+  // it, and it would hold the page at the old code indefinitely. Born
+  // detached, its drive exits before serving; the client re-attaches
+  // through a fresh entry import. Inert in prod (both sides 0) and in
+  // scopes no handler pinned.
+  if (import.meta.env.DEV) {
+    const pinned = _pinnedCodeVersion()
+    if (pinned !== undefined && pinned !== currentCodeVersion()) session.detached = true
+  }
   sessions.set(id, session)
   return session
 }
@@ -844,6 +859,28 @@ export function _forceCloseDrainingSessions(): string[] {
     for (const wake of [...session.flipWakes]) wake()
   }
   return forced
+}
+
+if (import.meta.hot) {
+  // Dev: a server-code edit is a mini-deploy for every HELD drive —
+  // fetch live streams and WS sockets alike render the module graph
+  // captured at THEIR attach, so after the edit they'd keep serving
+  // the old code's closures forever (the per-request import that
+  // freshens discrete fetches never happens on a held stream). Detach
+  // them all: the drive exits at its wake, the stream/socket closes
+  // cleanly, and the client's re-establishment attaches through a
+  // fresh entry import — where the code-version fp bump
+  // (`lib/code-version.ts`, bumped at `vite:beforeUpdate`) makes the
+  // catch-up honestly mismatch every cached fp and deliver fresh
+  // bodies. `sessions` is globalThis-anchored, so this reaches drives
+  // started before a framework-file edit re-evaluated this module.
+  import.meta.hot.on("vite:afterUpdate", (payload: { updates?: { type?: string }[] }) => {
+    if (!payload?.updates?.some((u) => u.type === "js-update")) return
+    for (const session of sessions.values()) {
+      session.detached = true
+      for (const wake of [...session.flipWakes]) wake()
+    }
+  })
 }
 
 // ─── The handover locker ─────────────────────────────────────────────

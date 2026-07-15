@@ -1307,6 +1307,14 @@ session under the current request's scope + session identity. The socket
 is inherently bound (one connection per socket), so the origin check
 lives at the handshake, not per-message.
 
+Dev only: an HMR edit to the rsc graph DETACHES every open session —
+held drives render the module graph captured at their attach, so an
+edit orphans them; the client's `rsc:update` handler arms an immediate
+reattach, which imports the entry fresh. Both drives pin their graph's
+code version into the attach scope (the `codeVersion` parameter) so
+their fps name the graph that renders. Mechanism + gate:
+[`render-pipeline.md`](./render-pipeline.md) § Dev HMR.
+
 **Dev/preview wiring** is the framework Vite plugin `partonChannelServer`
 (`framework/src/vite/channel-server.ts`): it hooks the Node http server's
 `upgrade` event, accepts the `/__parton/ws` handshake (leaving Vite's HMR

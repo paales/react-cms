@@ -31,6 +31,7 @@ import {
   _channelDeliveryCommittable,
   _channelFrameLaneCommitted,
   _channelFrameLaneSettled,
+  _channelArmReattachOnClose,
   _channelHandoverSettled,
   _channelIdle,
   _channelIsDegraded,
@@ -972,10 +973,17 @@ async function main() {
 
   if (import.meta.hot) {
     import.meta.hot.on("rsc:update", () => {
-      // An edit landed: state the current URL silent — the whole-tree
-      // segment (or the attach it triggers pre-establishment) carries
-      // the re-render; the HMR dispose hooks already wiped the
-      // registry, so fp-skip yields fresh bodies.
+      // A server-code edit landed. Server-side, the same edit bumps
+      // the code-version fp term (lib/code-version.ts) — every fp this
+      // page advertises now honestly mismatches — and DETACHES every
+      // held drive whose module graph the edit orphaned
+      // (lib/connection-session.ts), so the coming close is expected:
+      // arm the one-shot reattach so re-establishment is immediate
+      // (heartbeat-interval-free) and rides a fresh entry import.
+      _channelArmReattachOnClose()
+      // State the current URL silent — the whole-tree segment (or the
+      // attach it triggers pre-establishment / post-close) carries the
+      // fresh-code re-render.
       const routed = _channelNavigate({
         url: window.location.pathname + window.location.search,
         intent: "silent",

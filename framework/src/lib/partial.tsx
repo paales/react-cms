@@ -106,6 +106,7 @@ import { _onPartonSettled, _openPartonSettleScope, getServerContext } from "./se
 import { _setCurrentParton, type CurrentParton, type WakeHints } from "./current-parton.ts"
 import { CullPair } from "./cull-pair.tsx"
 import { evalDepKeys, readVisible } from "./server-hooks.ts"
+import { codeVersionKey } from "./code-version.ts"
 
 export { ROOT, type PartialCtx } from "./partial-context.ts"
 
@@ -1769,8 +1770,11 @@ function createSpecComponent<V>(
     // empty set → "" (byte-identical).
     const foldDeps = new Set<string>(selfDeps)
     if (priorSnap?.deps) for (const k of priorSnap.deps) foldDeps.add(k)
+    // Dev-only `|code=N` term — an HMR edit to server code bumps it so
+    // every fp (and through it every byte-cache key) honestly moves;
+    // empty in prod and until the first edit. See lib/code-version.ts.
     const ownFpSource = (deps: string) =>
-      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}${deps}`
+      `${id}|matchKey=${matchKey}|vary=${varyKey}${schemaKeyHash}${propsKey}${invalidationKey}${codeVersionKey()}${deps}`
     const depsKey = evalDepKeys(foldDeps, ourRequest)
     const ownStructuralFp = hash(ownFpSource(depsKey))
     const descendantFold = computeDescendantFold(id)

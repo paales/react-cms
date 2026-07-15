@@ -228,25 +228,22 @@ describe("v2 pinned regression seeds", () => {
   // a state it did not carry and the next flip-in CONFIRMED stale
   // content. Fixed by the culled-ancestor sibling of the F2 gate
   // discipline in computeWarmFps.
-  it(
-    "seed 77 — a culled-ancestor descendant gets no heal from the flush recompute",
-    async () => {
-      const actions: FuzzActionV2[] = [
-        { kind: "flip", ids: ["fz-wrap"], delivery: { hold: 0, order: "trailer-first" } },
-        {
-          kind: "navigate",
-          url: "/alpha",
-          delivery: { hold: 0, order: "trailer-first", reverse: true },
-        },
-        {
-          kind: "flip",
-          ids: ["fz-wrap"],
-          delivery: { hold: 0, order: "settle-first", reverse: true },
-        },
-        { kind: "settle" },
-      ]
-      const r = await runSequenceV2(fixtureV2, 77, actions, isolateV2)
-      expect(r.mismatches, `\n${formatResultV2(r)}\n`).toEqual([])
-    },
-  )
+  it("seed 77 — a culled-ancestor descendant gets no heal from the flush recompute", async () => {
+    const actions: FuzzActionV2[] = [
+      { kind: "flip", ids: ["fz-wrap"], delivery: { hold: 0, order: "trailer-first" } },
+      {
+        kind: "navigate",
+        url: "/alpha",
+        delivery: { hold: 0, order: "trailer-first", reverse: true },
+      },
+      {
+        kind: "flip",
+        ids: ["fz-wrap"],
+        delivery: { hold: 0, order: "settle-first", reverse: true },
+      },
+      { kind: "settle" },
+    ]
+    const r = await runSequenceV2(fixtureV2, 77, actions, isolateV2)
+    expect(r.mismatches, `\n${formatResultV2(r)}\n`).toEqual([])
+  })
 })

@@ -45,6 +45,14 @@ interface RequestStore {
    *  client-mirror promote never claims fps whose bytes no client
    *  received. */
   warmRender?: boolean
+  /** Dev-only: the server-code version of the MODULE GRAPH serving this
+   *  scope — captured at entry evaluation (`createRscHandler` /
+   *  `createChannelServer`) and pinned via `_pinCodeVersion`, so fps
+   *  computed anywhere in the scope fold the serving graph's version,
+   *  not the process-wide counter an HMR edit may have moved past it.
+   *  Unset in prod and in scopes no handler pinned (test harness,
+   *  action endpoints) — `codeVersionKey()` falls back to the counter. */
+  codeVersion?: number
   control?: FrameworkControl
   /** Hook the partial-registry layer registers when it opens its
    *  per-request context. Auto-fires on `runWithRequestAsync` exit
@@ -307,6 +315,19 @@ export async function runWithRequestAsync<T>(
     store.commitRegistry()
   }
   return { result, cookies: store.cookies }
+}
+
+/** Pin the serving graph's code version on the active request scope —
+ *  see `RequestStore.codeVersion`. No-op outside a scope. */
+export function _pinCodeVersion(version: number): void {
+  const store = requestContext.getStore()
+  if (store) store.codeVersion = version
+}
+
+/** The active scope's pinned code version, `undefined` when no handler
+ *  pinned one (or outside a scope). */
+export function _pinnedCodeVersion(): number | undefined {
+  return requestContext.getStore()?.codeVersion
 }
 
 /** Register (or clear) the settle-time trailer sink for the active

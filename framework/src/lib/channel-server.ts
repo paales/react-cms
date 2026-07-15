@@ -25,7 +25,7 @@
  * RSC-render dependency, so its testable core imports without one.
  */
 
-import { runWithRequestAsync } from "../runtime/context.ts"
+import { _pinCodeVersion, runWithRequestAsync } from "../runtime/context.ts"
 import { isDraining } from "../runtime/drain.ts"
 import { HEADER_RSC_RENDER } from "../runtime/request.tsx"
 import {
@@ -97,6 +97,7 @@ export async function driveChannelSocket(
   socket: ChannelSocket,
   request: Request,
   renderSegment: () => ReadableStream<Uint8Array>,
+  codeVersion?: number,
 ): Promise<void> {
   const origin = new URL(request.url).origin
 
@@ -174,6 +175,10 @@ export async function driveChannelSocket(
       headers.set(HEADER_RSC_RENDER, "1")
       const renderRequest = new Request(stated, { headers })
       void runWithRequestAsync(renderRequest, async () => {
+        // Pin the caller's graph birth version (dev HMR) BEFORE the
+        // statement binds — session creation checks it against the
+        // process counter, and every fp this drive computes folds it.
+        if (codeVersion !== undefined) _pinCodeVersion(codeVersion)
         bindAttachStatement(statement)
         await driveSegmentedResponse(controller, renderSegment, undefined, demand)
       }).then(resolveDone, resolveDone)
@@ -244,6 +249,7 @@ export async function driveChannelWebTransport(
   stream: ChannelDuplexStream,
   request: Request,
   renderSegment: () => ReadableStream<Uint8Array>,
+  codeVersion?: number,
 ): Promise<void> {
   const origin = new URL(request.url).origin
   const writer = stream.writable.getWriter()
@@ -327,6 +333,10 @@ export async function driveChannelWebTransport(
       headers.set(HEADER_RSC_RENDER, "1")
       const renderRequest = new Request(stated, { headers })
       void runWithRequestAsync(renderRequest, async () => {
+        // Pin the caller's graph birth version (dev HMR) BEFORE the
+        // statement binds — session creation checks it against the
+        // process counter, and every fp this drive computes folds it.
+        if (codeVersion !== undefined) _pinCodeVersion(codeVersion)
         bindAttachStatement(statement)
         await driveSegmentedResponse(controller, renderSegment, undefined, demand)
       }).then(resolveDone, resolveDone)
