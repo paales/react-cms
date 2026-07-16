@@ -31,6 +31,7 @@ import { _clearCellRegistry } from "@parton/framework/lib/cell.ts"
 import { _clearRouteKeyCache } from "@parton/framework/lib/partial.tsx"
 import { clearRegistry } from "@parton/framework/lib/partial-registry.ts"
 import { promoteSnapshotsToCachedOverride } from "@parton/framework/lib/segmented-response.ts"
+import { _clearSpecCatalog } from "@parton/framework/lib/spec-catalog.ts"
 import {
   _resetCellStorage,
   JsonFileCellStorage,
@@ -161,6 +162,12 @@ function freshCellStorage(): CellStorage {
 export function resetWorld(): void {
   setCellStorage(freshCellStorage())
   clearRegistry("all")
+  // Each scenario re-mints its leaf/wrapper specs under the same catalog
+  // ids (the fixture's `leaf-<i>` / `wrap-<level>`). The spec catalog's
+  // collision gate throws on a same-generation re-claim of a live id, so
+  // a scenario's ids must be cleared here alongside the other registries —
+  // a full world reset legitimately re-defines them.
+  _clearSpecCatalog()
   _clearInvalidationRegistry()
   _clearCellRegistry()
   _clearRouteKeyCache()
