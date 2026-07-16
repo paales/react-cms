@@ -49,6 +49,8 @@ import {
   type CellStorage,
 } from "../runtime/cell-storage.ts"
 import { getRequest, getScope, parseCookies } from "../runtime/context.ts"
+import { embedDepthOf } from "./page-embed.ts"
+import { embedCellWrite } from "./cell-client.tsx"
 import { createSessionReadSurface } from "../runtime/session.ts"
 import { hash } from "./hash.ts"
 import { stableStringify } from "./stable-stringify.ts"
@@ -1137,26 +1139,39 @@ async function resolveInBody<T>(
   return buildResolvedCell(handle, value, args !== undefined ? partition : undefined)
 }
 
+/** Whether the current render is a `<RemoteFrame>` embed hop (the
+ *  producer side of a splice). No request context ⇒ not a render ⇒
+ *  false. */
+function inEmbedRender(): boolean {
+  try {
+    return embedDepthOf(getRequest().headers) > 0
+  } catch {
+    return false
+  }
+}
+
 export function buildResolvedCell<T>(
   handle: CellInterface<T>,
   value: T,
   partition?: CellArgs,
 ): ResolvedCell<T> {
+  // Inside a `<RemoteFrame>` embed the resolved cell crosses the splice
+  // — the host decodes the producer's payload and re-encodes it into
+  // its own document render, which a bound server-action ref cannot
+  // survive (it stalls the host stream). Carry the write as a CLIENT
+  // reference instead: the id + partition ride as data, and
+  // `embedCellWrite` (a host-bundle client fn) re-routes through the
+  // ordinary batcher on the browser. Client refs re-encode across an
+  // ungoverned same-origin embed exactly like any client component.
+  const set = inEmbedRender()
+    ? (embedCellWrite as unknown as ResolvedCell<T>["set"])
+    : partition !== undefined
+      ? (_scopedCellWriteAction.bind(null, handle.id, partition) as ResolvedCell<T>["set"])
+      : handle.set
   if (partition !== undefined) {
-    return {
-      __cell: true,
-      id: handle.id,
-      value,
-      partition,
-      set: _scopedCellWriteAction.bind(null, handle.id, partition) as ResolvedCell<T>["set"],
-    }
+    return { __cell: true, id: handle.id, value, partition, set }
   }
-  return {
-    __cell: true,
-    id: handle.id,
-    value,
-    set: handle.set,
-  }
+  return { __cell: true, id: handle.id, value, set }
 }
 
 /** Test-only — wipe the registry between tests so cells from prior

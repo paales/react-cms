@@ -169,6 +169,39 @@ pipeline composes `moduleRefRewriter` after the slice (same-origin
 skips it — origin equality, not URL shape). A granted embed replaces
 that arm entirely — see the tier rewriter below.
 
+## A resolved cell's `set` across the splice
+
+A parton that resolves a cell and hands the whole `ResolvedCell` to a
+`"use client"` component would normally carry `set` as the cell's
+**bound** server-action ref (`__cellWrite.bind(null, id)` /
+`__scopedCellWrite.bind(null, id, partition)`). The host decodes the
+embedded payload and re-encodes `payload.root` into its OWN document
+Flight render — and a decoded server reference bound to a partition
+OBJECT cannot be re-encoded: `renderToReadableStream` stalls, the
+host document stream never closes (a single-string-bound id survives;
+the object arg is what stalls). So `buildResolvedCell` (`lib/cell.ts`)
+detects the embed render (`inEmbedRender` — `embedDepthOf(headers) >
+0`) and builds `set` as a CLIENT reference (`embedCellWrite`,
+`lib/cell-client.tsx`) instead. Client references re-encode across an
+ungoverned same-origin embed exactly like any client component in the
+payload — no server reference reaches the host re-encode.
+
+The write routing rides across as DATA: the cell `id` and (baked)
+`partition` are already fields on the `ResolvedCell`. Invoked as a
+method (`cell.set(value)`), `embedCellWrite` reads them off `this` and
+routes the write through the SAME coalescing batcher `useCell` uses
+(`__cellWriteBatch` — the cell's `writeGuard` + `cell:` invalidation
+fan-out unchanged), so a denial rejects the returned promise exactly
+like the direct-ref path outside an embed. `useCell` never touched
+`set` (it reconstructs the write from `id` + `partition`), so it works
+across the splice with no change. Under a vocabulary-constrained grant
+the producer emits BARE — no client boundary receives a `ResolvedCell`
+— so this path is reached only by ungoverned embeds; the grant gate is
+structural. Cross-origin ungoverned, the client ref resolves against
+the producer origin (like every ungoverned client module), so the
+write reaches the producer's own action endpoint — no NEW write
+channel the grant vocabulary doesn't already permit.
+
 ## The tier rewriter (grants)
 
 `createTierRewriter` (`lib/tier-rewrite.ts`) is the enforcement for a

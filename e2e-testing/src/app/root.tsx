@@ -24,6 +24,7 @@ import {
   EmbedSelfDemoPage,
 } from "./pages/embed-demo.tsx"
 import { EconItemPage, EmbedEconDemoPage, EmbedEconInlineDemoPage } from "./pages/embed-econ.tsx"
+import { EmbedCellDemoPage, EmbedCellTargetPage } from "./pages/embed-cell-demo.tsx"
 import { CmsDemoPage } from "./pages/cms-demo.tsx"
 import { DeferDemoPage } from "./pages/defer-demo.tsx"
 import { TagDemoPage } from "./pages/tag-demo.tsx"
@@ -87,6 +88,8 @@ export function Root() {
             <EmbedSelfDemoPage />
             <EmbedDuplicateDemoPage />
             <EmbedRefetchDemoPage />
+            <EmbedCellDemoPage />
+            <EmbedCellTargetPage />
             <EconItemPage />
             <EmbedEconDemoPage />
             <EmbedEconInlineDemoPage />

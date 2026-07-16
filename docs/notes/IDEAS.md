@@ -35,38 +35,6 @@ re-budget for the new model's honest cost. The bench is the CPU
 canary — its smoke ticks are a CI gate again, but the committed
 baselines must not be regenerated until this is resolved.
 
-### A ResolvedCell's `set` re-encoded across an embed splice hangs the host
-
-A parton that resolves a cell and passes the whole `ResolvedCell`
-(carrying `set` — a **bound** server-action ref, `__cellWrite.bind(null,
-id)`) into a `"use client"` component hangs the HOST render ~40s when
-that parton is re-rendered inside an ungoverned `<RemoteFrame>` embed
-(reproduced on `/embed-demo` + `/remote-frame-demo`). Root cause: the
-host decodes the embedded payload (`createFromReadableStream`) and
-splices `payload.root` back into its OWN document Flight render; a
-DECODED bound server reference cannot be cleanly re-encoded — the
-document `renderToReadableStream` stream never closes, so
-`await renderHTML(...)` hangs. Isolated:
-
-| variant (rendered inside an embed) | result |
-|---|---|
-| value only (`cell.value`) → client comp | OK |
-| PLAIN `"use server"` action ref → client comp | OK |
-| ResolvedCell with **bound `set`** → client comp | **~40s HANG** |
-
-NOT the bound-args encryption (`enableActionEncryption: false` still
-hangs) and NOT stream truncation (buffering the segment doesn't help) —
-it is React/plugin-rsc re-encoding a decoded bound server reference.
-The "matchless parton" framing is incidental: a matchless parton
-renders in EVERY embed, so it reliably injects the offending shape; a
-matched parton passing a ResolvedCell across an embed hangs the same
-way. Non-embed renders are fine (the ref is encoded once, fresh).
-Recommended fix direction: an ungoverned same-origin embed should route
-cell writes through the interaction bridge (as GRANTED embeds do) rather
-than splicing a re-encodable server-action ref, or the splice must
-strip/neutralize server-reference rows from the decoded payload
-(degrading embed-side writes gracefully). High priority; own lane.
-
 ### Test-infra: `refreshSelector` bumps cross Playwright workers
 
 Invalidation-timestamp bumps are process-global, not partitioned by
@@ -169,6 +137,15 @@ Open questions:
   dep record encodes them in a stable shape. Dep keys are already
   deterministic (`cookie:user_id`), so the matcher has a stable
   surface to query.
+
+### Live in-place re-embed after an in-embed cell write
+
+An in-embed `cell.set` (the client-reference write path) commits and
+fans out — the standalone page and any refetch/re-embed see the new
+value — but the EMBEDDED copy updates in place only when a streaming
+lane rides an open live connection to it. Pushing that lane for the
+in-embed-write case is a delivery-plane follow-up, not a write-path
+gap.
 
 ### Cross-tab sync via BroadcastChannel
 

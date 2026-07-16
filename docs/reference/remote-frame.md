@@ -603,6 +603,24 @@ them; `/@fs/` + `/@id/` dev paths and bare specifiers are left alone
 table). In production the remote's hashed asset URLs are stable and
 CORS on its JS assets lets the host browser load them.
 
+### Resolved cells passed to client components
+
+An ungoverned embed may hand a whole `ResolvedCell` to a client
+component, and its `.set` keeps working across the boundary: the write
+routes through the ordinary cell pipeline (same `writeGuard`, same
+`cell:` invalidation fan-out) on the origin the placement was spliced
+from. The framework carries the cell's write as a client reference
+across the splice rather than a bound server-action ref — the host
+re-encodes the embedded payload into its own document, and a bound
+server reference cannot survive that hop. Authors do nothing; both the
+direct `resolvedCell.set(value)` surface and `useCell` behave
+identically inside and outside an embed. Worked example:
+`/embed-cell-demo` (host) embedding `/embed-cell-target`, spec
+`e2e/embed-cell.spec.ts`. (Granted embeds never carry a `ResolvedCell`
+— a vocabulary-constrained payload references only the vocabulary, and
+its interactive members route through the [interaction
+bridge](#the-interactive-grant).)
+
 ## Embed economics
 
 Measured 2026-07-13 on the prod preview build
@@ -637,6 +655,10 @@ measured, not yet warranted.
   bump fans out to both.
 - **`/embed-refetch-demo`** — targeted refetch routing through
   `?partials=` at the embedded URL.
+- **`/embed-cell-demo`** — embeds `/embed-cell-target`, whose parton
+  resolves a cell and passes the `ResolvedCell` to a client component;
+  the button writes the cell directly across the embed boundary (the
+  write crosses as a client reference, not a bound server-action ref).
 - **`/remote-frame-demo`** — five same-origin embeds of `/remote/*`
   pages: parallel streaming, client-component hydration, producer-side
   byte cache, tag-driven refresh.

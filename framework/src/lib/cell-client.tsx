@@ -311,6 +311,36 @@ export function useCell<T>(cell: ResolvedCell<T>): ClientCell<T> {
   return { value, serverValue: cell.value, set, input, read }
 }
 
+/**
+ * The `set` an embedded `ResolvedCell` carries — a CLIENT reference,
+ * not a bound server-action ref.
+ *
+ * A cell resolved inside a `<RemoteFrame>` embed crosses the splice: the
+ * host decodes the producer's payload and re-encodes it into its OWN
+ * document render. A bound server reference (`__cellWrite.bind(null,
+ * id)`) cannot survive that re-encode — React stalls the host stream on
+ * it. A client reference re-encodes as an ordinary same-origin
+ * client-module ref (the exact path every client component in an
+ * ungoverned embed already takes), so the write routing rides across as
+ * DATA (the cell id + partition on the `ResolvedCell`) plus this one
+ * host-bundle function.
+ *
+ * Invoked as a method (`resolvedCell.set(value)`), so `this` is the
+ * `ResolvedCell` — its `id` and (baked) `partition` name the write. The
+ * write flows through the SAME coalescing batcher `useCell` uses (one
+ * `__cellWriteBatch` endpoint, the cell's `writeGuard` + invalidation
+ * fan-out unchanged), so a denial rejects the returned promise exactly
+ * like the direct-ref path outside an embed.
+ */
+export function embedCellWrite(
+  this: { readonly id: string; readonly partition?: Record<string, unknown> },
+  value: unknown,
+  opts?: { partition?: Record<string, unknown> },
+): Promise<void> {
+  const partition = opts?.partition ?? this.partition
+  return enqueue(this.id, value, partition ? { partition } : undefined)
+}
+
 function enqueue(
   cellId: string,
   value: unknown,
