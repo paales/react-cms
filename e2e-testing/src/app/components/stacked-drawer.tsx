@@ -2,8 +2,12 @@
 
 import { type ReactNode } from "react"
 import { ArrowLeft, X } from "lucide-react"
-import { useNavigation, useScrollRestore } from "@parton/framework/lib/partial-client.tsx"
-import type { FrameworkNavigation, Navigate } from "@parton/framework"
+import {
+  useNavigation,
+  useScrollRestore,
+  type FrameworkNavigation,
+  type Navigate,
+} from "@parton/framework/client"
 import {
   Drawer,
   DrawerContent,

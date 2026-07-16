@@ -186,8 +186,9 @@ same `match`-driven structure, so they reuse the template. See
 `framework/src/lib/` — the render pipeline and the client merge
 layer. `partial-client.tsx` is the `"use client"` boundary — it
 holds `PartialsClient` (the merge coordinator) and re-exports the
-client-side siblings, so `@parton/framework/lib/partial-client.tsx`
-stays the one import path.
+client-side siblings; the `@parton/framework/client` barrel re-exports
+its public hooks in turn, so an app's `"use client"` module imports
+`useNavigation` / `useActivate` / `useScrollRestore` from `/client`.
 
 Server pipeline:
 

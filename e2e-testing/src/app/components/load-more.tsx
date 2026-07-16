@@ -1,8 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
-import type { Navigate } from "@parton/framework"
+import { useNavigation, type Navigate } from "@parton/framework/client"
 
 /**
  * Tracks which page partials are currently visible.

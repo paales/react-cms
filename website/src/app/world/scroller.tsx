@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useRef, type ReactNode } from "react"
-// Deep path: `"use client"` modules import framework client symbols
-// directly, never through the server barrel.
-import { reportTelemetry } from "@parton/framework/lib/telemetry.ts"
+// `"use client"` modules import framework client symbols from the
+// client barrel, never through the server barrel.
+import { reportTelemetry } from "@parton/framework/client"
 import { CENTER_PX } from "./constants.ts"
 
 /**

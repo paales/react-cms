@@ -4,7 +4,7 @@
 // button is a bare useNavigation().reload() (a full document reload,
 // the post-reload attach catch-up path the spec drives).
 
-import { useNavigation } from "@parton/framework/lib/partial-client"
+import { useNavigation } from "@parton/framework/client"
 
 export function DupReload() {
   const [reload] = useNavigation().reload()

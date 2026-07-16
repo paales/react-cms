@@ -77,8 +77,10 @@ independent state.
 
 ## Navigation
 
-Client-side: `useNavigation(frameName?)` returns a handle. The
-handle's `reload()` and `navigate()` methods are **React hooks** —
+Client-side: `useNavigation(frameName?)` returns a handle — import it
+(like every framework client hook) from `@parton/framework/client` in
+your `"use client"` module. The handle's `reload()` and `navigate()`
+methods are **React hooks** —
 call them once during render to bind a tuple of
 `[fire, progress]` for one call site. `progress` is a
 `{ committed, streaming, finished }` triple of booleans, monotonic

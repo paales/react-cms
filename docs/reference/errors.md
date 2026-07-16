@@ -9,13 +9,13 @@ reserved for partons with no known-good bytes.**
 
 ## What throws where
 
-| Throw site | What happens |
-|---|---|
-| `notFound()` / `redirect()` — anywhere in a page or parton body | Control flow, never an error. The sentinel sets the framework control channel eagerly and bubbles past every boundary; the RSC entry translates it into the HTTP status / `Location`. The recovery machinery neither stores, serves stale, nor retries for it. |
-| `RenderCancelledError` / aborts | Render lifecycle (a wound-down connection, a superseded lane). Not a failure: no log, no store, no retry. |
-| Schema / props cell resolution, or a **synchronous** `Render` throw | Runs above the per-parton boundary; the spec wrapper contains it as the parton's error card in place ([partial.md § Error containment](./partial.md#error-containment)). Not covered by recovery — resolution failures happen before the body exists. |
-| The **async body** (`Render`'s returned promise) rejecting — a cell loader, a GraphQL read, any awaited failure | The loader-failure case this page is about. For a byte-cached spec the recovery engine intercepts it server-side (below); otherwise the error rides Flight to the parton's client boundary and shows the card. |
-| A **descendant server component** inside the body's returned JSX | Settles the body cleanly, so recovery does not engage; the throw streams into the parton's client boundary as today. Keep loaders in the parton body (where reads record anyway) if you want them covered. |
+| Throw site                                                                                                      | What happens                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notFound()` / `redirect()` — anywhere in a page or parton body                                                 | Control flow, never an error. The sentinel sets the framework control channel eagerly and bubbles past every boundary; the RSC entry translates it into the HTTP status / `Location`. The recovery machinery neither stores, serves stale, nor retries for it. |
+| `RenderCancelledError` / aborts                                                                                 | Render lifecycle (a wound-down connection, a superseded lane). Not a failure: no log, no store, no retry.                                                                                                                                                      |
+| Schema / props cell resolution, or a **synchronous** `Render` throw                                             | Runs above the per-parton boundary; the spec wrapper contains it as the parton's error card in place ([partial.md § Error containment](./partial.md#error-containment)). Not covered by recovery — resolution failures happen before the body exists.          |
+| The **async body** (`Render`'s returned promise) rejecting — a cell loader, a GraphQL read, any awaited failure | The loader-failure case this page is about. For a byte-cached spec the recovery engine intercepts it server-side (below); otherwise the error rides Flight to the parton's client boundary and shows the card.                                                 |
+| A **descendant server component** inside the body's returned JSX                                                | Settles the body cleanly, so recovery does not engage; the throw streams into the parton's client boundary as today. Keep loaders in the parton body (where reads record anyway) if you want them covered.                                                     |
 
 ## Serve-last-known-good (byte-cached partons)
 
@@ -70,7 +70,7 @@ never an inference from content age:
 
 ```tsx
 "use client"
-import { usePartonStale } from "@parton/framework/lib/partial-error-boundary.tsx"
+import { usePartonStale } from "@parton/framework/client"
 
 function StaleBadge() {
   const stale = usePartonStale() // PartonStale | null

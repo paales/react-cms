@@ -1,6 +1,6 @@
 "use client"
 
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
+import { useNavigation } from "@parton/framework/client"
 
 /**
  * Nav anchor that marks itself active when the current page path

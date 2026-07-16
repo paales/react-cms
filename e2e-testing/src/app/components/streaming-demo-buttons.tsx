@@ -1,6 +1,6 @@
 "use client"
 
-import type { ResolvedCell } from "@parton/framework"
+import type { ResolvedCell } from "@parton/framework/client"
 import { Button } from "@parton/copies/components/ui/button"
 import { pushSeq } from "../pages/streaming-demo-actions.ts"
 

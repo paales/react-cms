@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
+import { useNavigation } from "@parton/framework/client"
 // Deep-import from `cms-constants.ts` (zero side-effect imports) — see
 // the matching note on `editor-open-link.tsx` for why this avoids the
 // `node:async_hooks` evaluation that the runtime barrel forces.

@@ -54,14 +54,16 @@ export {
 } from "./server-hooks.ts"
 export { tag, getCurrentParton, type CurrentParton } from "./current-parton.ts"
 
-export {
-  PartialsClient,
-  getCachedPartialIds,
-  useActivate,
-  useNavigation,
-  useScrollRestore,
-  type ActivatorFire,
-} from "./partial-client.tsx"
+// `<Frame>` — scope opener for a per-name URL space (plain server
+// component). One of the five public surfaces (see intro.md).
+export { Frame } from "./frame.tsx"
+
+// The client hooks (`useNavigation`, `useActivate`, `useScrollRestore`,
+// `useCell`, `usePartonStale`) and their client-only types live in the
+// companion `@parton/framework/client` barrel — a `"use client"` module
+// imports them from there so Flight keeps each reference pointed at its
+// defining module. `PartialsClient` / `getCachedPartialIds` stay
+// framework-internal (entry/browser.tsx deep-imports them).
 
 export {
   atomic,
@@ -93,12 +95,9 @@ export {
 // The GraphQL data layer (gqlCell family, `graphqlBackend`) lives at the
 // `@parton/framework/graphql` subpath — see src/graphql/index.ts.
 
-export {
-  useCell,
-  type CellInputBindings,
-  type CellInputOpts,
-  type ClientCell,
-} from "./cell-client.tsx"
+// `useCell` and its `ClientCell` / `CellInputBindings` / `CellInputOpts`
+// types are the client mutation surface — exported from
+// `@parton/framework/client`.
 
 export { type TimeScope } from "./time.ts"
 
@@ -116,24 +115,21 @@ export type {
 } from "../runtime/navigation-api.ts"
 export { NavigationError, type NavigationErrorKind } from "../runtime/navigation-error.ts"
 
-export {
-  PartialErrorBoundary,
-  usePartonStale,
-  type PartonStale,
-} from "./partial-error-boundary.tsx"
+// `PartialErrorBoundary` is a client component a server tree places
+// around a flaky subtree — exported from both barrels (one defining
+// module, one client reference). `usePartonStale` (its client hook)
+// and the `PartonStale` type live in `@parton/framework/client`.
+export { PartialErrorBoundary } from "./partial-error-boundary.tsx"
 
 // Error recovery — the serve-last-known-good engine riding the byte
 // cache (docs/reference/errors.md). `onPartonError` is the
-// observability hook for failed parton renders; `usePartonStale` (a
-// client hook — deep-import from "use client" modules per the barrel
-// caveat) reads the staleness marker a last-known-good serve carries.
+// observability hook for failed parton renders.
 export { onPartonError, type PartonErrorEvent } from "./cache.tsx"
 export { RemoteFrame, remote, type RemoteFrameProps } from "./remote-frame.tsx"
 
 // Predictive warming — the server-side projector registration the
 // segment driver's warm pass consults (segmented-response.ts). The
-// client-side statement (`reportTelemetry`) lives in `./telemetry.ts`
-// and is imported by deep path from `"use client"` modules per the
-// barrel caveat.
+// client-side statement (`reportTelemetry`) lives in
+// `@parton/framework/client`.
 export { registerWarmProjector, type WarmCandidate, type WarmProjector } from "./warm-projection.ts"
 export type { SessionTelemetry } from "./connection-session.ts"

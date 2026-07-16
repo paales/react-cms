@@ -9,6 +9,7 @@
   },
   "exports": {
     ".": "./index.ts",
+    "./client": "./src/client.ts",
     "./graphql": "./src/graphql/index.ts",
     "./*": "./src/*"
   },

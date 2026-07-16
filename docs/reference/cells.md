@@ -831,7 +831,7 @@ action response and the client's skip-commit guard).
 
 ```tsx
 "use client"
-import { useCell } from "@parton/framework/lib/cell-client.tsx"
+import { useCell } from "@parton/framework/client"
 
 export function PaletteToggle({ palette }: { palette: ResolvedCell<"light" | "dark"> }) {
   return (
@@ -846,7 +846,7 @@ For controlled inputs and rapid-fire writes, reach for **`useCell`**:
 
 ```tsx
 "use client"
-import { useCell } from "@parton/framework/lib/cell-client.tsx"
+import { useCell } from "@parton/framework/client"
 
 export function MessageField({ message }: { message: ResolvedCell<string> }) {
   const m = useCell(message)

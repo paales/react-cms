@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect } from "react"
 // Client components import framework hooks from the client subpath, not the
 // `@parton/framework` barrel — the barrel pulls server-only modules into the
 // client bundle (see framework/index.ts).
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
+import { useNavigation } from "@parton/framework/client"
 
 // Layout effect on the client (scroll BEFORE paint), plain effect on the
 // server (no-op, no SSR warning).

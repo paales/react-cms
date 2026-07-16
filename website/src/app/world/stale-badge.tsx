@@ -1,8 +1,8 @@
 "use client"
 
-// Deep path: `"use client"` modules import framework client symbols
-// directly, never through the server barrel.
-import { usePartonStale } from "@parton/framework/lib/partial-error-boundary.tsx"
+// `"use client"` modules import framework client symbols from the
+// client barrel, never through the server barrel.
+import { usePartonStale } from "@parton/framework/client"
 
 /**
  * The flaky district's staleness indicator. Renders nothing while the

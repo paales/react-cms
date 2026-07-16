@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react"
 import { useIsSSR } from "@parton/copies/hooks/use-is-ssr"
-import type { ResolvedCell } from "@parton/framework"
+import type { ResolvedCell } from "@parton/framework/client"
 import { moveCursor } from "../pages/cursors-actions.ts"
 import type { CursorMap } from "../pages/cursors-state.ts"
 

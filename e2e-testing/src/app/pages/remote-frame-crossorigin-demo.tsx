@@ -13,7 +13,7 @@
  */
 
 import { parton, searchParam, type RenderArgs } from "@parton/framework"
-import { Frame } from "@parton/framework/lib/frame.tsx"
+import { Frame } from "@parton/framework"
 import { Suspense } from "react"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { RemoteRefreshButton } from "../components/remote-refresh-button.tsx"

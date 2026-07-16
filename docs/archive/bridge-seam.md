@@ -1,7 +1,12 @@
 # The bridge seam — cross-process bumps over one store
 
+> **Superseded 2026-07-17 by
+> [`docs/reference/deployment.md`](../reference/deployment.md)** for the
+> multi-process operator contract + the failover/drain measurements.
+> Kept for the bridge-seam design rationale and its as-built map.
+
 Landing note for increment 3's bridge half of
-[`remote-frame-arc.md`](./remote-frame-arc.md): the
+[`remote-frame-arc.md`](../notes/remote-frame-arc.md): the
 `setInvalidationBridge` seam, designed once for its two callers — the
 same-trust broker bus (processes of one app over one shared store,
 landed here) and the cross-trust capability-authorized channel attach
@@ -100,7 +105,7 @@ SQLite adapter carries the values; this seam carries the doorbells).
   - **Auto-recovery, no reload**: the viewer re-attached by itself —
     1 attach POST after the kill, 0 document reloads; recovery in
     **~2.1s**, longest DOM update gap **~1.9s** (kill → proxy failover
-    + re-pin → cold attach → doorbell resumes).
+    - re-pin → cold attach → doorbell resumes).
   - **No visible tear on committed state**: the counter DOM never
     regressed across the kill (samples at 10Hz); it went quiet for the
     gap, then converged.

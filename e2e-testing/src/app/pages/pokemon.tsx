@@ -19,7 +19,7 @@ import {
   type CellValue,
   type PartialCtx,
 } from "@parton/framework"
-import { Frame } from "@parton/framework/lib/frame.tsx"
+import { Frame } from "@parton/framework"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"
 import { LoadMore as LoadMoreClient, PageSentinel } from "../components/load-more.tsx"

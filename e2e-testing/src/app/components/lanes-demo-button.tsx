@@ -1,8 +1,7 @@
 "use client"
 
 import { Button } from "@parton/copies/components/ui/button"
-import type { ResolvedCell } from "@parton/framework"
-import { useCell } from "@parton/framework/lib/cell-client.tsx"
+import { useCell, type ResolvedCell } from "@parton/framework/client"
 import * as React from "react"
 
 // The bump button and the slow counter are separate partons that commit

@@ -11,7 +11,7 @@
 
 import { parton, notFound, tag, type RenderArgs, type ResolvedCell } from "@parton/framework"
 import type { ResultOf } from "../pokeapi.ts"
-import { Frame } from "@parton/framework/lib/frame.tsx"
+import { Frame } from "@parton/framework"
 import { Card, CardContent } from "@parton/copies/components/ui/card"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"

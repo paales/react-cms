@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, type MouseEvent } from "react"
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
+import { useNavigation } from "@parton/framework/client"
 import { Button, buttonVariants } from "@parton/copies/components/ui/button"
 import { cn } from "@parton/copies/lib/utils"
 

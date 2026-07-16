@@ -1,8 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { useActivate, type ActivatorFire } from "@parton/framework/lib/partial-client.tsx"
-import type { ActivatorProps } from "@parton/framework"
+import { useActivate, type ActivatorFire, type ActivatorProps } from "@parton/framework/client"
 import { Button } from "@parton/copies/components/ui/button"
 import { bumpTag } from "../pages/tag-demo-actions.ts"
 

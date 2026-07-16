@@ -5,7 +5,7 @@
  */
 
 import { parton, match, searchParam, type RenderArgs } from "@parton/framework"
-import { Frame } from "@parton/framework/lib/frame.tsx"
+import { Frame } from "@parton/framework"
 import { FrameNavigateButton, UpdateEntryStateButton } from "../components/frames-demo-controls.tsx"
 import { Card, CardContent, CardHeader, CardTitle } from "@parton/copies/components/ui/card"
 

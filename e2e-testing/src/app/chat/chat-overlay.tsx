@@ -8,7 +8,7 @@
  */
 
 import { parton, tag, searchParam, type PartialCtx, type RenderArgs } from "@parton/framework"
-import { Frame } from "@parton/framework/lib/frame.tsx"
+import { Frame } from "@parton/framework"
 import { ChatMessage } from "./piece.tsx"
 import {
   AutoScrollToBottom,

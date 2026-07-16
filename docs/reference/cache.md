@@ -215,8 +215,8 @@ On a live connection, the byte cache can be filled BEFORE a cullable
 parton scrolls into view. Two small surfaces, one mechanism:
 
 ```tsx
-// "use client" — state the scroll context (deep path per the barrel caveat)
-import { reportTelemetry } from "@parton/framework/lib/telemetry.ts"
+// "use client" — state the scroll context (client barrel)
+import { reportTelemetry } from "@parton/framework/client"
 reportTelemetry({ viewport: { w, h }, scroll: { x, y, vx, vy } })
 
 // server module — map a statement onto the parked partons it will reach

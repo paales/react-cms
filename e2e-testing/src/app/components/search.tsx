@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
+import { useNavigation } from "@parton/framework/client"
 import { Button } from "@parton/copies/components/ui/button"
 import { Input } from "@parton/copies/components/ui/input"
 

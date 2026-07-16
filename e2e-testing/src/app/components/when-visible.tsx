@@ -1,8 +1,7 @@
 "use client"
 
 import { Fragment, useCallback, useRef, type FragmentInstance } from "react"
-import { useActivate, type ActivatorFire } from "@parton/framework/lib/partial-client.tsx"
-import type { ActivatorProps } from "@parton/framework"
+import { useActivate, type ActivatorFire, type ActivatorProps } from "@parton/framework/client"
 
 export interface WhenVisibleProps extends ActivatorProps {
   /** `IntersectionObserver.rootMargin`. Default `"0px"`. */

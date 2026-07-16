@@ -11,7 +11,7 @@
  * proving the page isn't wedged.
  */
 
-import type { ResolvedCell } from "@parton/framework"
+import type { ResolvedCell } from "@parton/framework/client"
 import { useState } from "react"
 
 export interface GuardedNoteFormProps {

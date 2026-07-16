@@ -18,8 +18,7 @@
  *     rolls the batch back.
  */
 
-import { useCell } from "@parton/framework/lib/cell-client.tsx"
-import type { ResolvedCell } from "@parton/framework"
+import { useCell, type ResolvedCell } from "@parton/framework/client"
 import { useEffect, useState } from "react"
 
 interface SaveArgs {

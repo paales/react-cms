@@ -47,7 +47,7 @@ interface RemoteFrameProps {
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `url`        | The page URL to embed. Absolute URL (cross-origin) or same-origin path; relative paths resolve against the current request's URL.                                                                                                                                                                                                                                                      |
 | `capability` | Host-declared values the embedded render can read via `getCapability()`. Flat record of JSON-serializable values; serialized as the `x-parton-capability` header and decoded into scope on the embed-flagged page render.                                                                                                                                                              |
-| `namespace`  | Human name for this embed — a prefix on the minted **placement namespace**, so registry / wire ids read `magento~<hash>:…` instead of `e~<hash>:…`. Purely cosmetic: identity does not depend on it, the placement namespace disambiguates on its own. Set automatically by `parton add` bindings.                                                                             |
+| `namespace`  | Human name for this embed — a prefix on the minted **placement namespace**, so registry / wire ids read `magento~<hash>:…` instead of `e~<hash>:…`. Purely cosmetic: identity does not depend on it, the placement namespace disambiguates on its own. Set automatically by `parton add` bindings.                                                                                     |
 | `grant`      | Trust grant for the embedded payload — a grant **set** (a bare name is the singleton set). Omitted = full trust: the payload splices as-is. Present = enforced at splice time by the tier rewriter; shipped grants are `"paint"` and `"interactive"`. See [Grants](#grants--the-paint-tier). Replayed on targeted refetch, so a placement can never re-fetch wider than it was placed. |
 | `cells`      | Bound cells — the **inward** state contract. RESOLVED cells only, keyed by the names the remote's spec declares; the projected **values** cross with the embed request. See [Bound cells](#bound-cells--inward-state).                                                                                                                                                                 |
 
@@ -132,8 +132,9 @@ source: { kind: "page", url, ns, capability? }
 ```
 
 A wake that resolves to a page-sourced snapshot — a cell write, or a
-`refreshSelector` matching a label the embed shipped — re-embeds the
-page with the ordinary protocol: a page GET at the **embedded URL**
+`refreshSelector` whose `cell:`/`tag:` selector matches a dep the
+embedded render recorded — re-embeds the page with the ordinary
+protocol: a page GET at the **embedded URL**
 with `?partials=<id>` plus the embed headers, replaying the stored
 placement namespace and capability. The producer answers a _focused_
 render: it reconstructs just the target(s) from its own registry (the

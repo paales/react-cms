@@ -7,26 +7,29 @@
 //                 bootBrowser) that thin app entry files delegate to
 //   - test/       in-process Flight test harness (consumed by per-package tests)
 //
-// This barrel re-exports the user-facing surface so server-side consumers can
-// `import { … } from "@parton/framework"`. Deep paths
-// (`@parton/framework/entry/rsc.tsx`) remain available for the app's
-// entry files and for `"use client"` modules (see the caveat below).
+// This is the SERVER barrel — the server-authored surface (constructors,
+// cells, runtime, deployment). A `"use client"` module imports its
+// hooks and their types from the companion `@parton/framework/client`
+// barrel instead. Deep paths (`@parton/framework/entry/rsc.tsx`) remain
+// available for the app's entry files.
 //
 // ── Cross-`"use *"` re-export caveat ───────────────────────────────────
-// A `"use client"` file that needs symbols originating in another file
-// with a directive (`"use client"` hooks like `useNavigation`, OR
-// `"use server"` actions like `__cellWrite`) MUST import from the
-// deep path, not through this server-side barrel. Pulling those
-// symbols through the barrel mis-resolves the Flight client/server
-// reference and surfaces at runtime as
+// Flight resolves a client/server reference by its DEFINING module, not
+// the barrel it re-exports through. A `"use client"` file that pulls a
+// client hook (`useNavigation`) or a `"use server"` action
+// (`__cellWrite`) through THIS server barrel mis-resolves the reference
+// and surfaces at runtime as
 // `chunk.reason.enqueueModel is not a function`.
-//   ✗ import { useNavigation } from "@parton/framework"            (in "use client")
-//   ✓ import { useNavigation } from "@parton/framework/lib/partial-client.tsx"
-//   ✗ import { __cellWrite } from "@parton/framework"               (in "use client")
+//   ✗ import { useNavigation } from "@parton/framework"        (in "use client")
+//   ✓ import { useNavigation } from "@parton/framework/client"
+//   ✗ import { __cellWrite } from "@parton/framework"           (in "use client")
 //   ✓ import { __cellWrite } from "@parton/framework/runtime/cell-actions.ts"
-// Symbols from plain server modules (`getNavigation` from
-// `navigation-api.ts`, `notFound` from `errors.ts`) re-export through
-// this barrel cleanly.
+// The client hooks + their types route through `@parton/framework/client`
+// (`__cellWrite` has no barrel — deep-import it). `Redirect` and
+// `PartialErrorBoundary` are exported from BOTH barrels (one defining
+// module, one client reference): a server tree places them, a client
+// tree wraps with them. Symbols from plain server modules
+// (`getNavigation`, `notFound`) re-export through this barrel cleanly.
 
 // ── Partial spec API (lib/) ─────────────────────────────────────────────
 export * from "./src/lib/index.ts"
@@ -108,6 +111,13 @@ export {
 } from "./src/runtime/drain.ts"
 
 // ── Cell storage (pluggable backend) ────────────────────────────────────
+// `JsonFileCellStorage` is the dev-only default (whole-snapshot
+// debounced flush — a SIGKILL drops its window). The deployment backend
+// `SqliteCellStorage` (per-key, synchronous-commit WAL, `update()` CAS)
+// stays a DEEP import — it statically pulls the native `better-sqlite3`,
+// which only apps that opt in should carry:
+// `@parton/framework/runtime/cell-storage-sqlite.ts` (see
+// docs/reference/deployment.md).
 export {
   getCellStorage,
   setCellStorage,
@@ -158,10 +168,20 @@ export { getCatalogManifest, type BlockManifest } from "./src/runtime/cms-preren
 export { getRouteSnapshots } from "./src/lib/partial-registry.ts"
 
 // ── Session (frame URLs, per-key values, read surface) ─────────────────
+// `MemorySessionStore` is the default — it dies with the process, so a
+// deploy resets frames to their initial URLs. `setSessionStore` swaps
+// the store; the durable `SqliteSessionStore` (carries frame URLs
+// across a restart / a second process) is a DEEP import, since it
+// transitively pulls the native `better-sqlite3`:
+// `@parton/framework/runtime/session-store-sqlite.ts` (see
+// docs/reference/deployment.md).
 export {
   configureSessionStore,
   ensureSessionId,
   setSessionFrameUrl,
+  setSessionStore,
+  MemorySessionStore,
+  type SessionStore,
   type SessionReadSurface,
 } from "./src/runtime/session.ts"
 

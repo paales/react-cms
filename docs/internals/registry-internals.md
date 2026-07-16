@@ -499,7 +499,7 @@ invalidationBridgeOrigin()                // this process's origin id
 The harness (`experiments/multi-process/`) runs the seam end-to-end
 over two real processes + one SQLite store; the seam's unit contract
 lives in `runtime/__tests__/invalidation-bridge.rsc.test.ts`. Design
-and measurements: [`../notes/bridge-seam.md`](../notes/bridge-seam.md).
+and measurements: [`../archive/bridge-seam.md`](../archive/bridge-seam.md).
 
 ## LRU bound
 

@@ -166,3 +166,6 @@ the registry alone, so it never short-circuits ahead of the render.
 8. [`remote-frame.md`](./remote-frame.md) — `<RemoteFrame>` for
    cross-process composition (same- or cross-origin partons
    stitched into the host's response).
+9. [`deployment.md`](./deployment.md) — running a pilot: build
+   outputs, the sticky stateful-process model, storage backends,
+   deploy-and-drain, and what state survives a deploy.

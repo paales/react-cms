@@ -23,8 +23,7 @@
  * name/number then CVC). Open the network panel to see the difference.
  */
 
-import { useCell } from "@parton/framework/lib/cell-client.tsx"
-import type { ResolvedCell } from "@parton/framework"
+import { useCell, type ResolvedCell } from "@parton/framework/client"
 import {
   computeCvc,
   extractNumberDigits,
