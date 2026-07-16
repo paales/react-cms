@@ -51,13 +51,15 @@ export default defineConfig({
   // a per-worker `x-test-scope` header, and the framework (see
   // `framework/src/runtime/context.ts` — `deriveScope`) routes each
   // request to its own bucket of process-wide state (<Cache>, registry,
-  // session, GraphQL cache). Capped at 6 rather than Playwright's
+  // session, GraphQL cache). Capped rather than Playwright's
   // CPU-count default: every worker renders through ONE dev-server
-  // process, and past ~6 concurrent heavy RSC renders (the browse
-  // page alone is ~100 sections) the server's p99 latency blows past
-  // the specs' give-up bounds without anything being wrong.
+  // process, and past a machine-dependent ceiling of concurrent heavy
+  // RSC renders (the browse page alone is ~100 sections) the server's
+  // p99 latency blows past the specs' give-up bounds without anything
+  // being wrong. 6 is that ceiling for a dev box; a shared CI runner
+  // has a fraction of the CPU, so its ceiling is lower.
   fullyParallel: true,
-  workers: 6,
+  workers: process.env.CI ? 3 : 6,
   use: {
     baseURL: `http://localhost:${PORT}`,
     headless: true,
