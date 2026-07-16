@@ -316,7 +316,13 @@ export interface ResolvedCell<T> {
   readonly id: string
   readonly value: T
   readonly partition?: CellArgs
-  set(value: T, opts?: { partition?: CellArgs }): Promise<void>
+  /** Call as a METHOD (`cell.set(v)`), never detached. The declared
+   *  `this` makes a destructured or callback-prop extraction
+   *  (`const { set } = cell`, `onClick={cell.set}`) a compile error:
+   *  inside an embed render `set` is a client reference that reads
+   *  `this.id` / `this.partition` off the cell at call time, so a
+   *  detached call would lose the cell's identity. */
+  set(this: ResolvedCell<T>, value: T, opts?: { partition?: CellArgs }): Promise<void>
 }
 
 /**

@@ -329,24 +329,28 @@ describe("scoped cell — in-body resolution in a parton", () => {
       { match: "/x" },
     )
 
-    // Alice's render bakes {sid: "alice"} into her set ref.
+    // Alice's render bakes {sid: "alice"} into her cell's set.
+    // (`set` is called as a METHOD of the captured cell — the
+    // ResolvedCell contract; a detached `const s = cell.set` is a
+    // compile error because the embed-render variant reads the cell
+    // off `this`.)
     await flightAt("http://t/x", <Page />, { cookie: "__frame_sid=alice" })
-    const aliceSet = captured!.set
+    const alice = captured!
     await runWithRequestAsync(
       new Request("http://t/x", { headers: { cookie: "__frame_sid=alice" } }),
       async () => {
-        await aliceSet("alice-draft")
+        await alice.set("alice-draft")
       },
     )
 
     // Bob's render bakes {sid: "bob"}.
     captured = undefined
     await flightAt("http://t/x", <Page />, { cookie: "__frame_sid=bob" })
-    const bobSet = captured!.set
+    const bob = captured!
     await runWithRequestAsync(
       new Request("http://t/x", { headers: { cookie: "__frame_sid=bob" } }),
       async () => {
-        await bobSet("bob-draft")
+        await bob.set("bob-draft")
       },
     )
 
