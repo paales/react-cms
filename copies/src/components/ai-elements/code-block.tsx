@@ -21,8 +21,10 @@ import {
   useRef,
   useState,
 } from "react"
-import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from "shiki"
-import { createHighlighter } from "shiki"
+import type { BundledLanguage, ThemedToken } from "shiki"
+import type { HighlighterCore } from "shiki/core"
+import { createHighlighterCore } from "shiki/core"
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript"
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -122,12 +124,6 @@ const CodeBlockContext = createContext<CodeBlockContextType>({
   code: "",
 })
 
-// Highlighter cache (singleton per language)
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->()
-
 // Token cache
 const tokensCache = new Map<string, TokenizedCode>()
 
@@ -140,20 +136,39 @@ const getTokensCacheKey = (code: string, language: BundledLanguage) => {
   return `${language}:${code.length}:${start}:${end}`
 }
 
-const getHighlighter = (
-  language: BundledLanguage,
-): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const cached = highlighterCache.get(language)
-  if (cached) {
-    return cached
-  }
+// Curated grammar diet. Importing `createHighlighter` from the top-level
+// `shiki` bundle statically references its full ~200-grammar and
+// ~60-theme registries — every one emitted as a lazy chunk — even though
+// a highlight only ever loads the single language requested. The
+// fine-grained `createHighlighterCore` ships only the grammars listed
+// here (the languages this app renders, json + typescript, plus the
+// common-web set) and the two themes actually used. The JavaScript
+// RegExp engine covers every built-in grammar (Shiki 3.9+) and needs no
+// Oniguruma WASM, so it is the browser-lean engine.
+//
+// One core highlighter, built lazily on first highlight and shared. The
+// grammar/theme modules are dynamic imports, so their chunks are fetched
+// only when a code block first renders — never at first paint. A
+// language outside the curated set falls back to plain text below.
+let highlighterPromise: Promise<HighlighterCore> | null = null
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
+const getHighlighter = (): Promise<HighlighterCore> => {
+  highlighterPromise ??= createHighlighterCore({
+    langs: [
+      import("@shikijs/langs/typescript"),
+      import("@shikijs/langs/tsx"),
+      import("@shikijs/langs/javascript"),
+      import("@shikijs/langs/jsx"),
+      import("@shikijs/langs/json"),
+      import("@shikijs/langs/html"),
+      import("@shikijs/langs/css"),
+      import("@shikijs/langs/bash"),
+      import("@shikijs/langs/graphql"),
+      import("@shikijs/langs/markdown"),
+    ],
+    themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
+    engine: createJavaScriptRegexEngine(),
   })
-
-  highlighterCache.set(language, highlighterPromise)
   return highlighterPromise
 }
 
@@ -197,7 +212,7 @@ export const highlightCode = (
   }
 
   // Start highlighting in background - fire-and-forget async pattern
-  getHighlighter(language)
+  getHighlighter()
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
     .then((highlighter) => {
       const availableLangs = highlighter.getLoadedLanguages()
