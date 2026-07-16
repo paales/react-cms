@@ -18,7 +18,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { _frame, _readFrameNode } from "../frame-client.tsx"
+import { _frame } from "../frame-client.tsx"
+import { _readFrameNode } from "../frame-context.tsx"
 
 // ─── Controllable fake Navigation ───────────────────────────────────
 //

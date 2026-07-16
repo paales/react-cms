@@ -40,7 +40,8 @@
  */
 
 import { _serverUrlPushApplies } from "./channel-client.ts"
-import { _applyFpUpdates, _windowNav } from "./partial-client.tsx"
+import { _windowNav } from "./frame-client.tsx"
+import { _applyFpUpdates } from "./partial-client.tsx"
 import type { FpUpdatesPayload } from "./fp-trailer-marker.ts"
 
 interface UrlUpdate {

@@ -43,13 +43,15 @@ import { enqueueRefetch } from "./refetch.ts"
 import {
   buildFrameHandle,
   buildWindowNavigationHandle,
+  resolveWindowTarget,
+  _frame,
+} from "./frame-client.tsx"
+import {
   FrameNameContext,
   FrameUrlContext,
   joinFramePath,
-  resolveWindowTarget,
   splitFramePath,
-  _frame,
-} from "./frame-client.tsx"
+} from "./frame-context.tsx"
 
 // ─── Client contexts ──────────────────────────────────────────────
 

@@ -81,56 +81,25 @@ import {
 } from "./fp-trailer-marker.ts"
 import { getNavigation } from "../runtime/navigation-api.ts"
 import {
-  _getLiveConnectionId,
-  _setContentLossListener,
-  _setLiveConnectionId,
-} from "./partial-client-state.ts"
+  _bindChannelUpstream,
+  _channelEstablishListeners,
+  _channelProducers,
+  _resetChannelRegistry,
+  type ChannelProducer,
+  registerChannelProducer,
+} from "./channel-registry.ts"
+import { _getLiveConnectionId, _setLiveConnectionId } from "./partial-client-state.ts"
 
-/** A source of upstream frames (the visibility controller is the
- *  first). Registered once at module scope; consulted on every
- *  envelope flush. */
-export interface ChannelProducer {
-  /** Contribute the producer's frames to the envelope being assembled
-   *  — one frame for most producers; an ordered array where one
-   *  statement is several frames (the frame-navigation producer's
-   *  cancel-then-url pair). `connection` is the open connection's id,
-   *  or `null` when none is established — the producer keeps its
-   *  statements pending (or drops them, lossy class) and returns
-   *  `null`. Called only when an envelope can
-   *  actually fire (never while one is in flight), so the frames'
-   *  content is always the producer's latest state. */
-  collect(connection: string | null): ChannelFrame | ChannelFrame[] | null
-  /** The envelope carrying this producer's frame was not applied —
-   *  connection gone (`404`-equivalent) or the POST never reached the
-   *  server. The transport has already cleared the published id; the
-   *  producer re-owns the frame's statements, which pend for the next
-   *  establishment. Never called for a `reliable` producer's frames —
-   *  the transport's retransmit buffer owns their redelivery. */
-  deliveryFailed(frame: ChannelFrame): void
-  /** Declares this producer's frames RELIABLE-class: they must reach
-   *  the server even across a torn connection, so the transport
-   *  buffers them (keyed by envelope seq) until the downstream
-   *  `applied` marker proves application, and retransmits survivors
-   *  at the next establishment. Application idempotence is the frame
-   *  kind's own contract (seq-ordered statement semantics). Absent /
-   *  false: loss-tolerant — a failed envelope hands the frame back
-   *  via `deliveryFailed`. */
-  reliable?: boolean
-}
-
-const producers = new Set<ChannelProducer>()
-const establishListeners = new Set<(connection: string) => void>()
-
-export function registerChannelProducer(producer: ChannelProducer): void {
-  producers.add(producer)
-}
-
-/** Run `cb` with the connection id every time a live connection is
- *  established — producers arm connection-scoped work here (e.g. the
- *  visibility controller's full-set sync at first measurement). */
-export function onChannelEstablished(cb: (connection: string) => void): void {
-  establishListeners.add(cb)
-}
+// Re-export the eager producer-facing surface so callers that already
+// hold a channel-client handle (the test suites, internal producers)
+// keep their import site. Producers that must stay OUT of the
+// transport's static closure (visibility, telemetry) import these from
+// `channel-registry.ts` directly.
+export {
+  onChannelEstablished,
+  registerChannelProducer,
+  type ChannelProducer,
+} from "./channel-registry.ts"
 
 // PAGE-LIFETIME monotonic envelope seq — never restarted at
 // establishment, so retransmitted reliable envelopes keep their
@@ -328,9 +297,9 @@ export function _reportContentEvicted(id: string, opts?: { drive?: boolean }): v
   if (opts?.drive === true) scheduleChannelFlush()
 }
 
-// The destruction sites live in `partial-client-state.ts`, which this
-// module already imports — the listener seam breaks the cycle.
-_setContentLossListener(_reportContentEvicted)
+// The content-loss listener is wired eagerly in `channel-registry.ts`
+// (before this transport loads). The registry's `_reportContentEvicted`
+// queues losses and replays them into the impl bound below.
 
 // ─── Reliable-class buffer + upstream watermark ──────────────────────
 
@@ -1750,7 +1719,7 @@ export function _channelEstablished(connection: string): void {
     // credential and stays out of the DOM.
     document.documentElement.setAttribute("data-parton-live", "")
   }
-  for (const cb of [...establishListeners]) cb(connection)
+  for (const cb of [..._channelEstablishListeners()]) cb(connection)
   // Statements that latched while no connection existed (and weren't
   // folded into this attach — they landed after its subsume, or the
   // attach was a handover adoption, which folds nothing) flush on the
@@ -1924,7 +1893,7 @@ async function flush(): Promise<void> {
   }
 
   const carried: Array<{ producer: ChannelProducer; frame: ChannelFrame }> = []
-  for (const producer of [...producers]) {
+  for (const producer of [..._channelProducers()]) {
     const contributed = producer.collect(connection)
     if (contributed === null) continue
     // A producer's array contribution stays in ITS order within the
@@ -2041,17 +2010,24 @@ registerChannelProducer(frameNavProducer)
 registerChannelProducer(warmProducer)
 registerChannelProducer(cookieProducer)
 
+// Bind the live upstream into the registry: producer statements made
+// before this transport loaded (a hydration-time content loss, an early
+// flush request) replay through here, in order.
+_bindChannelUpstream({
+  scheduleFlush: scheduleChannelFlush,
+  reportContentEvicted: _reportContentEvicted,
+})
+
 /** Test-only: reset the transport's module state (seq, in-flight
  *  serialization, registrations, delivery tracking, buffer, degrade,
  *  navigation, frame navigation, consequence gates). */
 export function _resetChannelClient(): void {
-  producers.clear()
+  _resetChannelRegistry()
   registerChannelProducer(ackProducer)
   registerChannelProducer(urlProducer)
   registerChannelProducer(frameNavProducer)
   registerChannelProducer(warmProducer)
   registerChannelProducer(cookieProducer)
-  establishListeners.clear()
   envelopeSeq = 0
   rafScheduled = false
   inFlight = false

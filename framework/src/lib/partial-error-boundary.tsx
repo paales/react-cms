@@ -1,7 +1,8 @@
 "use client"
 
 import React, { createContext, useContext } from "react"
-import { _windowNav, PartialIdContext, registerClientPartial } from "./partial-client.tsx"
+import { _windowNav } from "./frame-client.tsx"
+import { PartialIdContext, registerClientPartial } from "./partial-client.tsx"
 
 // ─── Stale-serve marker ────────────────────────────────────────────────
 

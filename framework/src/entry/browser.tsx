@@ -76,14 +76,13 @@ import { markPageInteractive } from "../lib/page-interactive.ts"
 import {
   _applyFpTrailerFromDocument,
   _applyFpUpdates,
-  _collectFramePaths,
   _commitPartonLane,
   _commitPartonLaneProgressive,
-  _dispatchFrameRefetch,
-  _readFramesSnapshot,
   getCachedPartialIds,
-  isFrameworkSilentInfo,
 } from "../lib/partial-client.tsx"
+import { _collectFramePaths, _readFramesSnapshot } from "../lib/frame-context.tsx"
+import { _dispatchFrameRefetch } from "../lib/frame-client.tsx"
+import { isFrameworkSilentInfo } from "../lib/refetch.ts"
 import {
   _documentCatchupAnchor,
   _getLiveConnectionId,

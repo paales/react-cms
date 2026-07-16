@@ -31,7 +31,7 @@
  * (`@parton/framework/lib/telemetry.ts`) per the barrel caveat.
  */
 
-import { type ChannelProducer, registerChannelProducer } from "./channel-client.ts"
+import { type ChannelProducer, registerChannelProducer } from "./channel-registry.ts"
 import type { ChannelFrame, TelemetryFrame } from "./channel-protocol.ts"
 
 /** The statement `reportTelemetry` takes — the frame's content minus

@@ -63,7 +63,7 @@ import {
   onChannelEstablished,
   registerChannelProducer,
   scheduleChannelFlush,
-} from "./channel-client.ts"
+} from "./channel-registry.ts"
 import type { ChannelFrame, VisibleFrame } from "./channel-protocol.ts"
 import {
   registerCullObserver,

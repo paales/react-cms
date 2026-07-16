@@ -62,16 +62,20 @@ import {
 import { deriveTemplate, renderTemplate } from "./partial-template.tsx"
 import { _sweepEmptyVisibilityObservers } from "./visibility.tsx"
 
+// The EAGER frame surface only — the contexts, the provider, the pure
+// frames-tree readers. The frame NAVIGATION machinery (`_frame`,
+// `_windowNav`, `_dispatchFrameRefetch`) and the silent-info guard live
+// in the late-loaded layer (`frame-client.tsx` / `refetch.ts`) and are
+// imported directly by the modules that need them — never re-exported
+// here, so this boundary keeps the channel transport out of its static
+// closure.
 export {
   _collectFramePaths,
-  _dispatchFrameRefetch,
-  _frame,
   _readFrameNode,
   _readFramesSnapshot,
-  _windowNav,
   FrameNameContext,
   FrameNameProvider,
-} from "./frame-client.tsx"
+} from "./frame-context.tsx"
 export {
   _applyFpTrailerFromDocument,
   _commitPartonLane,
@@ -82,7 +86,6 @@ export {
   getCachedPartialIds,
   registerClientPartial,
 } from "./partial-client-state.ts"
-export { isFrameworkSilentInfo } from "./refetch.ts"
 export {
   type ActivatorFire,
   PageUrlContext,
