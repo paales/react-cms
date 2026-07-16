@@ -131,6 +131,46 @@ export function pathname(): string {
 }
 
 /**
+ * Read the full request URL — origin, path, and every search param the
+ * client actually sent, named ones the spec doesn't otherwise track
+ * included — and record NOTHING. This is the one hook that is
+ * deliberately NOT a tracked read: no individually-tracked dimension
+ * can cover "the whole URL, whatever it is," so there is no dep key
+ * that would make it fp-accurate. Most specs don't need it — a
+ * canonical `<link>` for SEO, for instance, wants `pathname()` plus
+ * the handful of `searchParam()`s that are part of the canonical
+ * identity, which composes correctly from the tracked hooks and stays
+ * fp-skip-safe. Reach for `untrackedUrl()` only when a surface must
+ * mirror the raw request byte-for-byte, params it can't name in
+ * advance included — the CMS editor chrome is the model: every
+ * generated link re-derives from the full incoming URL because it
+ * must preserve whatever the visitor already had on it.
+ *
+ * Throws unless the calling spec declared `{ fpSkip: false }`. Without
+ * that guard, an fp-carrying spec could serve a fingerprint-MATCHED
+ * cached render whose embedded URL is stale — the untracked read never
+ * moved the fp that decided the match. The throw is the explicit
+ * signal (no heuristics): `fpSkip: false` is the spec's own admission
+ * that it's always-authoritative, the one condition under which
+ * skipping the tracked-dep system is sound.
+ */
+export function untrackedUrl(): URL {
+  const cp = getCurrentParton()
+  if (!cp) return new URL("http://localhost/")
+  if (cp.fpSkip !== false) {
+    throw new Error(
+      `untrackedUrl() was called by parton "${cp.id}", which does not declare ` +
+        `{ fpSkip: false }. The full request URL is not a tracked read: reading it on an ` +
+        `fp-skippable spec risks serving a fingerprint-matched cached render whose embedded ` +
+        `URL is actually stale. Read the specific dimensions this spec needs via pathname() / ` +
+        `searchParam() / match() instead (tracked, fp-skip-safe) — or, if this surface ` +
+        `genuinely must mirror the raw request, set { fpSkip: false } on it.`,
+    )
+  }
+  return new URL(cp.request.url)
+}
+
+/**
  * Read a resolved match param (`/pokemon/:id` → `param("id")`). Records
  * NO dependency: match params already fold into the fp via `matchKey`,
  * so reading one is enough — a param change moves the fp through the

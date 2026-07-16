@@ -1523,6 +1523,7 @@ function createSpecComponent<V>(
       params,
       phase: "schema",
       wakeHints: {},
+      fpSkip: opts.fpSkip,
       ...(boundCells !== undefined ? { boundCells } : {}),
     }
     _setCurrentParton(self)

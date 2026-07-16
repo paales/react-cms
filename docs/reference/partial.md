@@ -114,7 +114,7 @@ interface PartialOptions {
 | `defer`          | `true` for app-driven, an activator element to wire automatically.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `fallback`       | React node rendered while the partial's body is suspended.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `keepalive`      | When `true` (default), the rendered body is wrapped in a `<Activity mode="visible" key={matchKey}>` while active and the spec emits `<Activity mode="hidden">` + placeholder for each cached variant on a `match` miss (instead of returning nothing). The client substitutes its cached subtree at each placeholder, so the React fiber tree stays shape-stable across active ↔ parked transitions — `useState`, `useRef`, and DOM state survive a navigate-away-and-back round-trip. Multiple variants of the same spec (e.g. `/pokemon/1` ↔ `/pokemon/2`) coexist as hidden Activity siblings keyed by `matchKey` so each variant's fiber stays alive across cross-variant navigation. Set to `false` for partials whose state should reset on cross-route nav (heavy video/iframe DOM, debug-only specs, anything where stale state is worse than re-mount cost). |
-| `fpSkip`         | When `false`, this spec is never served from the client's fingerprint cache — every request renders it fresh. The spec still fingerprints normally (folds, trailer, addressability all unchanged); only the serve-from-cache decision is disabled. For always-authoritative surfaces whose output must track the request exactly: the CMS editor chrome opts out because its links embed the full request URL, which no individually-tracked dimension covers. Default `true`.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `fpSkip`         | When `false`, this spec is never served from the client's fingerprint cache — every request renders it fresh. The spec still fingerprints normally (folds, trailer, addressability all unchanged); only the serve-from-cache decision is disabled. For always-authoritative surfaces whose output must track the request exactly: the CMS editor chrome opts out because its links embed the full request URL, which no individually-tracked dimension covers — the one legitimate caller of [`untrackedUrl()`](#rendering-a-url--canonical-links-and-the-untracked-exception). Default `true`.                                                                                                                                                                                                                                                                       |
 | `capabilityType` | Capability schema name referenced by the `/__remote/manifest.json` endpoint so `parton add` can generate typed bindings. Omit if the spec doesn't read capability values. See [`remote-frame.md`](./remote-frame.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ## The match gate — gating the request
@@ -266,6 +266,57 @@ removes the cookie from the overlay; a non-zero `Max-Age` with an
 empty value reads as the empty string. (Match `cookies` gates
 deliberately bypass this overlay — see
 [The match gate](#the-match-gate--gating-the-request).)
+
+### Rendering a URL — canonical links and the untracked exception
+
+A canonical `<link rel="canonical">`, an Open Graph `og:url`, a
+share-this-page href — these want to render a URL, but they want the
+CANONICAL form: the pathname plus whichever search params are actually
+part of the page's identity, normalized (no session id, no tracking
+param, no transport noise). That composes directly from the tracked
+hooks the spec already has, so it stays fp-skip-safe with no new
+primitive:
+
+```tsx
+async function ProductRender({ slug }: { slug: string } & RenderArgs) {
+  const variant = searchParam("variant") // part of the canonical identity
+  const canonical = new URL(pathname(), "https://example.com")
+  if (variant) canonical.searchParams.set("variant", variant)
+  return (
+    <>
+      <link rel="canonical" href={canonical.href} />
+      <ProductDetail slug={slug} variant={variant} />
+    </>
+  )
+}
+```
+
+`pathname()` and `searchParam()` are tracked — each is a dep key,
+folded into the fp, so a change to either re-renders this spec and the
+`<link>` (which hoists from anywhere in the tree per React 19's
+document-metadata support) is never stale. This is the default answer
+whenever "render a URL" comes up: name the dimensions that matter and
+read them.
+
+That's different from reading the FULL request URL — origin, path,
+and every search param the visitor happens to have, including ones
+this spec never named. No individually-tracked dimension can cover
+"whatever the whole URL is" — there's no dep key for a param nobody
+declared. `untrackedUrl()` exists for that narrower case: it returns
+the raw request `URL` and records nothing, so the fp never moves on
+its own. Calling it THROWS unless the spec declares `{ fpSkip: false }`
+— an fp-skippable spec that read it could serve a fingerprint-matched
+cached render carrying a stale URL, since nothing about the untracked
+read would have moved the fp to prevent the skip. The CMS editor
+chrome is the in-tree example: every generated link re-derives from
+the full incoming URL because it must preserve whatever params the
+visitor already has (`cms/src/editor/shell.tsx`), and the chrome is
+declared `{ fpSkip: false }` for exactly that reason (see the
+[`fpSkip`](#options) option). Reach for `untrackedUrl()` only when a
+surface has that same shape — genuinely always-authoritative, genuinely
+needs params it can't enumerate in advance. For everything else,
+including canonical links, `pathname()` + `searchParam()` is the
+answer.
 
 ### View culling — the `cull` gate
 

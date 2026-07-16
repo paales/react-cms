@@ -25,6 +25,7 @@ import {
   pathname,
   searchParam,
   tag,
+  untrackedUrl,
   getCatalogManifest,
   getRouteSnapshots,
   getSlotBlockMeta,
@@ -212,7 +213,7 @@ export const EditorTreePartial = parton(
     searchParam("config")
     searchParam("tabs")
     pathname()
-    const currentUrl = new URL(getCurrentParton()?.request.url ?? "")
+    const currentUrl = untrackedUrl()
     const treeStyle = (await editorTreeStyle.resolve()).value
     const catalog = await getCatalogManifest()
     const rootIds = renderedCmsIdsForPreviewedPage()
@@ -507,7 +508,7 @@ export const EditorFieldPanelPartial = parton(
     searchParam("tabs")
     pathname()
     const cp = getCurrentParton()
-    const currentUrl = new URL(cp?.request.url ?? "http://localhost/")
+    const currentUrl = untrackedUrl()
     if (!selected) {
       return (
         <div className="cms-panel-body">
@@ -1147,7 +1148,7 @@ export const EditorShell = parton(
     searchParam("tabs")
     searchParam("__frame")
     pathname()
-    const currentUrl = new URL(getCurrentParton()?.request.url ?? "http://localhost/")
+    const currentUrl = untrackedUrl()
     const isPreviewFrameRefetch = currentUrl.searchParams.getAll("__frame").includes("preview")
     const previewUrl = derivePreviewUrl(currentUrl)
     const [leftTabCell, treeStyleCell, paletteCell, surfaceCell, attachmentCell, deviceCell] =

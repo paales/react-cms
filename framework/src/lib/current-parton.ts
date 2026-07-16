@@ -69,8 +69,19 @@ export interface CurrentParton {
    *  Mutable; the wrapper owns it. */
   readonly deps: Set<string>
   /** The parton's frame-resolved request — what tracked hooks read
-   *  from, so a framed spec tracks its frame's URL/cookies. */
+   *  from, so a framed spec tracks its frame's URL/cookies. Reading
+   *  `.url` directly off this bypasses tracking entirely (the fp folds
+   *  nothing from it) — reach for `pathname()` / `searchParam()` /
+   *  `match()` instead, or `untrackedUrl()` (server-hooks.ts) for the
+   *  rare surface that genuinely needs the raw request URL. */
   readonly request: Request
+  /** The spec's own `fpSkip` option, as constructed
+   *  (`PartialOptions.fpSkip`, default `true`). Stamped alongside
+   *  `request` so `untrackedUrl()` can refuse to run on an
+   *  fp-skippable spec: without this check, an fp match could serve a
+   *  cached render whose embedded URL is silently stale, because
+   *  nothing recorded the untracked read as a dependency. */
+  readonly fpSkip?: boolean
   /** Resolved match params (`/pokemon/:id` → `{id}`), read by `param()`.
    *  NOT dep-recorded — match params already fold into the fp via
    *  `matchKey`, so `param()` is a pure read. */
