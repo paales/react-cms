@@ -50,7 +50,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ChangeEvent } from "react"
 import { __cellWriteBatch } from "../runtime/cell-actions.ts"
-import { _awaitActionConsequences } from "./channel-client.ts"
+import { _awaitActionConsequences } from "./channel-registry.ts"
 import type { ResolvedCell } from "./cell.ts"
 
 interface QueuedWrite {

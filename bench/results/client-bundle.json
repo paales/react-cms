@@ -1,28 +1,28 @@
 {
-  "sha": "308d188",
-  "date": "2026-07-16T21:20:15.712Z",
+  "sha": "5937f52",
+  "date": "2026-07-17T01:11:37.916Z",
   "node": "v24.11.1",
   "vite": "8.1.0",
   "rolldown": "1.1.3",
   "apps": {
     "website": {
       "totalJs": {
-        "raw": 311057,
-        "gzip": 96775,
-        "brotli": 83442,
-        "chunks": 2
+        "raw": 319928,
+        "gzip": 101605,
+        "brotli": 87964,
+        "chunks": 5
       },
       "initialJs": {
-        "raw": 301771,
-        "gzip": 92780,
-        "brotli": 79881,
+        "raw": 268811,
+        "gzip": 83622,
+        "brotli": 71771,
         "chunks": 1
       },
       "lazyJs": {
-        "raw": 9286,
-        "gzip": 3995,
-        "brotli": 3561,
-        "chunks": 1
+        "raw": 51117,
+        "gzip": 17983,
+        "brotli": 16193,
+        "chunks": 4
       },
       "css": {
         "raw": 16086,
@@ -33,245 +33,299 @@
         "raw": 84216,
         "files": 5
       },
-      "entry": "assets/index-wwEf5-Qm.js",
+      "entry": "assets/index-Cs_hbfjP.js",
       "topChunks": [
         {
-          "file": "assets/index-wwEf5-Qm.js",
-          "raw": 301771,
-          "gzip": 92780,
+          "file": "assets/index-Cs_hbfjP.js",
+          "raw": 268811,
+          "gzip": 83622,
           "load": "initial"
         },
         {
-          "file": "assets/entry.rsc-1C9-D9Fm.js",
-          "raw": 9286,
-          "gzip": 3995,
+          "file": "assets/channel-client-BTrIhFCP.js",
+          "raw": 24569,
+          "gzip": 7737,
+          "load": "lazy"
+        },
+        {
+          "file": "assets/live-boot-B0UhMmL5.js",
+          "raw": 15396,
+          "gzip": 5356,
+          "load": "lazy"
+        },
+        {
+          "file": "assets/entry.rsc-Dpf0d5Jy.js",
+          "raw": 10235,
+          "gzip": 4391,
+          "load": "lazy"
+        },
+        {
+          "file": "assets/refetch-IFwPwzks.js",
+          "raw": 917,
+          "gzip": 499,
           "load": "lazy"
         }
       ],
       "groups": [
         {
           "group": "react",
-          "raw": 226805,
-          "initialRaw": 226805,
+          "raw": 223070,
+          "initialRaw": 223070,
           "subs": [
             {
               "sub": "react-dom",
-              "raw": 216012
+              "raw": 212454
             },
             {
               "sub": "react",
-              "raw": 7035
+              "raw": 6919
             },
             {
               "sub": "scheduler",
-              "raw": 3759
+              "raw": 3697
             }
           ]
         },
         {
           "group": "framework",
-          "raw": 54561,
-          "initialRaw": 49701,
+          "raw": 67657,
+          "initialRaw": 20893,
           "subs": [
             {
               "sub": "lib/channel-client.ts",
-              "raw": 10515
+              "raw": 12835
             },
             {
-              "sub": "entry/browser.tsx",
-              "raw": 6845
-            },
-            {
-              "sub": "lib/partial-cache.ts",
-              "raw": 6124
+              "sub": "entry/live-boot.tsx",
+              "raw": 7386
             },
             {
               "sub": "lib/fp-trailer-split.ts",
-              "raw": 5789
-            },
-            {
-              "sub": "lib/partial-client-state.ts",
-              "raw": 3956
-            },
-            {
-              "sub": "lib/channel-transport.ts",
-              "raw": 3167
+              "raw": 6999
             },
             {
               "sub": "lib/frame-client.tsx",
-              "raw": 2946
+              "raw": 6284
+            },
+            {
+              "sub": "lib/partial-cache.ts",
+              "raw": 6023
+            },
+            {
+              "sub": "lib/partial-client-state.ts",
+              "raw": 3914
+            },
+            {
+              "sub": "lib/channel-transport.ts",
+              "raw": 3829
             },
             {
               "sub": "lib/visibility.tsx",
-              "raw": 2551
+              "raw": 2509
+            },
+            {
+              "sub": "lib/frame-context.tsx",
+              "raw": 2029
             },
             {
               "sub": "lib/embed-interactive.tsx",
-              "raw": 1994
+              "raw": 1958
             },
             {
               "sub": "lib/partial-error-boundary.tsx",
-              "raw": 1419
+              "raw": 1397
             },
             {
               "sub": "runtime/error-boundary.tsx",
-              "raw": 1196
+              "raw": 1176
             },
             {
               "sub": "lib/partial-client.tsx",
-              "raw": 1108
+              "raw": 1089
             },
             {
-              "sub": "lib/refetch.ts",
-              "raw": 1021
-            },
-            {
-              "sub": "lib/cull-pair.tsx",
-              "raw": 982
-            },
-            {
-              "sub": "lib/cull-park.ts",
-              "raw": 964
-            },
-            {
-              "sub": "lib/partial-template.tsx",
-              "raw": 901
+              "sub": "lib/cell-client.tsx",
+              "raw": 1002
             },
             {
               "sub": "lib/live-page-heartbeat.tsx",
-              "raw": 855
+              "raw": 950
+            },
+            {
+              "sub": "lib/cull-park.ts",
+              "raw": 948
+            },
+            {
+              "sub": "lib/cull-pair.tsx",
+              "raw": 931
+            },
+            {
+              "sub": "lib/refetch.ts",
+              "raw": 917
+            },
+            {
+              "sub": "lib/partial-template.tsx",
+              "raw": 886
+            },
+            {
+              "sub": "entry/browser.tsx",
+              "raw": 841
             },
             {
               "sub": "lib/fp-trailer-marker.ts",
-              "raw": 637
+              "raw": 771
+            },
+            {
+              "sub": "lib/channel-registry.ts",
+              "raw": 520
+            },
+            {
+              "sub": "lib/refetch-dispatch.ts",
+              "raw": 487
             },
             {
               "sub": "lib/telemetry.ts",
-              "raw": 348
-            },
-            {
-              "sub": "runtime/navigation-error.ts",
-              "raw": 289
+              "raw": 342
             },
             {
               "sub": "lib/segment-trailers-client.ts",
-              "raw": 241
+              "raw": 285
+            },
+            {
+              "sub": "runtime/navigation-error.ts",
+              "raw": 284
             },
             {
               "sub": "runtime/request.tsx",
-              "raw": 227
+              "raw": 269
             },
             {
-              "sub": "lib/use-navigation.tsx",
-              "raw": 135
+              "sub": "lib/silent-info.ts",
+              "raw": 141
             },
             {
-              "sub": "lib/page-embed.ts",
-              "raw": 117
+              "sub": "runtime/cell-actions.ts",
+              "raw": 139
             },
             {
               "sub": "lib/channel-protocol.ts",
-              "raw": 112
+              "raw": 136
+            },
+            {
+              "sub": "lib/use-navigation.tsx",
+              "raw": 133
+            },
+            {
+              "sub": "lib/page-embed.ts",
+              "raw": 114
             },
             {
               "sub": "lib/page-interactive.ts",
-              "raw": 68
+              "raw": 81
             },
             {
               "sub": "runtime/navigation-api.ts",
-              "raw": 54
+              "raw": 53
+            },
+            {
+              "sub": "runtime/redirect-client.tsx",
+              "raw": 0
+            },
+            {
+              "sub": "client.ts",
+              "raw": 0
             }
           ]
         },
         {
           "group": "rsc-runtime",
-          "raw": 22775,
-          "initialRaw": 22775,
+          "raw": 22400,
+          "initialRaw": 22400,
           "subs": [
             {
               "sub": "react-server-dom (vendored)",
-              "raw": 21725
+              "raw": 21367
             },
             {
               "sub": "@vitejs/plugin-rsc client runtime",
-              "raw": 1050
+              "raw": 1033
             }
           ]
         },
         {
           "group": "app",
-          "raw": 4106,
-          "initialRaw": 28,
+          "raw": 4031,
+          "initialRaw": 27,
           "subs": [
             {
               "sub": "app/world/scroller.tsx",
-              "raw": 2067
+              "raw": 2029
             },
             {
               "sub": "app/world/constants.ts",
-              "raw": 614
+              "raw": 602
             },
             {
               "sub": "app/world/activity-light.tsx",
-              "raw": 572
+              "raw": 562
             },
             {
               "sub": "app/world/chunk-shell.tsx",
-              "raw": 256
+              "raw": 251
             },
             {
               "sub": "app/world/stale-badge.tsx",
-              "raw": 248
+              "raw": 243
             },
             {
               "sub": "app/world/bid-button.tsx",
-              "raw": 129
+              "raw": 126
             },
             {
               "sub": "app/world/auction-actions.ts",
-              "raw": 97
+              "raw": 95
             },
             {
               "sub": "app/world/quad-shell.tsx",
-              "raw": 96
+              "raw": 94
             },
             {
               "sub": "entry.browser.tsx",
-              "raw": 28
+              "raw": 27
             }
           ]
         },
         {
           "group": "other",
-          "raw": 2467,
-          "initialRaw": 2118,
+          "raw": 2434,
+          "initialRaw": 2083,
           "subs": [
             {
               "sub": "vite/preload-helper.js",
-              "raw": 902
+              "raw": 887
             },
             {
               "sub": "virtual:vite-rsc/client-references",
-              "raw": 756
+              "raw": 744
             },
             {
               "sub": "rolldown/runtime.js",
-              "raw": 460
+              "raw": 453
             },
             {
               "sub": "virtual:vite-rsc/client-references/group/facade:src/entry.rsc.tsx",
-              "raw": 348
+              "raw": 350
             }
           ]
         },
         {
           "group": "node_modules",
-          "raw": 343,
-          "initialRaw": 343,
+          "raw": 337,
+          "initialRaw": 337,
           "subs": [
             {
               "sub": "rsc-html-stream",
-              "raw": 343
+              "raw": 337
             }
           ]
         }
@@ -279,148 +333,184 @@
       "frameworkModules": [
         {
           "sub": "lib/channel-client.ts",
-          "raw": 10515
+          "raw": 12835
         },
         {
-          "sub": "entry/browser.tsx",
-          "raw": 6845
-        },
-        {
-          "sub": "lib/partial-cache.ts",
-          "raw": 6124
+          "sub": "entry/live-boot.tsx",
+          "raw": 7386
         },
         {
           "sub": "lib/fp-trailer-split.ts",
-          "raw": 5789
-        },
-        {
-          "sub": "lib/partial-client-state.ts",
-          "raw": 3956
-        },
-        {
-          "sub": "lib/channel-transport.ts",
-          "raw": 3167
+          "raw": 6999
         },
         {
           "sub": "lib/frame-client.tsx",
-          "raw": 2946
+          "raw": 6284
+        },
+        {
+          "sub": "lib/partial-cache.ts",
+          "raw": 6023
+        },
+        {
+          "sub": "lib/partial-client-state.ts",
+          "raw": 3914
+        },
+        {
+          "sub": "lib/channel-transport.ts",
+          "raw": 3829
         },
         {
           "sub": "lib/visibility.tsx",
-          "raw": 2551
+          "raw": 2509
+        },
+        {
+          "sub": "lib/frame-context.tsx",
+          "raw": 2029
         },
         {
           "sub": "lib/embed-interactive.tsx",
-          "raw": 1994
+          "raw": 1958
         },
         {
           "sub": "lib/partial-error-boundary.tsx",
-          "raw": 1419
+          "raw": 1397
         },
         {
           "sub": "runtime/error-boundary.tsx",
-          "raw": 1196
+          "raw": 1176
         },
         {
           "sub": "lib/partial-client.tsx",
-          "raw": 1108
+          "raw": 1089
         },
         {
-          "sub": "lib/refetch.ts",
-          "raw": 1021
-        },
-        {
-          "sub": "lib/cull-pair.tsx",
-          "raw": 982
-        },
-        {
-          "sub": "lib/cull-park.ts",
-          "raw": 964
-        },
-        {
-          "sub": "lib/partial-template.tsx",
-          "raw": 901
+          "sub": "lib/cell-client.tsx",
+          "raw": 1002
         },
         {
           "sub": "lib/live-page-heartbeat.tsx",
-          "raw": 855
+          "raw": 950
+        },
+        {
+          "sub": "lib/cull-park.ts",
+          "raw": 948
+        },
+        {
+          "sub": "lib/cull-pair.tsx",
+          "raw": 931
+        },
+        {
+          "sub": "lib/refetch.ts",
+          "raw": 917
+        },
+        {
+          "sub": "lib/partial-template.tsx",
+          "raw": 886
+        },
+        {
+          "sub": "entry/browser.tsx",
+          "raw": 841
         },
         {
           "sub": "lib/fp-trailer-marker.ts",
-          "raw": 637
+          "raw": 771
+        },
+        {
+          "sub": "lib/channel-registry.ts",
+          "raw": 520
+        },
+        {
+          "sub": "lib/refetch-dispatch.ts",
+          "raw": 487
         },
         {
           "sub": "lib/telemetry.ts",
-          "raw": 348
-        },
-        {
-          "sub": "runtime/navigation-error.ts",
-          "raw": 289
+          "raw": 342
         },
         {
           "sub": "lib/segment-trailers-client.ts",
-          "raw": 241
+          "raw": 285
+        },
+        {
+          "sub": "runtime/navigation-error.ts",
+          "raw": 284
         },
         {
           "sub": "runtime/request.tsx",
-          "raw": 227
+          "raw": 269
         },
         {
-          "sub": "lib/use-navigation.tsx",
-          "raw": 135
+          "sub": "lib/silent-info.ts",
+          "raw": 141
         },
         {
-          "sub": "lib/page-embed.ts",
-          "raw": 117
+          "sub": "runtime/cell-actions.ts",
+          "raw": 139
         },
         {
           "sub": "lib/channel-protocol.ts",
-          "raw": 112
+          "raw": 136
+        },
+        {
+          "sub": "lib/use-navigation.tsx",
+          "raw": 133
+        },
+        {
+          "sub": "lib/page-embed.ts",
+          "raw": 114
         },
         {
           "sub": "lib/page-interactive.ts",
-          "raw": 68
+          "raw": 81
         },
         {
           "sub": "runtime/navigation-api.ts",
-          "raw": 54
+          "raw": 53
+        },
+        {
+          "sub": "runtime/redirect-client.tsx",
+          "raw": 0
+        },
+        {
+          "sub": "client.ts",
+          "raw": 0
         }
       ]
     },
     "e2e-testing": {
       "totalJs": {
-        "raw": 5033333,
-        "gzip": 1272738,
-        "brotli": 1052655,
-        "chunks": 91
+        "raw": 5041212,
+        "gzip": 1278768,
+        "brotli": 1059298,
+        "chunks": 98
       },
       "initialJs": {
-        "raw": 316957,
-        "gzip": 96614,
-        "brotli": 82891,
-        "chunks": 2
+        "raw": 282251,
+        "gzip": 88127,
+        "brotli": 76000,
+        "chunks": 5
       },
       "lazyJs": {
-        "raw": 4716376,
-        "gzip": 1176124,
-        "brotli": 969764,
-        "chunks": 89
+        "raw": 4758961,
+        "gzip": 1190641,
+        "brotli": 983298,
+        "chunks": 93
       },
       "css": {
-        "raw": 235205,
-        "gzip": 40198,
+        "raw": 235432,
+        "gzip": 40238,
         "files": 2
       },
       "fonts": {
         "raw": 1434076,
         "files": 74
       },
-      "entry": "assets/index-DpwPKqgH.js",
+      "entry": "assets/index-CqxQD1DQ.js",
       "topChunks": [
         {
-          "file": "assets/markdown-impl-BFkubZS9.js",
-          "raw": 1418718,
-          "gzip": 242709,
+          "file": "assets/markdown-impl-BOh5UZKM.js",
+          "raw": 1418788,
+          "gzip": 242734,
           "load": "lazy"
         },
         {
@@ -430,9 +520,9 @@
           "load": "lazy"
         },
         {
-          "file": "assets/chunk-BO2N2NFS-Dqyl4KF9.js",
-          "raw": 448561,
-          "gzip": 134701,
+          "file": "assets/chunk-BO2N2NFS-NclW5ENa.js",
+          "raw": 448648,
+          "gzip": 134732,
           "load": "lazy"
         },
         {
@@ -442,37 +532,37 @@
           "load": "lazy"
         },
         {
-          "file": "assets/index-DpwPKqgH.js",
-          "raw": 316021,
-          "gzip": 96091,
+          "file": "assets/index-CqxQD1DQ.js",
+          "raw": 265693,
+          "gzip": 81299,
           "load": "initial"
         },
         {
-          "file": "assets/chunk-ICPOFSXX-sfqBO8Fd.js",
-          "raw": 217091,
-          "gzip": 31561,
+          "file": "assets/chunk-ICPOFSXX-BqdwRidW.js",
+          "raw": 217216,
+          "gzip": 31634,
           "load": "lazy"
         },
         {
-          "file": "assets/entry.rsc-CD5IgC1H.js",
-          "raw": 154790,
-          "gzip": 48359,
+          "file": "assets/entry.rsc-CSK71wB6.js",
+          "raw": 155796,
+          "gzip": 48681,
           "load": "lazy"
         },
         {
-          "file": "assets/architectureDiagram-Q4EWVU46-DvApRWj4.js",
+          "file": "assets/architectureDiagram-Q4EWVU46-DJQHyfYi.js",
           "raw": 146788,
-          "gzip": 39812,
+          "gzip": 39811,
           "load": "lazy"
         },
         {
-          "file": "assets/sequenceDiagram-FGHM5R23-CE2BWBQK.js",
+          "file": "assets/sequenceDiagram-FGHM5R23-CWjbbrx6.js",
           "raw": 115512,
-          "gzip": 30155,
+          "gzip": 30156,
           "load": "lazy"
         },
         {
-          "file": "assets/chunk-5FUZZQ4R-rEfjE1fv.js",
+          "file": "assets/chunk-5FUZZQ4R-Kl70zu0f.js",
           "raw": 97914,
           "gzip": 23719,
           "load": "lazy"
@@ -484,43 +574,43 @@
           "load": "lazy"
         },
         {
-          "file": "assets/blockDiagram-DXYQGD6D-C2zLL82E.js",
+          "file": "assets/blockDiagram-DXYQGD6D-DrDqZBr1.js",
           "raw": 69876,
-          "gzip": 19497,
+          "gzip": 19496,
           "load": "lazy"
         },
         {
-          "file": "assets/c4Diagram-AHTNJAMY-BpnXS5sm.js",
+          "file": "assets/c4Diagram-AHTNJAMY-5R-tG-Va.js",
           "raw": 69170,
           "gzip": 19143,
           "load": "lazy"
         },
         {
-          "file": "assets/ganttDiagram-T4ZO3ILL-C3Hv9g2p.js",
+          "file": "assets/ganttDiagram-T4ZO3ILL-C3jiFK3g.js",
           "raw": 69155,
           "gzip": 22440,
           "load": "lazy"
         },
         {
-          "file": "assets/flowDiagram-DWJPFMVM-2EsIvW2p.js",
+          "file": "assets/flowDiagram-DWJPFMVM-B6XIRpJD.js",
           "raw": 60229,
-          "gzip": 19157,
+          "gzip": 19154,
           "load": "lazy"
         }
       ],
       "groups": [
         {
           "group": "node_modules",
-          "raw": 4652055,
-          "initialRaw": 348,
+          "raw": 4652554,
+          "initialRaw": 341,
           "subs": [
             {
               "sub": "mermaid",
-              "raw": 1246127
+              "raw": 1246245
             },
             {
               "sub": "@shikijs/langs",
-              "raw": 786713
+              "raw": 786759
             },
             {
               "sub": "cytoscape",
@@ -528,7 +618,7 @@
             },
             {
               "sub": "katex",
-              "raw": 351669
+              "raw": 351683
             },
             {
               "sub": "langium",
@@ -536,7 +626,7 @@
             },
             {
               "sub": "parse5",
-              "raw": 119361
+              "raw": 119384
             },
             {
               "sub": "layout-base",
@@ -548,7 +638,7 @@
             },
             {
               "sub": "@mermaid-js/parser",
-              "raw": 80039
+              "raw": 80048
             },
             {
               "sub": "cose-base",
@@ -556,141 +646,165 @@
             },
             {
               "sub": "marked",
-              "raw": 65154
+              "raw": 65160
             },
             {
               "sub": "@shikijs/vscode-textmate",
-              "raw": 63313
+              "raw": 63316
             }
           ]
         },
         {
           "group": "react",
-          "raw": 229992,
-          "initialRaw": 229992,
+          "raw": 226887,
+          "initialRaw": 226887,
           "subs": [
             {
               "sub": "react-dom",
-              "raw": 219047
+              "raw": 214880
             },
             {
               "sub": "react",
-              "raw": 7134
+              "raw": 8268
             },
             {
               "sub": "scheduler",
-              "raw": 3811
+              "raw": 3739
             }
           ]
         },
         {
           "group": "framework",
-          "raw": 65012,
-          "initialRaw": 58571,
+          "raw": 75041,
+          "initialRaw": 27075,
           "subs": [
             {
               "sub": "lib/channel-client.ts",
-              "raw": 10807
+              "raw": 12840
             },
             {
               "sub": "lib/frame-client.tsx",
-              "raw": 7467
-            },
-            {
-              "sub": "entry/browser.tsx",
-              "raw": 6942
-            },
-            {
-              "sub": "lib/partial-cache.ts",
-              "raw": 6210
+              "raw": 7371
             },
             {
               "sub": "lib/fp-trailer-split.ts",
-              "raw": 5871
+              "raw": 7002
             },
             {
-              "sub": "lib/partial-client-state.ts",
-              "raw": 4060
+              "sub": "entry/live-boot.tsx",
+              "raw": 6767
+            },
+            {
+              "sub": "lib/partial-cache.ts",
+              "raw": 6092
             },
             {
               "sub": "lib/use-navigation.tsx",
-              "raw": 3465
+              "raw": 4649
+            },
+            {
+              "sub": "lib/partial-client-state.ts",
+              "raw": 4407
             },
             {
               "sub": "lib/channel-transport.ts",
-              "raw": 3212
+              "raw": 3831
+            },
+            {
+              "sub": "lib/frame-context.tsx",
+              "raw": 2700
             },
             {
               "sub": "lib/visibility.tsx",
-              "raw": 2587
-            },
-            {
-              "sub": "lib/embed-interactive.tsx",
-              "raw": 1892
+              "raw": 2538
             },
             {
               "sub": "lib/cell-client.tsx",
-              "raw": 1848
+              "raw": 1934
+            },
+            {
+              "sub": "lib/embed-interactive.tsx",
+              "raw": 1896
             },
             {
               "sub": "lib/partial-error-boundary.tsx",
-              "raw": 1302
+              "raw": 1309
             },
             {
               "sub": "runtime/error-boundary.tsx",
-              "raw": 1212
+              "raw": 1189
             },
             {
               "sub": "lib/partial-client.tsx",
-              "raw": 1123
-            },
-            {
-              "sub": "lib/refetch.ts",
-              "raw": 1035
+              "raw": 1102
             },
             {
               "sub": "lib/cull-park.ts",
-              "raw": 977
+              "raw": 959
+            },
+            {
+              "sub": "lib/refetch.ts",
+              "raw": 928
             },
             {
               "sub": "lib/partial-template.tsx",
-              "raw": 914
+              "raw": 896
             },
             {
               "sub": "lib/cull-pair.tsx",
-              "raw": 876
+              "raw": 877
             },
             {
               "sub": "lib/live-page-heartbeat.tsx",
-              "raw": 867
+              "raw": 871
+            },
+            {
+              "sub": "entry/browser.tsx",
+              "raw": 851
             },
             {
               "sub": "lib/fp-trailer-marker.ts",
-              "raw": 646
+              "raw": 771
+            },
+            {
+              "sub": "lib/channel-registry.ts",
+              "raw": 582
+            },
+            {
+              "sub": "lib/refetch-dispatch.ts",
+              "raw": 545
             },
             {
               "sub": "runtime/navigation-error.ts",
-              "raw": 464
+              "raw": 504
             },
             {
               "sub": "lib/segment-trailers-client.ts",
-              "raw": 244
+              "raw": 261
             },
             {
               "sub": "runtime/request.tsx",
-              "raw": 230
+              "raw": 246
             },
             {
               "sub": "runtime/redirect-client.tsx",
-              "raw": 199
+              "raw": 200
             },
             {
               "sub": "runtime/cell-actions.ts",
+              "raw": 167
+            },
+            {
+              "sub": "lib/silent-info.ts",
               "raw": 166
             },
             {
+              "sub": "lib/telemetry.ts",
+              "raw": 163
+            },
+            {
               "sub": "lib/channel-protocol.ts",
-              "raw": 114
+              "raw": 136
             },
             {
               "sub": "lib/page-embed.ts",
@@ -698,98 +812,102 @@
             },
             {
               "sub": "lib/page-interactive.ts",
-              "raw": 69
+              "raw": 74
             },
             {
               "sub": "runtime/navigation-api.ts",
-              "raw": 54
+              "raw": 59
             },
             {
               "sub": "runtime/cms-constants.ts",
               "raw": 47
+            },
+            {
+              "sub": "client.ts",
+              "raw": 0
             }
           ]
         },
         {
           "group": "app",
-          "raw": 31620,
-          "initialRaw": 30,
+          "raw": 32096,
+          "initialRaw": 29,
           "subs": [
             {
               "sub": "app/components/forms-demo-form.tsx",
-              "raw": 4272
+              "raw": 4281
             },
             {
               "sub": "app/components/streaming-demo-card-form.tsx",
-              "raw": 3308
+              "raw": 3315
             },
             {
               "sub": "app/components/search.tsx",
-              "raw": 3053
+              "raw": 3059
             },
             {
               "sub": "app/chat/chat-controls.tsx",
-              "raw": 1735
+              "raw": 1738
             },
             {
               "sub": "app/components/stacked-drawer.tsx",
-              "raw": 1628
+              "raw": 1631
             },
             {
               "sub": "app/components/cursor-layer.tsx",
-              "raw": 1530
+              "raw": 1533
             },
             {
               "sub": "app/components/guarded-note-form.tsx",
-              "raw": 1341
+              "raw": 1344
             },
             {
               "sub": "app/components/load-more.tsx",
-              "raw": 1243
+              "raw": 1246
             },
             {
               "sub": "app/components/cache-controls.tsx",
-              "raw": 1008
+              "raw": 1010
             },
             {
               "sub": "app/pages/streaming-demo-card-shared.ts",
-              "raw": 960
+              "raw": 962
             },
             {
               "sub": "app/pages/magento/cart-line-controls.tsx",
-              "raw": 950
+              "raw": 952
             },
             {
               "sub": "app/components/docs-sidebar.tsx",
-              "raw": 873
+              "raw": 875
             },
             {
               "sub": "app/components/page-url-sync.tsx",
-              "raw": 801
+              "raw": 803
             },
             {
               "sub": "app/components/lanes-demo-button.tsx",
-              "raw": 775
+              "raw": 777
             },
             {
               "sub": "app/components/defer-demo-controls.tsx",
-              "raw": 690
+              "raw": 691
             },
             {
               "sub": "app/pages/magento/add-to-cart-button.tsx",
-              "raw": 584
+              "raw": 585
             },
             {
               "sub": "app/pages/magento/cart-badge.tsx",
-              "raw": 564
+              "raw": 565
             },
             {
               "sub": "app/components/partial-controls.tsx",
-              "raw": 476
+              "raw": 477
             },
             {
               "sub": "app/components/frames-demo-controls.tsx",
-              "raw": 454
+              "raw": 455
             },
             {
               "sub": "app/components/when-visible.tsx",
@@ -797,23 +915,27 @@
             },
             {
               "sub": "app/components/nav-link-active.tsx",
-              "raw": 437
+              "raw": 438
             },
             {
               "sub": "app/components/deferred-demo-ping.tsx",
+              "raw": 413
+            },
+            {
+              "sub": "app/components/embed-cell-counter.tsx",
               "raw": 412
             },
             {
               "sub": "app/components/streaming-demo-buttons.tsx",
-              "raw": 381
+              "raw": 382
             },
             {
               "sub": "app/components/checkout-step-nav.tsx",
-              "raw": 375
+              "raw": 376
             },
             {
               "sub": "app/pages/magento/refresh-price-button.tsx",
-              "raw": 341
+              "raw": 342
             },
             {
               "sub": "app/pages/magento/refresh-all-prices-button.tsx",
@@ -821,7 +943,7 @@
             },
             {
               "sub": "app/components/remote-refresh-button.tsx",
-              "raw": 281
+              "raw": 282
             },
             {
               "sub": "app/components/tag-demo-controls.tsx",
@@ -853,7 +975,7 @@
             },
             {
               "sub": "app/pages/magento/price-actions.ts",
-              "raw": 165
+              "raw": 166
             },
             {
               "sub": "app/pages/dup-placement-client.tsx",
@@ -885,57 +1007,57 @@
             },
             {
               "sub": "entry.browser.tsx",
-              "raw": 30
+              "raw": 29
             }
           ]
         },
         {
           "group": "rsc-runtime",
-          "raw": 23095,
-          "initialRaw": 23095,
+          "raw": 22656,
+          "initialRaw": 22656,
           "subs": [
             {
               "sub": "react-server-dom (vendored)",
-              "raw": 22030
+              "raw": 21611
             },
             {
               "sub": "@vitejs/plugin-rsc client runtime",
-              "raw": 1065
+              "raw": 1044
             }
           ]
         },
         {
           "group": "cms",
-          "raw": 12915,
+          "raw": 12941,
           "initialRaw": 0,
           "subs": [
             {
               "sub": "editor/components/icon.tsx",
-              "raw": 4421
+              "raw": 4429
             },
             {
               "sub": "editor/components/add-block.tsx",
-              "raw": 4171
+              "raw": 4179
             },
             {
               "sub": "editor/components/page-navigator.tsx",
-              "raw": 1936
+              "raw": 1940
             },
             {
               "sub": "editor/components/status-pill.tsx",
-              "raw": 1002
+              "raw": 1004
             },
             {
               "sub": "editor/components/editor-open-nav-link.tsx",
-              "raw": 359
+              "raw": 360
             },
             {
               "sub": "editor/components/editor-close-link.tsx",
-              "raw": 324
+              "raw": 325
             },
             {
               "sub": "editor/components/tree-link.tsx",
-              "raw": 301
+              "raw": 302
             },
             {
               "sub": "editor/components/session-toggle.tsx",
@@ -949,12 +1071,12 @@
         },
         {
           "group": "copies",
-          "raw": 11121,
+          "raw": 11137,
           "initialRaw": 0,
           "subs": [
             {
               "sub": "components/ai-elements/file-tree.tsx",
-              "raw": 2984
+              "raw": 2990
             },
             {
               "sub": "components/ui/streamdown-code.ts",
@@ -962,11 +1084,11 @@
             },
             {
               "sub": "components/ui/drawer.tsx",
-              "raw": 1766
+              "raw": 1769
             },
             {
               "sub": "components/ui/button.tsx",
-              "raw": 1412
+              "raw": 1415
             },
             {
               "sub": "components/ui/markdown-impl.tsx",
@@ -974,7 +1096,7 @@
             },
             {
               "sub": "components/ui/alert.tsx",
-              "raw": 608
+              "raw": 609
             },
             {
               "sub": "components/ui/input.tsx",
@@ -982,7 +1104,7 @@
             },
             {
               "sub": "components/ui/collapsible.tsx",
-              "raw": 284
+              "raw": 285
             },
             {
               "sub": "components/ui/markdown.tsx",
@@ -1000,24 +1122,24 @@
         },
         {
           "group": "other",
-          "raw": 6253,
-          "initialRaw": 4920,
+          "raw": 6631,
+          "initialRaw": 5263,
           "subs": [
             {
               "sub": "virtual:vite-rsc/client-references",
-              "raw": 3070
+              "raw": 3071
             },
             {
               "sub": "virtual:vite-rsc/client-references/group/facade:src/entry.rsc.tsx",
-              "raw": 1333
+              "raw": 1368
+            },
+            {
+              "sub": "vite/preload-helper.js",
+              "raw": 1256
             },
             {
               "sub": "rolldown/runtime.js",
               "raw": 936
-            },
-            {
-              "sub": "vite/preload-helper.js",
-              "raw": 914
             }
           ]
         }
@@ -1025,107 +1147,131 @@
       "frameworkModules": [
         {
           "sub": "lib/channel-client.ts",
-          "raw": 10807
+          "raw": 12840
         },
         {
           "sub": "lib/frame-client.tsx",
-          "raw": 7467
-        },
-        {
-          "sub": "entry/browser.tsx",
-          "raw": 6942
-        },
-        {
-          "sub": "lib/partial-cache.ts",
-          "raw": 6210
+          "raw": 7371
         },
         {
           "sub": "lib/fp-trailer-split.ts",
-          "raw": 5871
+          "raw": 7002
         },
         {
-          "sub": "lib/partial-client-state.ts",
-          "raw": 4060
+          "sub": "entry/live-boot.tsx",
+          "raw": 6767
+        },
+        {
+          "sub": "lib/partial-cache.ts",
+          "raw": 6092
         },
         {
           "sub": "lib/use-navigation.tsx",
-          "raw": 3465
+          "raw": 4649
+        },
+        {
+          "sub": "lib/partial-client-state.ts",
+          "raw": 4407
         },
         {
           "sub": "lib/channel-transport.ts",
-          "raw": 3212
+          "raw": 3831
+        },
+        {
+          "sub": "lib/frame-context.tsx",
+          "raw": 2700
         },
         {
           "sub": "lib/visibility.tsx",
-          "raw": 2587
-        },
-        {
-          "sub": "lib/embed-interactive.tsx",
-          "raw": 1892
+          "raw": 2538
         },
         {
           "sub": "lib/cell-client.tsx",
-          "raw": 1848
+          "raw": 1934
+        },
+        {
+          "sub": "lib/embed-interactive.tsx",
+          "raw": 1896
         },
         {
           "sub": "lib/partial-error-boundary.tsx",
-          "raw": 1302
+          "raw": 1309
         },
         {
           "sub": "runtime/error-boundary.tsx",
-          "raw": 1212
+          "raw": 1189
         },
         {
           "sub": "lib/partial-client.tsx",
-          "raw": 1123
-        },
-        {
-          "sub": "lib/refetch.ts",
-          "raw": 1035
+          "raw": 1102
         },
         {
           "sub": "lib/cull-park.ts",
-          "raw": 977
+          "raw": 959
+        },
+        {
+          "sub": "lib/refetch.ts",
+          "raw": 928
         },
         {
           "sub": "lib/partial-template.tsx",
-          "raw": 914
+          "raw": 896
         },
         {
           "sub": "lib/cull-pair.tsx",
-          "raw": 876
+          "raw": 877
         },
         {
           "sub": "lib/live-page-heartbeat.tsx",
-          "raw": 867
+          "raw": 871
+        },
+        {
+          "sub": "entry/browser.tsx",
+          "raw": 851
         },
         {
           "sub": "lib/fp-trailer-marker.ts",
-          "raw": 646
+          "raw": 771
+        },
+        {
+          "sub": "lib/channel-registry.ts",
+          "raw": 582
+        },
+        {
+          "sub": "lib/refetch-dispatch.ts",
+          "raw": 545
         },
         {
           "sub": "runtime/navigation-error.ts",
-          "raw": 464
+          "raw": 504
         },
         {
           "sub": "lib/segment-trailers-client.ts",
-          "raw": 244
+          "raw": 261
         },
         {
           "sub": "runtime/request.tsx",
-          "raw": 230
+          "raw": 246
         },
         {
           "sub": "runtime/redirect-client.tsx",
-          "raw": 199
+          "raw": 200
         },
         {
           "sub": "runtime/cell-actions.ts",
+          "raw": 167
+        },
+        {
+          "sub": "lib/silent-info.ts",
           "raw": 166
         },
         {
+          "sub": "lib/telemetry.ts",
+          "raw": 163
+        },
+        {
           "sub": "lib/channel-protocol.ts",
-          "raw": 114
+          "raw": 136
         },
         {
           "sub": "lib/page-embed.ts",
@@ -1133,15 +1279,19 @@
         },
         {
           "sub": "lib/page-interactive.ts",
-          "raw": 69
+          "raw": 74
         },
         {
           "sub": "runtime/navigation-api.ts",
-          "raw": 54
+          "raw": 59
         },
         {
           "sub": "runtime/cms-constants.ts",
           "raw": 47
+        },
+        {
+          "sub": "client.ts",
+          "raw": 0
         }
       ]
     }

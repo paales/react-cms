@@ -63,7 +63,11 @@ describe("the warm producer", () => {
     expect(_channelWarm("/b")).toBe(true)
     raf()
     await settle()
-    expect(sentFrames()).toEqual([{ kind: "warm", url: "/b" }])
+    // The establishment ack co-rides the connection's first envelope.
+    expect(sentFrames()).toEqual([
+      { kind: "ack", delivered: 0 },
+      { kind: "warm", url: "/b" },
+    ])
   })
 
   it("drops with no connection — advisory, never an attach trigger", async () => {
@@ -72,7 +76,9 @@ describe("the warm producer", () => {
     scheduleChannelFlush()
     raf()
     await settle()
-    expect(sentFrames()).toEqual([])
+    // Only the establishment ack ships — no warm frame survives the
+    // no-connection drop.
+    expect(sentFrames().filter((f) => f.kind === "warm")).toEqual([])
   })
 
   it("a failed envelope drops the statement — no re-queue", async () => {

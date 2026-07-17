@@ -53,7 +53,13 @@ import {
 } from "../channel-client.ts"
 import type { ChannelEnvelope } from "../channel-protocol.ts"
 import { _getLiveConnectionId } from "../partial-client-state.ts"
-import { enqueueRefetch } from "../refetch.ts"
+import { enqueueRefetch } from "../refetch-dispatch.ts"
+// `enqueueRefetch` accumulates eagerly and lazy-imports the channel
+// FLUSH (`refetch.ts`) once per batch — in the running app the live
+// layer has that module loaded by dispatch time. Pre-load it so the
+// per-batch `import()` resolves from cache within the same microtask
+// these synchronous assertions flush.
+import "../refetch.ts"
 
 let rafQueue: FrameRequestCallback[] = []
 function raf(): void {
@@ -213,12 +219,17 @@ describe("reliable class + the attach subsume", () => {
     expect(sentEnvelopes()[1]).toMatchObject({ connection: "c2", seq: 1 })
     expect(sentEnvelopes()[1].frames).toEqual([{ kind: "url", url: "/b", intent: "push" }])
 
-    // The applied marker covers it — nothing left to retransmit.
+    // The applied marker covers it — nothing left to retransmit; c3's
+    // envelope carries only its establishment ack.
     _channelWireEntry("applied", enc("1"))
     _channelEstablished("c3")
     raf()
     await settle()
-    expect(sentEnvelopes()).toHaveLength(2)
+    expect(sentEnvelopes()).toHaveLength(3)
+    expect(sentEnvelopes()[2]).toMatchObject({
+      connection: "c3",
+      frames: [{ kind: "ack", delivered: 0 }],
+    })
   })
 
   it("the attach subsumes: the pending statement folds into the intent, records re-anchor at 0", async () => {
@@ -241,11 +252,13 @@ describe("reliable class + the attach subsume", () => {
     expect(finished.done()).toBe(true)
 
     // Establishment after the attach: no retransmit — the statement
-    // already rode the attach's own body.
+    // already rode the attach's own body. Only the establishment ack
+    // opens the fresh connection.
     _channelEstablished("c2")
     raf()
     await settle()
-    expect(sentEnvelopes()).toHaveLength(0)
+    expect(sentEnvelopes()).toHaveLength(1)
+    expect(sentEnvelopes()[0].frames).toEqual([{ kind: "ack", delivered: 0 }])
   })
 
   it("a statement latched pre-establishment flushes on the fresh connection", async () => {

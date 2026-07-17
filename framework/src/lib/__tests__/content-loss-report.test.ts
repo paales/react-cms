@@ -106,6 +106,10 @@ afterEach(() => {
 describe("loss reports ride the ack's evicted statement", () => {
   it("a pool-cap eviction reports every destroyed id — a PASSENGER, with no watermark advance", async () => {
     _channelEstablished("c1")
+    // Drain the establishment ack — the connection's opening
+    // statement, not loss traffic.
+    await flushWindow()
+    expect(sentAcks()).toHaveLength(1)
     const cache = getCurrentPagePartials()
     for (let i = 0; i < CLIENT_POOL_CAP + 3; i++) {
       cacheStore(cache, `pool-${i}`, "mk", `SUBTREE-${i}`)
@@ -120,15 +124,15 @@ describe("loss reports ride the ack's evicted statement", () => {
     scheduleChannelFlush()
     await flushWindow()
     const acks = sentAcks()
-    expect(acks).toHaveLength(1)
+    expect(acks).toHaveLength(2)
     // Nothing was ever delivery-committed on this connection — the
     // eviction alone justified the frame's contribution.
-    expect(acks[0].delivered).toBe(0)
-    expect(acks[0].evicted).toEqual(expect.arrayContaining(["pool-0", "pool-1", "pool-2"]))
+    expect(acks[1].delivered).toBe(0)
+    expect(acks[1].evicted).toEqual(expect.arrayContaining(["pool-0", "pool-1", "pool-2"]))
     // The report cleared at collect — a later flush repeats nothing.
     scheduleChannelFlush()
     await flushWindow()
-    expect(sentAcks()).toHaveLength(1)
+    expect(sentAcks()).toHaveLength(2)
   })
 
   it("a cull-park eviction reports; an id that held nothing does not", async () => {
@@ -168,7 +172,11 @@ describe("loss reports ride the ack's evicted statement", () => {
     _channelEstablished("c1")
     scheduleChannelFlush()
     await flushWindow()
-    expect(sentAcks()).toHaveLength(0)
+    // Only the establishment ack ships — the retired report never
+    // rides it as an `evicted` statement.
+    const acks = sentAcks()
+    expect(acks).toHaveLength(1)
+    expect(acks[0]).toEqual({ kind: "ack", delivered: 0 })
   })
 })
 

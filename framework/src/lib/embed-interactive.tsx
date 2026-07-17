@@ -51,7 +51,7 @@
 
 import { useContext, useEffect, useEffectEvent, useRef, type ReactNode, type Ref } from "react"
 import { PartialIdContext } from "./use-navigation.tsx"
-import { enqueueRefetch } from "./refetch.ts"
+import { enqueueRefetch } from "./refetch-dispatch.ts"
 import {
   CAPABILITY_HEADER_NAME,
   REMOTE_ACTION_INVOKE_PATH,

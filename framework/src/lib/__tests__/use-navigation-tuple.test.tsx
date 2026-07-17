@@ -12,6 +12,16 @@ import {
 } from "../channel-client.ts"
 import { PartialIdContext, useNavigation } from "../partial-client.tsx"
 import type { NavigationProgress } from "../../runtime/navigation-api.ts"
+// The navigate/reload executors live in the late-loaded `frame-client`;
+// the eager handle dynamically imports them on fire. In the running app
+// the live layer has loaded that module by the time a user fires, so
+// the import resolves from cache within the fire's microtask chain.
+// Pre-load it here so these synchronous-milestone assertions model that
+// steady state rather than a first-ever cold module load. `refetch.ts`
+// (the channel flush a streaming reload lazy-imports per batch) is
+// pre-loaded for the same reason.
+import "../frame-client.tsx"
+import "../refetch.ts"
 
 /**
  * Hook contract under test:

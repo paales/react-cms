@@ -105,7 +105,13 @@ describe("ChannelClient", () => {
     const [envelope] = sentEnvelopes()
     expect(envelope.connection).toBe("conn-1")
     expect(envelope.seq).toBe(1)
-    expect(envelope.frames).toEqual([visibleFrame(["a"]), visibleFrame(["b"])])
+    // The ESTABLISHMENT ack — the connection's opening statement —
+    // rides the same coalesced envelope as the producers' frames.
+    expect(envelope.frames).toEqual([
+      { kind: "ack", delivered: 0 },
+      visibleFrame(["a"]),
+      visibleFrame(["b"]),
+    ])
     // Fire-and-forget: the envelope survives a page unload.
     expect(fetchCalls[0].init.keepalive).toBe(true)
   })
@@ -259,6 +265,8 @@ describe("ChannelClient", () => {
     const [env] = sentEnvelopes()
     expect(env.connection).toBe("conn-cookie")
     expect(env.frames).toEqual([
+      // The establishment ack co-rides the connection's first envelope.
+      { kind: "ack", delivered: 0 },
       { kind: "cookie", name: "theme", value: "dark" },
       { kind: "cookie", name: "cart_id", value: null },
     ])

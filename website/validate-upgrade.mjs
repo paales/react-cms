@@ -169,6 +169,14 @@ try {
     15000,
     "origin content",
   )
+  // The live layer loads from a post-commit effect (hydrate-first boot),
+  // then fires the fetch attach — so SSR origin content is already on
+  // screen a beat before the `POST /__parton/live` lands. Wait for the
+  // attach explicitly rather than sample it at content-paint; the
+  // ordering checks below still prove it rode fetch, before any WS.
+  try {
+    await until(async () => postsLive.length > 0, 5000, "boot live attach")
+  } catch {}
   const firstLiveAt = postsLive[0]?.t ?? null
   check(
     firstLiveAt !== null,

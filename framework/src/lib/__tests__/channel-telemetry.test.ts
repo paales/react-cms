@@ -169,11 +169,16 @@ describe("the lossy telemetry producer", () => {
 
   it("reportTelemetry schedules nothing — no envelope fires at telemetry's own cadence", async () => {
     _channelEstablished("conn-t")
+    // Drain the establishment ack's driven flush — the connection's
+    // opening statement, not telemetry traffic.
+    raf()
+    await settle()
+    expect(fetchCalls).toHaveLength(1)
     reportTelemetry(telemetryInput(100))
     reportTelemetry(telemetryInput(200))
     raf()
     await settle()
-    expect(fetchCalls).toHaveLength(0)
+    expect(fetchCalls).toHaveLength(1)
   })
 
   it("a failed envelope drops the frame — no re-queue, no retransmit", async () => {

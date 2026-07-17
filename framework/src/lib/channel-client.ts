@@ -40,10 +40,14 @@
  *     an internal producer. The ack is a PASSENGER, never a driver:
  *     a watermark advance marks the producer dirty and any envelope
  *     other frames justify carries the current value for free —
- *     except the connection's FIRST committed delivery (the prompt
- *     duplex proof the degrade machinery times) and the unacked count
- *     crossing `ACK_FLUSH_THRESHOLD`, which request the same
- *     rAF-coalesced flush every statement rides (no timers).
+ *     except the ESTABLISHMENT ack (every connection opens with one
+ *     cumulative ack of the watermark as applied at establishment —
+ *     the attach-confirm + duplex proof whose delivery outcome
+ *     settles the degrade state at boot), the connection's FIRST
+ *     committed delivery (the prompt duplex proof the degrade
+ *     machinery times) and the unacked count crossing
+ *     `ACK_FLUSH_THRESHOLD`, which request the same rAF-coalesced
+ *     flush every statement rides (no timers).
  *   - **The reliable class + retransmit.** Frames from producers
  *     declaring `reliable: true` are buffered per envelope (with the
  *     envelope's seq) until the downstream `applied` marker covers
@@ -256,6 +260,22 @@ const ACK_FLUSH_THRESHOLD = UNACKED_DELIVERY_WINDOW / 2
  *  failure means the connection never acked once — the degrade
  *  signal. */
 let ackDeliveredOnConnection = false
+/** The ESTABLISHMENT ack is owed — armed by `_channelEstablished`, so
+ *  the connection's first flush contributes one cumulative ack of the
+ *  delivery watermark as applied at establishment (0 on a catch-up
+ *  boot: nothing delivered on this connection yet — a true statement).
+ *  The connection's opening upstream statement: an envelope can address
+ *  the connection only because the client heard its `conn` handshake,
+ *  so the arrival confirms the attach round-trip and proves the duplex
+ *  (`firstAckReceived` server-side — the never-acked deadline stands
+ *  down at establishment instead of timing the first delivery), and
+ *  the envelope's DELIVERY OUTCOME settles the client's degrade state
+ *  at establishment: a blocked `/__parton/channel` fails this first
+ *  ack-carrying envelope — the first-ack failure signature — rather
+ *  than staying undiscovered until the first real statement. Consumed
+ *  at collect; re-armed per establishment (each connection settles its
+ *  own state, across reattaches and the transport handover alike). */
+let establishmentAckDue = false
 /** As-of-dropped delivery seqs awaiting report to the server: the
  *  client received these deliveries but did NOT hold them — the content
  *  rendered as-of a navigation point it had already left, so its as-of
@@ -1622,11 +1642,13 @@ const warmProducer: ChannelProducer = {
 
 /** The transport's own ack producer — cumulative committed delivery
  *  seq, contributed whenever the watermark advanced past the last
- *  collected value. A passenger on whatever envelope flushes (the two
- *  advances that drive one live at `commitDelivery`). Loss-tolerant: a
- *  lost ack is subsumed by the next one; a failed FIRST ack is the
- *  degrade signal (handled in `flush`, which sees the whole envelope's
- *  fate). */
+ *  collected value, and ONCE per establishment regardless (the
+ *  establishment ack — `establishmentAckDue`). A passenger on whatever
+ *  envelope flushes (the two advances that drive one live at
+ *  `commitDelivery`; the establishment ack's flush is driven by
+ *  `_channelEstablished`). Loss-tolerant: a lost ack is subsumed by
+ *  the next one; a failed FIRST ack is the degrade signal (handled in
+ *  `flush`, which sees the whole envelope's fate). */
 const ackProducer: ChannelProducer = {
   collect(connection: string | null): ChannelFrame | null {
     if (connection === null) return null
@@ -1644,9 +1666,15 @@ const ackProducer: ChannelProducer = {
     // no new commits still justifies one (the ghost credit it revokes
     // would otherwise confirm on the next covering render).
     const evicted = [...evictedContentIds]
-    if (deliveredWatermark <= lastAckCollected && dropped.length === 0 && evicted.length === 0) {
+    if (
+      !establishmentAckDue &&
+      deliveredWatermark <= lastAckCollected &&
+      dropped.length === 0 &&
+      evicted.length === 0
+    ) {
       return null
     }
+    establishmentAckDue = false
     lastAckCollected = deliveredWatermark
     for (const seq of dropped) asOfDroppedSeqs.delete(seq)
     evictedContentIds.clear()
@@ -1695,6 +1723,11 @@ export function _channelEstablished(connection: string): void {
   evictedContentIds.clear()
   navStreamingByPoint.clear()
   ackDeliveredOnConnection = false
+  // The establishment ack — the connection's opening upstream
+  // statement (see `establishmentAckDue`). Collected by the flush
+  // driven below; the envelope's fate settles the degrade state at
+  // establishment on every connection, catch-up boots included.
+  establishmentAckDue = true
   establishedSinceClose = true
   // A successful attach clears the establishment-failure streak and any
   // pending backoff timer; document-nav mode lifts here UNLESS a
@@ -1720,19 +1753,12 @@ export function _channelEstablished(connection: string): void {
     document.documentElement.setAttribute("data-parton-live", "")
   }
   for (const cb of [..._channelEstablishListeners()]) cb(connection)
-  // Statements that latched while no connection existed (and weren't
+  // Every establishment flushes: the establishment ack is owed, and
+  // statements that latched while no connection existed (and weren't
   // folded into this attach — they landed after its subsume, or the
-  // attach was a handover adoption, which folds nothing) flush on the
-  // fresh connection alongside any retransmit survivors.
-  if (
-    retransmitPending ||
-    pendingNavFrame !== null ||
-    pendingFrameFrames.size > 0 ||
-    pendingCancelScopes.size > 0 ||
-    pendingCookies.size > 0
-  ) {
-    scheduleChannelFlush()
-  }
+  // attach was a handover adoption, which folds nothing) ride the same
+  // envelope, after any retransmit survivors replay.
+  scheduleChannelFlush()
 }
 
 /** The live connection settled (keepalive elapsed, abort, error) —
@@ -2016,6 +2042,7 @@ registerChannelProducer(cookieProducer)
 _bindChannelUpstream({
   scheduleFlush: scheduleChannelFlush,
   reportContentEvicted: _reportContentEvicted,
+  awaitActionConsequences: _awaitActionConsequences,
 })
 
 /** Test-only: reset the transport's module state (seq, in-flight
@@ -2041,6 +2068,7 @@ export function _resetChannelClient(): void {
   evictedContentIds.clear()
   navStreamingByPoint.clear()
   ackDeliveredOnConnection = false
+  establishmentAckDue = false
   retransmitBuffer = []
   appliedWatermark = 0
   retransmitPending = false

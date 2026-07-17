@@ -90,6 +90,18 @@ for (let i = 0; ; i++) {
 
 browser = await chromium.launch()
 const page = await browser.newPage()
+// Vite's OWN HMR socket must finish its handshake before we edit a
+// source file: an `rsc:update` Vite emits before the client socket is
+// connected is dropped (Vite does not replay backlog on connect), and
+// the browser stays on the old bytes. This is independent of the
+// framework's live channel — it's the dev server's HMR transport. Fast
+// hydration (a lean initial chunk) can reach "interactive" before that
+// handshake lands, so gate the first edit on the connection, not on
+// paint. `[vite] connected` is the client runtime's own ready log.
+let viteHmrConnected = false
+page.on("console", (m) => {
+  if (m.text().includes("[vite] connected")) viteHmrConnected = true
+})
 await page.goto(URL)
 
 let failures = 0
@@ -118,6 +130,13 @@ const expectBoth = async (value, label, timeout = 10_000) => {
 }
 
 await expectBoth("HMR_MARKER_A", "initial load")
+
+// Gate the first edit on Vite's HMR socket handshake (see above). Bounded
+// wait — a `[vite] connected` that never lands falls through after 5s and
+// the phase fails honestly rather than hanging.
+for (let i = 0; i < 100 && !viteHmrConnected; i++) {
+  await new Promise((r) => setTimeout(r, 50))
+}
 
 // 1. Fetch-era edit (~1s after load, upgrade in flight).
 setMarker("HMR_MARKER_B")

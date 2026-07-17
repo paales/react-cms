@@ -1,97 +1,34 @@
 /**
- * Targeted-refetch orchestration for the client — framework-internal
- * id-based forcing (the defer activators' `useActivate` fire, the
- * interactive-embed bridge's post-write echo). Authors never target
- * partons: their refresh signals are cells and `tag()`.
+ * Targeted-refetch flush — the late-loaded CHANNEL half.
  *
- * `enqueueRefetch` is the single dispatch point every id-forced
- * refetch goes through — microtask-batched so multiple fires in one
- * tick coalesce into one channel statement. A batch states the page
- * URL with the effective ids as its one-shot `?__force=` overlay
- * (intent "silent"); the response arrives on the held stream as a
- * whole-tree payload segment with the targets laned explicit after
- * the reopen. Pre-establishment batches latch and ride the attach
- * they trigger (`_channelNavigate`'s attach-with-intent). A DEGRADED
- * page has no freshness transport: fires resolve as no-ops — the page
- * is browser-native, and document loads are its renders.
+ * `enqueueRefetch` (eager, `refetch-dispatch.ts`) accumulates a
+ * same-tick batch and, once per batch, dynamically imports this module
+ * and calls `flushRefetchBatch`. A batch states the page URL with the
+ * effective ids as its one-shot `?__force=` overlay (intent "silent");
+ * the response arrives on the held stream as a whole-tree payload
+ * segment with the targets laned explicit after the reopen.
+ * Pre-establishment batches latch and ride the attach they trigger
+ * (`_channelNavigate`'s attach-with-intent). A DEGRADED page has no
+ * freshness transport: fires resolve as no-ops — the page is
+ * browser-native, and document loads are its renders.
  *
- * Also home to the framework-internal "silent navigation" info brand
- * (the signal a `nav.navigate()` initiator sends so the page-level
- * intercept stands down).
+ * This half touches the channel transport (`_channelNavigate`), so it
+ * stays out of the eager callers' static closure — reached only through
+ * the dispatch seam's per-batch dynamic import.
+ *
+ * The framework-internal "silent navigation" info brand lives in the
+ * eager `silent-info.ts`; the caller-facing `enqueueRefetch` /
+ * `RefetchMilestones` live in `refetch-dispatch.ts`.
  */
 
 import { _channelNavigate } from "./channel-client.ts"
+import { _bindRefetchFlush, type RefetchEntry } from "./refetch-dispatch.ts"
 
-// ─── Framework-internal navigation info ───────────────────────────
-//
-// The Navigation API's `info` option is a one-shot payload delivered
-// on the resulting `navigate` event. Unlike `state` it is not
-// persisted on the history entry, so it's a natural channel for
-// signalling intent from initiator to listener.
-//
-// Two framework-internal paths still go through `nav.navigate()` and
-// need the page-level intercept to stand down:
-//   - window-scoped silent nav (URL-only update, or caller dispatches
-//     its own targeted refetch via `enqueueRefetch`)
-//   - frame nav with explicit `history: "push" | "replace"` (caller
-//     dispatches `_dispatchFrameRefetch` itself)
-//
-// Frame navs with the default `history: "auto"` do NOT stamp silent
-// info — they patch state via `updateCurrentEntry`, which fires
-// `currententrychange` but not `navigate`, so there's nothing for the
-// listener to intercept.
-//
-// Any non-framework-branded `info` (user-provided via
-// `navigate(url, { info })`) passes straight through as a normal
-// page-level navigation.
+export type { RefetchMilestones } from "./refetch-dispatch.ts"
 
-interface FrameworkSilentInfo {
-  __framework: "silent-navigate"
-  mode: "window" | "frame"
-  name?: string
-}
-
-export function makeSilentInfo(mode: "window" | "frame", name?: string): FrameworkSilentInfo {
-  return { __framework: "silent-navigate", mode, name }
-}
-
-export function isFrameworkSilentInfo(info: unknown): info is FrameworkSilentInfo {
-  return (
-    info != null &&
-    typeof info === "object" &&
-    (info as { __framework?: unknown }).__framework === "silent-navigate"
-  )
-}
-
-// ─── Microtask-batched targeted-refetch dispatcher ────────────────
-//
-// Multiple fires in the same tick coalesce into one channel
-// statement: several activators triggering in the same frame produce
-// one statement with `?__force=a,b,c`. Each batched entry carries its
-// own `streaming` / `finished` deferreds so the batched statement can
-// fan out its two milestones (covering segment committed, covering
-// segment settled) back to every caller separately.
-
-/** Two-milestone return mirroring the navigation handles. */
-export interface RefetchMilestones {
-  streaming: Promise<void>
-  finished: Promise<void>
-}
-
-interface RefetchBatchEntry {
-  /** Effective parton ids — become the statement's `?__force=`
-   *  overlay. The server resolves each against the route's snapshots
-   *  and lanes it EXPLICIT. */
-  ids: string[]
-  /** Render mode for the commit — `false` (default) wraps in
-   *  `startTransition`; `true` opts into progressive streaming with
-   *  Suspense fallbacks. Mirrors the `streaming` option on
-   *  `FrameworkNavigateOptions` / `FrameworkReloadOptions`. */
-  streaming: boolean
-  /** Abort signal for this entry — a superseding fire sets this to
-   *  a fresh `AbortController`'s signal; a superseded fire's record
-   *  rejects with AbortError. */
-  signal?: AbortSignal
+/** A batch entry with its milestone resolvers attached — the shape the
+ *  dispatch seam accumulates and hands to `flushRefetchBatch`. */
+export interface RefetchBatchEntry extends RefetchEntry {
   /** Resolver for this entry's `streaming` milestone — the covering
    *  segment's commit. */
   resolveStreaming: () => void
@@ -102,9 +39,6 @@ interface RefetchBatchEntry {
   rejectFinished: (err: unknown) => void
 }
 
-let _batchRef: RefetchBatchEntry[] = []
-let _batchScheduled = false
-
 // Ids of refetch statements whose covering segment has not settled.
 // The transport keeps ONE pending url frame (newest statement wins
 // pre-flush), so a batch flushed while an earlier batch is still
@@ -114,7 +48,11 @@ let _batchScheduled = false
 // costs one extra explicit lane render; dropping one loses the refetch.
 const _uncoveredForces = new Map<object, readonly string[]>()
 
-function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
+/**
+ * Flush one accumulated batch as a single `?__force=` url statement.
+ * Called (once per batch) from the eager dispatch seam's microtask.
+ */
+export function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   const idSet = new Set<string>()
   let streamingMode = false
   for (const entry of batch) {
@@ -191,53 +129,7 @@ function flushRefetchBatch(batch: RefetchBatchEntry[]): void {
   )
 }
 
-/**
- * Enqueue a targeted refetch. Multiple calls in the same microtask
- * coalesce into one statement. Returns synchronously with
- * `{streaming, finished}` promises — the caller can attach handlers
- * on either milestone independently. On supersede, the shared
- * `AbortSignal` propagates an `AbortError` to both milestones.
- */
-export function enqueueRefetch(
-  entry: Omit<
-    RefetchBatchEntry,
-    "resolveStreaming" | "rejectStreaming" | "resolveFinished" | "rejectFinished"
-  >,
-): RefetchMilestones {
-  let resolveStreaming!: () => void
-  let rejectStreaming!: (err: unknown) => void
-  let resolveFinished!: () => void
-  let rejectFinished!: (err: unknown) => void
-  const streaming = new Promise<void>((res, rej) => {
-    resolveStreaming = res
-    rejectStreaming = rej
-  })
-  const finished = new Promise<void>((res, rej) => {
-    resolveFinished = res
-    rejectFinished = rej
-  })
-  // Pre-attach no-op handlers so a rejection that lands before the
-  // downstream consumer's `.then(_, handler)` registers doesn't
-  // surface as unhandledrejection. The pre-attach does NOT consume
-  // the rejection — subsequent handlers still see the error.
-  streaming.catch(() => {})
-  finished.catch(() => {})
-
-  _batchRef.push({
-    ...entry,
-    resolveStreaming,
-    rejectStreaming,
-    resolveFinished,
-    rejectFinished,
-  })
-  if (!_batchScheduled) {
-    _batchScheduled = true
-    queueMicrotask(() => {
-      const batch = _batchRef
-      _batchRef = []
-      _batchScheduled = false
-      flushRefetchBatch(batch)
-    })
-  }
-  return { streaming, finished }
-}
+// Bind the flush into the eager dispatch seam the moment this module
+// loads — from here on `enqueueRefetch` dispatches synchronously, and
+// any batch buffered before the live layer arrived replays in order.
+_bindRefetchFlush(flushRefetchBatch)

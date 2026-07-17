@@ -280,18 +280,27 @@ Downstream delivery stops being assumed the moment a session opens:
   driver: a watermark advance marks the producer dirty and nothing
   more — any envelope other statements justify (visibility flips,
   detach, future kinds) collects the current watermark for free.
-  Exactly two advances drive a flush of their own, on the same
-  rAF-coalesced path every statement rides (no timers): the
-  connection's FIRST committed delivery — the prompt duplex proof
-  both sides' degrade machinery times — and the unacked count
+  Exactly three moments drive a flush of their own, on the same
+  rAF-coalesced path every statement rides (no timers): EVERY
+  ESTABLISHMENT — the establishment ack, one cumulative ack of the
+  watermark as applied on the fresh connection (`delivered: 0` on a
+  catch-up boot that has committed nothing yet), which is both the
+  attach-confirm and the prompt duplex proof whose delivery OUTCOME
+  settles degrade state at boot (see §The never-acked degrade); the
+  connection's FIRST committed delivery; and the unacked count
   crossing `ACK_FLUSH_THRESHOLD` (half the server's
   `UNACKED_DELIVERY_WINDOW`, one shared protocol constant), so a
   client under sustained lane traffic acks once per ~32 commits and
-  the window always keeps 2× headroom. The third moment an ack
-  could seem due — attach — owes nothing: delivery seqs are
-  per-connection, so a fresh connection opens with zero ack debt
-  (the attach manifest is the durable evidence; the `applied` field
-  covers the separate upstream timeline). The cadence is a cost
+  the window always keeps 2× headroom. The establishment ack advances
+  no watermark on a catch-up boot yet still fires: it is the one
+  statement a lean boot always has to make, so the duplex is proven
+  (or found blocked) at establishment rather than waiting on the first
+  real upstream need. The server applies it unconditionally
+  (`firstAckReceived` before the watermark-advance gate — a
+  `delivered: 0` ack stands the never-acked deadline down without
+  moving the marker); delivery seqs remain per-connection, so the
+  attach manifest stays the durable evidence and the `applied` field
+  still covers the separate upstream timeline. The cadence is a cost
   rule: every envelope carries the browser's full Cookie header
   (§Telemetry's numbers — ~3.5–4.5 KB, >90 % cookie under a
   commerce jar), and no consumer of the ack needs per-commit
@@ -478,7 +487,12 @@ side is BOUNDED and RECOVERABLE:
   accrue a consecutive-failure counter, reset on their own success:
   a FIRST-ACK failure (the envelope carrying the connection's first
   ack fails to deliver — a blocked `/__parton/channel`; reset on a
-  delivered ack) and an ESTABLISHMENT failure that STRANDED a real
+  delivered ack). Because the establishment ack fires unconditionally
+  (§The `ack` frame), this signature now surfaces AT ESTABLISHMENT: a
+  catch-up boot that commits nothing still sends its establishment
+  ack, so a blocked upstream is discovered at boot rather than staying
+  dark until the first real upstream statement. Alongside it, an
+  ESTABLISHMENT failure that STRANDED a real
   interaction (an attach settled without ever establishing while a
   nav/refetch record rode it — a blocked `/__parton/live`; reset on
   establishment). An idle-heartbeat non-establishment is a benign

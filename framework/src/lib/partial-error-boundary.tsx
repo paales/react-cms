@@ -1,7 +1,7 @@
 "use client"
 
 import React, { createContext, useContext } from "react"
-import { _windowNav } from "./frame-client.tsx"
+import { getNavigation } from "../runtime/navigation-api.ts"
 import { PartialIdContext, registerClientPartial } from "./partial-client.tsx"
 
 // ─── Stale-serve marker ────────────────────────────────────────────────
@@ -144,7 +144,11 @@ export class PartialErrorBoundary extends React.Component<Props, State> {
   retry = () => {
     React.startTransition(() => {
       this.setState({ error: null })
-      void _windowNav().reload()
+      // A hard recovery: reload the document (Navigation API `reload` —
+      // navigationType "reload", which the page listener passes through
+      // to a real cross-document load). No channel dependency, so the
+      // error card stays in the initial chunk.
+      getNavigation()?.reload()
     })
   }
 
@@ -213,7 +217,7 @@ export function PartialErrorCard({
   message?: string
   onRetry?: () => void
 }) {
-  const retry = onRetry ?? (() => React.startTransition(() => void _windowNav().reload()))
+  const retry = onRetry ?? (() => React.startTransition(() => void getNavigation()?.reload()))
   return (
     <div
       className="partial-error"

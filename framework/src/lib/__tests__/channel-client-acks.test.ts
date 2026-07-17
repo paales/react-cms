@@ -9,10 +9,14 @@
  *   2. the ack is a PASSENGER, never a driver: past the connection's
  *      delivered first ack, a watermark advance flushes NOTHING of its
  *      own — the current watermark rides any envelope other statements
- *      justify. Exactly two advances drive a flush: the connection's
- *      FIRST committed delivery (the prompt duplex proof), and the
- *      unacked count crossing ACK_FLUSH_THRESHOLD — half the server's
- *      backpressure window, so steady state keeps 2× headroom;
+ *      justify. Exactly three moments drive a flush: EVERY
+ *      establishment (the ESTABLISHMENT ack — one cumulative ack of
+ *      the watermark as applied at establishment, the attach-confirm +
+ *      duplex proof whose delivery outcome settles the degrade state
+ *      at boot), the connection's FIRST committed delivery (the prompt
+ *      duplex proof), and the unacked count crossing
+ *      ACK_FLUSH_THRESHOLD — half the server's backpressure window, so
+ *      steady state keeps 2× headroom;
  *   3. a DROPPED lane (stale-page guard on a dying stream, torn
  *      decode) consumes its queued seq without recording it, so the
  *      watermark stalls at the drop and later commits stay correctly
@@ -98,6 +102,20 @@ async function flushOnce(): Promise<void> {
   await settle()
 }
 
+/** Establish and drain the ESTABLISHMENT ack — the connection's opening
+ *  cumulative ack (delivered = the watermark as applied at
+ *  establishment, 0 on a fresh connection). Claims below that pin the
+ *  steady-state cadence start from this settled point. */
+async function establishDrained(conn: string): Promise<void> {
+  _channelEstablished(conn)
+  raf()
+  await settle()
+  expect(sentEnvelopes().at(-1)).toMatchObject({
+    connection: conn,
+    frames: [{ kind: "ack", delivered: 0 }],
+  })
+}
+
 beforeEach(() => {
   _resetChannelClient()
   rafQueue = []
@@ -122,28 +140,28 @@ afterEach(() => {
 
 describe("delivery tracking + the ack producer", () => {
   it("acks the contiguous commit watermark; out-of-order commits wait for the gap", async () => {
-    _channelEstablished("c1")
+    await establishDrained("c1")
     laneSeqEntry("p1", 1)
     laneSeqEntry("p2", 2)
 
     // p2's lane commits first — seq 2 is past the gap at 1: no ack.
     _laneDeliveryCommitted("p2")
     await flushOnce()
-    expect(fetchCalls).toHaveLength(0)
+    expect(fetchCalls).toHaveLength(1)
 
     // p1 commits — the frontier reaches 2 through the filled gap; the
     // connection's FIRST committed delivery drives ONE flush, and the
     // cumulative ack rides it.
     _laneDeliveryCommitted("p1")
     await flushOnce()
-    expect(fetchCalls).toHaveLength(1)
-    const [envelope] = sentEnvelopes()
+    expect(fetchCalls).toHaveLength(2)
+    const envelope = sentEnvelopes()[1]
     expect(envelope.connection).toBe("c1")
     expect(envelope.frames).toEqual([{ kind: "ack", delivered: 2 }])
 
     // Nothing new committed — the producer stays silent.
     await flushOnce()
-    expect(fetchCalls).toHaveLength(1)
+    expect(fetchCalls).toHaveLength(2)
   })
 
   it("coalesces a burst of commits into one cumulative ack", async () => {
@@ -157,7 +175,7 @@ describe("delivery tracking + the ack producer", () => {
   })
 
   it("the first committed delivery drives a prompt flush of its own — the duplex proof", async () => {
-    _channelEstablished("c1")
+    await establishDrained("c1")
     expect(rafQueue).toHaveLength(0)
     laneSeqEntry("p", 1)
     _laneDeliveryCommitted("p")
@@ -168,7 +186,39 @@ describe("delivery tracking + the ack producer", () => {
     expect(rafQueue).toHaveLength(1)
     raf()
     await settle()
-    expect(sentEnvelopes().map((e) => e.frames)).toEqual([[{ kind: "ack", delivered: 1 }]])
+    expect(sentEnvelopes().map((e) => e.frames)).toEqual([
+      [{ kind: "ack", delivered: 0 }],
+      [{ kind: "ack", delivered: 1 }],
+    ])
+  })
+
+  it("every establishment opens with the establishment ack — its own driven flush", async () => {
+    // The connection's opening statement: one cumulative ack of the
+    // delivery watermark as applied at establishment (0 — nothing
+    // delivered on the fresh connection; a true statement). Addressing
+    // the connection at all confirms the `conn` handshake round-tripped,
+    // and any ack is the server's duplex proof — so its delivery
+    // outcome settles the degrade state AT establishment, catch-up
+    // boots (which deliver nothing to ack) included.
+    _channelEstablished("c1")
+    expect(rafQueue).toHaveLength(1)
+    raf()
+    await settle()
+    expect(sentEnvelopes().map((e) => e.frames)).toEqual([[{ kind: "ack", delivered: 0 }]])
+
+    // Consumed at collect — nothing further is owed.
+    await flushOnce()
+    expect(fetchCalls).toHaveLength(1)
+
+    // A re-establishment owes its own: each connection settles its own
+    // state.
+    _channelEstablished("c2")
+    raf()
+    await settle()
+    expect(sentEnvelopes()[1]).toMatchObject({
+      connection: "c2",
+      frames: [{ kind: "ack", delivered: 0 }],
+    })
   })
 
   it("past the delivered first ack, a watermark advance is a passenger — no flush of its own", async () => {
@@ -270,7 +320,7 @@ describe("delivery tracking + the ack producer", () => {
   })
 
   it("a dropped lane stalls the watermark and keeps later attribution aligned", async () => {
-    _channelEstablished("c1")
+    await establishDrained("c1")
     laneSeqEntry("p", 1)
     laneSeqEntry("p", 2)
     // The first payload decoded but never committed (stale page):
@@ -280,7 +330,7 @@ describe("delivery tracking + the ack producer", () => {
     // stalls at 0 and no ack ever claims the dropped delivery.
     _laneDeliveryCommitted("p")
     await flushOnce()
-    expect(fetchCalls).toHaveLength(0)
+    expect(fetchCalls).toHaveLength(1)
   })
 
   it("an as-of drop consumes PROCESSED — the watermark advances past it", async () => {
@@ -319,7 +369,7 @@ describe("delivery tracking + the ack producer", () => {
   })
 
   it("a drop past the contiguous frontier waits for the watermark to cover it", async () => {
-    _channelEstablished("c1")
+    await establishDrained("c1")
     laneSeqEntry("p", 1, 0)
     laneSeqEntry("p", 2, 0)
     // Seq 2 drops while seq 1 is still uncommitted — the frontier is at
@@ -331,7 +381,7 @@ describe("delivery tracking + the ack producer", () => {
     await flushOnce()
     // Nothing acks: the watermark is still 0 (seq 1 never committed), so
     // the drop for seq 2 is not yet in range.
-    expect(fetchCalls).toHaveLength(0)
+    expect(fetchCalls).toHaveLength(1)
   })
 
   it("segment-form seq entries are fetch-local; commits advance the same watermark", async () => {
@@ -421,12 +471,19 @@ describe("the reliable buffer + retransmit", () => {
     await settle()
     expect(sentEnvelopes()[3]).toMatchObject({ connection: "c3", seq: 2 })
 
-    // Once applied covers it, nothing retransmits.
+    // Once applied covers it, nothing retransmits — the collect flush
+    // that follows carries only c4's establishment ack (the earlier
+    // establishments' owed acks collapsed into it: the flag is per
+    // CURRENT connection, and retransmit-first defers the collect).
     _channelWireEntry("applied", enc("2"))
     _channelEstablished("c4")
     raf()
     await settle()
-    expect(fetchCalls).toHaveLength(4)
+    expect(fetchCalls).toHaveLength(5)
+    expect(sentEnvelopes()[4]).toMatchObject({
+      connection: "c4",
+      frames: [{ kind: "ack", delivered: 0 }],
+    })
   })
 
   it("a failed reliable envelope stays buffered and is never handed back", async () => {
@@ -502,6 +559,23 @@ describe("bounded re-establishment", () => {
     expect(_channelIsDegraded()).toBe(false)
   })
 
+  it("a RUN of failed establishment acks degrades with NO delivery at all — boot-time discovery", async () => {
+    _registerLiveStreamAbort(() => {})
+    _registerAttachRequester(() => {})
+    // A catch-up boot delivers nothing to ack, so the establishment ack
+    // is the connection's ONLY upstream traffic — its failure is the
+    // same first-ack signature, which is what settles the degrade state
+    // at establishment instead of at the first real statement.
+    for (let i = 1; i <= 3; i++) {
+      _channelEstablished(`c${i}`)
+      fetchResults.push(new Error("blocked"))
+      raf()
+      await settle()
+      _channelConnectionClosed({ aborted: true })
+      expect(_channelIsDegraded()).toBe(i >= 3)
+    }
+  })
+
   it("a connection whose first ack DELIVERED is never degraded by a later failure", async () => {
     _channelEstablished("c1")
     laneSeqEntry("p", 1)
@@ -526,7 +600,7 @@ describe("bounded re-establishment", () => {
       visible: ["a"],
       cached: [],
     }
-    let pending: VisibleFrame | null = frame
+    let pending: VisibleFrame | null = null
     const deliveryFailed = vi.fn()
     registerChannelProducer({
       collect: (conn) => {
@@ -537,7 +611,11 @@ describe("bounded re-establishment", () => {
       },
       deliveryFailed,
     })
-    _channelEstablished("c1")
+    // The establishment ack delivers first — the statement's envelope
+    // is then genuinely ack-free (a delivered watermark with no
+    // advance is silent).
+    await establishDrained("c1")
+    pending = frame
     fetchResults.push(new Error("blip"))
     await flushOnce()
     expect(_channelIsDegraded()).toBe(false)

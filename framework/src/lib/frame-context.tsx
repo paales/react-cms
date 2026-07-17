@@ -19,8 +19,48 @@ import {
   useMemo,
   type ReactNode,
 } from "react"
-import { getNavigation } from "../runtime/navigation-api.ts"
-import { hasFrameUrl, setFrameUrl } from "./partial-client-state.ts"
+import {
+  getNavigation,
+  type FrameEntryState,
+  type FrameNavigationHistoryEntry,
+  type ImperativeNavigation,
+  type NavigateTarget,
+  type NavigationMilestones,
+} from "../runtime/navigation-api.ts"
+import { getFrameUrl, hasFrameUrl, setFrameUrl } from "./partial-client-state.ts"
+
+// ─── The late-loaded navigation executor seam ─────────────────────
+//
+// The navigate/reload/preload/back EXECUTORS live in the late-loaded
+// `frame-client.tsx` (they touch the channel transport). It binds its
+// surface here on load. `useNavigation()`'s eager handles dispatch a
+// fire SYNCHRONOUSLY through the bound executor when it is present — the
+// normal case, since the live layer loads it once post-commit, before
+// any user interaction. A synchronous dispatch is what keeps a fire's
+// browser-navigation and milestone timing identical to a non-split
+// build (a `nav.reload()` deferred a task lands outside its gesture and
+// races the reload it triggered). Only a fire BEFORE the executor has
+// bound (pre-live-boot — rare) takes the async-import fallback.
+
+/** The `frame-client` surface `useNavigation()`'s eager handles call. */
+export interface NavExecutor {
+  buildWindowNavigationHandle(ssrUrl?: string | null): ImperativeNavigation
+  buildFrameHandle(path: readonly string[], ssrUrl?: string | null): ImperativeNavigation
+  executePreload(target: NavigateTarget, frameName: string | null): Promise<void>
+  _frame(pathOrName: string | readonly string[]): ImperativeNavigation
+}
+
+let boundNavExecutor: NavExecutor | null = null
+
+/** `frame-client` binds its executor surface here on load. */
+export function _bindNavExecutor(exec: NavExecutor): void {
+  boundNavExecutor = exec
+}
+
+/** The bound executor, or `null` before the live layer has loaded it. */
+export function _navExecutor(): NavExecutor | null {
+  return boundNavExecutor
+}
 
 // ─── Frame naming + URL contexts ──────────────────────────────────
 
@@ -321,4 +361,181 @@ export function FrameNameProvider({
       <FrameNameContext value={path}>{children}</FrameNameContext>
     </FrameUrlContext>
   )
+}
+
+// ─── Eager handle building blocks ─────────────────────────────────
+//
+// The render-time surface of the navigation handles: the SSR stub, the
+// frame-entry projection (read during render for `currentEntry.url` /
+// `canGoBack`), and the milestone-deferred shells a fire returns
+// synchronously. These touch nothing heavy — react, the Navigation API
+// shim, the eager frames-tree readers — so `useNavigation()` builds its
+// handle here without pulling the channel transport into the initial
+// chunk. The navigate/reload EXECUTORS (which touch the channel) live in
+// the late-loaded `frame-client.tsx`; the eager handle dispatches into
+// them on invocation.
+
+/**
+ * Project a window `NavigationHistoryEntry` into a frame-scoped
+ * `FrameNavigationHistoryEntry`: `url` reports the frame's URL
+ * (absolute, against the page origin); `getState()` returns the node
+ * at `path`'s `__frameState` bucket, not the whole window state.
+ */
+export function projectEntryForFrame(
+  entry: NavigationHistoryEntry | null,
+  path: readonly string[],
+): FrameNavigationHistoryEntry | null {
+  if (!entry) return null
+  const key = joinFramePath(path)
+  const node = _readFrameNode(entry.getState(), path)
+  const frameUrl = node?.url ?? getFrameUrl(key) ?? "/"
+  const origin = typeof window !== "undefined" ? window.location.origin : "http://_"
+  const absoluteUrl = new URL(frameUrl, origin).href
+  return new Proxy(entry, {
+    get(_target, prop, _receiver) {
+      if (prop === "url") return absoluteUrl
+      if (prop === "getState") {
+        return function getState(): FrameEntryState | null {
+          const bucket = _readFrameNode(entry.getState(), path)?.__frameState
+          if (bucket == null || typeof bucket !== "object") return null
+          return bucket as FrameEntryState
+        }
+      }
+      // Native NavigationHistoryEntry getters (url, key, id, index,
+      // sameDocument) throw "Illegal invocation" when invoked with a
+      // non-NavigationHistoryEntry `this` — so we must bypass the
+      // Proxy receiver and read directly off the underlying entry.
+      const value = (entry as unknown as Record<string | symbol, unknown>)[prop]
+      return typeof value === "function" ? value.bind(entry) : value
+    },
+  }) as FrameNavigationHistoryEntry
+}
+
+// ─── SSR / no-Navigation stub ─────────────────────────────────────
+//
+// `useNavigation()` is a hook that must run in React's render phase,
+// but RSC renders happen server-side where `globalThis.navigation` is
+// undefined. Return a stub that type-checks with no-op behavior — any
+// actual invocation only happens on the client after hydration.
+
+export function nullImperativeNavigation(
+  name: string | null,
+  url?: string | null,
+): ImperativeNavigation {
+  const stubEntry = null as unknown as NavigationHistoryEntry
+  // On the server (and pre-hydration) there is no browser Navigation
+  // API, but a Flight-borne URL still lets `currentEntry.url` resolve
+  // correctly for the first paint. Synthesize a minimal entry carrying
+  // just that URL; everything else stays inert until the live browser
+  // handle takes over after hydration.
+  const ssrEntry =
+    url == null
+      ? null
+      : ({
+          url,
+          key: "",
+          id: "",
+          index: 0,
+          sameDocument: true,
+          getState: () => null,
+          ondispose: null,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          dispatchEvent: () => false,
+        } as unknown as NavigationHistoryEntry)
+  const stubMilestones = (): NavigationMilestones => ({
+    committed: Promise.resolve(stubEntry),
+    streaming: Promise.resolve(),
+    finished: Promise.resolve(stubEntry),
+  })
+  const stubNavResult = {
+    committed: Promise.resolve(stubEntry),
+    finished: Promise.resolve(stubEntry),
+  } as unknown as NavigationResult
+  return {
+    name,
+    currentEntry: ssrEntry,
+    canGoBack: false,
+    canGoForward: false,
+    transition: null,
+    activation: null,
+    entries: () => [],
+    navigate: stubMilestones,
+    reload: stubMilestones,
+    back: () => stubNavResult,
+    forward: () => stubNavResult,
+    traverseTo: () => stubNavResult,
+    updateCurrentEntry: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => true,
+    oncurrententrychange: null,
+    onnavigate: null,
+    onnavigateerror: null,
+    onnavigatesuccess: null,
+  } as unknown as ImperativeNavigation
+}
+
+// ─── Milestone deferreds ──────────────────────────────────────────
+
+export interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+  reject: (err: unknown) => void
+}
+
+export function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (err: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+export interface MilestoneDeferreds {
+  committed: Deferred<NavigationHistoryEntry>
+  streaming: Deferred<void>
+  finished: Deferred<NavigationHistoryEntry>
+}
+
+/**
+ * Build a fresh milestone-deferred triple. Each promise has a no-op
+ * rejection handler pre-attached so an un-listened branch doesn't
+ * surface as unhandledrejection when the rejection comes through — the
+ * pre-attach doesn't consume the rejection, so subsequent consumer
+ * handlers still see the error.
+ *
+ * The eager handle creates one of these SYNCHRONOUSLY on each fire and
+ * returns its `.promise`s, then hands the triple to the late-loaded
+ * executor to resolve/reject — so a fire's `{committed, streaming,
+ * finished}` shape is available in the same tick the caller invoked it,
+ * even while the executor module is still importing.
+ */
+export function makeMilestoneDeferreds(): MilestoneDeferreds {
+  const committed = deferred<NavigationHistoryEntry>()
+  const streaming = deferred<void>()
+  const finished = deferred<NavigationHistoryEntry>()
+  committed.promise.catch(() => {})
+  streaming.promise.catch(() => {})
+  finished.promise.catch(() => {})
+  return { committed, streaming, finished }
+}
+
+/** Expose the three deferreds as a plain `NavigationMilestones`. */
+export function milestonesOf(m: MilestoneDeferreds): NavigationMilestones {
+  return {
+    committed: m.committed.promise,
+    streaming: m.streaming.promise,
+    finished: m.finished.promise,
+  }
+}
+
+/** Reject all three milestones — the eager handle's failure path when
+ *  the executor module fails to load. */
+export function rejectMilestones(m: MilestoneDeferreds, err: unknown): void {
+  m.committed.reject(err)
+  m.streaming.reject(err)
+  m.finished.reject(err)
 }

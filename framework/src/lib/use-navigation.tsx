@@ -25,6 +25,7 @@ import React, {
 } from "react"
 import {
   getNavigation,
+  type FrameNavigationHistoryEntry,
   type FrameworkNavigateOptions,
   type FrameworkNavigation,
   type FrameworkReloadOptions,
@@ -38,20 +39,80 @@ import {
   type ReloadStatus,
 } from "../runtime/navigation-api.ts"
 import { NavigationError, toNavigationError } from "../runtime/navigation-error.ts"
-import { _channelIsDegraded, _channelWarm } from "./channel-client.ts"
-import { enqueueRefetch } from "./refetch.ts"
+import { enqueueRefetch } from "./refetch-dispatch.ts"
 import {
-  buildFrameHandle,
-  buildWindowNavigationHandle,
-  resolveWindowTarget,
-  _frame,
-} from "./frame-client.tsx"
-import {
+  deferred,
   FrameNameContext,
   FrameUrlContext,
   joinFramePath,
+  makeMilestoneDeferreds,
+  milestonesOf,
+  type MilestoneDeferreds,
+  type NavExecutor,
+  _navExecutor,
+  nullImperativeNavigation,
+  projectEntryForFrame,
+  _readFrameNode,
+  rejectMilestones,
   splitFramePath,
 } from "./frame-context.tsx"
+
+// ─── Late-loaded executor bridge ──────────────────────────────────
+//
+// The navigate/reload/preload/back/forward EXECUTORS touch the channel
+// transport, so they live in the late-loaded `frame-client.tsx`, which
+// binds its surface into `frame-context`'s `_navExecutor` seam on load.
+// The eager handles below build getters that read `window.navigation` /
+// the frames tree at render, and dispatch a FIRE through the bound
+// executor.
+//
+// The dispatch is SYNCHRONOUS whenever the executor has bound — the
+// normal case, since the live layer loads `frame-client` once
+// post-commit, before any user interaction. Synchronicity matters: a
+// `nav.reload()` / `nav.navigate()` deferred a task lands outside the
+// caller's gesture and races the browser navigation it triggers (a
+// deferred reload double-fires). Only a fire made BEFORE the executor
+// bound (pre-live-boot — rare) takes the async-import fallback, which
+// returns milestone deferreds synchronously and pipes the real
+// milestones once the import resolves; a load failure rejects them (the
+// page stays functional, document navigations, never a broken paint).
+
+let _frameClientPromise: Promise<typeof import("./frame-client.tsx")> | null = null
+function loadFrameClient(): Promise<typeof import("./frame-client.tsx")> {
+  return (_frameClientPromise ??= import("./frame-client.tsx"))
+}
+
+/** Pipe a real handle's milestones (produced by the late-loaded
+ *  executor) into the eager deferreds the fire already returned. */
+function pipeMilestones(real: NavigationMilestones, m: MilestoneDeferreds): void {
+  real.committed.then(
+    (e) => m.committed.resolve(e),
+    (err) => m.committed.reject(err),
+  )
+  real.streaming.then(
+    () => m.streaming.resolve(),
+    (err) => m.streaming.reject(err),
+  )
+  real.finished.then(
+    (e) => m.finished.resolve(e),
+    (err) => m.finished.reject(err),
+  )
+}
+
+/** Run a milestone-returning executor fire: synchronously through the
+ *  bound executor when present, else async through the import (deferred,
+ *  piped). */
+function dispatchMilestones(
+  run: (exec: NavExecutor) => NavigationMilestones,
+): NavigationMilestones {
+  const exec = _navExecutor()
+  if (exec !== null) return run(exec)
+  const m = makeMilestoneDeferreds()
+  loadFrameClient()
+    .then((mod) => pipeMilestones(run(mod), m))
+    .catch((err) => rejectMilestones(m, err))
+  return milestonesOf(m)
+}
 
 // ─── Client contexts ──────────────────────────────────────────────
 
@@ -293,67 +354,154 @@ function attachMilestoneWatchers(
   milestones.finished.then(onSuccess("finished"), onRejection)
 }
 
-// ─── Preload (warm intent) ────────────────────────────────────────
+// ─── Eager imperative handles ─────────────────────────────────────
 //
-// `useNavigation().preload(target)` states a route the user is about
-// to visit — a WARM intent, advisory by nature. Two carriers, matched
-// to the page's transport:
-//
-//   - Attached: a `warm` frame on the channel (`_channelWarm` — the
-//     lossy class, newest-wins). The server's driver runs one
-//     byte-silent whole-tree render of the target at its park point,
-//     so the navigation statement that follows renders against warm
-//     caches. Nothing reaches the client until the navigation itself.
-//   - Degraded (document-nav mode): a Speculation Rules prefetch on
-//     the document — the browser warms the target DOCUMENT's HTTP
-//     cache entry, which is exactly what a degraded navigation loads.
-//   - Pre-establishment: dropped. A preload must never trigger an
-//     attach (the navigation itself will), and a stale hint is worth
-//     less than none.
+// `useNavigation()` builds one of these during render. The getters
+// (`name`, `currentEntry`, `canGoBack`, `entries`, the passthroughs to
+// `window.navigation`) are EAGER — pure reads of the browser Navigation
+// API and the frames tree. The fires (`navigate` / `reload` / `back` /
+// `forward` / `updateCurrentEntry`) DISPATCH into the late-loaded
+// executor: they return their milestone deferreds synchronously and
+// pipe the real handle's milestones in once `frame-client.tsx` has
+// loaded (imported once post-commit by the browser bootstrap — resolved
+// from the module cache by fire time in the steady state).
 
-/** Targets already speculated on this document — one rule per URL. */
-const _speculated = new Set<string>()
+/**
+ * Window-scoped eager handle — a Proxy over `window.navigation` with
+ * `name: null`, whose `navigate` / `reload` dispatch into the executor.
+ * Everything else passes straight through to the browser.
+ */
+function buildEagerWindowHandle(ssrUrl?: string | null): ImperativeNavigation {
+  const nav = getNavigation()
+  // No browser Navigation API → SSR or pre-hydration. Fall back to the
+  // Flight-borne page URL so `currentEntry.url` is correct on first
+  // paint; the live handle takes over once `window.navigation` exists.
+  if (!nav) return nullImperativeNavigation(null, ssrUrl ?? null)
 
-/** Append a `<script type="speculationrules">` prefetch rule for
- *  `url` — the degraded page's preload carrier. The browser dedupes
- *  and schedules; one rule per target keeps the head bounded. */
-function speculateDocumentPrefetch(url: string): void {
-  if (typeof document === "undefined" || _speculated.has(url)) return
-  _speculated.add(url)
-  const script = document.createElement("script")
-  script.type = "speculationrules"
-  script.textContent = JSON.stringify({
-    prefetch: [{ source: "list", urls: [url] }],
-  })
-  document.head.appendChild(script)
+  const navigate = (
+    target: NavigateTarget,
+    options?: FrameworkNavigateOptions,
+  ): NavigationMilestones =>
+    dispatchMilestones((exec) => exec.buildWindowNavigationHandle().navigate(target, options))
+
+  const reload = (options?: FrameworkReloadOptions): NavigationMilestones =>
+    dispatchMilestones((exec) => exec.buildWindowNavigationHandle().reload(options))
+
+  return new Proxy(nav, {
+    get(_target, prop, _receiver) {
+      if (prop === "name") return null
+      if (prop === "navigate") return navigate
+      if (prop === "reload") return reload
+      // Native Navigation getters (currentEntry, canGoBack,
+      // canGoForward, transition, activation) throw "Illegal
+      // invocation" when invoked with a non-Navigation `this`, so we
+      // bypass the Proxy receiver and read directly off
+      // `window.navigation`.
+      const value = (nav as unknown as Record<string | symbol, unknown>)[prop]
+      return typeof value === "function" ? value.bind(nav) : value
+    },
+  }) as unknown as ImperativeNavigation
 }
 
-function doPreload(target: NavigateTarget, frameName: string | null): Promise<void> {
-  if (typeof window === "undefined") return Promise.resolve()
-  // Window-scoped only today: a frame handle's preload is a no-op.
-  // A frame's content is session-scoped subtree state with no
-  // standalone route to warm; preload is a best-effort hint, so an
-  // unsupported scope degrades silently rather than throwing into an
-  // event handler.
-  if (frameName !== null) return Promise.resolve()
-  let url: string
-  try {
-    url = resolveWindowTarget(target)
-  } catch {
-    return Promise.resolve()
+/**
+ * Frame-scoped eager handle — a Proxy over `window.navigation` with
+ * frame-scoped getters (URL projection, `canGoBack`/`canGoForward` off
+ * the in-state history stack) computed eagerly, and fires dispatched
+ * into the executor.
+ */
+function buildEagerFrameHandle(
+  path: readonly string[],
+  ssrUrl?: string | null,
+): ImperativeNavigation {
+  const nav = getNavigation()
+  const key = joinFramePath(path)
+  // No browser Navigation API → SSR / pre-hydration. Resolve
+  // `currentEntry.url` from the Flight-borne frame URL so a framed
+  // `useNavigation()` is correct on first paint.
+  if (!nav) return nullImperativeNavigation(key, ssrUrl ?? null)
+  if (path.length === 0) {
+    throw new Error("buildEagerFrameHandle: path must be non-empty")
   }
-  const parsed = new URL(url, window.location.origin)
-  if (parsed.origin !== window.location.origin) return Promise.resolve()
-  // Warming the page you're on states nothing new.
-  if (parsed.pathname + parsed.search === window.location.pathname + window.location.search) {
-    return Promise.resolve()
+
+  const navigate = (
+    target: NavigateTarget,
+    options?: FrameworkNavigateOptions,
+  ): NavigationMilestones =>
+    dispatchMilestones((exec) => exec.buildFrameHandle(path).navigate(target, options))
+
+  const reload = (options?: FrameworkReloadOptions): NavigationMilestones =>
+    dispatchMilestones((exec) => exec.buildFrameHandle(path).reload(options))
+
+  const traverse = (direction: "back" | "forward"): NavigationResult => {
+    const run = (exec: NavExecutor): NavigationResult => {
+      const handle = exec.buildFrameHandle(path)
+      return direction === "back" ? handle.back() : handle.forward()
+    }
+    const exec = _navExecutor()
+    if (exec !== null) return run(exec)
+    const committed = deferred<NavigationHistoryEntry>()
+    const finished = deferred<NavigationHistoryEntry>()
+    committed.promise.catch(() => {})
+    finished.promise.catch(() => {})
+    loadFrameClient()
+      .then((mod) => {
+        const real = run(mod)
+        real.committed?.then(
+          (e) => committed.resolve(e as NavigationHistoryEntry),
+          (err) => committed.reject(err),
+        )
+        real.finished?.then(
+          (e) => finished.resolve(e as NavigationHistoryEntry),
+          (err) => finished.reject(err),
+        )
+      })
+      .catch((err) => {
+        committed.reject(err)
+        finished.reject(err)
+      })
+    return { committed: committed.promise, finished: finished.promise }
   }
-  if (_channelIsDegraded()) {
-    speculateDocumentPrefetch(parsed.href)
-    return Promise.resolve()
+
+  const updateCurrentEntry = (options: NavigationUpdateCurrentEntryOptions): void => {
+    const exec = _navExecutor()
+    if (exec !== null) {
+      exec.buildFrameHandle(path).updateCurrentEntry(options)
+      return
+    }
+    void loadFrameClient().then((mod) => mod.buildFrameHandle(path).updateCurrentEntry(options))
   }
-  _channelWarm(parsed.pathname + parsed.search)
-  return Promise.resolve()
+
+  return new Proxy(nav, {
+    get(target, prop) {
+      if (prop === "name") return key
+      if (prop === "navigate") return navigate
+      if (prop === "reload") return reload
+      if (prop === "back") return () => traverse("back")
+      if (prop === "forward") return () => traverse("forward")
+      if (prop === "canGoBack") {
+        const node = _readFrameNode(target.currentEntry?.getState(), path)
+        return (node?.__frameHistory?.past.length ?? 0) > 0
+      }
+      if (prop === "canGoForward") {
+        const node = _readFrameNode(target.currentEntry?.getState(), path)
+        return (node?.__frameHistory?.future.length ?? 0) > 0
+      }
+      if (prop === "currentEntry") return projectEntryForFrame(target.currentEntry, path)
+      if (prop === "entries") {
+        return () =>
+          target
+            .entries()
+            .map((e) => projectEntryForFrame(e, path))
+            .filter((e): e is FrameNavigationHistoryEntry => e !== null)
+      }
+      if (prop === "updateCurrentEntry") return updateCurrentEntry
+      // See window-handle Proxy — native Navigation getters throw
+      // "Illegal invocation" when reached via the Proxy receiver, so we
+      // read directly off `target` (window.navigation).
+      const value = (target as unknown as Record<string | symbol, unknown>)[prop]
+      return typeof value === "function" ? value.bind(target) : value
+    },
+  }) as unknown as ImperativeNavigation
 }
 
 /**
@@ -390,7 +538,12 @@ function wrapWithHooks(imperative: ImperativeNavigation): FrameworkNavigation {
         // frame) comes off the underlying handle's `name`.
         const frameName = (target as ImperativeNavigation).name
         return function preload(navTarget: NavigateTarget): Promise<void> {
-          return doPreload(navTarget, frameName)
+          // The warm executor lives in the late-loaded layer — dispatch
+          // synchronously once it has bound (the normal case), else async
+          // through the import.
+          const exec = _navExecutor()
+          if (exec !== null) return exec.executePreload(navTarget, frameName)
+          return loadFrameClient().then((mod) => mod.executePreload(navTarget, frameName))
         }
       }
       return Reflect.get(target, prop, receiver)
@@ -468,7 +621,7 @@ export function useNavigation(name?: string): FrameworkNavigation {
   // identity stays stable until the bound name changes.
   const imperative = useMemo(
     () => {
-      if (resolvedPath.length === 0) return buildWindowNavigationHandle(ssrPageUrl)
+      if (resolvedPath.length === 0) return buildEagerWindowHandle(ssrPageUrl)
       // Resolve the frame's SSR URL against the page origin so its
       // pathname matches the client (which absolutizes via
       // `projectEntryForFrame`), avoiding a hydration mismatch. An empty
@@ -478,7 +631,7 @@ export function useNavigation(name?: string): FrameworkNavigation {
         frameUrl != null && frameUrl !== ""
           ? new URL(frameUrl, ssrPageUrl ?? "http://_").href
           : null
-      return buildFrameHandle(resolvedPath, ssrFrameUrl)
+      return buildEagerFrameHandle(resolvedPath, ssrFrameUrl)
     },
     // resolvedKey captures any change to the path — resolvedPath is a
     // fresh array each render, so we can't use it as a dep directly.
@@ -551,10 +704,14 @@ export function useActivate(
     // A framed activator refetches its frame (the frame statement's
     // whole-frame segment covers the target); a window-scoped one
     // forces the parton's effective id through the batched dispatcher
-    // (one `?__force=` statement per microtask). Fire-and-forget —
+    // (one `?__force=` statement per microtask). Both reach the channel
+    // through the late-loaded live layer — dispatch on fire (an
+    // event-time trigger, well after hydration). Fire-and-forget —
     // errors surface through the channel layer.
     if (framePath.length > 0) {
-      void _frame(framePath).reload()
+      const exec = _navExecutor()
+      if (exec !== null) void exec._frame(framePath).reload()
+      else void loadFrameClient().then((m) => m._frame(framePath).reload())
     } else {
       enqueueRefetch({ ids: [partialId], streaming: false })
     }

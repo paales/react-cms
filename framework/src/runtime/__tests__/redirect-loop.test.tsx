@@ -4,6 +4,12 @@ import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { Redirect } from "../redirect-client.tsx"
+// The window navigate executor lives in the late-loaded `frame-client`;
+// `<Redirect>`'s eager handle dynamically imports it on fire. Pre-load
+// it so the dispatch resolves from cache within the mount effect's
+// microtask chain — modelling the running app, where the live layer has
+// loaded the executor before any redirect fires.
+import "../../lib/frame-client.tsx"
 
 /**
  * Redirect loop guard.

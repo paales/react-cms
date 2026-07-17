@@ -94,6 +94,9 @@ export function _channelEstablishListeners(): ReadonlySet<(connection: string) =
 export interface ChannelUpstream {
   scheduleFlush(): void
   reportContentEvicted(id: string, opts?: { drive?: boolean }): void
+  /** Every outstanding action-consequence gate as one promise (see
+   *  `_awaitActionConsequences`). */
+  awaitActionConsequences(): Promise<void>
 }
 
 let upstream: ChannelUpstream | null = null
@@ -132,6 +135,19 @@ export function _reportContentEvicted(id: string, opts?: { drive?: boolean }): v
     return
   }
   pendingEvicted.push({ id, drive: opts?.drive === true })
+}
+
+/**
+ * Every outstanding action-consequence gate as one promise — the cell
+ * optimistic overlay's clear point awaits it after a write POST
+ * resolves (`cell-client`). Brokered so that eager write code can await
+ * consequences without pulling the transport into its static closure.
+ * Before the transport binds there is no connection and no reservation,
+ * so no gate can exist: resolve immediately (unchanged behavior — the
+ * "without a channel" path).
+ */
+export function _awaitActionConsequences(): Promise<void> {
+  return upstream !== null ? upstream.awaitActionConsequences() : Promise.resolve()
 }
 
 /** The transport binds its live upstream here when the live layer

@@ -108,6 +108,8 @@ describe("frame statements on the wire", () => {
     await flushOnce()
     expect(sentEnvelopes()).toHaveLength(1)
     expect(sentEnvelopes()[0].frames).toEqual([
+      // The establishment ack co-rides the connection's first envelope.
+      { kind: "ack", delivered: 0 },
       {
         kind: "url",
         url: "/items?page=2",
@@ -143,7 +145,8 @@ describe("frame statements on the wire", () => {
     })
     if (!first) throw new Error("expected channel routing")
     await flushOnce()
-    expect(sentEnvelopes()[0].frames.map((f) => f.kind)).toEqual(["url"])
+    // The establishment ack leads the connection's first envelope.
+    expect(sentEnvelopes()[0].frames.map((f) => f.kind)).toEqual(["ack", "url"])
 
     // The first fire is still unsettled — the second supersedes it.
     const second = _channelFrameNavigate({
@@ -310,10 +313,14 @@ describe("connection loss + the attach subsume", () => {
     await settle()
     expect(finished.done()).toBe(true)
     // The buffered url frame never retransmits at the next
-    // establishment.
+    // establishment — its envelope carries only c2's establishment ack.
     _channelEstablished("c2")
     raf()
     await settle()
-    expect(sentEnvelopes()).toHaveLength(1)
+    expect(sentEnvelopes()).toHaveLength(2)
+    expect(sentEnvelopes()[1]).toMatchObject({
+      connection: "c2",
+      frames: [{ kind: "ack", delivered: 0 }],
+    })
   })
 })
