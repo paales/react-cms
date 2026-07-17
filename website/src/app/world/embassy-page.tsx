@@ -89,9 +89,22 @@ export const EmbassyBulletin = parton(
         >
           GLORIOUS FIREWORKS — 50% OFF (raw HTML, smuggled)
         </div>
+        {/* CONTRABAND #2 — the escalation exhibit: a raw link. A spliced
+            embed lives in the HOST document, so an anchor that crossed
+            would natively navigate the WHOLE host page on click — and a
+            cross-origin href is not even interceptable by the host's
+            navigate listener. Links are deliberately not vocabulary; the
+            border seizes this one like the crate. */}
+        <a
+          data-testid="embassy-defection-link"
+          href="https://ministry.example/defect"
+          style={{ color: "#ff5f56", fontWeight: 700 }}
+        >
+          DEFECT TODAY — apply at ministry.example (raw link, smuggled)
+        </a>
         <Text size="sm" tone="muted">
           This bulletin is an ordinary page — visit /embassy/bulletin. Embedded under a paint grant,
-          everything above crosses; the crate does not.
+          everything above crosses; the crate and the link do not.
         </Text>
       </Stack>
     )

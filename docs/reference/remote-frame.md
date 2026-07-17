@@ -317,15 +317,19 @@ chunk west of the origin: an embassy building whose bulletin is
 embedding one of its own pages. `/embassy/bulletin` is an ordinary
 page (the world page's match carves out `/embassy`, so the body
 carries the bulletin alone — the lean-embed-surface verdict), authored
-against the vocabulary plus one deliberate raw-HTML row: contraband
-that renders standalone but degrades at the border, captioned in-world
-by the building's plaque. The world themes the splice via `--parton-*`
+against the vocabulary plus two deliberate contraband rows: a raw
+styled `<div>` and a raw `<a href>` to a foreign origin — both render
+standalone but degrade at the border, captioned in-world by the
+building's plaque. The world themes the splice via `--parton-*`
 custom properties on `.embassy-building`. `website/validate-embassy.mjs`
-proves the exhibit end-to-end: standalone browsability, splice into
-the contained box, the custom-property handshake (the spliced heading
-wears a violet the standalone page doesn't), contraband dropped
-(dev-marker / prod-silent, structured log line in both), district tint,
-world hygiene.
+proves the exhibit end-to-end: standalone browsability (link and all,
+href intact), splice into the contained box, the custom-property
+handshake (the spliced heading wears a violet the standalone page
+doesn't), both contraband rows dropped (dev-marker / prod-silent,
+structured log lines in both — the seized link's own `"type":"a"`
+line included), the escalation probe (real clicks inside the embed
+box never move the host document — a realm token on `window` survives
+and the page URL stays byte-identical), district tint, world hygiene.
 
 ### The Interactive grant
 
@@ -460,6 +464,23 @@ properties, which inherit straight through the containment boundary:
 Paint itself carries no interactivity at all — the interactive members
 above exist only for placements granted `interactive`. Further members
 (Form, Tabs, links) join the table as real embed surfaces need them.
+
+**No links, by design — navigation containment.** A spliced embed
+lives in the HOST document, so an `<a href>` that crossed would
+natively navigate the whole host page on click — and a cross-origin
+href is not even interceptable by the host's navigate listener
+(`NavigateEvent.canIntercept` is false). Under every shipped grant an
+anchor degrades at the border like any non-vocabulary row, and no
+audited attribute can carry a navigation (an `href` on an admitted tag
+is sanitize-dropped). The enforcement is splice-time, server-side, so
+a degraded host channel cannot resurrect it. Admitting a link member
+is therefore a navigation-containment design decision (what does a
+link DO inside a contained splice?), pinned by
+`tier-rewrite.rsc.test.tsx` and the embassy gate's escalation probe.
+Ungoverned (full-trust) embeds splice as-is: their anchors behave
+exactly like host-authored links — same-origin clicks ride the host's
+soft navigation, a cross-origin href is a native top-level document
+load — which is the trust the omitted grant declares.
 
 ## remoteCell — outward state
 
@@ -684,9 +705,9 @@ measured, not yet warranted.
   lane).
 - **The embassy district** (website world, west of the origin) — the
   in-world Paint-tier exhibit: a self-embed of `/embassy/bulletin`
-  under `grant="paint"`, world-themed, with a contraband row degraded
-  at the border. See the worked example above;
-  `website/validate-embassy.mjs` is its gate.
+  under `grant="paint"`, world-themed, with two contraband rows (a raw
+  `<div>` and a raw `<a href>`) degraded at the border. See the worked
+  example above; `website/validate-embassy.mjs` is its gate.
 - **`/embed-econ`** / **`/embed-econ-inline`** — the economics
   measurement surfaces.
 

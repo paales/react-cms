@@ -237,16 +237,19 @@ node website/validate-scroll-stress.mjs # ADVERSARIAL-SCROLL gate: drives the
                         # `yarn build:website` first.
 node website/validate-embassy.mjs # EMBASSY-DISTRICT gate: the world's
                         # Paint-tier exhibit — /embassy/bulletin is
-                        # browsable standalone (contraband raw HTML
-                        # included), splices into the building's
-                        # contained embed box under grant="paint",
-                        # host --parton-* theming crosses the
-                        # containment boundary, the contraband row
-                        # does NOT paint (dev marker / prod silent +
-                        # the structured log line either way), district
-                        # tint, world hygiene. Run after any
-                        # embed / grant / vocabulary change:
-                        # `yarn build:website` first.
+                        # browsable standalone (contraband raw HTML +
+                        # a raw <a href> included), splices into the
+                        # building's contained embed box under
+                        # grant="paint", host --parton-* theming
+                        # crosses the containment boundary, neither
+                        # contraband row paints (dev marker / prod
+                        # silent + the structured log line either
+                        # way), the escalation probe (clicks inside
+                        # the box never move the host document —
+                        # realm token + URL), district tint, world
+                        # hygiene. Run after any embed / grant /
+                        # vocabulary change: `yarn build:website`
+                        # first.
 node e2e-testing/validate-hmr.mjs # DEV-HMR LIVE-EDIT gate: boots its own
                         # dev server (:5327), rewrites /hmr-probe's
                         # source through every transport phase

@@ -274,6 +274,37 @@ describe("paint rewriter — audit + violations (synthetic rows)", () => {
     expect((data[3] as Record<string, unknown>)["data-offense"]).toBe("opaque-props")
   })
 
+  it("an anchor never crosses a granted splice — Paint or Interactive", () => {
+    // Navigation containment: a spliced embed lives in the HOST
+    // document, so an `<a href>` that crossed would natively
+    // top-level-navigate the whole host page on click — and a
+    // cross-origin href is not even interceptable by the host's
+    // navigate listener (`NavigateEvent.canIntercept` is false).
+    // Links are therefore deliberately absent from VOCABULARY at
+    // every shipped grant; admitting a link member is a
+    // navigation-containment decision (what does a link DO inside a
+    // contained splice?), not a table edit. This pin forces that
+    // conversation.
+    for (const grants of [new Set(["paint"]), new Set(["paint", "interactive"])]) {
+      const rw = createTierRewriter({ grants, url: "http://t/embedded", dev: true })
+      const anchor = rewriteOne(
+        rw,
+        `0:["$","a",null,{"href":"https://remote.example/away","children":"defect"}]`,
+      ) as unknown[]
+      expect(anchor[1]).toBe(TIER_VIOLATION_TAG)
+      expect((anchor[3] as Record<string, unknown>)["data-offense"]).toBe("element")
+      expect((anchor[3] as Record<string, unknown>)["data-type"]).toBe("a")
+      // An href smuggled onto an ADMITTED tag is sanitize-dropped —
+      // no audited attribute can carry a navigation.
+      const text = rewriteOne(
+        rw,
+        `1:["$","parton-text",null,{"href":"https://remote.example/away","tone":"muted","children":"t"}]`,
+      ) as unknown[]
+      expect(text[1]).toBe("parton-text")
+      expect(Object.keys(text[3] as Record<string, unknown>).sort()).toEqual(["children", "tone"])
+    }
+  })
+
   it("a disallowed symbol (Activity) degrades by name", () => {
     const rw = paintRewriter()
     // Symbol row passes (the ledger), the referencing element degrades.

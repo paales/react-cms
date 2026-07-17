@@ -15,12 +15,21 @@
  *   3. the handshake — host `--parton-*` custom properties cross the
  *      containment boundary: the spliced heading computes the
  *      district's violet, which the STANDALONE page does not carry;
- *   4. the border — the contraband row does NOT paint inside the box.
- *      Prod degrades silently (no marker either); dev leaves the
- *      visible `parton-tier-violation` marker. Both modes assert the
+ *   4. the border — the contraband rows do NOT paint inside the box:
+ *      neither the raw <div> nor the raw <a> (a link that crossed
+ *      would natively navigate the WHOLE host page — links are
+ *      deliberately not vocabulary). Prod degrades silently (no
+ *      marker either); dev leaves the visible
+ *      `parton-tier-violation` marker. Both modes assert the
  *      structured `[parton] tier-violation` line in the host log —
- *      degrade + loud;
- *   5. the district — chunks under the building carry the embassy
+ *      degrade + loud — including the seized link's own line
+ *      (`"type":"a"`);
+ *   5. navigation containment — real clicks inside the embed box
+ *      never move the host document. Real signals, not timing: a
+ *      realm token stamped on `window` survives (a top-level
+ *      navigation mints a fresh JS realm) and the page URL is
+ *      byte-identical;
+ *   6. the district — chunks under the building carry the embassy
  *      tint, and the world around it stays healthy (origin content,
  *      no error cards, no page errors, no failed requests).
  */
@@ -108,6 +117,15 @@ try {
     standaloneContraband.includes("GLORIOUS FIREWORKS"),
     "contraband raw HTML renders on the ORDINARY page",
   )
+  const standaloneLink = await page.$eval('[data-testid="embassy-defection-link"]', (el) => ({
+    tag: el.tagName,
+    href: el.getAttribute("href"),
+  }))
+  check(
+    standaloneLink.tag === "A" && standaloneLink.href === "https://ministry.example/defect",
+    "contraband raw <a> renders on the ORDINARY page, href intact",
+    standaloneLink.href,
+  )
   const standaloneHeading = await page.$eval(
     '[data-testid="embassy-bulletin-title"]',
     (el) => getComputedStyle(el).color,
@@ -167,6 +185,12 @@ try {
   // don't fake one in the other mode.
   const contrabandInBox = await page.$(`${box} [data-testid="embassy-contraband"]`)
   check(contrabandInBox === null, "contraband raw <div> did NOT cross the paint splice")
+  const anchorsInBox = await page.$$eval(`${box} a`, (els) => els.length)
+  check(
+    anchorsInBox === 0,
+    "no anchor crossed the paint splice — zero <a> inside the embed box",
+    `${anchorsInBox} anchors`,
+  )
   const markers = await page.$$eval("parton-tier-violation", (els) => els.length)
   if (MODE === "preview") {
     check(markers === 0, "prod degrades silently — no violation marker", `${markers} markers`)
@@ -181,6 +205,43 @@ try {
     violationLines.length >= 1 && violationLines.some((l) => l.includes('"offense":"element"')),
     "structured tier-violation line lands in the host log (degrade + LOUD)",
     violationLines[0]?.slice(0, 140),
+  )
+  check(
+    violationLines.some((l) => l.includes('"offense":"element"') && l.includes('"type":"a"')),
+    "the seized link logs its own structured line (element offense, type a)",
+  )
+
+  // ── The escalation probe: clicks inside the box never move the host ──
+  // A leaked anchor (or any activation behavior smuggled past the
+  // border) would navigate the HOST document — the embed is spliced
+  // into the host DOM, so a native activation is a TOP-LEVEL move.
+  // Real signals, not timing: a realm token stamped on `window`
+  // survives (a top-level navigation mints a fresh JS realm where the
+  // token is gone), and the page URL stays byte-identical (no soft
+  // navigation either — the world syncs nothing into its URL).
+  const realmToken = `embassy-realm-${Date.now()}`
+  await page.evaluate((t) => {
+    window.__partonEmbassyRealm = t
+  }, realmToken)
+  const urlBefore = page.url()
+  const clickTargets = [
+    ...(await page.$$(`${box} parton-heading`)),
+    ...(await page.$$(`${box} parton-text`)),
+    // Dev leaves violation markers standing exactly where the seized
+    // contraband (div + link) would have been — click those spots too.
+    ...(await page.$$(`${box} parton-tier-violation`)),
+  ]
+  for (const target of clickTargets) await target.click({ force: true })
+  const realmAfter = await page.evaluate(() => window.__partonEmbassyRealm ?? null)
+  check(
+    clickTargets.length >= 2 && realmAfter === realmToken,
+    "clicks inside the embed box never replaced the document (realm token survives)",
+    `${clickTargets.length} targets clicked`,
+  )
+  check(
+    page.url() === urlBefore,
+    "clicks inside the embed box never navigated the host",
+    page.url(),
   )
 
   // ── 3. The district tint under the building ──
