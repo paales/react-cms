@@ -39,6 +39,7 @@ cms/data/cells.json
 bench/results/prof/
 bench/results/*.log
 bench/results/baseline.json
+bench/results/*.scratch.json
 
 # Client-scroll benchmark artifacts (bench/client-scroll.mjs) — DevTools
 # traces + CPU profiles + per-run summaries. Large and machine-specific;

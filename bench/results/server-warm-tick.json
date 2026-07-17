@@ -1,12 +1,686 @@
 {
-  "generatedAt": "2026-07-13T00:11:11.837Z",
-  "gitSha": "614100a",
+  "generatedAt": "2026-07-17T23:40:16.178Z",
+  "gitSha": "ba4a1b3",
   "nodeVersion": "v24.11.1",
   "runtime": "dev",
   "warmup": 50,
   "measure": 500,
-  "results": [],
-  "soak": [],
+  "results": [
+    {
+      "name": "scaling/N=10",
+      "params": {
+        "partons": 10,
+        "liveCells": 1,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 7.682082999999977,
+      "coldBytes": 43230,
+      "gate": {
+        "coldRenders": 12,
+        "coldBytes": 43230,
+        "warmRenders": 3,
+        "warmBytes": 42425,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 457.29100000005474,
+        "p95us": 1181.5420000000358,
+        "p99us": 2074.5829999999614,
+        "meanUs": 684.6670859999961,
+        "minUs": 388.37499999999636,
+        "maxUs": 3741.833999999983
+      },
+      "warmBytesMean": 30333.106,
+      "ticksPerSec": 1460.5638571619693
+    },
+    {
+      "name": "scaling/N=50",
+      "params": {
+        "partons": 50,
+        "liveCells": 1,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 2.1018340000000535,
+      "coldBytes": 78494,
+      "gate": {
+        "coldRenders": 52,
+        "coldBytes": 78494,
+        "warmRenders": 3,
+        "warmBytes": 73582,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 1397.5830000000542,
+        "p95us": 4300.12499999998,
+        "p99us": 9899.792000000161,
+        "meanUs": 1969.9332299999994,
+        "minUs": 1309.291999999914,
+        "maxUs": 10654.374999999845
+      },
+      "warmBytesMean": 82796.112,
+      "ticksPerSec": 507.63141855320663
+    },
+    {
+      "name": "scaling/N=100",
+      "params": {
+        "partons": 100,
+        "liveCells": 1,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 3.281417000000147,
+      "coldBytes": 151406,
+      "gate": {
+        "coldRenders": 102,
+        "coldBytes": 151406,
+        "warmRenders": 3,
+        "warmBytes": 141290,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 2634.2499999996107,
+        "p95us": 7133.08300000017,
+        "p99us": 11916.000000000167,
+        "meanUs": 3262.6307479999987,
+        "minUs": 2483.874999999898,
+        "maxUs": 17166.416000000027
+      },
+      "warmBytesMean": 152764.984,
+      "ticksPerSec": 306.5011266178383
+    },
+    {
+      "name": "scaling/N=500",
+      "params": {
+        "partons": 500,
+        "liveCells": 1,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 16.832167000000027,
+      "coldBytes": 744868,
+      "gate": {
+        "coldRenders": 502,
+        "coldBytes": 744868,
+        "warmRenders": 3,
+        "warmBytes": 692238,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 14306.125000000065,
+        "p95us": 41669.958000000406,
+        "p99us": 44049.708000000464,
+        "meanUs": 19222.544413999974,
+        "minUs": 13045.500000000175,
+        "maxUs": 53036.833000000115
+      },
+      "warmBytesMean": 789185.006,
+      "ticksPerSec": 52.02224942040919
+    },
+    {
+      "name": "scaling/N=1000",
+      "params": {
+        "partons": 1000,
+        "liveCells": 1,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 40.73237500000141,
+      "coldBytes": 1496874,
+      "gate": {
+        "coldRenders": 1002,
+        "coldBytes": 1496874,
+        "warmRenders": 3,
+        "warmBytes": 1389181,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 36563.33299999824,
+        "p95us": 83318.16600000093,
+        "p99us": 87129.25000000178,
+        "meanUs": 41423.476426,
+        "minUs": 27476.62499999933,
+        "maxUs": 93835.33299999908
+      },
+      "warmBytesMean": 1592084.3,
+      "ticksPerSec": 24.140899950452653
+    },
+    {
+      "name": "dashboard/M=1",
+      "params": {
+        "partons": 200,
+        "liveCells": 1,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 23.536583000000974,
+      "coldBytes": 579226,
+      "gate": {
+        "coldRenders": 202,
+        "coldBytes": 579226,
+        "warmRenders": 3,
+        "warmBytes": 340131,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 5870.9579999995185,
+        "p95us": 15606.957999996666,
+        "p99us": 22192.08300000173,
+        "meanUs": 7941.360155999973,
+        "minUs": 5442.499999997381,
+        "maxUs": 23784.083999998984
+      },
+      "warmBytesMean": 378500.438,
+      "ticksPerSec": 125.92301323148847
+    },
+    {
+      "name": "dashboard/M=10",
+      "params": {
+        "partons": 200,
+        "liveCells": 10,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 6.963166999994428,
+      "coldBytes": 299221,
+      "gate": {
+        "coldRenders": 202,
+        "coldBytes": 299221,
+        "warmRenders": 12,
+        "warmBytes": 279902,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 5602.707999998529,
+        "p95us": 15374.250000000757,
+        "p99us": 21099.291999998968,
+        "meanUs": 7609.758909999576,
+        "minUs": 5122.957999999926,
+        "maxUs": 22027.084000001196
+      },
+      "warmBytesMean": 316949.072,
+      "ticksPerSec": 131.4102078432411
+    },
+    {
+      "name": "dashboard/M=50",
+      "params": {
+        "partons": 200,
+        "liveCells": 50,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 6.572249999997439,
+      "coldBytes": 301363,
+      "gate": {
+        "coldRenders": 202,
+        "coldBytes": 301363,
+        "warmRenders": 52,
+        "warmBytes": 285995,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 5961.708000002545,
+        "p95us": 16727.708999998868,
+        "p99us": 21810.709000004863,
+        "meanUs": 7895.664593999945,
+        "minUs": 5542.95799999818,
+        "maxUs": 23306.750000003376
+      },
+      "warmBytesMean": 317979.132,
+      "ticksPerSec": 126.65178315197402
+    },
+    {
+      "name": "dashboard/M=200",
+      "params": {
+        "partons": 200,
+        "liveCells": 200,
+        "depth": 2,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 7.035207999993872,
+      "coldBytes": 309076,
+      "gate": {
+        "coldRenders": 202,
+        "coldBytes": 309076,
+        "warmRenders": 202,
+        "warmBytes": 309193,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 7496.666999999434,
+        "p95us": 20018.54099999764,
+        "p99us": 25757.707999997365,
+        "meanUs": 9970.871483999872,
+        "minUs": 6841.291999997338,
+        "maxUs": 29079.333000001498
+      },
+      "warmBytesMean": 334378.688,
+      "ticksPerSec": 100.29213610913419
+    },
+    {
+      "name": "depth/D=1",
+      "params": {
+        "partons": 100,
+        "liveCells": 1,
+        "depth": 1,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 3.1437090000035823,
+      "coldBytes": 147378,
+      "gate": {
+        "coldRenders": 101,
+        "coldBytes": 147378,
+        "warmRenders": 2,
+        "warmBytes": 139889,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 2640.625,
+        "p95us": 7432.916000005207,
+        "p99us": 11867.041999998037,
+        "meanUs": 3498.0170159998934,
+        "minUs": 2464.4590000025346,
+        "maxUs": 13444.083000002138
+      },
+      "warmBytesMean": 158906.774,
+      "ticksPerSec": 285.87625372489913
+    },
+    {
+      "name": "depth/D=4",
+      "params": {
+        "partons": 100,
+        "liveCells": 1,
+        "depth": 4,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 3.5206249999973807,
+      "coldBytes": 160362,
+      "gate": {
+        "coldRenders": 104,
+        "coldBytes": 160362,
+        "warmRenders": 5,
+        "warmBytes": 145155,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 2833.4580000009737,
+        "p95us": 7863.625000005413,
+        "p99us": 11854.999999995925,
+        "meanUs": 3699.1400059999282,
+        "minUs": 2649.334000001545,
+        "maxUs": 13633.04199999402
+      },
+      "warmBytesMean": 163831.876,
+      "ticksPerSec": 270.33310401283023
+    },
+    {
+      "name": "depth/D=16",
+      "params": {
+        "partons": 100,
+        "liveCells": 1,
+        "depth": 16,
+        "sharedPulseCell": false,
+        "idPrefix": ""
+      },
+      "coldMs": 4.397375000000466,
+      "coldBytes": 220306,
+      "gate": {
+        "coldRenders": 116,
+        "coldBytes": 220306,
+        "warmRenders": 17,
+        "warmBytes": 173532,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 3826.0000000009313,
+        "p95us": 9826.416999996582,
+        "p99us": 14408.458999998402,
+        "meanUs": 5033.999244000036,
+        "minUs": 3562.9580000022543,
+        "maxUs": 14985.16699999891
+      },
+      "warmBytesMean": 199910.298,
+      "ticksPerSec": 198.64921537123553
+    },
+    {
+      "name": "pulse/P=512",
+      "params": {
+        "partons": 512,
+        "liveCells": 512,
+        "depth": 2,
+        "sharedPulseCell": true,
+        "idPrefix": ""
+      },
+      "coldMs": 21.59004200000345,
+      "coldBytes": 795544,
+      "gate": {
+        "coldRenders": 514,
+        "coldBytes": 795544,
+        "warmRenders": 3,
+        "warmBytes": 724661,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 19878.959000008763,
+        "p95us": 46712.37499998824,
+        "p99us": 48667.12500000722,
+        "meanUs": 22346.406686000184,
+        "minUs": 15376.416999992216,
+        "maxUs": 49518.583999997645
+      },
+      "warmBytesMean": 830869.298,
+      "ticksPerSec": 44.749923960995964
+    },
+    {
+      "name": "pulse/P=512+20k",
+      "params": {
+        "partons": 512,
+        "liveCells": 512,
+        "depth": 2,
+        "sharedPulseCell": true,
+        "idPrefix": ""
+      },
+      "coldMs": 20.246917000011308,
+      "coldBytes": 795578,
+      "gate": {
+        "coldRenders": 514,
+        "coldBytes": 795578,
+        "warmRenders": 3,
+        "warmBytes": 724225,
+        "faithful": true
+      },
+      "measuredTicks": 500,
+      "warm": {
+        "p50us": 18968.708000000333,
+        "p95us": 46553.916999997455,
+        "p99us": 48789.41599999962,
+        "meanUs": 22358.19149799976,
+        "minUs": 15337.165999997524,
+        "maxUs": 49106.082999991486
+      },
+      "warmBytesMean": 833049.898,
+      "ticksPerSec": 44.7263366578403
+    }
+  ],
+  "soak": [
+    {
+      "name": "soak/N=100+M=0",
+      "params": {
+        "connections": 100,
+        "active": 0
+      },
+      "openMs": 42.454166999988956,
+      "gate": {
+        "coldRenders": 300,
+        "idleBumps": 30,
+        "idleRenders": 0,
+        "tickRenders": 0,
+        "expectedTickRenders": 0,
+        "tickRenderViolations": 0,
+        "closedEarly": 0,
+        "faithful": true
+      },
+      "heap": {
+        "baselineHeapBytes": 30596072,
+        "heldHeapBytes": 34198872,
+        "heapPerConnection": 36028,
+        "baselineRssBytes": 633765888,
+        "heldRssBytes": 634421248,
+        "rssPerConnection": 6553.6,
+        "afterTicksHeapBytes": 34159792,
+        "heapDriftPerConnection": -390.8,
+        "wakesPerConnection": 30,
+        "heapDriftPerConnectionPerWake": -13.026666666666667
+      },
+      "idleWake": {
+        "bumps": 30,
+        "cpuUsPerBump": 75.2,
+        "cpuNsPerConnectionPerBump": 752
+      },
+      "ticks": null
+    },
+    {
+      "name": "soak/N=100+M=10",
+      "params": {
+        "connections": 100,
+        "active": 10
+      },
+      "openMs": 38.318708000006154,
+      "gate": {
+        "coldRenders": 300,
+        "idleBumps": 30,
+        "idleRenders": 0,
+        "tickRenders": 10,
+        "expectedTickRenders": 10,
+        "tickRenderViolations": 0,
+        "closedEarly": 0,
+        "faithful": true
+      },
+      "heap": {
+        "baselineHeapBytes": 31105840,
+        "heldHeapBytes": 34416320,
+        "heapPerConnection": 33104.8,
+        "baselineRssBytes": 634683392,
+        "heldRssBytes": 634732544,
+        "rssPerConnection": 491.52,
+        "afterTicksHeapBytes": 35083792,
+        "heapDriftPerConnection": 6674.72,
+        "wakesPerConnection": 66,
+        "heapDriftPerConnectionPerWake": 101.13212121212122
+      },
+      "idleWake": {
+        "bumps": 30,
+        "cpuUsPerBump": 14.5,
+        "cpuNsPerConnectionPerBump": 145
+      },
+      "ticks": {
+        "measured": 30,
+        "lanesPerTick": 10,
+        "wall": {
+          "p50us": 1324.7919999994338,
+          "p95us": 1495.8329999935813,
+          "p99us": 1587.8329999977723,
+          "meanUs": 1337.334733332197
+        },
+        "cpuMeanUs": 2015.9,
+        "cpuPerLaneUs": 201.59,
+        "bytesMeanPerTick": 35284.46666666667
+      }
+    },
+    {
+      "name": "soak/N=1000+M=0",
+      "params": {
+        "connections": 1000,
+        "active": 0
+      },
+      "openMs": 507.52695899999526,
+      "gate": {
+        "coldRenders": 3000,
+        "idleBumps": 30,
+        "idleRenders": 0,
+        "tickRenders": 0,
+        "expectedTickRenders": 0,
+        "tickRenderViolations": 0,
+        "closedEarly": 0,
+        "faithful": true
+      },
+      "heap": {
+        "baselineHeapBytes": 39331768,
+        "heldHeapBytes": 72436912,
+        "heapPerConnection": 33105.144,
+        "baselineRssBytes": 637009920,
+        "heldRssBytes": 642777088,
+        "rssPerConnection": 5767.168,
+        "afterTicksHeapBytes": 72263824,
+        "heapDriftPerConnection": -173.088,
+        "wakesPerConnection": 30,
+        "heapDriftPerConnectionPerWake": -5.7696
+      },
+      "idleWake": {
+        "bumps": 30,
+        "cpuUsPerBump": 4.233333333333333,
+        "cpuNsPerConnectionPerBump": 4.233333333333333
+      },
+      "ticks": null
+    },
+    {
+      "name": "soak/N=1000+M=100",
+      "params": {
+        "connections": 1000,
+        "active": 100
+      },
+      "openMs": 301.50616699999955,
+      "gate": {
+        "coldRenders": 3000,
+        "idleBumps": 30,
+        "idleRenders": 0,
+        "tickRenders": 100,
+        "expectedTickRenders": 100,
+        "tickRenderViolations": 0,
+        "closedEarly": 0,
+        "faithful": true
+      },
+      "heap": {
+        "baselineHeapBytes": 40299952,
+        "heldHeapBytes": 73646424,
+        "heapPerConnection": 33346.472,
+        "baselineRssBytes": 642465792,
+        "heldRssBytes": 642891776,
+        "rssPerConnection": 425.984,
+        "afterTicksHeapBytes": 75994776,
+        "heapDriftPerConnection": 2348.352,
+        "wakesPerConnection": 66,
+        "heapDriftPerConnectionPerWake": 35.5810909090909
+      },
+      "idleWake": {
+        "bumps": 30,
+        "cpuUsPerBump": 52.266666666666666,
+        "cpuNsPerConnectionPerBump": 52.266666666666666
+      },
+      "ticks": {
+        "measured": 30,
+        "lanesPerTick": 100,
+        "wall": {
+          "p50us": 18486.542000013287,
+          "p95us": 21333.749999990687,
+          "p99us": 22273.792000007234,
+          "meanUs": 15650.711066668251
+        },
+        "cpuMeanUs": 18851.6,
+        "cpuPerLaneUs": 188.516,
+        "bytesMeanPerTick": 449069.93333333335
+      }
+    },
+    {
+      "name": "soak/N=5000+M=0",
+      "params": {
+        "connections": 5000,
+        "active": 0
+      },
+      "openMs": 1651.4465000000055,
+      "gate": {
+        "coldRenders": 15000,
+        "idleBumps": 30,
+        "idleRenders": 0,
+        "tickRenders": 0,
+        "expectedTickRenders": 0,
+        "tickRenderViolations": 0,
+        "closedEarly": 0,
+        "faithful": true
+      },
+      "heap": {
+        "baselineHeapBytes": 75667856,
+        "heldHeapBytes": 241342656,
+        "heapPerConnection": 33134.96,
+        "baselineRssBytes": 646103040,
+        "heldRssBytes": 650379264,
+        "rssPerConnection": 855.2448,
+        "afterTicksHeapBytes": 241102992,
+        "heapDriftPerConnection": -47.9328,
+        "wakesPerConnection": 30,
+        "heapDriftPerConnectionPerWake": -1.59776
+      },
+      "idleWake": {
+        "bumps": 30,
+        "cpuUsPerBump": 4.7,
+        "cpuNsPerConnectionPerBump": 0.9400000000000001
+      },
+      "ticks": null
+    },
+    {
+      "name": "soak/N=5000+M=500",
+      "params": {
+        "connections": 5000,
+        "active": 500
+      },
+      "openMs": 1548.6284589999996,
+      "gate": {
+        "coldRenders": 15000,
+        "idleBumps": 30,
+        "idleRenders": 0,
+        "tickRenders": 500,
+        "expectedTickRenders": 500,
+        "tickRenderViolations": 0,
+        "closedEarly": 0,
+        "faithful": true
+      },
+      "heap": {
+        "baselineHeapBytes": 83867480,
+        "heldHeapBytes": 257599232,
+        "heapPerConnection": 34746.3504,
+        "baselineRssBytes": 947175424,
+        "heldRssBytes": 952647680,
+        "rssPerConnection": 1094.4512,
+        "afterTicksHeapBytes": 268931704,
+        "heapDriftPerConnection": 2266.4944,
+        "wakesPerConnection": 66,
+        "heapDriftPerConnectionPerWake": 34.34082424242424
+      },
+      "idleWake": {
+        "bumps": 30,
+        "cpuUsPerBump": 4.866666666666666,
+        "cpuNsPerConnectionPerBump": 0.9733333333333332
+      },
+      "ticks": {
+        "measured": 30,
+        "lanesPerTick": 500,
+        "wall": {
+          "p50us": 67337.9169999971,
+          "p95us": 107711.75000000221,
+          "p99us": 110028.25000000303,
+          "meanUs": 74692.40979999787
+        },
+        "cpuMeanUs": 92188.46666666666,
+        "cpuPerLaneUs": 184.3769333333333,
+        "bytesMeanPerTick": 1973876.8333333333
+      }
+    }
+  ],
   "shared": [
     {
       "name": "shared/N=10+M=1",
@@ -14,7 +688,7 @@
         "connections": 10,
         "active": 1
       },
-      "openMs": 23.605666999999983,
+      "openMs": 10.87125000001106,
       "gate": {
         "coldRenders": 110,
         "idleBumps": 30,
@@ -28,34 +702,34 @@
         "faithful": true
       },
       "heap": {
-        "baselineHeapBytes": 23120960,
-        "heldHeapBytes": 25084392,
-        "heapPerConnection": 196343.2,
-        "baselineRssBytes": 105168896,
-        "heldRssBytes": 122929152,
-        "rssPerConnection": 1776025.6,
-        "afterTicksHeapBytes": 25397656,
-        "heapDriftPerConnection": 31326.4,
+        "baselineHeapBytes": 51323032,
+        "heldHeapBytes": 51786288,
+        "heapPerConnection": 46325.6,
+        "baselineRssBytes": 973701120,
+        "heldRssBytes": 973471744,
+        "rssPerConnection": -22937.6,
+        "afterTicksHeapBytes": 51944992,
+        "heapDriftPerConnection": 15870.4,
         "wakesPerConnection": 66,
-        "heapDriftPerConnectionPerWake": 474.6424242424243
+        "heapDriftPerConnectionPerWake": 240.46060606060607
       },
       "idleWake": {
         "bumps": 30,
-        "cpuUsPerBump": 67.43333333333334,
-        "cpuNsPerConnectionPerBump": 6743.333333333334
+        "cpuUsPerBump": 4.333333333333333,
+        "cpuNsPerConnectionPerBump": 433.3333333333333
       },
       "ticks": {
         "measured": 30,
         "lanesPerTick": 10,
         "wall": {
-          "p50us": 587.8339999999866,
-          "p95us": 804.6249999999873,
-          "p99us": 958.7500000000091,
-          "meanUs": 613.1764000000011
+          "p50us": 448.541000005207,
+          "p95us": 566.1669999972219,
+          "p99us": 608.3750000107102,
+          "meanUs": 461.1056666666021
         },
-        "cpuMeanUs": 942.9666666666667,
-        "cpuPerLaneUs": 94.29666666666667,
-        "bytesMeanPerTick": 53318
+        "cpuMeanUs": 1491.3666666666666,
+        "cpuPerLaneUs": 149.13666666666666,
+        "bytesMeanPerTick": 35319.666666666664
       }
     },
     {
@@ -64,7 +738,7 @@
         "connections": 10,
         "active": 4
       },
-      "openMs": 19.799791999999968,
+      "openMs": 12.103917000000365,
       "gate": {
         "coldRenders": 110,
         "idleBumps": 30,
@@ -78,34 +752,34 @@
         "faithful": true
       },
       "heap": {
-        "baselineHeapBytes": 24634600,
-        "heldHeapBytes": 25256192,
-        "heapPerConnection": 62159.2,
-        "baselineRssBytes": 130514944,
-        "heldRssBytes": 133070848,
-        "rssPerConnection": 255590.4,
-        "afterTicksHeapBytes": 26078920,
-        "heapDriftPerConnection": 82272.8,
+        "baselineHeapBytes": 51128824,
+        "heldHeapBytes": 51402960,
+        "heapPerConnection": 27413.6,
+        "baselineRssBytes": 973471744,
+        "heldRssBytes": 973553664,
+        "rssPerConnection": 8192,
+        "afterTicksHeapBytes": 52140352,
+        "heapDriftPerConnection": 73739.2,
         "wakesPerConnection": 66,
-        "heapDriftPerConnectionPerWake": 1246.5575757575757
+        "heapDriftPerConnectionPerWake": 1117.260606060606
       },
       "idleWake": {
         "bumps": 30,
-        "cpuUsPerBump": 21.866666666666667,
-        "cpuNsPerConnectionPerBump": 2186.6666666666665
+        "cpuUsPerBump": 4.366666666666666,
+        "cpuNsPerConnectionPerBump": 436.66666666666663
       },
       "ticks": {
         "measured": 30,
         "lanesPerTick": 40,
         "wall": {
-          "p50us": 1670.5840000000194,
-          "p95us": 1915.6670000000418,
-          "p99us": 2166.2919999999986,
-          "meanUs": 1685.7251000000113
+          "p50us": 1208.4999999933643,
+          "p95us": 1424.9160000035772,
+          "p99us": 1760.3329999983544,
+          "meanUs": 1242.0985666642082
         },
-        "cpuMeanUs": 2456.4666666666667,
-        "cpuPerLaneUs": 61.41166666666667,
-        "bytesMeanPerTick": 212554.66666666666
+        "cpuMeanUs": 1844.0333333333333,
+        "cpuPerLaneUs": 46.100833333333334,
+        "bytesMeanPerTick": 140598.33333333334
       }
     },
     {
@@ -114,7 +788,7 @@
         "connections": 100,
         "active": 1
       },
-      "openMs": 165.498667,
+      "openMs": 158.3324580000044,
       "gate": {
         "coldRenders": 1100,
         "idleBumps": 30,
@@ -128,34 +802,34 @@
         "faithful": true
       },
       "heap": {
-        "baselineHeapBytes": 24858992,
-        "heldHeapBytes": 30987160,
-        "heapPerConnection": 61281.68,
-        "baselineRssBytes": 137592832,
-        "heldRssBytes": 180649984,
-        "rssPerConnection": 430571.52,
-        "afterTicksHeapBytes": 31502248,
-        "heapDriftPerConnection": 5150.88,
+        "baselineHeapBytes": 50968400,
+        "heldHeapBytes": 56389336,
+        "heapPerConnection": 54209.36,
+        "baselineRssBytes": 974913536,
+        "heldRssBytes": 974929920,
+        "rssPerConnection": 163.84,
+        "afterTicksHeapBytes": 56793992,
+        "heapDriftPerConnection": 4046.56,
         "wakesPerConnection": 66,
-        "heapDriftPerConnectionPerWake": 78.04363636363637
+        "heapDriftPerConnectionPerWake": 61.31151515151515
       },
       "idleWake": {
         "bumps": 30,
-        "cpuUsPerBump": 13.3,
-        "cpuNsPerConnectionPerBump": 133
+        "cpuUsPerBump": 3.9,
+        "cpuNsPerConnectionPerBump": 39
       },
       "ticks": {
         "measured": 30,
         "lanesPerTick": 100,
         "wall": {
-          "p50us": 2280.499999999961,
-          "p95us": 2655.040999999983,
-          "p99us": 3548.041000000012,
-          "meanUs": 2370.4985666666553
+          "p50us": 2455.8749999996508,
+          "p95us": 2975.708999991184,
+          "p99us": 3067.750000001979,
+          "meanUs": 2544.7916333330795
         },
-        "cpuMeanUs": 4095,
-        "cpuPerLaneUs": 40.95,
-        "bytesMeanPerTick": 532763.3333333334
+        "cpuMeanUs": 3952.366666666667,
+        "cpuPerLaneUs": 39.52366666666667,
+        "bytesMeanPerTick": 557476.6666666666
       }
     },
     {
@@ -164,7 +838,7 @@
         "connections": 100,
         "active": 4
       },
-      "openMs": 108.72904200000005,
+      "openMs": 187.75608300000022,
       "gate": {
         "coldRenders": 1100,
         "idleBumps": 30,
@@ -178,34 +852,34 @@
         "faithful": true
       },
       "heap": {
-        "baselineHeapBytes": 25464176,
-        "heldHeapBytes": 31292600,
-        "heapPerConnection": 58284.24,
-        "baselineRssBytes": 190693376,
-        "heldRssBytes": 221642752,
-        "rssPerConnection": 309493.76,
-        "afterTicksHeapBytes": 36463296,
-        "heapDriftPerConnection": 51706.96,
+        "baselineHeapBytes": 51058864,
+        "heldHeapBytes": 56511400,
+        "heapPerConnection": 54525.36,
+        "baselineRssBytes": 977043456,
+        "heldRssBytes": 976912384,
+        "rssPerConnection": -1310.72,
+        "afterTicksHeapBytes": 61373784,
+        "heapDriftPerConnection": 48623.84,
         "wakesPerConnection": 66,
-        "heapDriftPerConnectionPerWake": 783.4387878787878
+        "heapDriftPerConnectionPerWake": 736.7248484848484
       },
       "idleWake": {
         "bumps": 30,
-        "cpuUsPerBump": 11.333333333333334,
-        "cpuNsPerConnectionPerBump": 113.33333333333334
+        "cpuUsPerBump": 12.466666666666667,
+        "cpuNsPerConnectionPerBump": 124.66666666666666
       },
       "ticks": {
         "measured": 30,
         "lanesPerTick": 400,
         "wall": {
-          "p50us": 7204.4160000000375,
-          "p95us": 8805.12500000009,
-          "p99us": 10567.332999999962,
-          "meanUs": 7452.030500000004
+          "p50us": 7893.292000007932,
+          "p95us": 9454.083000004175,
+          "p99us": 12036.665999999968,
+          "meanUs": 8080.706966668367
         },
-        "cpuMeanUs": 10553.866666666667,
-        "cpuPerLaneUs": 26.384666666666668,
-        "bytesMeanPerTick": 1903676.6666666667
+        "cpuMeanUs": 11560.6,
+        "cpuPerLaneUs": 28.901500000000002,
+        "bytesMeanPerTick": 1895410
       }
     },
     {
@@ -214,7 +888,7 @@
         "connections": 500,
         "active": 1
       },
-      "openMs": 476.3307500000001,
+      "openMs": 489.2855419999978,
       "gate": {
         "coldRenders": 5500,
         "idleBumps": 30,
@@ -228,34 +902,34 @@
         "faithful": true
       },
       "heap": {
-        "baselineHeapBytes": 25751000,
-        "heldHeapBytes": 52981952,
-        "heapPerConnection": 54461.904,
-        "baselineRssBytes": 306331648,
-        "heldRssBytes": 312344576,
-        "rssPerConnection": 12025.856,
-        "afterTicksHeapBytes": 55228696,
-        "heapDriftPerConnection": 4493.488,
+        "baselineHeapBytes": 51073704,
+        "heldHeapBytes": 77418184,
+        "heapPerConnection": 52688.96,
+        "baselineRssBytes": 983334912,
+        "heldRssBytes": 983580672,
+        "rssPerConnection": 491.52,
+        "afterTicksHeapBytes": 79109608,
+        "heapDriftPerConnection": 3382.848,
         "wakesPerConnection": 66,
-        "heapDriftPerConnectionPerWake": 68.08315151515151
+        "heapDriftPerConnectionPerWake": 51.255272727272725
       },
       "idleWake": {
         "bumps": 30,
-        "cpuUsPerBump": 3.533333333333333,
-        "cpuNsPerConnectionPerBump": 7.066666666666666
+        "cpuUsPerBump": 36.56666666666667,
+        "cpuNsPerConnectionPerBump": 73.13333333333334
       },
       "ticks": {
         "measured": 30,
         "lanesPerTick": 500,
         "wall": {
-          "p50us": 10794.041000000107,
-          "p95us": 11367.833000000019,
-          "p99us": 11372.749999999996,
-          "meanUs": 10806.576466666655
+          "p50us": 12648.042000000714,
+          "p95us": 14878.582999997889,
+          "p99us": 15277.415999997174,
+          "meanUs": 12909.831966666874
         },
-        "cpuMeanUs": 13794.8,
-        "cpuPerLaneUs": 27.589599999999997,
-        "bytesMeanPerTick": 1897883.3333333333
+        "cpuMeanUs": 16533.466666666667,
+        "cpuPerLaneUs": 33.06693333333333,
+        "bytesMeanPerTick": 1762350
       }
     },
     {
@@ -264,7 +938,7 @@
         "connections": 500,
         "active": 4
       },
-      "openMs": 467.9737919999998,
+      "openMs": 513.7662080000009,
       "gate": {
         "coldRenders": 5500,
         "idleBumps": 30,
@@ -278,34 +952,34 @@
         "faithful": true
       },
       "heap": {
-        "baselineHeapBytes": 26279272,
-        "heldHeapBytes": 53836600,
-        "heapPerConnection": 55114.656,
-        "baselineRssBytes": 384778240,
-        "heldRssBytes": 389251072,
-        "rssPerConnection": 8945.664,
-        "afterTicksHeapBytes": 78713736,
-        "heapDriftPerConnection": 49754.272,
+        "baselineHeapBytes": 51117704,
+        "heldHeapBytes": 77501160,
+        "heapPerConnection": 52766.912,
+        "baselineRssBytes": 983318528,
+        "heldRssBytes": 983613440,
+        "rssPerConnection": 589.824,
+        "afterTicksHeapBytes": 101710608,
+        "heapDriftPerConnection": 48418.896,
         "wakesPerConnection": 66,
-        "heapDriftPerConnectionPerWake": 753.852606060606
+        "heapDriftPerConnectionPerWake": 733.6196363636363
       },
       "idleWake": {
         "bumps": 30,
-        "cpuUsPerBump": 3.533333333333333,
-        "cpuNsPerConnectionPerBump": 7.066666666666666
+        "cpuUsPerBump": 22.233333333333334,
+        "cpuNsPerConnectionPerBump": 44.46666666666667
       },
       "ticks": {
         "measured": 30,
         "lanesPerTick": 2000,
         "wall": {
-          "p50us": 43400.04200000021,
-          "p95us": 45978.91600000003,
-          "p99us": 58841.24999999994,
-          "meanUs": 43646.148633333294
+          "p50us": 47391.042000002926,
+          "p95us": 63466.91699999792,
+          "p99us": 69103.8750000007,
+          "meanUs": 48723.78060000143
         },
-        "cpuMeanUs": 54896.76666666667,
-        "cpuPerLaneUs": 27.448383333333336,
-        "bytesMeanPerTick": 10194183.333333334
+        "cpuMeanUs": 62981.36666666667,
+        "cpuPerLaneUs": 31.490683333333333,
+        "bytesMeanPerTick": 10145133.333333334
       }
     }
   ]

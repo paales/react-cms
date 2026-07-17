@@ -54,11 +54,18 @@ const ONLY = process.env.BENCH_ONLY?.trim() || null
 // here in the same worker reports the build that is genuinely in effect
 // — not merely what the CLI requested. `--prod` sets it to "production".
 const RUNTIME = process.env.NODE_ENV === "production" ? "prod" : "dev"
+// The committed ledgers are the CANONICAL default-config full matrix —
+// a partial or short run (--only / --warmup / --measure) is not the
+// baseline, so without an explicit BENCH_OUT it writes to the
+// gitignored scratch sibling instead of silently clobbering the
+// regression substrate. The config itself is the signal.
+const CANONICAL =
+  !process.env.BENCH_ONLY?.trim() && !process.env.BENCH_WARMUP && !process.env.BENCH_MEASURE
 const OUT =
   process.env.BENCH_OUT?.trim() ||
   (RUNTIME === "prod"
-    ? "bench/results/server-warm-tick.prod.json"
-    : "bench/results/server-warm-tick.json")
+    ? `bench/results/server-warm-tick.prod${CANONICAL ? "" : ".scratch"}.json`
+    : `bench/results/server-warm-tick${CANONICAL ? "" : ".scratch"}.json`)
 
 function gitSha(): string {
   try {
@@ -94,10 +101,23 @@ test("server warm-tick benchmark", async () => {
     return specName.split("/")[0] === ONLY
   }
   const scenarios = ALL_SCENARIOS.filter((s) => matches(s.name))
-  const soakSpecs = SOAK_SWEEP.filter((s) => matches(s.name))
-  const sharedSpecs = SHARED_SWEEP.filter((s) => matches(s.name))
+  let soakSpecs = SOAK_SWEEP.filter((s) => matches(s.name))
+  let sharedSpecs = SHARED_SWEEP.filter((s) => matches(s.name))
   if (scenarios.length === 0 && soakSpecs.length === 0 && sharedSpecs.length === 0) {
     throw new Error(`BENCH_ONLY="${ONLY}" matched no scenarios`)
+  }
+  // Soak + shared are dev-Flight categories (per-connection isolation
+  // rides the dev-mode x-test-scope seam — see soak-runner.ts). A full
+  // `--prod` run records the tick categories and skips them, so the
+  // advertised `--prod → .prod.json` invocation completes; an EXPLICIT
+  // `--only=soak`/`--only=shared` under `--prod` still runs into the
+  // scope probe's hard-fail — a stated request must fail loud, never
+  // silently no-op.
+  if (RUNTIME === "prod" && !ONLY && (soakSpecs.length > 0 || sharedSpecs.length > 0)) {
+    // eslint-disable-next-line no-console
+    console.log("skipping soak + shared under --prod (dev-Flight categories; see bench/README.md)")
+    soakSpecs = []
+    sharedSpecs = []
   }
 
   const results: ScenarioResult[] = []

@@ -13,28 +13,6 @@ keeping for context).
 
 Confirmed bugs and debt awaiting a lane — measured, not yet fixed.
 
-### Warm-tick bench ~2× slower since every parton fingerprints
-
-CI evidence (same runner class, same workflow): the Server warm-tick
-bench job finished in 7m32s at `6cd2da8` and times out at 15m on
-`be20eb1` — the harness's duplicate-id crash was fixed in between, so
-the timeout is pure runtime growth. The window contains the two
-commits that added per-parton per-render work: the placement fold
-(`0adcf92`, a hash per auto-id placement) and the selector deletion
-(`2f332d1`, every bare parton now runs the full fp/registry pipeline
-it used to skip). The CI TIMEOUT itself was a separate bench-harness
-deadlock (the soak fixture's fold-mismatched selector — fixed), and
-the same stale selector was under-counting warm renders (rndr=2 vs
-the documented 3), so every pre-fix measurement is unfaithful —
-including the first same-machine ratios recorded here (warm p50 3.6×
-at N=10 down to 1.4× at N=1000 vs the `614100a` baseline, loaded
-box). Re-measure on a quiet machine post-fix, then
-`yarn bench:server --prof` the warm-tick hot path before deciding:
-optimize (memoize fold inputs? cheaper fp source concat?) vs
-re-budget for the new model's honest cost. The bench is the CPU
-canary — its smoke ticks are a CI gate again, but the committed
-baselines must not be regenerated until this is resolved.
-
 ### Test-infra: `refreshSelector` bumps cross Playwright workers
 
 Invalidation-timestamp bumps are process-global, not partitioned by
@@ -112,6 +90,28 @@ worth its weight (multi-team adoption pressure).
 
 String tokens are brittle past a single codebase — highest-leverage
 backlog item before multi-team adoption.
+
+### Warm-tick micro-optimizations (profiled, unclaimed)
+
+The 2026-07 warm-tick profile (the measurement that retired the "~2×
+slower" scare — dev-signal parity, prod ~1.25×, the honest price of
+per-placement identity; budgets re-recorded at `ba4a1b3`) left two
+concrete candidates on the table, together worth maybe 8–12% of the
+prod tick:
+
+- **Fold the fp in one pass.** `partial.tsx` hashes overlapping
+  concatenations three times per parton (`ownStructuralFp` →
+  `structuralFp` → `fp`); `hash()` is ~12.6% of the prod tick.
+  Collapse to one pass over the sources + cheap suffix folds.
+- **Pre-parse dep-key selectors at record time.** `evalDepKeys`
+  re-runs `parseSelector` on every `cell:` dep string on every
+  descendant-fold pass — the pulse category's one visible dev delta
+  (+9–15%). Parse once when the dep is recorded, store the compiled
+  form.
+
+Not urgent — no single frame is pathological; the remaining delta is
+inherent to minting and carrying placement-qualified ids. Take these
+when a lean-end budget actually pinches.
 
 ### Pattern-based cache invalidation
 

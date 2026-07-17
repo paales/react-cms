@@ -20,6 +20,12 @@ yarn bench:server --only=scaling/N=1000   # one exact scenario
 yarn bench:server --warmup=20 --measure=200   # shorter run while iterating
 ```
 
+Only the DEFAULT full-matrix invocation writes the committed ledger; any
+`--only` / `--warmup` / `--measure` run is not the baseline and writes
+the gitignored `*.scratch.json` sibling instead (explicit `--out` always
+wins). This is what keeps a quick iteration run from silently clobbering
+the regression substrate.
+
 **Dev vs prod, and which is canonical.** Dev is the DEFAULT; `--prod`
 measures the production react-server-dom build. They answer different
 questions and are NOT comparable in absolute terms — see
@@ -127,7 +133,29 @@ Which to use:
 - **prod (`--prod`) — honest absolute numbers.** What a deployed tick
   actually costs. The committed `server-warm-tick.prod.json` is the prod
   baseline. Do NOT compare a dev p50 against a prod p50 — they measure
-  different runtimes.
+  different runtimes. Soak + shared are dev-Flight categories (their
+  per-connection isolation rides the dev-mode `x-test-scope` seam), so
+  a full `--prod` run skips them; the `.prod.json` ledger carries the
+  tick categories only.
+
+Two caveats on reading the prod numbers:
+
+- **The `--prod` bench slightly overstates a deployed tick (~3.5%).**
+  The worker still runs under vitest's transform: `codeVersionKey`'s
+  `import.meta.env.DEV` branch is live (one ALS read per parton per
+  render that a real vite build compiles away to `""`), and vite-node's
+  module-proxy getters sit on hot import paths. Treat the ledger as an
+  upper bound.
+- **The per-parton budget is a decision, not an accident.** The
+  2026-07 identity ladder (placement fold + selector deletion) priced
+  every parton into the full fp/registry pipeline: ~8.3 µs per parton
+  per warm tick prod CPU on an M5 Pro, up from ~6.8 µs before it —
+  +~1.5 µs/parton buys sound per-placement identity and universal
+  fp-skip, concentrated at depth (long parent paths make longer ids;
+  depth/D=16 wears it worst). Measured, profiled, and re-budgeted
+  deliberately — the committed ledgers at `ba4a1b3`+ reflect it.
+  Remaining micro-candidates: docs/notes/IDEAS.md § Warm-tick
+  micro-optimizations.
 
 ## Scenarios
 
