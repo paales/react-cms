@@ -12,17 +12,19 @@
 
 import {
   parton,
+  scroller,
   searchParam,
   type RenderArgs,
   type ResolvedCell,
   type BoundCell,
+  type ScrollerSlice,
   type CellValue,
   type PartialCtx,
 } from "@parton/framework"
 import { Frame } from "@parton/framework"
 import { Badge } from "@parton/copies/components/ui/badge"
 import { cn } from "@parton/copies/lib/utils"
-import { LoadMore as LoadMoreClient, PageSentinel } from "../components/load-more.tsx"
+import { PokedexShell } from "../components/pokedex-shell.tsx"
 import { PartialControls } from "../components/partial-controls.tsx"
 import { SearchToggle, SearchInput, SearchDialog } from "../components/search.tsx"
 import { pokemonCardCell, pokemonListCell, pokemonSearchCell } from "./pokemon-cells.ts"
@@ -322,53 +324,33 @@ export const SearchAreaFrame = makeSearchArea("frame")
 
 // ─── Pokedex list pages ─────────────────────────────────────────────────
 
-function makeListPagePartial(page: number) {
-  // One spec per page window — the factory names each product
-  // (`page-1`, `page-2`, …); the name is the identity.
-  return parton(
-    Object.assign(
-      function PokemonListPageRender({
-        results,
-      }: {
-        results: ResolvedCell<CellValue<typeof pokemonListCell>>
-      } & RenderArgs) {
-        const isFirst = page === 1
-        const list = results.value?.pokemon_v2_pokemon ?? []
-        return (
-          <div>
-            <PageSentinel page={page} />
-            {isFirst && (
-              <>
-                <h1 className="mb-4 text-2xl font-semibold">Pokedex</h1>
-                <title>Pokedex</title>
-                <p className="mb-6 text-muted-foreground">
-                  Browse pokemon from the PokeAPI GraphQL endpoint.
-                </p>
-              </>
-            )}
-            <PokemonCardGrid items={list} />
-          </div>
-        )
-      },
-      { displayName: `page-${page}` },
-    ),
-    {
-      // Page N exists iff the URL admits it — a miss parks the cached
-      // page (back/forward across a load-more boundary restores it).
-      match: { searchParams: { pages: (v) => Math.max(1, Number(v) || 1) >= page } },
+// The pokedex as a windowed collection: leaf partons cover 24 pokemon
+// and resolve their slice only in view; culled regions collapse to
+// shells; `?page=` is the anchor (cold seed + silent scroll mirror).
+// Each card stays its own parton (`PokemonCard`, fed the per-entity
+// fragment cell), so card content invalidates per pokemon wherever it
+// appears — order belongs to the slice, content to the entity.
+const PokedexList = scroller(
+  function PokedexListRender({
+    items,
+  }: ScrollerSlice<BoundCell<CellValue<typeof pokemonCardCell>>> & RenderArgs) {
+    return <PokemonCardGrid items={items} />
+  },
+  {
+    range: async ({ offset, limit }) => {
+      const res = await pokemonListCell.resolve({ limit, offset })
+      return {
+        items: res.value?.pokemon_v2_pokemon ?? [],
+        total: res.value?.pokemon_v2_pokemon_aggregate?.aggregate?.count ?? 0,
+      }
     },
-  )
-}
-
-const MAX_LIST_PAGES = 10
-const ListPagePartials = Array.from({ length: MAX_LIST_PAGES }, (_, i) =>
-  makeListPagePartial(i + 1),
+    shell: PokedexShell,
+    estimate: (n) => Math.ceil(n / 4) * 240,
+    leaf: 24,
+    fanout: 4,
+    anchor: { param: "page", pageSize: 24 },
+  },
 )
-
-const LoadMorePartial = parton(function LoadMoreRender(_: RenderArgs) {
-  const nextPage = Math.max(1, Number(searchParam("pages")) || 1) + 1
-  return <LoadMoreClient nextPage={nextPage} />
-})
 
 // ─── Outer wrapper — matches /, composes the overview ─────────────────
 
@@ -381,14 +363,12 @@ export const PokemonOverviewPage = parton(
         <Frame name="search" initialUrl="/">
           <SearchAreaFrame />
         </Frame>
-        {ListPagePartials.map((P, i) => {
-          const page = i + 1
-          const offset = (page - 1) * 24
-          return (
-            <P key={`list-page-${page}`} results={pokemonListCell.with({ limit: 24, offset })} />
-          )
-        })}
-        <LoadMorePartial />
+        <h1 className="mb-4 text-2xl font-semibold">Pokedex</h1>
+        <title>Pokedex</title>
+        <p className="mb-6 text-muted-foreground">
+          Browse pokemon from the PokeAPI GraphQL endpoint.
+        </p>
+        <PokedexList />
       </>
     )
   },

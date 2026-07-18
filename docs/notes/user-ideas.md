@@ -4,7 +4,7 @@
 
 - [ ] Migrate to a more classic monorepo setup with a packages and examples directory. Have a better usage guide for /client and /server exports so that they dont conflict. Should each package have both exports?
 
-- [ ] InfiniteScroll: The current example in the frontend is highly incomplete and doesn't allow scrolling back, restoring state on refresh, not tested that scroll positions restore, doesn't reserve space further below the fold, doesn't accept async iterators as a streaming primitive, can't handle grid items etc.
+- [ ] Scroller follow-ups (the primitive shipped — `docs/reference/scroller.md`; scroll-back, refresh restore, space reservation, grid items covered): async iterators as a streaming source; the signed/prepend feed extension; measure-and-pin for estimate drift.
 
 - [ ] Make sure the ViewTransitions are properly documented.
 

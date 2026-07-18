@@ -93,6 +93,11 @@ export const pokemonListCell = pokeapi.query(
       pokemon_v2_pokemon(limit: $limit, offset: $offset, order_by: { id: asc }) {
         ...PokemonListFields
       }
+      pokemon_v2_pokemon_aggregate {
+        aggregate {
+          count
+        }
+      }
     }
   `,
   [pokemonCardCell],

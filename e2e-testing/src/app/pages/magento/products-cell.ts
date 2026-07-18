@@ -40,3 +40,50 @@ export const magentoProductsCell = magentoCatalog.query(`
     }
   }
 `)
+
+// ─── Browse scroller cells — order/content split ───────────────────────
+//
+// The per-card ENTITY cell: content keyed by `uid`, hydrated from the
+// slice query's spread sites. A card parton bound to it re-renders on
+// `cell:magento.browse-card-fields?uid=X` wherever the product
+// appears — per-item invalidation across every collection.
+export const browseCardCell = magentoCatalog.fragment(
+  `#graphql
+  fragment BrowseCardFields on ProductInterface {
+    uid
+    name
+    sku
+    small_image {
+      url
+      label
+    }
+    price_range {
+      minimum_price {
+        regular_price {
+          value
+          currency
+        }
+      }
+    }
+  }
+`,
+  { key: (d) => ({ uid: d.uid }) },
+)
+
+// The slice cell the scroller's `range` resolves: ORDER + totals.
+// Composing `browseCardCell` rewrites each spread site to the card
+// cell's BoundCell, so the leaf Render forwards items straight into
+// card partons.
+export const browseProductsCell = magentoCatalog.query(
+  `#graphql
+  query BrowseProducts($pageSize: Int!, $currentPage: Int!) {
+    products(filter: {}, pageSize: $pageSize, currentPage: $currentPage) {
+      total_count
+      items {
+        ...BrowseCardFields
+      }
+    }
+  }
+`,
+  [browseCardCell],
+)

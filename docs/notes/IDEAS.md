@@ -144,3 +144,60 @@ display. The `cell.input()` ↔ RHF `register()` comparison in
 [`../reference/cells.md`](../reference/cells.md) is the design surface
 to start from. Waits for a real form flow that exercises
 submit + validation + draft together.
+
+### Scroller: measure-and-pin, streaming sources, signed feeds
+
+`scroller()` shipped (`../reference/scroller.md`) with three known
+refinements, each waiting on a forcing caller:
+
+- **Measure-and-pin.** A culled region reserves `estimate(n)` px;
+  drift above the viewport shifts scroll by the error. The
+  visibility observer already produces rects — pin measured heights
+  client-side so shells re-open at their real size.
+- **Streaming / async-iterator sources.** `range` is offset/limit.
+  A feed whose tail streams (chat, activity) wants a source adapter
+  over a tail cell + `expires()`, not a new core.
+- **Signed intervals for prepend feeds.** The interval tree extends
+  append-ward today. Anchoring item 0 at first-load and letting the
+  tree grow in both directions (the world's signed chunk coords, in
+  1D) covers newest-first feeds without re-keying.
+
+### Scroller × broadcast eligibility
+
+D2's classifier marks every cull-gated parton broadcast-ineligible
+(the `visible:` dep is per-viewer). Under `scroller()`, every leaf
+and item placement is cull-gated — so N viewers of one live-priced
+catalog cost N× per-item lanes, exactly the shape broadcast lanes
+kill. The body's output is viewer-independent; only the gate is
+per-viewer. Investigate "broadcast-eligible when resolved-visible":
+publish keyed on the resolved state, per-connection gating stays
+local. Delivery-plane change — design against the shared bench.
+
+### Scroller: seed reads fold raw, not resolved
+
+A cull seed's tracked reads (the anchor's `searchParam("page")`)
+record raw dep keys, so every segment's fp moves when the mirrored
+anchor value moves — the next refetch re-sends the whole visible
+set even though every seed VERDICT (and every measured gate) is
+unchanged. The resolved-visibility term (`visible:<id>?seed=`)
+already folds the verdict; investigate suppressing the seed's raw
+keys when a measurement exists (measurement wins the gate), so the
+anchor mirror stops being a page-wide fp mover. Soundness argument
+sketched in the scroller commit; needs the fold's re-eval path to
+re-run seeds for unmeasured instances.
+
+### A 2D `space` for scroller — wait for the second caller
+
+The scroller is the 1D instance of the world's quadtree; the shared
+substance (recursive cull-gated level minting, staggered runways,
+seed-by-intersection) is real but small, and the differences
+dominate: the world is coordinate-driven (procedural chunks, fixed
+px boxes, no estimate, telemetry warming, no URL anchor) where the
+scroller is source-driven (range slices, flow layout, estimate,
+anchor param). Folding both under one constructor now would be a
+false unification — every option would mean something different per
+space — and converting the world churns eight validators for zero
+behavioral gain while deleting the demo code whose explanatory
+comments ARE the exhibit. Extract the shared core only when a real
+second 2D caller appears (a coordinate-addressed data grid:
+calendar, sheet). `website/src/app/world/quad.tsx` is the donor.
