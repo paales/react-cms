@@ -1,7 +1,11 @@
 import path from "node:path"
-import react from "@vitejs/plugin-react"
+import babel from "@rolldown/plugin-babel"
+import react, { reactCompilerPreset } from "@vitejs/plugin-react"
 import rsc from "@vitejs/plugin-rsc"
+import tailwindcss from "@tailwindcss/vite"
 import { defineConfig } from "vite"
+import { partonChannelServer } from "@parton/framework/vite/channel-server.ts"
+import { rscCompression } from "@parton/framework/vite/compression.ts"
 
 // This example keeps its own tiny content store, gitignored like every
 // sibling app's `data/` — anchored here (not `process.cwd()`) because
@@ -25,7 +29,19 @@ const workspaceAliases = [
 ]
 
 export default defineConfig(() => ({
-  plugins: [rsc(), react()],
+  plugins: [
+    // Serve the opt-in WebSocket channel transport's `/__parton/ws`
+    // upgrade in dev + preview (additive — the default fetch transport is
+    // untouched, and only a page opting in with `?transport=ws` uses it).
+    partonChannelServer(),
+    rscCompression(),
+    rsc(),
+    react(),
+    babel({
+      presets: [reactCompilerPreset({ target: "19", compilationMode: "annotation" })],
+    }),
+    tailwindcss(),
+  ],
   server: {
     port: 5177,
     // Cell storage lives in data/ inside this workspace; writes are
