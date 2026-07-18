@@ -116,3 +116,49 @@ test("the DOM is O(viewport), independent of the million", async ({ page }) => {
   expect(counts.nodes, "total DOM nodes").toBeLessThan(4000)
   expect(counts.reservations).toBeLessThanOrEqual(2)
 })
+
+test("span moves while scrolling up never teleport the viewport", async ({ page }) => {
+  // The regression this pins: a span move swaps reservation-space
+  // for leaves at identical height, but native scroll anchoring saw
+  // its anchor node destroyed and "compensated" — a spontaneous
+  // teleport by exactly the swapped height. The collection opts out
+  // of anchoring (`overflow-anchor: none`); geometry is exact by
+  // construction.
+  await page.addInitScript(() => {
+    ;(window as unknown as { __spont: number[] }).__spont = []
+    let lastY = 0
+    window.addEventListener(
+      "scroll",
+      () => {
+        const d = window.scrollY - lastY
+        // Wheel steps below are exactly -700; anything else large is
+        // a spontaneous move.
+        if (Math.abs(d) > 900) {
+          ;(window as unknown as { __spont: number[] }).__spont.push(Math.round(d))
+        }
+        lastY = window.scrollY
+      },
+      { passive: true, capture: true },
+    )
+  })
+  await page.goto("/scale?page=7814")
+  await page.waitForSelector('[data-testid="scale-cell"]', { timeout: 20000 })
+  await waitForPageInteractive(page)
+  // Ignore the deep-link landing itself.
+  await page.evaluate(() => {
+    ;(window as unknown as { __spont: number[] }).__spont.length = 0
+  })
+
+  await page.mouse.move(600, 400)
+  // Stepped up-scroll with settle pauses — each pause lets the
+  // reservation state a landing and the span move underneath us.
+  for (let round = 0; round < 6; round++) {
+    for (let i = 0; i < 5; i++) {
+      await page.mouse.wheel(0, -700)
+      await page.waitForTimeout(80)
+    }
+    await page.waitForTimeout(900)
+  }
+  const spont = await page.evaluate(() => (window as unknown as { __spont: number[] }).__spont)
+  expect(spont, `spontaneous scroll moves: ${spont.join(",")}`).toEqual([])
+})

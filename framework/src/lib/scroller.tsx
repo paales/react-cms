@@ -222,7 +222,20 @@ export function scroller<Item>(opts: ScrollerOptions<Item>): React.ComponentType
         // exact.
         return (
           <>
-            <div className={opts.className} data-s={name} data-so={0} data-sn={total} data-sroot="">
+            {/* overflow-anchor OFF for the whole collection: a span
+                move swaps reservation-space for leaves at IDENTICAL
+                height, but native scroll anchoring sees its anchor
+                node destroyed and "compensates" — teleporting the
+                viewport by the swapped height. Geometry here is exact
+                by construction; anchoring can only misfire. */}
+            <div
+              className={opts.className}
+              data-s={name}
+              data-so={0}
+              data-sn={total}
+              data-sroot=""
+              style={{ overflowAnchor: "none" }}
+            >
               {start > 0 ? (
                 <ScrollerReservation
                   key="res-before"
