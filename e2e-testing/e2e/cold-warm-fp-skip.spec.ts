@@ -1,4 +1,4 @@
-import { clearCaches, test, expect, waitForPageInteractive } from "./fixtures"
+import { clearCaches, test, expect, waitForPageInteractive, waitForRscIdle } from "./fixtures"
 
 /**
  * Cold→warm fp instability fix via the fp-trailer.
@@ -47,8 +47,11 @@ test("re-visit to a route fp-skips on the very next nav after cold", async ({ pa
     if (liveRequests.has(e.requestId)) liveBytes += e.dataLength
   })
 
-  // Visit /magento (cold). Body renders fully, snapshots register.
-  await page.goto("/magento")
+  // Visit /magento (cold), pinning the fetch transport — the byte
+  // accounting above only sees /__parton/live, and the settle wait
+  // below is long enough for the WS auto-upgrade to land otherwise
+  // (return bytes would ride /__parton/ws and read as zero).
+  await page.goto("/magento?transport=fetch")
   await page.waitForSelector("[data-testid=product-grid]", { timeout: 15000 })
   await waitForPageInteractive(page)
 
@@ -60,6 +63,13 @@ test("re-visit to a route fp-skips on the very next nav after cold", async ({ pa
   // dev server the Pokemon route's first Vite dep-optimization pass
   // can push it past 10s.
   await page.getByRole("heading", { name: "Pokedex" }).waitFor({ timeout: 25000 })
+  // The pokedex home is a scroller() collection: after the heading
+  // commits, its visibility observers materialize the viewport's
+  // leaves level by level. Let that settle — a return nav mid-cascade
+  // carries the in-flight flip lanes on the measured stream and the
+  // byte budget stops measuring what this spec is about (/magento's
+  // fp-skip).
+  await waitForRscIdle(page)
 
   // Nav back to /magento, measuring the stream bytes the return costs.
   const beforeReturn = liveBytes
