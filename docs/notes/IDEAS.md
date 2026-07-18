@@ -88,31 +88,6 @@ Not urgent — no single frame is pathological; the remaining delta is
 inherent to minting and carrying placement-qualified ids. Take these
 when a lean-end budget actually pinches.
 
-### Pattern-based cache invalidation
-
-Today, cache entries are invalidated by spec id or by tag. The dep
-result that produced each cache key is stored alongside, so a third
-invalidation axis is mechanically available: "drop every cache entry
-whose dep record contains `cookie:user_id=42`" (or
-`pathname:/p/abc`, etc.). Useful when a session-level change (logout,
-locale switch, A/B bucket flip) needs to fan out across every spec
-that depended on it without the caller knowing each affected partial
-id.
-
-Open questions:
-
-- **Storage shape.** Dep records are hashed into the cache key, not
-  stored as queryable fields. Either keep a side-index
-  `(key → depsKey)` to walk, or accept O(n) scan over cache
-  entries on invalidation (probably fine for sub-10k entries).
-- **Surface.** Extend `getServerNavigation().reload(...)` to accept
-  a `match: { cookie: "user_id", value: "42" }` shape alongside the
-  current `selector` form. Same call site, additional dimension.
-- **Cross-key dimensions.** Matching on `cookie` keys assumes the
-  dep record encodes them in a stable shape. Dep keys are already
-  deterministic (`cookie:user_id`), so the matcher has a stable
-  surface to query.
-
 ### Live in-place re-embed after an in-embed cell write
 
 An in-embed `cell.set` (the client-reference write path) commits and
@@ -121,16 +96,6 @@ value — but the EMBEDDED copy updates in place only when a streaming
 lane rides an open live connection to it. Pushing that lane for the
 in-embed-write case is a delivery-plane follow-up, not a write-path
 gap.
-
-### Cross-tab sync via BroadcastChannel
-
-When tab A runs a server action that invalidates `["cart"]`, tab B is stale — unless it holds a `?live=1` heartbeat connection, in which case the process-global invalidation registry wakes its segment stream and pushes the update. But the heartbeat costs one long-poll connection per tab. A BroadcastChannel propagating invalidation signals across same-origin tabs would make multi-tab behaviour correct by default without every tab holding a stream open (one tab holds the connection, the others hear the bump and refetch).
-
-### Persist optimistic unsaved cell values
-
-`useCell` shows the optimistic-aware value (`latestSentByCell`) while writes are pending; on reconcile the server's value wins. The optimistic value lives in React memory and dies on reload. For drafts and rapid-edit flows the user may close the tab mid-write, return, and expect the unsaved value to still be there.
-
-Persist `latestSentByCell` to `sessionStorage` (or IndexedDB for larger payloads) keyed by cell id + partition key, with a short TTL. On mount, hydrate the optimistic map from storage. Only persist entries with `pendingByCell[id] > 0` — once a write settles, drop the persisted entry. Open questions: cross-tab coherence (two tabs both write the same cell — last-write-wins?), and whether to surface the persisted state to the renderer differently from a fresh in-flight write.
 
 ### Sharp edge: a bare `refreshSelector(name)` is too broad by default
 
@@ -179,73 +144,17 @@ and [`../internals/render-pipeline.md`](../internals/render-pipeline.md)
 Both can be layered on the current trailer + matchKey infrastructure
 without breaking the API surface.
 
-### Restart-streaming via segmented Flight — resolved by the live segment driver
+### Speculation Rules — the cross-document spike
 
-Shipped as the segmented live response: the driver keeps the stream
-open for `?live=1` subscriptions (the opt-in `<LivePageHeartbeat>`
-long-poll) or `markConnectionLive()`, wakes on any invalidation-registry
-bump or `expires()` boundary, re-renders, and emits the next
-`next`-tagged segment; per-parton lanes multiplex high-frequency
-streams. The open questions resolved themselves: the iteration loop is
-the registry wait + wake hints (no `useRevalidate`), framing reuses the
-fp-trailer sentinel with distinct tags, and backpressure is intrinsic —
-each segment renders _current_ state, so intermediate states coalesce.
-See [`../internals/streaming.md`](../internals/streaming.md).
-
-### Activate ⇄ deactivate symmetry — resolved by read-tracked culling
-
-Shipped as `visible()` — not the per-item `deactivate()` sketch, but a
-tri-state tracked read that folds a parton's viewport state into its
-fingerprint, so it self-refetches (full ⇄ skeleton) as it enters or
-leaves view. Design + framework-level findings live in
-[`view-culling.md`](./view-culling.md).
-
-### Speculation Rules API — cross-document prefetch complement
-
-**Shipped — the in-app path.** `useNavigation().preload(target)` warms a
-destination's partials into the client RSC cache on hover: a
-same-document, warm-only GET walked into
-`_currentPagePartials` without committing, so the subsequent click
-fp-skips and substitutes from cache. See
-[`../reference/frames-navigation.md`](../reference/frames-navigation.md)
-§Preload and
-[`../internals/render-pipeline.md`](../internals/render-pipeline.md)
-§"Preload (warm-only client commit)". That covers the common case (hover
-a `<Link>`, arrive warm) entirely in framework JS.
-
-What it does NOT cover is the **cross-document** case — the only thing
-the [Speculation Rules API][spec-rules] can help with, and the two don't
-overlap:
-
-- Speculation Rules acts on cross-document (MPA) navigations: `prerender`
-  loads a whole document into a hidden tab; `prefetch` warms the
-  document's HTTP-cache entry.
-- Parton `<Link>`s are **same-document** — they `intercept()` the nav
-  and issue an RSC refetch GET. `intercept()` only applies to
-  same-document navigations, so a speculation never fires for an
-  intercepted link; and even when one does fire (a nav parton doesn't
-  intercept), an activated prerender is a _cold_ parton boot (fresh
-  `_currentPagePartials`) and a prefetch warms the _document_ entry, not
-  the RSC request. So Speculation Rules can't warm the client RSC cache
-  — that's exactly the gap `preload` fills.
-
-Where it still adds value (research spike, lower priority now the in-app
-path ships): genuinely cross-document entry points — cold first paint of
-a deep link, cross-origin links, a hard-nav fallback before JS boots.
-Open questions for that surface:
-
-- **Per-link rules from the server.** Emit a
-  `<script type="speculationrules">` block (prefetch by default; opt in
-  to prerender, which executes RSC actions / can mutate session). Borrow
-  the `eagerness` model (`moderate` default) and the
-  `Sec-Speculation-Tags` header for server-side attribution.
-- **Hover-without-JS.** Speculation Rules fire on `:hover` selectors
-  with zero client JS — the one thing `preload`'s pointer-enter handler
-  can't do (it needs hydration). Useful for the pre-hydration window.
-- **Composes with `defer`.** A `<WhenVisible>` partial could carry a
-  prefetch rule firing before the intersection, so activation is warm.
-
-[spec-rules]: https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API
+The in-app path is shipped (`useNavigation().preload` warms the client
+RSC cache on hover; a DEGRADED page's preload already emits a
+`<script type="speculationrules">` prefetch as its carrier —
+`frame-client.tsx`). What remains is the genuinely cross-document
+surface Speculation Rules alone can reach: server-emitted per-link
+rules (prefetch by default, opt-in prerender, the `eagerness` model),
+hover-without-JS in the pre-hydration window, and a `<WhenVisible>`
+prefetch co-rider so activation lands warm. Research spike, low
+priority.
 
 ### Sitemap / route list generation + prerender
 
@@ -313,18 +222,6 @@ concern. Investigate whether CSRF protection inherits from
 same-origin + session cookies (Next.js's stance) or needs a
 framework-issued token. Provider impl downstream.
 
-### Head metadata
-
-Surface a sync per-spec `title` contribution the framework collects
-and emits in `<head>` before the body streams. React 19's metadata
-hoisting handles _placement_ (an inline `<title>` rendered anywhere
-hoists), but not _timing_ — a title rendered after an await arrives
-too late in the stream for first paint. The contribution needs a
-pre-body surface, and the spec constructor has no pre-render callback
-to hang it on — the natural candidate is a spec option (static or a
-sync function of match params). Open Graph / canonical /
-structured-data not urgent.
-
 ### Performance tracing
 
 Add a per-partial instrumentation interface (`onPartialStart` /
@@ -355,16 +252,18 @@ entry on transient errors), error → observability hook.
 across swaps, live-region announcements. Currently on the app —
 will be pile-of-ad-hoc in a year without framework-level defaults.
 
-### Split framework barrel into server + client
+### Package layout — finish the server/client split, classic monorepo shape
 
-Replace the single `framework/index.ts` barrel with explicit
-`framework/server.ts` and `framework/client.ts` entry points. Today's
-single barrel can't re-export `"use client"` hooks or `"use server"`
-actions without footguns (see the cross-`"use *"` caveat in
-CLAUDE.md); deep-imports work around it. Two barrels match the
-actual `"use *"` boundary. Related: `framework/src/lib/` and
-`framework/src/runtime/` could re-organize along the same client /
-server axis instead of their current names.
+Half shipped: `framework/src/client.ts` is the `./client` export (the
+DX floor), so the client half of the `"use *"` boundary has its
+barrel. Remaining, as one batched mechanical move: name the main
+barrel what it now is (a `./server` entry, with `.` kept as alias or
+deprecated), re-organize `framework/src/lib/` / `src/runtime/` along
+the same client/server axis instead of their current names, and
+consider the classic `packages/` + `examples/` monorepo shape with a
+short usage guide for which entry to import where (each package
+stating whether it has both exports). Import-churn-heavy — do it in a
+quiet moment between arcs, never mid-arc.
 
 ### Audit frame-state write paths
 
@@ -433,15 +332,11 @@ The second claim is the one that distinguishes this from Next.js App Router in t
 
 ## Transient client state — resolved by cells
 
-Original design exploration archived to
-[`../archive/transient-client-state.md`](../archive/transient-client-state.md).
-Directions A and B (server-authoritative state the partial reads;
-optimistic overlay for in-flight writes) collapsed into the **cell**
-primitive — see [`../reference/cells.md`](../reference/cells.md) and
-[`../internals/cell-internals.md`](../internals/cell-internals.md).
-The cell's `value` is optimistic-aware via `useCell`, so consumers
-bind once and never see pending state directly. Two threads from the
-original doc remain open and live below as standalone backlog items.
+Archived to
+[`../archive/transient-client-state.md`](../archive/transient-client-state.md);
+directions A + B became the cell primitive
+([`../reference/cells.md`](../reference/cells.md)). Two threads from
+that doc stay live below.
 
 ## Per-tab session axis
 
