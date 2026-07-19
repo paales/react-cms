@@ -32,9 +32,10 @@ const ScaleGrid = scroller({
     ),
     total: TOTAL,
   }),
-  item: (i) => (
+  render: ({ item: i, id }) => (
     <div
       key={i}
+      id={id}
       data-testid="scale-cell"
       data-i={i}
       className="mb-1 flex items-center justify-center rounded bg-secondary tabular-nums"

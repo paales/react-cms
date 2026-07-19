@@ -25,7 +25,7 @@ const BrowseGrid = scroller({
     })
     return { items: itemsOf(res), total: totalOf(res) }
   },
-  item: (cell) => <BrowseCard key={String(cell.args.uid)} item={cell} />,
+  render: ({ item, id }) => <BrowseCard key={String(item.args.uid)} item={item} anchorId={id} />,
   leaf: 12,
   className: "browse-grid",
 })
@@ -79,12 +79,20 @@ the pokedex on `/` (fragment-cell forwarding), `/scale` (the million).
   re-renders the root and the verdict-flipped leaves ONLY; every
   other leaf holds its fp, so scroll-back is a zero-byte confirm
   (pinned by test).
-- **ONE writer.** The anchor sync computes item-under-center
-  arithmetically on scroll settle and states it: silently in-span
-  (bookmarkability only — culling follows the viewport on its own),
-  as an in-place navigation (`scroll: "manual"`) when the landing is
-  inside a reservation. Occlusion-guarded — an overlay covering the
-  collection silences it.
+- **ONE writer, measure-first.** The anchor sync derives
+  item-under-center from LAYOUT where content exists (the hit cell,
+  walked back to the nearest boundary anchor id — correct under any
+  item heights or breakpoints) and from row arithmetic only inside
+  reservations (nothing exists there to measure). It states the
+  landing silently in-span (bookmarkability only — culling follows
+  the viewport on its own), as an in-place navigation
+  (`scroll: "manual"`) when the span must move. Occlusion-guarded —
+  an overlay covering the collection silences it.
+- **The anchor surface is real content.** Anchor-step boundary items
+  receive `id` (`<name>-p<N>`) through `render(...)` — the app puts
+  it on the cell; the culled shell carries it on its first cell, so
+  the target exists in both states. Deep links resolve their
+  position from layout, never from computation.
 
 ## The scrollbar jump (why there is no tree)
 
@@ -122,7 +130,7 @@ its plane is 2D px space with procedural content, a different animal.
 | ------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `name`       | (required) | Identity: catalog ids (`<name>`, `<name>-leaf`), the public DOM anchors (`id=<name>`, `id=<name>-p<N>`). Explicit — there is no Render name to derive it from. |
 | `load`       | (required) | `({offset, limit}) → {items, total}`. Called in `leaf`-aligned slices. Tracked reads (cells, `searchParam`) record as deps.       |
-| `item`       | (required) | `(item, index) → ReactNode` — one grid cell. `Item` infers from `load`. Key each cell by entity.                                 |
+| `render`     | (required) | `({item, index, id}) → ReactNode` — one grid cell, props-bag style. Apply `id` to the cell (boundary anchor). `Item` infers from `load`. |
 | `leaf`       | `24`       | Items per leaf parton = fetch slice = default anchor step. **Must be divisible by every `--scroller-cols` value** (row alignment). |
 | `ring`       | `6`        | Leaves placed each side of the anchor leaf. Placement ≠ materialization — the ring is the park/restore zone.                      |
 | `className`  | —          | The wrapper class carrying the three CSS variables.                                                                                |

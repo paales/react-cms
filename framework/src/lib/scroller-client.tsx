@@ -35,13 +35,15 @@ const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : use
 // ─── Leaf shell ────────────────────────────────────────────────────────
 
 /** A culled leaf's skeleton cells. Receives the placement's cull
- *  props (`{o, n}`); the cells are grid items of the outer grid,
- *  sized by its `grid-auto-rows`, styled via `.parton-skel`. */
-export function ScrollerLeafShell({ n }: { o: number; n: number }) {
+ *  props (`{o, n, aid?}`); the cells are grid items of the outer
+ *  grid, sized by its `grid-auto-rows`, styled via `.parton-skel`.
+ *  A boundary leaf's `aid` lands on the FIRST cell, so the public
+ *  anchor id exists in the culled state too. */
+export function ScrollerLeafShell({ n, aid }: { o: number; n: number; aid?: string }) {
   return (
     <>
       {Array.from({ length: n }, (_, i) => (
-        <div key={i} className="parton-skel" aria-hidden />
+        <div key={i} id={i === 0 ? aid : undefined} className="parton-skel" aria-hidden />
       ))}
     </>
   )
@@ -198,9 +200,7 @@ export function ScrollerAnchorSync({
     const url = nav.currentEntry?.url
     const page = url ? Number(new URL(url).searchParams.get(param) || "1") : 1
     if (page > 1) {
-      const el = document.getElementById(`${name}-p${page}`)
-      const target = el?.firstElementChild ?? el
-      target?.scrollIntoView({ block: "start" })
+      document.getElementById(`${name}-p${page}`)?.scrollIntoView({ block: "start" })
     }
     // Mount-only: the landing is for the entry this mount belongs to.
   }, [])
@@ -218,14 +218,52 @@ export function ScrollerAnchorSync({
       // wrapper's subtree, and the writer stands down.
       const hit = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
       if (!hit || !wrapper.contains(hit)) return
-      const geo = gridGeometry(wrapper.querySelector(":scope > .parton-scroller-grid"))
-      if (!geo) return
-      // Pure arithmetic: rows from the wrapper's top at the resolved
-      // pitch — reservations and grid share the geometry, so one
-      // linear map covers the whole collection.
-      const wTop = wrapper.getBoundingClientRect().top
-      const centerRow = Math.floor((window.innerHeight / 2 - wTop) / geo.rowH)
-      const idx = Math.min(Math.max(total, 1) - 1, Math.max(0, centerRow * geo.cols))
+      const gridEl = wrapper.querySelector(":scope > .parton-scroller-grid")
+      if (!gridEl) return
+      // MEASURE where content exists, COMPUTE only where nothing
+      // does. In-span, the index comes from layout: the hit's grid
+      // cell, walked back to the nearest boundary id — correct under
+      // any item heights or breakpoints. Inside a reservation there
+      // is nothing to measure; row arithmetic on its own box is the
+      // (self-correcting) estimate.
+      let idx: number
+      const res = hit.closest(".parton-scroller-res")
+      if (res) {
+        const geo = gridGeometry(gridEl)
+        if (!geo) return
+        const before =
+          (res.compareDocumentPosition(gridEl) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+        const base = before ? 0 : end
+        const count = Math.max(1, before ? start : total - end)
+        const r = res.getBoundingClientRect()
+        const rowH = r.height / Math.max(1, Math.ceil(count / geo.cols))
+        if (!(rowH > 0)) return
+        const rows = Math.floor((window.innerHeight / 2 - r.top) / rowH)
+        idx = base + Math.min(count - 1, Math.max(0, rows * geo.cols))
+      } else {
+        let cell: Element | null = hit
+        while (cell && cell.parentElement !== gridEl) cell = cell.parentElement
+        if (!cell) return
+        const re = new RegExp(`^${CSS.escape(name)}-p(\\d+)$`)
+        let steps = 0
+        let hops = 0
+        let el: Element | null = cell
+        let baseIdx: number | null = null
+        while (el && hops < step * 4 + 64) {
+          const m = el.id ? re.exec(el.id) : null
+          if (m) {
+            baseIdx = (Number(m[1]) - 1) * step
+            break
+          }
+          // Count only laid-out cells — scripts, holes, and parked
+          // (display:none) DOM don't occupy grid positions.
+          if ((el as HTMLElement).offsetParent !== null) steps++
+          el = el.previousElementSibling
+          hops++
+        }
+        if (baseIdx === null) return
+        idx = Math.min(Math.max(total, 1) - 1, baseIdx + steps)
+      }
       const page = Math.floor(idx / step) + 1
       const want = page > 1 ? String(page) : ""
       if (want === lastVal) return

@@ -63,7 +63,7 @@ describe("scroller: the placed span and its reservations", () => {
   const List = scroller({
     name: "probe-list",
     load: makeSource(state),
-    item: (i) => <i key={i} data-item={i} />,
+    render: ({ item: i, id }) => <i key={i} id={id} data-item={i} />,
     leaf: 24,
     ring: 6,
   })
@@ -84,10 +84,12 @@ describe("scroller: the placed span and its reservations", () => {
     expect(ls).not.toContainEqual([192, 24])
     expect(flight).toContain('"count":1134')
 
-    // The public anchor surface: the wrapper id and per-page ids.
+    // The public anchor surface: the wrapper id; a materialized
+    // boundary's id on its first ITEM; a culled boundary's id riding
+    // the placement (`aid` — the shell's first cell carries it).
     expect(flight).toContain('"id":"probe-list"')
     expect(flight).toContain('"id":"probe-list-p1"')
-    expect(flight).toContain('"id":"probe-list-p7"')
+    expect(flight).toContain('"aid":"probe-list-p7"')
 
     // Cold seed (no ?page=): the anchor neighborhood (leaves 0 and
     // 24) materializes; the rest of the span is culled — placed, but
@@ -146,7 +148,7 @@ describe("scroller: growth re-shapes only the tail", () => {
   const List = scroller({
     name: "grow-list",
     load: makeSource(state),
-    item: (i) => <i key={i} data-item={i} />,
+    render: ({ item: i }) => <i key={i} data-item={i} />,
     leaf: 24,
     ring: 6,
   })

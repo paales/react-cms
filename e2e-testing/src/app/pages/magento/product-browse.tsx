@@ -42,12 +42,14 @@ const LEAF = 12
 // the visual row spacing (row-gap stays 0 by the scroller contract).
 const BrowseCard = parton(function BrowseCardRender({
   item,
-}: { item: ResolvedCell<CardItem> } & RenderArgs) {
+  anchorId,
+}: { item: ResolvedCell<CardItem>; anchorId?: string } & RenderArgs) {
   const p = item.value
   if (!p) return null
   const price = p.price_range.minimum_price.regular_price
   return (
     <Card
+      id={anchorId}
       className="mb-3 h-[240px] overflow-hidden p-4"
       data-testid={`browse-card-${p.sku ?? p.uid}`}
     >
@@ -87,7 +89,7 @@ const BrowseGrid = scroller({
     )
     return { items, total: res.value?.products?.total_count ?? 0 }
   },
-  item: (cell) => <BrowseCard key={String(cell.args.uid)} item={cell} />,
+  render: ({ item, id }) => <BrowseCard key={String(item.args.uid)} item={item} anchorId={id} />,
   leaf: LEAF,
   className: "browse-grid",
 })

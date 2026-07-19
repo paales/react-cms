@@ -64,10 +64,13 @@
  * seed a deep link paints at, the shadow scrolling mirrors into, and
  * the window statement rides. A page is never a render unit. The
  * public anchor surface in the DOM: the wrapper carries `id=<name>`,
- * and each anchor-step boundary leaf carries `id=<name>-p<N>` — the
+ * and each anchor-step boundary ITEM carries `id=<name>-p<N>` (flowed
+ * through `render(...)`'s `id` prop — on the shell's first cell
+ * while culled). The id sits on REAL content, so the browser resolves
+ * its position from layout — correct under any heights — and the
  * deep-link script (streamed right after the anchored leaf, so it
- * runs the moment that markup parses) and any external tooling
- * navigate by those ids; nothing else about the markup is contract.
+ * runs the moment that markup parses) plus any external tooling
+ * navigate by it; nothing else about the markup is contract.
  *
  * See `docs/reference/scroller.md`.
  */
@@ -123,10 +126,15 @@ export interface ScrollerOptions<Item> {
    *  to derive it from. */
   name: string
   load: ScrollerLoad<Item>
-  /** The item renderer — one grid cell per item. Give each cell a
-   *  stable key (the entity key), and make the cell its own parton
-   *  when its content should invalidate per entity. */
-  item: (item: Item, index: number) => ReactNode
+  /** The item renderer — one grid cell per item, props-bag style
+   *  like a parton Render. Give each cell a stable key (the entity
+   *  key), and make the cell its own parton when its content should
+   *  invalidate per entity. `id` is the public anchor id on
+   *  anchor-step boundary items (`<name>-p<N>`, absent otherwise) —
+   *  put it on the cell (`id={id}`) so deep links target REAL
+   *  content: the browser resolves the position from layout, correct
+   *  under any heights or breakpoints. */
+  render: (props: { item: Item; index: number; id?: string }) => ReactNode
   /** Items per leaf parton — also the `load` slice size and the
    *  default anchor step. Default 24. */
   leaf?: number
@@ -170,6 +178,11 @@ const seedVerdict = registerDepKind("scroller-seed", (name, request) => {
 interface LeafProps {
   o: number
   n: number
+  /** The public anchor id this leaf's FIRST item carries (boundary
+   *  leaves only) — flowed to `item(...)` as `extra.anchorId`, and to
+   *  the culled shell's first cell, so the target exists in both
+   *  states. */
+  aid?: string
 }
 
 export function scroller<Item>(opts: ScrollerOptions<Item>): React.ComponentType {
@@ -194,9 +207,17 @@ export function scroller<Item>(opts: ScrollerOptions<Item>): React.ComponentType
   // ── Leaf spec — resolves the slice, renders items as grid cells ──
   const LeafSpec = _buildPartial(
     Object.assign(
-      async function LeafRender({ o, n }: LeafProps & RenderArgs) {
+      async function LeafRender({ o, n, aid }: LeafProps & RenderArgs) {
         const { items } = await opts.load({ offset: o, limit: leaf })
-        return <>{items.slice(0, n).map((it, i) => opts.item(it, o + i))}</>
+        return (
+          <>
+            {items
+              .slice(0, n)
+              .map((it, i) =>
+                opts.render({ item: it, index: o + i, ...(i === 0 && aid ? { id: aid } : {}) }),
+              )}
+          </>
+        )
       } as (props: LeafProps & RenderArgs) => ReactNode,
       { displayName: `${name}-leaf` },
     ) as never,
@@ -209,21 +230,17 @@ export function scroller<Item>(opts: ScrollerOptions<Item>): React.ComponentType
     } as PartialOptions<object>,
   ) as unknown as React.ComponentType<LeafProps>
 
-  /** Place one leaf. An anchor-step boundary leaf gets the public
-   *  anchor id (`<name>-p<N>`) on a layout-free wrapper; others need
-   *  no wrapper at all. */
+  /** Place one leaf — bare; no wrapper participates in the markup. */
+  /** Place one leaf — bare. A boundary leaf's placement carries the
+   *  anchor id as a prop; the id lands on REAL content (the first
+   *  item via `extra.anchorId`, or the shell's first cell while
+   *  culled), so the browser resolves its position from layout —
+   *  correct under any item heights or breakpoints. */
   function placeLeaf(o: number, n: number): ReactNode {
-    if (o % anchorStep === 0) {
-      const page = o / anchorStep + 1
-      return (
-        <div key={o} style={{ display: "contents" }} id={`${name}-p${page}`}>
-          <LeafSpec o={o} n={n} />
-        </div>
-      )
-    }
+    const aid = o % anchorStep === 0 ? `${name}-p${o / anchorStep + 1}` : undefined
     return (
       <Fragment key={o}>
-        <LeafSpec o={o} n={n} />
+        <LeafSpec o={o} n={n} {...(aid !== undefined ? { aid } : {})} />
       </Fragment>
     )
   }
@@ -256,7 +273,7 @@ export function scroller<Item>(opts: ScrollerOptions<Item>): React.ComponentType
               __html:
                 `(function(){try{var p=+(new URLSearchParams(location.search).get(${JSON.stringify(anchorParam)})||1);` +
                 `if(p>1){var e=document.getElementById(${JSON.stringify(name)}+"-p"+p);` +
-                `var t=e&&(e.firstElementChild||e);if(t&&t.scrollIntoView)t.scrollIntoView({block:"start"})}}catch(_){}})()`,
+                `if(e&&e.scrollIntoView)e.scrollIntoView({block:"start"})}}catch(_){}})()`,
             }}
           />
         )

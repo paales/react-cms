@@ -65,13 +65,19 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const PokemonCard = parton(function PokemonCardRender({
   item,
   compact,
-}: { item: ResolvedCell<CellValue<typeof pokemonCardCell>>; compact?: boolean } & RenderArgs) {
+  anchorId,
+}: {
+  item: ResolvedCell<CellValue<typeof pokemonCardCell>>
+  compact?: boolean
+  anchorId?: string
+} & RenderArgs) {
   const p = item.value
   if (!p) return null
   const types = p.pokemon_v2_pokemontypes.map((t) => t.pokemon_v2_type?.name ?? "")
   const spriteUrl = extractSprite(p.pokemon_v2_pokemonsprites[0]?.sprites)
   return (
     <a
+      id={anchorId}
       href={`/pokemon/${p.id}`}
       className="block rounded-xl bg-card p-5 ring-1 ring-border/50 transition-colors hover:bg-muted"
     >
@@ -337,7 +343,7 @@ const PokedexList = scroller({
       total: res.value?.pokemon_v2_pokemon_aggregate?.aggregate?.count ?? 0,
     }
   },
-  item: (cell) => <PokemonCard key={String(cell.args.id)} item={cell} />,
+  render: ({ item, id }) => <PokemonCard key={String(item.args.id)} item={item} anchorId={id} />,
   leaf: 24,
   className: "pokedex-grid",
 })
