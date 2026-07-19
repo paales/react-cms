@@ -961,28 +961,30 @@ export function _channelNavInFlightCovering(asOf: number): boolean {
 }
 
 /** True when a covering commit should land as a TRANSITION (atomic
- *  swap) rather than a progressive `setPayloadRaw`. The NEWEST unsettled
+ *  swap) rather than a progressive `setPayloadRaw`. The NEWEST
  *  navigation at or below `asOf` decides: that statement is what the
  *  client is now displaying, so its commit-mode wish (`streaming: false`
  *  → transition) is the one that matters. Consulting the newest — not
- *  "any covered pending record" — is load-bearing: an on-mount `defer`
- *  force (`streaming: false`) whose page was navigated AWAY from before
- *  its own segment ran leaves an unsettled record behind (it is retired
- *  only at a covering segment's settle, one step after the next nav's
- *  commit-mode is read). Counting that superseded record would drag the
- *  next window navigation — a `streaming: true` statement — into a
- *  withholding transition, so its destination stops streaming. Reads
- *  the pending records (retired at settle), so a landed navigation no
- *  longer shapes a later segment's mode. No covered navigation → the
- *  live stream's default raw commit. */
+ *  "any covered record" — is load-bearing: an on-mount `defer` force
+ *  (`streaming: false`) must not drag a LATER window navigation — a
+ *  `streaming: true` statement, which registers its own newer wish —
+ *  into a withholding transition. Reads the PERSISTED per-point wish
+ *  map (the lane path's precedent: the wish must outlive the record),
+ *  not the pending records: the browser's supersede abort settles a
+ *  record the moment ANY newer navigation starts — including a silent
+ *  URL-only mirror write during an in-flight in-place move (the
+ *  scroller's steady state) — while the statement's segment is still
+ *  streaming, and that segment must land with the mode its statement
+ *  asked for (measured: the raw fallback flash of a whole visible
+ *  span). The map resets per connection, so a fresh attach keeps the
+ *  live stream's default raw commit until its first navigation. */
 export function _channelNavPrefersTransition(asOf: number): boolean {
   let bestSeq = -1
   let streaming = true
-  for (const record of pendingNavRecords) {
-    if (record.settled) continue
-    if (record.navSeq > asOf || record.navSeq <= bestSeq) continue
-    bestSeq = record.navSeq
-    streaming = record.streaming
+  for (const [seq, wish] of navStreamingByPoint) {
+    if (seq > asOf || seq <= bestSeq) continue
+    bestSeq = seq
+    streaming = wish
   }
   return bestSeq >= 0 && !streaming
 }

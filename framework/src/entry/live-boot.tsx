@@ -895,7 +895,7 @@ export function installLiveLayer(host: LiveHost): () => void {
     return data
   })
 
-  const offNavigation = listenNavigation(host, (url, types, signal, intent) => {
+  const offNavigation = listenNavigation(host, (url, types, signal, intent, inPlace) => {
     host.setPendingTransitionTypes(types ?? [])
     const target = new URL(url, window.location.origin)
     // The statement: the client's URL moved. Pre-establishment it
@@ -909,13 +909,19 @@ export function installLiveLayer(host: LiveHost): () => void {
       // boundary shows its fallback immediately, then its content
       // streams in as the nav segment's Flight continuation resolves,
       // exactly as a `startTransition` into a fresh tree behaves. The
-      // atomic swap (`streaming: false`) is for selector refetches
-      // that REPLACE existing content, where a fallback flash reads as
-      // a flicker — those ride `enqueueRefetch`/`refetch.ts`, never
-      // this window-navigation path.
+      // atomic swap (`streaming: false`) is for navs that REPLACE
+      // existing content, where a fallback flash reads as a flicker:
+      // selector refetches (`enqueueRefetch`/`refetch.ts`) — and the
+      // IN-PLACE navigation (`FrameworkInPlaceInfo` — a scroller's
+      // window statement), which by definition describes the position
+      // the user already occupies: its segment re-ships the same
+      // surface, so a root-ready commit re-suspends the mounted
+      // boundaries and hides live content behind fallbacks for the
+      // frames until their rows resolve (measured: the visible span
+      // blinking to skeletons at a page transition).
       url: target.pathname + target.search,
       intent: intent ?? "push",
-      streaming: true,
+      streaming: inPlace !== true,
       signal,
     })
     return routed ? routed.finished : Promise.resolve()
@@ -1008,6 +1014,10 @@ function listenNavigation(
     transitionTypes?: string[],
     signal?: AbortSignal,
     intent?: UrlFrame["intent"],
+    /** The nav carried the `FrameworkInPlaceInfo` brand — it replaces
+     *  the current surface in place, so its commit mode is the atomic
+     *  swap, never the streaming reveal. */
+    inPlace?: boolean,
   ) => Promise<void>,
 ) {
   const nav = getNavigation()
@@ -1155,7 +1165,13 @@ function listenNavigation(
           handler: () =>
             swallowNavigationAbort(async () => {
               const jobs: Array<Promise<unknown>> = [
-                onNavigation(event.destination.url, types, event.signal, "replace"),
+                onNavigation(
+                  event.destination.url,
+                  types,
+                  event.signal,
+                  "replace",
+                  isFrameworkInPlaceInfo(event.info),
+                ),
               ]
               for (const d of diffs) {
                 jobs.push(_dispatchFrameRefetch(d.key.split("."), d.url).finished)
@@ -1197,6 +1213,7 @@ function listenNavigation(
             directionFor(event),
             event.signal,
             event.navigationType === "push" ? "push" : "replace",
+            isFrameworkInPlaceInfo(event.info),
           ),
         ),
       // An in-place nav (a scroller's window statement) describes the

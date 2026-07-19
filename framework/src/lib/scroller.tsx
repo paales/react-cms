@@ -81,7 +81,7 @@
  * See `docs/reference/scroller.md`.
  */
 
-import React, { Fragment, Suspense, type ReactNode } from "react"
+import React, { Fragment, type ReactNode } from "react"
 import { _buildPartial, type PartialOptions, type RenderArgs } from "./partial.tsx"
 import { registerDepKind, searchParam } from "./server-hooks.ts"
 import { ScrollerAnchorSync, ScrollerLeafShell, ScrollerReservation } from "./scroller-client.tsx"
@@ -265,9 +265,7 @@ export function scroller<Item>(opts: ScrollerOptions<Item>): React.ComponentType
     // as one (measured: parked pairs stopped restoring).
     return (
       <Fragment key={o}>
-        <Suspense fallback={<ScrollerLeafShell o={o} n={n} aid={aid} />}>
-          <LeafSpec o={o} n={n} {...(aid !== undefined ? { aid } : {})} />
-        </Suspense>
+        <LeafSpec o={o} n={n} {...(aid !== undefined ? { aid } : {})} />
       </Fragment>
     )
   }

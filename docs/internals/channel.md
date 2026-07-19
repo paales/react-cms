@@ -644,17 +644,27 @@ The pieces:
   `streaming` resolves when a payload segment whose as-of covers its
   navigation point COMMITS; `finished` when that segment SETTLES
   (its trailers resolve). The commit mode follows the NEWEST covered
-  navigation (`_channelNavPrefersTransition`): if the newest pending
-  statement at or below the segment's as-of asked for the atomic swap
+  navigation (`_channelNavPrefersTransition`): if the newest statement
+  at or below the segment's as-of asked for the atomic swap
   (`streaming: false`) the segment is a transition commit; a streaming
-  statement (the default for a window navigation) leaves the live
-  stream's raw commit in place. Consulting the NEWEST — not "any
-  covered pending fire" — is load-bearing: a superseded atomic force
+  statement (the default for a route-changing window navigation)
+  leaves the live stream's raw commit in place. An IN-PLACE window
+  navigation (the `FrameworkInPlaceInfo` brand — a scroller's window
+  statement) states `streaming: false`: it replaces the surface the
+  user is looking at, where a raw commit re-suspends mounted content
+  behind fallbacks. Consulting the NEWEST — not "any
+  covered fire" — is load-bearing: a superseded atomic force
   (an on-mount `defer` refetch whose page was navigated away from
-  before its own segment ran, so its `streaming: false` record lingers
-  unsettled) must NOT drag the next window navigation into a
-  withholding transition — that is what makes a destination "stop
-  streaming" on a second navigation. With no covered navigation the
+  before its own segment ran) must NOT drag the next window navigation
+  into a withholding transition — the later navigation's own wish,
+  registered at its newer point, wins. The read is the PERSISTED
+  per-point wish map (the same store the lane path reads — the wish
+  must outlive the record): the browser's supersede abort settles a
+  record the moment ANY newer navigation starts — including a silent
+  URL-only mirror write during an in-flight in-place move — while the
+  statement's segment is still streaming, and that segment must still
+  commit with the mode its statement asked for. The map resets per
+  connection; with no covered navigation the
   live stream's default raw commit stands. A
   forced target's fresh bytes can trail `finished` by one lane — the
   lane path is the framework's own freshness delivery, moments

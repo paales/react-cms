@@ -585,7 +585,20 @@ export function VisibilityObserver({
     // slot's facade subscribes exactly the elements React attaches.
     const nodeState = new Map<Element, boolean>()
     const io = acquireSlotObserver(rootMargin, (entries) => {
-      for (const e of entries) nodeState.set(e.target, e.isIntersecting)
+      for (const e of entries) {
+        // A not-intersecting entry whose rect is EMPTY was computed
+        // while the node had no layout — mid-commit detachment or a
+        // transiently hidden ancestor (a lane commit re-slotting the
+        // pair's content). By callback time the node is often laid
+        // out and in view again; storing the stale `false` would park
+        // a parton the user is looking at (measured: the visible span
+        // flashing to skeletons for 3 frames at a page transition).
+        // Unmeasurable, not testimony — keep the node's prior state;
+        // IO's next real computation carries the evidence.
+        const r = e.boundingClientRect
+        if (!e.isIntersecting && r.width === 0 && r.height === 0) continue
+        nodeState.set(e.target, e.isIntersecting)
+      }
       for (const el of [...nodeState.keys()]) {
         if (!el.isConnected) nodeState.delete(el)
       }
@@ -597,8 +610,35 @@ export function VisibilityObserver({
       // "out" → … at rAF rate, remounting the subtree every cycle.
       // Stay silent; the new nodes' initial callback (placement
       // attach or the empty-observer sweep) carries real evidence.
-      if (nodeState.size === 0) return
-      reportVisible(id, [...nodeState.values()].some(Boolean))
+      //
+      // The same rule holds per node for LAID-OUT-ness: a node with no
+      // client rects (display:none — a parked Activity's DOM, a hidden
+      // variant sibling committed alongside a fresh emission) is
+      // unmeasurable, never "out" — its non-intersection is the pair's
+      // own hiding, not viewport testimony. Without the filter, a
+      // commit that lands the hidden sibling's nodes in the observer
+      // before the replacing content nodes' initial callbacks arrive
+      // reads the aggregate as OUT and parks a parton the user is
+      // looking at (measured: the whole visible span flashing to
+      // skeletons for 3 frames at a page transition).
+      const laidOut = [...nodeState].filter(([el]) => el.getClientRects().length > 0)
+      if (laidOut.length === 0) return
+      // TEMP DEBUG
+      if (id.includes("browse-grid-leaf") && !laidOut.some(([, v]) => v)) {
+        console.log(
+          `[out-debug] ${id.slice(17, 33)} nodes=${nodeState.size} laidOut=${laidOut.length} rects=${laidOut
+            .slice(0, 5)
+            .map(([el]) => {
+              const r = el.getBoundingClientRect()
+              return `${el.tagName}@${Math.round(r.top)}h${Math.round(r.height)}`
+            })
+            .join(",")} y=${Math.round(window.scrollY)}`,
+        )
+      }
+      reportVisible(
+        id,
+        laidOut.some(([, v]) => v),
+      )
     })
     inst.observeUsing(io)
     // Late-materializing content: if the fragment had no host children

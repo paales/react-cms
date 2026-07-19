@@ -330,8 +330,14 @@ describe("milestones ride the covering segment", () => {
     _channelNavSegmentSettled(1)
     await settle()
     expect(finished.done()).toBe(true)
-    // Retired records no longer shape commit modes.
-    expect(_channelNavPrefersTransition(1)).toBe(false)
+    // The wish OUTLIVES the record (the per-point map, the lane path's
+    // precedent): the browser's supersede abort settles a record the
+    // moment ANY newer navigation starts — a silent mirror write during
+    // an in-flight in-place move — while the statement's segment is
+    // still streaming, and that segment must still commit with the mode
+    // its statement asked for. A newer navigation's own wish supersedes
+    // at its own point (newest-at-or-below-asOf wins).
+    expect(_channelNavPrefersTransition(1)).toBe(true)
   })
 
   it("a progressive caller leaves the live stream's raw commit in place", () => {

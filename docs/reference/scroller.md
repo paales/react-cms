@@ -97,19 +97,29 @@ the pokedex on `/` (fragment-cell forwarding), `/scale` (the million).
   the viewport on its own), as an in-place navigation
   (`scroll: "manual"`) when the span must move. Occlusion-guarded —
   an overlay covering the collection silences it.
-- **Window moves are geometry-atomic.** A move's fresh payload
-  streams; without protection the root chunk commits (reservations
-  resized, departing leaves gone) before the new leaves' rows arrive,
-  and an up-move's new top span vanishes for a frame — the browser
-  anchors on displaced content, the writer reads a smaller page,
-  states another move, and cascades to the top (measured). Each leaf
-  placement therefore carries a Suspense fallback of its exact shell
-  cells (`n` + the boundary `aid`), so a pending leaf always occupies
-  its cells at estimate height. And because a move keeps every ITEM
+- **Window moves are geometry-atomic — they commit as transitions.**
+  The in-place window statement carries the `FrameworkInPlaceInfo`
+  brand, and the page-level intercept states it on the channel as an
+  ATOMIC-SWAP commit (`streaming: false`): React holds the current
+  tree until the move's payload fully resolves, then swaps once.
+  Without that, the move's raw progressive commit lands the root
+  chunk (reservations resized, departing leaves gone) before the new
+  leaves' rows arrive — an up-move's new top span vanishes for a
+  frame, the browser anchors on displaced content, the writer reads a
+  smaller page, states another move, and cascades to the top
+  (measured); and a same-span re-render re-suspends mounted leaves,
+  blinking the visible cards to nothing at every page transition
+  (measured, the user report). The commit-mode wish survives the
+  statement's supersede (the next throttled write aborts the
+  in-flight nav record; the segment still lands atomic — see
+  `internals/channel.md`). And because a move keeps every ITEM
   at its document offset while the grid container's own edge shifts,
   the sync suppresses native scroll anchoring for exactly the move
   commit's layout flush — anchoring must not "compensate" an
-  arithmetic no-op.
+  arithmetic no-op. Pinned by the prod-tier
+  `e2e/preview/scroller-no-blink.spec.ts` (the blink and shift
+  mechanisms only reproduce against the production bundle's streaming
+  timing).
 - **The anchor surface is real content.** Anchor-step boundary items
   receive `id` (`<name>-p<N>`) through `render(...)` — the app puts
   it on the cell; the culled shell carries it on its first cell, so
