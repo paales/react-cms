@@ -107,6 +107,15 @@ re-renders it — and returns a Flight-portable `ResolvedCell<T>`. Pass
 explicit args to name the partition
 (`await cartLineCell.resolve({ uid })`).
 
+Cold loads are **single-flight per (scope, cell, partition)**:
+concurrent resolves of one cold partition — sibling partons joining
+the same query in one render, or concurrent requests hitting one
+partition — share ONE loader run; storage answers every resolve after
+it settles, and a failed flight clears so the next resolve retries.
+Resolving the same partition from N partons is therefore the intended
+join pattern, not N fetches (see `reference/scroller.md` § Joining
+the query).
+
 > **Empty session → ephemeral.** `session.id` is the empty string for
 > an anonymous request with no `__frame_sid` cookie. A persistent cell
 > partitioned on it would fold every such visitor into one shared

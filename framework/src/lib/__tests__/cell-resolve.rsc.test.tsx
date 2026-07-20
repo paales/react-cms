@@ -11,7 +11,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest"
 import { computeRouteKey, parton, PartialRoot, type RenderArgs } from "../partial.tsx"
-import { localCell } from "../cell.ts"
+import { localCell, resolveCellValue } from "../cell.ts"
 import { renderWithRequest } from "../../test/rsc-server.ts"
 import { runWithRequestAsync } from "../../runtime/context.ts"
 import { _clearInvalidationRegistry, _currentTs } from "../../runtime/invalidation-registry.ts"
@@ -158,5 +158,76 @@ describe("atomic() — one commit, one fan-out", () => {
         expect(saves.peek()).toBe(0)
       },
     )
+  })
+})
+
+describe("single-flight loads", () => {
+  it("concurrent cold resolves of one partition run the loader ONCE and share the value", async () => {
+    let loaderCalls = 0
+    const products = localCell({
+      id: "test.flight.shared",
+      shape: "number",
+      initial: -1,
+      load: async () => {
+        loaderCalls++
+        // Real async gap: every resolver arrives while the flight is
+        // still open — the join-the-query pattern (root shape read,
+        // leaf slice, filter counts, pagination total) in one render.
+        await new Promise((r) => setTimeout(r, 5))
+        return 42
+      },
+    })
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => resolveCellValue(products, { page: 1 })),
+    )
+    expect(results).toEqual(Array.from({ length: 8 }, () => 42))
+    expect(loaderCalls).toBe(1)
+  })
+
+  it("distinct partitions fly separately; a settled flight leaves storage warm", async () => {
+    let loaderCalls = 0
+    const cell = localCell({
+      id: "test.flight.partitions",
+      shape: "number",
+      initial: -1,
+      load: async (args) => {
+        loaderCalls++
+        await new Promise((r) => setTimeout(r, 5))
+        return (args.page as number) * 10
+      },
+    })
+    const [a, b] = await Promise.all([
+      resolveCellValue(cell, { page: 1 }),
+      resolveCellValue(cell, { page: 2 }),
+    ])
+    expect([a, b]).toEqual([10, 20])
+    expect(loaderCalls).toBe(2)
+    // Warm now — no third flight.
+    expect(await resolveCellValue(cell, { page: 1 })).toBe(10)
+    expect(loaderCalls).toBe(2)
+  })
+
+  it("a failed flight clears — the next resolve retries the loader", async () => {
+    let loaderCalls = 0
+    const cell = localCell({
+      id: "test.flight.retry",
+      shape: "number",
+      initial: -1,
+      load: async () => {
+        loaderCalls++
+        await new Promise((r) => setTimeout(r, 5))
+        if (loaderCalls === 1) throw new Error("backend down")
+        return 7
+      },
+    })
+    // Both concurrent resolvers share the ONE failed flight.
+    const settled = await Promise.allSettled([
+      resolveCellValue(cell, {}),
+      resolveCellValue(cell, {}),
+    ])
+    expect(settled.map((s) => s.status)).toEqual(["rejected", "rejected"])
+    expect(loaderCalls).toBe(1)
+    expect(await resolveCellValue(cell, {})).toBe(7)
+    expect(loaderCalls).toBe(2)
   })
 })

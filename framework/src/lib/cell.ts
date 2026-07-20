@@ -735,10 +735,20 @@ function buildCellPartitionScopeFromRequest(): CellPartitionScope {
  * Reads are sync when storage is warm (the common case after first
  * hydration). The cold-start path is the only async branch.
  */
+/** In-flight loads, keyed per (scope, cell, partition) — SINGLE-FLIGHT.
+ *  A cold partition resolved concurrently (the scroller root's shape
+ *  read, a leaf's slice, and any parton JOINING the query in the same
+ *  render) runs the loader once; every resolver shares the one
+ *  promise. The entry clears when the load settles either way, so a
+ *  failed load is retryable and a warm partition never consults this
+ *  map (storage answers first). */
+const inflightLoads = new Map<string, Promise<unknown>>()
+
 export async function resolveCellValue<T>(cell: CellInterface<T>, args: CellArgs): Promise<T> {
   const partitionKey = hash(stableStringify(args))
   const storage = cellStorageForArgs(cell as CellInterface<unknown>, args)
-  const stored = storage.read(getScope(), cell.id, partitionKey)
+  const scope = getScope()
+  const stored = storage.read(scope, cell.id, partitionKey)
   if (stored !== undefined) {
     try {
       return cell.validate(stored)
@@ -747,11 +757,22 @@ export async function resolveCellValue<T>(cell: CellInterface<T>, args: CellArgs
     }
   }
   if (cell.load) {
-    const loaded = await cell.load(args)
-    const validated = cell.validate(loaded)
-    const transformed = cell.write ? cell.write(validated) : validated
-    storage.write(getScope(), cell.id, partitionKey, transformed)
-    return transformed
+    const flightKey = `${scope} ${cell.id} ${partitionKey}`
+    const inflight = inflightLoads.get(flightKey)
+    if (inflight) return (await inflight) as T
+    const flight = (async () => {
+      const loaded = await cell.load!(args)
+      const validated = cell.validate(loaded)
+      const transformed = cell.write ? cell.write(validated) : validated
+      storage.write(scope, cell.id, partitionKey, transformed)
+      return transformed
+    })()
+    inflightLoads.set(flightKey, flight)
+    try {
+      return await flight
+    } finally {
+      inflightLoads.delete(flightKey)
+    }
   }
   return cell.defaultValue
 }
