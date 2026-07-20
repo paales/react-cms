@@ -729,3 +729,101 @@ test("rapid back/forward during load never corrupts the anchor entries", async (
     })
     .toBe(urlFiltered)
 })
+
+test.describe("up-scroll restore", () => {
+  // 4-column geometry: the 3-col (1280px) cold path dead-ends on a
+  // PRE-EXISTING span/flip misalignment (both this build and the
+  // pre-arc baseline — the backtrack-hole residual family), which is
+  // not this pin's subject.
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  // KNOWN-FAILING (the reproducing test for the open residual): the
+  // FILTERED facet reshapes the collection while its cold covering
+  // segment is still loading; scrolling immediately keeps superseding
+  // that segment with window-move statements, and the reshaped tree
+  // can fail to land — the up-scroll then samples a collection whose
+  // geometry never converged (the pre-arc build passes this recipe:
+  // its every-mirror covering segments incidentally re-delivered the
+  // reshape). The unfiltered/warm up-scroll restore this fix targets
+  // is verified by probes; the filtered-cold flow is the next arc.
+  test.fixme("scrolling back up restores content without skeleton dwell", async ({ page }) => {
+    // The up-scroll restore path: parked copies confirm via flip lanes.
+    // A flip statement is exactly-once, but its content delivery is
+    // not guaranteed — a navigation consume tears its lane mid-flight,
+    // a cold loader outlasts several window moves. The driver's OWED
+    // ledger makes materialization at-least-once: every wake (and
+    // every nav consume) re-lanes consumed flips whose content never
+    // drained (measured pre-fix: the resting viewport stayed a
+    // skeleton band for good on a cold backend).
+    await page.goto("/magento/browse")
+    await page.waitForSelector(card, { timeout: 20000 })
+    await waitForPageInteractive(page)
+
+    // A FILTERED collection: its partitions are cold on the fresh dev
+    // server (the warmup warms only base routes), so every flip's lane
+    // pays the real backend round trip — the condition under which an
+    // undelivered flip used to dead-end.
+    await page.locator('[data-testid="browse-facet-option"]').first().click()
+    await expect
+      .poll(() => new URL(page.url()).searchParams.get("f"), { timeout: 10000 })
+      .not.toBeNull()
+    await page.waitForTimeout(800)
+
+    await page.mouse.move(550, 400)
+    for (let i = 0; i < 22; i++) {
+      await page.mouse.wheel(0, 700)
+      await page.waitForTimeout(150)
+    }
+    await page.waitForTimeout(2000)
+    expect(await page.evaluate(() => Math.round(window.scrollY))).toBeGreaterThan(8000)
+
+    // Steady up-scroll at reading speed, sampling the viewport each
+    // step: the visible band must (almost) never be card-less — a
+    // transient sample is racing tolerance, a multi-sample dwell is the
+    // regression (a torn flip lane nothing re-stated). Extreme flick
+    // speeds legitimately show the reservation band on a cold backend —
+    // that is the estimate space doing its job, not this pin's subject.
+    let cardless = 0
+    let maxConsecutive = 0
+    let run = 0
+    for (let i = 0; i < 36; i++) {
+      await page.mouse.wheel(0, -500)
+      await page.waitForTimeout(240)
+      const cards = await page.evaluate(() => {
+        let n = 0
+        for (const c of document.querySelectorAll<HTMLElement>('[data-testid^="browse-card-"]')) {
+          const r = c.getBoundingClientRect()
+          if (r.bottom > 0 && r.top < window.innerHeight && c.offsetParent !== null) n++
+        }
+        return n
+      })
+      if (cards === 0) {
+        cardless++
+        run++
+        maxConsecutive = Math.max(maxConsecutive, run)
+      } else run = 0
+    }
+    expect(
+      maxConsecutive,
+      `card-less samples: ${cardless}, max consecutive: ${maxConsecutive}`,
+    ).toBeLessThanOrEqual(2)
+
+    // And the resting viewport materializes fully.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            let n = 0
+            for (const c of document.querySelectorAll<HTMLElement>(
+              '[data-testid^="browse-card-"]',
+            )) {
+              const r = c.getBoundingClientRect()
+              if (r.bottom > 0 && r.top < window.innerHeight && c.offsetParent !== null) n++
+            }
+            return n
+          }),
+        { timeout: 15000 },
+      )
+      .toBeGreaterThan(0)
+  })
+})

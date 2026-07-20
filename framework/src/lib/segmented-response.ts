@@ -1728,6 +1728,8 @@ async function driveLaneStream(
             return
         }
         if (!enqueue(muxEndFrame(id))) return
+        // The delivery drained — an owed flip-in for this id is paid.
+        owedFlips.delete(id)
         // The delivery is fully on the wire — the connection's first
         // settled delivery anchors the never-acked degrade deadline.
         if (session !== null) session.firstDeliverySettledAt ??= Date.now()
@@ -1805,6 +1807,19 @@ async function driveLaneStream(
   // in-flip re-arms it with fresh cached tokens). Ids that never
   // materialize linger harmlessly until the connection closes.
   const deferredFlips = new Map<string, number>()
+
+  // OWED flip-ins — materialization is AT-LEAST-ONCE. A flip
+  // statement is exactly-once on the wire, but its content delivery
+  // is not guaranteed: the flip's lane can be torn by a navigation
+  // consume mid-flight, or its cold loader can outlast several
+  // window moves in a row (measured: a cold-backend up-scroll left
+  // the resting viewport in skeletons for good once sync statements
+  // stopped emitting a redundant covering segment per mirror). An id
+  // joins the ledger when its in-flip resolves to a lane and leaves
+  // ONLY when a lane for it drains to the wire (`muxend`), the
+  // client flips it back out, or it parks — so every wake retries
+  // undelivered flips until the content actually ships.
+  const owedFlips = new Set<string>()
 
   // Keepalive anchored at the last USEFUL activity (a lane started, a
   // flip processed) — not re-armed per wake. Bump wakes whose touched
@@ -2312,6 +2327,21 @@ async function driveLaneStream(
     // satisfied — they re-lane after the reopen alongside the new
     // statement's own forces.
     const unfulfilledForces = [...lanes.entries()].filter(([, rt]) => rt.forced).map(([id]) => id)
+    // Torn VISIBLE lanes re-lane too: a window move mid-scroll tears
+    // in-flight flip/bump lanes, and a flip statement is exactly-once
+    // — nothing would restate the id, so the viewport dwelt in
+    // skeletons until the atomic covering segment drained (measured:
+    // the up-scroll restore regression once sync statements stopped
+    // providing a redundant every-250ms carrier). Non-forced: an
+    // unchanged parked copy resolves as the zero-byte confirm — the
+    // client-side restore trigger.
+    const visibleSet = session.visible
+    const tornVisible =
+      visibleSet !== null && visibleSet.size > 0
+        ? [...lanes.entries()]
+            .filter(([id, rt]) => !rt.forced && visibleSet.has(id))
+            .map(([id]) => id)
+        : []
     await tearLanesForNavigation()
     // The route is left behind: consequence seqs assigned for its
     // lanes can never emit (their client commits would be
@@ -2447,6 +2477,26 @@ async function driveLaneStream(
     if (segmentStubs.size > 0) {
       enterRequestRegistry(routeKey, "cache")
       spawnStubLanes(segmentStubs)
+    }
+    // Torn visible lanes AND owed flip-ins re-lane on the reopened
+    // region — ids the new route still snapshots, whose lane the
+    // forces block didn't already reopen. The owed ledger must retry
+    // HERE too: at rest after the last consume there may be no later
+    // wake to run the loop-tail retry.
+    if (tornVisible.length > 0 || owedFlips.size > 0) {
+      const snapshots = _readSnapshotsForRoute(scope, routeKey)
+      const visibleNow = session.visible
+      const ids = [...new Set([...tornVisible, ...owedFlips])].filter(
+        (id) =>
+          snapshots.has(id) &&
+          !lanes.has(id) &&
+          (visibleNow === null || visibleNow.has(id)) &&
+          !isParkedOnConnection(id, snapshots, session),
+      )
+      if (ids.length > 0) {
+        enterRequestRegistry(routeKey, "cache")
+        for (const id of ids) startLane(id)
+      }
     }
     return true
   }
@@ -2855,6 +2905,8 @@ async function driveLaneStream(
           if (openAncestor) openAncestor.dirty = true
         }
       }
+      // The in-flip is now OWED: only a drained lane clears it.
+      owedFlips.add(id)
       if (!touched.includes(id)) touched.push(id)
     }
     // Cookie deltas — a client cookie change stated over the channel
@@ -2996,6 +3048,23 @@ async function driveLaneStream(
           continue
         }
         if (!touched.includes(id)) touched.unshift(id)
+      }
+    }
+    // Retry OWED flip-ins whose lane never drained (torn, refused):
+    // still-visible, still-snapshotted, no lane in flight — re-lane.
+    // An out-flipped or parked id retires from the ledger instead.
+    if (session !== null && owedFlips.size > 0) {
+      for (const id of [...owedFlips]) {
+        if (session.visible !== null && !session.visible.has(id)) {
+          owedFlips.delete(id)
+          continue
+        }
+        if (!snapshots.has(id) || lanes.has(id)) continue
+        if (isParkedOnConnection(id, snapshots, session)) {
+          owedFlips.delete(id)
+          continue
+        }
+        if (!touched.includes(id)) touched.push(id)
       }
     }
     announceVoidSeqs()
