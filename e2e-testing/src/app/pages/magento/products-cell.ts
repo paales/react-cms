@@ -77,6 +77,56 @@ export const browseCardCell = magentoCatalog.fragment(
 // any parton can join the query by resolving the same partition (the
 // FilterBar does exactly that), so the facets cost no extra fetch
 // where the partitions align and one cached query where they don't.
+/** The filterable attribute codes — mirrors the schema's
+ *  `ProductAttributeFilterInput` fields (equal + range types). The
+ *  URL's `?f=` pairs validate against this closed vocabulary before
+ *  they reach the query: an unknown code would fail GraphQL input
+ *  validation (breaking the whole slice), and an open vocabulary
+ *  would let arbitrary URLs mint unbounded cell partitions, each a
+ *  backend query. */
+export const FILTERABLE_CODES = new Set([
+  "activity",
+  "brand",
+  "category_gear",
+  "category_id",
+  "category_uid",
+  "category_url_path",
+  "climate",
+  "collar",
+  "color",
+  "colors",
+  "compatible_phones",
+  "dominant_color",
+  "eco_collection",
+  "engine",
+  "erin_recommends",
+  "features_bags",
+  "format",
+  "gender",
+  "material",
+  "new",
+  "pattern",
+  "performance_fabric",
+  "price",
+  "print_art",
+  "print_holiday",
+  "print_labels",
+  "print_landmarks",
+  "print_landscape",
+  "print_mood",
+  "print_type",
+  "sale",
+  "size",
+  "sku",
+  "sleeve",
+  "special_price",
+  "strap_bags",
+  "style_bags",
+  "style_bottom",
+  "style_general",
+  "url_key",
+])
+
 export const browseProductsCell = magentoCatalog.query(
   `#graphql
   query BrowseProducts($pageSize: Int!, $currentPage: Int!, $filter: ProductAttributeFilterInput) {

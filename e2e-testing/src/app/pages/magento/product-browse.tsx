@@ -38,7 +38,7 @@ import {
 } from "@parton/framework"
 import { Suspense } from "react"
 import { LivePriceFallback, LivePricePartial } from "./live-price.tsx"
-import { browseCardCell, browseProductsCell } from "./products-cell.ts"
+import { browseCardCell, browseProductsCell, FILTERABLE_CODES } from "./products-cell.ts"
 
 type CardItem = CellValue<typeof browseCardCell>
 type BrowseArgs = NonNullable<Parameters<typeof browseProductsCell.resolve>[0]>
@@ -64,14 +64,22 @@ const RANGE_FACETS = new Set(["price", "special_price"])
 
 /** The active facets, parsed from the URL — a tracked read, so every
  *  parton deriving its query args from it re-renders when a facet
- *  toggles. */
+ *  toggles. The param is PUBLIC INPUT: codes validate against the
+ *  schema's closed vocabulary (an unknown code would fail GraphQL
+ *  input validation and break the slice; an open vocabulary would
+ *  let arbitrary URLs mint unbounded cell partitions, each a backend
+ *  query), and dropped pairs simply don't exist — the URL states
+ *  only what the schema can answer. */
 function readActive(): Map<string, string> {
   const active = new Map<string, string>()
   const raw = searchParam(FILTER_PARAM)
   if (!raw) return active
   for (const pair of raw.split(",")) {
     const i = pair.indexOf(":")
-    if (i > 0) active.set(pair.slice(0, i), decodeURIComponent(pair.slice(i + 1)))
+    if (i <= 0) continue
+    const code = pair.slice(0, i)
+    if (!FILTERABLE_CODES.has(code)) continue
+    active.set(code, decodeURIComponent(pair.slice(i + 1)))
   }
   return active
 }
@@ -170,13 +178,13 @@ const BrowseCard = parton(function BrowseCardRender({
 
 // The FILTER BAR — a plain parton JOINING the scroller's query, both
 // sides of it:
-//   - the facet UNIVERSE is DYNAMIC: every aggregation the UNFILTERED
-//     query returns with at least one counted option renders — no
-//     app-side facet list, and the bar stays stable while filters
-//     toggle (options never vanish because the current result dropped
-//     them);
-//   - the COUNTS come from the ACTIVE query, so every number reflects
-//     what the grid is actually showing.
+//   - the facet UNIVERSE is DYNAMIC — bounded by the UNFILTERED
+//     query's aggregations (no app-side facet list): only options the
+//     whole catalog counts can ever render;
+//   - VISIBILITY and COUNTS follow the ACTIVE query: an option shows
+//     only while the current result has matches for it (or it is the
+//     selected one — it must stay unselectable), so a facet row whose
+//     every count is 0 disappears instead of rendering dead choices.
 // Same cell, two partitions — and with no filter active the two args
 // are identical, so they collapse into ONE shared resolve. No
 // scroller API involved: the cell is the shared address of the query
@@ -187,12 +195,6 @@ const BrowseFilterBar = parton(async function BrowseFilterBarRender(_: RenderArg
     browseProductsCell.resolve({ pageSize: LEAF, currentPage: 1, filter: {} }),
     browseProductsCell.resolve(sliceArgs(0, LEAF)),
   ])
-  const universe = (base.value?.products?.aggregations ?? []).filter(
-    (a): a is NonNullable<typeof a> =>
-      a != null && (a.options ?? []).some((o) => o != null && (o.count ?? 0) > 0),
-  )
-  if (universe.length === 0) return null
-
   // Counts of the active result, keyed `code:value`; an option absent
   // here has 0 matches under the current filter.
   const countOf = new Map<string, number>()
@@ -201,11 +203,31 @@ const BrowseFilterBar = parton(async function BrowseFilterBarRender(_: RenderArg
       if (o) countOf.set(`${agg?.attribute_code}:${o.value}`, o.count ?? 0)
     }
   }
-  // Labels for the active-filter chips, from the universe.
+  // The rendered universe: base-counted options that the ACTIVE
+  // result can still answer (or that are selected — an active facet
+  // must stay unselectable). A row with nothing to offer under the
+  // current filter disappears entirely: a facet whose every count is
+  // 0 is dead weight, not a choice.
+  const universe = (base.value?.products?.aggregations ?? [])
+    .filter((a): a is NonNullable<typeof a> => a != null)
+    .map((agg) => ({
+      ...agg,
+      options: (agg.options ?? []).filter(
+        (o): o is NonNullable<typeof o> =>
+          o != null &&
+          (o.count ?? 0) > 0 &&
+          ((countOf.get(`${agg.attribute_code}:${o.value}`) ?? 0) > 0 ||
+            active.get(agg.attribute_code) === o.value),
+      ),
+    }))
+    .filter((agg) => agg.options.length > 0)
+  if (universe.length === 0 && active.size === 0) return null
+
+  // Labels for the active-filter chips, from the base result.
   const labelOf = new Map<string, string>()
-  for (const agg of universe) {
-    for (const o of agg.options ?? []) {
-      if (o) labelOf.set(`${agg.attribute_code}:${o.value}`, o.label ?? o.value)
+  for (const agg of base.value?.products?.aggregations ?? []) {
+    for (const o of agg?.options ?? []) {
+      if (o) labelOf.set(`${agg?.attribute_code}:${o.value}`, o.label ?? o.value)
     }
   }
 
@@ -236,39 +258,34 @@ const BrowseFilterBar = parton(async function BrowseFilterBarRender(_: RenderArg
       {universe.map((agg) => (
         <div key={agg.attribute_code} className="flex flex-wrap items-baseline gap-2">
           <span className="text-xs font-medium text-muted-foreground">{agg.label}</span>
-          {(agg.options ?? [])
-            .filter((o): o is NonNullable<typeof o> => o != null)
-            .slice(0, 8)
-            .map((o) => {
-              const code = agg.attribute_code
-              const isActive = active.get(code) === o.value
-              const count = countOf.get(`${code}:${o.value}`) ?? 0
-              return (
-                <a
-                  key={o.value}
-                  href={facetHref(active, code, isActive ? null : o.value)}
-                  data-testid="browse-facet-option"
-                  data-facet={code}
-                  data-active={isActive || undefined}
-                  aria-pressed={isActive}
-                  className={
-                    isActive
-                      ? "rounded-full border border-primary bg-primary px-2 py-0.5 text-xs text-primary-foreground"
-                      : count === 0
-                        ? "rounded-full border px-2 py-0.5 text-xs opacity-40"
-                        : "rounded-full border px-2 py-0.5 text-xs hover:bg-muted"
-                  }
+          {agg.options.slice(0, 8).map((o) => {
+            const code = agg.attribute_code
+            const isActive = active.get(code) === o.value
+            const count = countOf.get(`${code}:${o.value}`) ?? 0
+            return (
+              <a
+                key={o.value}
+                href={facetHref(active, code, isActive ? null : o.value)}
+                data-testid="browse-facet-option"
+                data-facet={code}
+                data-active={isActive || undefined}
+                aria-pressed={isActive}
+                className={
+                  isActive
+                    ? "rounded-full border border-primary bg-primary px-2 py-0.5 text-xs text-primary-foreground"
+                    : "rounded-full border px-2 py-0.5 text-xs hover:bg-muted"
+                }
+              >
+                {o.label}{" "}
+                <span
+                  data-testid="browse-facet-count"
+                  className={isActive ? "tabular-nums" : "tabular-nums text-muted-foreground"}
                 >
-                  {o.label}{" "}
-                  <span
-                    data-testid="browse-facet-count"
-                    className={isActive ? "tabular-nums" : "tabular-nums text-muted-foreground"}
-                  >
-                    {count}
-                  </span>
-                </a>
-              )
-            })}
+                  {count}
+                </span>
+              </a>
+            )
+          })}
         </div>
       ))}
     </div>
