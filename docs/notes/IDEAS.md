@@ -168,6 +168,28 @@ waiting on a forcing caller:
   refining the reservation calc) is the next lever. Wait for a
   collection that actually drifts.
 
+### The flush boundary — lane bodies buffer to completion
+
+Measured (2026-07-20, browse demo, WS frame timestamps vs commit
+polling): a materializing leaf's bytes reach the client ~1.05s after
+its backend query returns in ~100ms, and the commit follows the bytes
+within ~40ms — the whole wait is server-side. The gate is
+architectural: a lane body drains its Flight render into a buffered
+chunk list before anything is emitted (`segmented-response.ts`,
+`publishBroadcastBody` and the per-connection iteration), so a leaf
+whose streamed Suspense content is slow (the demo's 1s price sleep —
+any real slow sub-parton) holds its OWN shell hostage: the cards
+could paint with price fallbacks the instant the shell rows exist,
+but the shell and the fills share one buffered frame. Producer lanes
+(chat) already hold open and stream, so the wire grammar has the
+vocabulary; the design question is making progressive intra-lane
+flush the NORMAL body shape — shell rows flush as produced, Suspense
+fills follow — without breaking the broadcast slot (which must
+buffer to replay), fp-heal finalization at drain, and the delivery
+accounting. The document path has the sibling problem (buffered
+Brotli; only `markConnectionLive` flushes). One boundary, two
+transports — likely one arc.
+
 ### Scroller × broadcast eligibility
 
 D2's classifier marks every cull-gated parton broadcast-ineligible
