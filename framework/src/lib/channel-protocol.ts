@@ -376,6 +376,17 @@ export interface UrlFrame {
   url: string
   intent: "push" | "replace" | "silent"
   streaming?: boolean
+  /** URL-only SYNCHRONIZATION: the client updated its URL and expects
+   *  no covering render for the statement (a scroller's bookmark
+   *  mirror — the fire-and-forget `record: false` class). The server
+   *  applies it to request state without tearing lanes or emitting a
+   *  whole-tree navigation segment (unless the target changes the
+   *  route, carries a `__force` overlay, or an earlier non-sync
+   *  statement still awaits its covering segment — then the sync
+   *  statement's URL rides the full path as the covering statement).
+   *  Distinct from `intent: "silent"`, which targeted refetches and
+   *  the HMR renav also state while REQUIRING coverage. */
+  sync?: boolean
   frame?: string[]
 }
 
@@ -603,6 +614,7 @@ function decodeUrlFrameShape(f: Record<string, unknown>): UrlFrame | null {
     url: f.url,
     intent: f.intent,
     ...(f.streaming === true ? { streaming: true } : {}),
+    ...(f.sync === true ? { sync: true } : {}),
     ...(framePath ? { frame: framePath } : {}),
   }
 }

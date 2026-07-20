@@ -45,7 +45,7 @@ import {
   _channelNavAvailable,
   _channelNavigate,
   _channelNavInFlightCovering,
-  _channelNavPoint,
+  _channelUrlStatementPoint,
   _channelNavPrefersStreaming,
   _channelNavPrefersTransition,
   _channelNavSegmentCommitted,
@@ -412,6 +412,17 @@ export function installLiveLayer(host: LiveHost): () => void {
             // would gate the initial content on an unbounded await. Race
             // the trailer against the producer announcement.
             let delivery = _lanePendingDelivery(lane.partonId)
+            // A VOIDED delivery: the server announced the seq, then tore
+            // or cancelled the body before it could complete (the
+            // `seqvoid` entry named it). The bytes are truncated —
+            // committing them would swap torn content over live content.
+            // Consume processed (the void already advanced the
+            // watermark; the double-count is a no-op) and drop the body.
+            if (delivery !== null && delivery.voided === true) {
+              consumed = true
+              _laneDeliveryDroppedStale(lane.partonId)
+              return
+            }
             // A streaming-preferred forced lane (a selector nav whose
             // caller opted into progressive commit) commits like a
             // PRODUCER lane: root-ready, so the body's Suspense fallbacks
@@ -457,6 +468,13 @@ export function installLiveLayer(host: LiveHost): () => void {
                 )
               })
               delivery = _lanePendingDelivery(lane.partonId)
+            }
+            if (delivery !== null && delivery.voided === true) {
+              // Voided mid-wait (see the early guard) — drop, never
+              // commit a truncated body.
+              consumed = true
+              _laneDeliveryDroppedStale(lane.partonId)
+              return
             }
             if (delivery !== null && delivery.live === true) {
               // PRODUCER lane: commit progressively at root-ready — the
@@ -504,6 +522,13 @@ export function installLiveLayer(host: LiveHost): () => void {
               // over the page. Nothing to consume: no seq was ever
               // queued.
               consumed = true
+              return
+            }
+            if (delivery.voided === true) {
+              // Voided while the trailer resolved — drop, never commit
+              // a truncated body.
+              consumed = true
+              _laneDeliveryDroppedStale(lane.partonId)
               return
             }
             // As-of guard: a lane rendered before the client's
@@ -642,6 +667,12 @@ export function installLiveLayer(host: LiveHost): () => void {
               const torn = takeSegmentDelivery()
               if (torn !== null && !_channelDeliveryCommittable(torn.asOf)) {
                 _segmentDeliveryDroppedStale(torn.seq)
+                // The truncated render still COVERED every statement at
+                // or below its as-of — those fires were superseded by
+                // the newer statement that aborted it, and their
+                // milestones must resolve now, not starve until an
+                // unrelated later segment (the stuck-traverse class).
+                _channelNavSegmentSettled(torn.asOf)
                 continue
               }
               throw err
@@ -656,6 +687,14 @@ export function installLiveLayer(host: LiveHost): () => void {
             if (delivery !== null && !_channelDeliveryCommittable(delivery.asOf)) {
               _reportAsOfDrop(delivery.seq)
               _segmentDeliveryDroppedStale(delivery.seq)
+              // A dropped covering segment still resolves the fires it
+              // covered: any record at or below its as-of was superseded
+              // by the statement that moved the navigation point — the
+              // newest statement's own segment follows (or is this
+              // stream's next). Without this, a fire whose segment gets
+              // as-of-dropped starves its `finished` (measured: minutes-
+              // stuck traverse transitions under rapid back/forward).
+              _channelNavSegmentSettled(delivery.asOf)
               continue
             }
             segment.trailers
@@ -804,10 +843,12 @@ export function installLiveLayer(host: LiveHost): () => void {
     // unattached semantics, routing its cell writes into a throwaway
     // storage instead of the connection's. Immediate in steady state.
     await _channelHandoverSettled()
-    // The navigation point at action fire — the as-of this response's
-    // server url push is gated on (client-wins: a push the client has
-    // channel-navigated past is a stale suggestion).
-    const actionIssueNavPoint = _channelNavPoint()
+    // The URL-statement point at action fire — the as-of this
+    // response's server url push is gated on (client-wins: a push the
+    // client has stated past — recorded nav OR sync mirror — is a
+    // stale suggestion). Captured from the same timeline the gate
+    // reads (`_serverUrlPushApplies`).
+    const actionIssueNavPoint = _channelUrlStatementPoint()
     // An attached, healthy page names its live connection on the
     // action POST (`x-parton-conn`) — an explicit client statement,
     // never inferred — so the server can reserve the delivery seqs
@@ -1174,7 +1215,12 @@ function listenNavigation(
                 ),
               ]
               for (const d of diffs) {
-                jobs.push(_dispatchFrameRefetch(d.key.split("."), d.url).finished)
+                // The traverse's own signal: a superseding traverse
+                // aborts the frame-diff refetches too, so a torn frame
+                // lane can't hold this handler's promise open forever.
+                jobs.push(
+                  _dispatchFrameRefetch(d.key.split("."), d.url, undefined, event.signal).finished,
+                )
               }
               await Promise.all(jobs)
             }),

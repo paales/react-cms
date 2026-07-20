@@ -134,6 +134,14 @@ export interface PendingNavigation {
   readonly url: string
   readonly intent: UrlFrame["intent"]
   readonly streaming?: true
+  /** URL-only synchronization (see [[UrlFrame]]`.sync`): the client
+   *  expects no covering segment. The driver applies it to request
+   *  state without tearing lanes or emitting a whole-tree render —
+   *  unless it changes the route, carries a `__force` overlay, or an
+   *  earlier non-sync statement's coverage is still owed
+   *  (`pendingNavCoverage`), in which case it rides the full path as
+   *  the covering statement. */
+  readonly sync?: true
   /** Envelope seq of the statement — the client's navigation point,
    *  and the AS-OF value every post-consume emission carries. */
   readonly seq: number
@@ -384,6 +392,13 @@ export interface ConnectionSession {
    *  [[PendingNavigation]]. `null` when the request state reflects
    *  every url frame heard so far. */
   pendingNav: PendingNavigation | null
+  /** A NON-SYNC url statement latched and its covering whole-tree
+   *  segment has not yet fully emitted — coverage is owed. Set at the
+   *  latch, cleared by the driver when a navigation segment lands
+   *  (`emitNavSegment` outcome "done"). While owed, a later sync
+   *  statement must ride the full path (its URL becomes the covering
+   *  statement) instead of the lightweight apply. */
+  pendingNavCoverage: boolean
   /** Latched FRAME url statements awaiting the driver, keyed by frame
    *  key (newest seq per key wins) — see [[PendingFrameNavigation]].
    *  Drained via `takeConnectionFrameNavs`. */
@@ -518,6 +533,7 @@ export function _openConnectionSession(
     telemetry: null,
     pendingWarmUrl: null,
     pendingNav: null,
+    pendingNavCoverage: false,
     pendingFrameNavs: new Map(),
     consumedFrameNavSeqs: new Map(),
     cancelSeqByScope: new Map(),
@@ -1041,12 +1057,24 @@ function applyUrlFrame(
   // was validated against the envelope's request; the driver re-resolves
   // against ITS request at consume time.
   const target = new URL(frame.url, requestUrl)
+  const url = target.pathname + target.search
+  // A SYNC statement must not downgrade a latched non-sync one: the
+  // older statement's covering segment is still owed, so the newer URL
+  // folds in (newest truth) while the recorded intent — and the owed
+  // coverage — stand. The reverse (a non-sync statement replacing a
+  // sync latch) replaces wholesale, as does sync-over-sync.
+  if (frame.sync === true && session.pendingNav !== null && session.pendingNav.sync !== true) {
+    session.pendingNav = { ...session.pendingNav, url, seq }
+    return
+  }
   session.pendingNav = {
-    url: target.pathname + target.search,
+    url,
     intent: frame.intent,
     ...(frame.streaming === true ? { streaming: true } : {}),
+    ...(frame.sync === true ? { sync: true as const } : {}),
     seq,
   }
+  if (frame.sync !== true) session.pendingNavCoverage = true
 }
 
 /** Consume the session's latched navigation — the driver's wait-entry

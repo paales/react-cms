@@ -524,7 +524,7 @@ held stream in stream order.
 | Interaction                                                               | Attached + healthy                                                                                                                                                                                                                        | Pre-establishment                                                               | Degraded                                                              |
 | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | Window navigation (`nav.navigate`, intercepted)                           | `url` frame, intent `push`/`replace` (a traverse states `replace`)                                                                                                                                                                        | latches; rides the attach it triggers (the statement's `url`)                   | not intercepted — browser-native document load                        |
-| Silent window URL sync (`silent: true`, server-push application)          | `url` frame, intent `silent`, fire-and-forget                                                                                                                                                                                             | nothing (the next attach's `url` restates it)                                   | client-local URL work only (still intercepted — no server leg exists) |
+| Silent window URL sync (`silent: true`, server-push application)          | `url` frame, intent `silent` + `sync: true`, fire-and-forget — the LIGHTWEIGHT class (see §The sync class below)                                                                                                                          | nothing (the next attach's `url` restates it)                                   | client-local URL work only (still intercepted — no server leg exists) |
 | Batched id-forced refetch (`enqueueRefetch` — framework-internal)         | `url` frame, intent `silent`, page URL + `?__force=<ids>`                                                                                                                                                                                 | latches; the overlay rides the attach `url` and the targets lane at region open | resolves as a no-op (document loads are the page's renders)           |
 | Frame navigation (`useNavigation(frame).navigate/reload`, frame traverse) | frame-scoped `url` frame (+ a `cancel` co-rider when it supersedes an unsettled fire for the same frame) — §Frames ride the channel                                                                                                       | latches; rides the attach's `frames` intent                                     | document navigation carrying `__frame`/`__frameUrl` document params   |
 | Culling flips                                                             | `visible` frames                                                                                                                                                                                                                          | PEND until establishment (the attach seed + first segment carry the truth)      | none (no transport)                                                   |
@@ -611,6 +611,41 @@ The pieces:
   committed shell to tear, and a streaming nav suspended on a slow
   loader has produced no bytes yet — the case the nav-latch arm exists
   to preempt, and where the supersede's latency win lives.
+- **The sync class — URL-only statements apply lightly.** A
+  `record: false` fire (a scroller's bookmark mirror, the silent URL
+  sync) ships `sync: true` on its url frame and is treated as a
+  DECLARATION of content-equivalence on both sides. Client: it does
+  NOT advance the navigation point — deliveries rendered as-of the
+  previous URL stay committable (advancing per mirror as-of-dropped
+  every in-flight covering segment and lane, starving pending records
+  into minutes-stuck traverse transitions and discarding whole decoded
+  trees per mirror — the measured traverse-storm livelock), and it
+  never downgrades a pending RECORDED frame (the sync's URL folds in,
+  the recorded intent and its owed coverage stand; the server latch
+  merges the same way). A separate `lastUrlStatementSeq` advances on
+  EVERY statement — the server-push client-wins gate reads that
+  timeline (`_serverUrlPushApplies`; discrete action responses capture
+  it at issue). Server: a latched sync statement applies to request
+  state without tearing lanes or emitting a whole-tree segment — no
+  region churn for a bookmark mirror — and never supersedes a
+  rendering navigation segment (that render IS current coverage).
+  Full-path exceptions, in which the sync statement's URL rides the
+  ordinary consume as the covering statement: a route change, a
+  `__force` overlay, or owed coverage (`pendingNavCoverage`, set when
+  a non-sync frame latches, cleared when its covering segment lands).
+  Match-gated partons whose existence turns on a silently-mirrored
+  param follow at the next real navigation or reconcile — the
+  documented silent contract (the degraded column above never
+  refetched them either).
+- **Dropped covering segments still settle their fires.** A payload
+  segment the client as-of-drops (or that arrives torn under a
+  supersede) resolves the records at or below its as-of
+  (`_channelNavSegmentSettled` at the drop consume): those fires were
+  superseded by the statement that moved the navigation point, and
+  the newest statement's own segment follows. Without this, a fire
+  whose covering segment lost the race starved its `finished`
+  forever — `navigation.transition` stuck for minutes under rapid
+  back/forward, the WS upgrade's quiesce gate blocked with it.
 - **The as-of guard — pageUrlKey generalized into the protocol.**
   The client's commit arbitration for seq'd deliveries: commit iff
   the delivery's as-of ≥ the navigation point
@@ -969,6 +1004,19 @@ deferred-only tally takes — [`streaming.md`](./streaming.md) § "Deferred
   voids everything). The client counts voided seqs PROCESSED, so the
   contiguous watermark can always pass a reservation — a silent gap
   would wedge the unacked window and hold the gate forever.
+* **An ANNOUNCED seq whose body cannot complete is voided too.** A
+  lane that already wrote its delivery announcement (an
+  early-announced streaming force, a `muxlive` producer) and is then
+  torn by a navigation or cancelled mid-body adds its ANNOUNCED seq
+  to `voidSeqs` on the torn exit. Without the void, the client's
+  torn-decode consume stalls the watermark at that seq permanently —
+  the unacked window fills and every later flip/bump lane coalesces
+  into `windowDirty` forever (the measured skeletons-at-rest wedge
+  after a traverse storm). The client's `seqvoid` handler counts the
+  seq processed AND marks any still-queued lane delivery `voided`, so
+  a settled-but-truncated body (a cancelled lane closed with its
+  `muxend`) is dropped instead of committed as torn content
+  (`channel-sync-statements.rsc.test.tsx`).
 * **The response header** (`x-parton-consequences: s1,s2`) registers
   a gate (`_registerActionConsequences`) before the action's returned
   promise resolves; the cell overlay's clear point awaits

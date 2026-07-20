@@ -715,4 +715,17 @@ test("rapid back/forward during load never corrupts the anchor entries", async (
       { timeout: 20000 },
     )
     .toBeGreaterThan(0)
+
+  // URL/CONTENT COHERENCE: the rendered collection is the URL's — a
+  // traverse whose covering segment starved left the FILTERED tree on
+  // an unfiltered URL (measured: pagination showing the filtered
+  // 8-page total under a bare /magento/browse). The active-filters
+  // section tracks the query the content was rendered from, so its
+  // presence must match the URL's ?f=.
+  const urlFiltered = new URL(page.url()).searchParams.has("f")
+  await expect
+    .poll(() => page.locator('[data-testid="browse-active-filters"]').isVisible(), {
+      timeout: 15000,
+    })
+    .toBe(urlFiltered)
 })

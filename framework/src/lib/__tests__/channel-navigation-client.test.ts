@@ -217,7 +217,10 @@ describe("reliable class + the attach subsume", () => {
     await settle()
     expect(sentEnvelopes()).toHaveLength(2)
     expect(sentEnvelopes()[1]).toMatchObject({ connection: "c2", seq: 1 })
-    expect(sentEnvelopes()[1].frames).toEqual([{ kind: "url", url: "/b", intent: "push" }])
+    // record:false statements are the sync class — the frame states it.
+    expect(sentEnvelopes()[1].frames).toEqual([
+      { kind: "url", url: "/b", intent: "push", sync: true },
+    ])
 
     // The applied marker covers it — nothing left to retransmit; c3's
     // envelope carries only its establishment ack.
@@ -274,7 +277,7 @@ describe("reliable class + the attach subsume", () => {
     const urlFrames = sentEnvelopes()
       .flatMap((e) => e.frames)
       .filter((f) => f.kind === "url")
-    expect(urlFrames).toEqual([{ kind: "url", url: "/late", intent: "push" }])
+    expect(urlFrames).toEqual([{ kind: "url", url: "/late", intent: "push", sync: true }])
   })
 })
 
@@ -282,9 +285,40 @@ describe("the as-of guards", () => {
   it("drops deliveries rendered before the navigation point", () => {
     _channelEstablished("c1")
     expect(_channelDeliveryCommittable(0)).toBe(true)
-    _channelNavigate({ url: "/b", intent: "push", record: false })
+    const fire = _channelNavigate({ url: "/b", intent: "push" })
+    expect(fire).not.toBeNull()
     expect(_channelDeliveryCommittable(0)).toBe(false)
     expect(_channelDeliveryCommittable(1)).toBe(true)
+  })
+
+  it("a sync statement (record:false) does NOT move the navigation point", () => {
+    // A URL-only mirror declares its change content-equivalent: an
+    // in-flight covering segment or lane rendered as-of the previous
+    // URL must still commit — advancing the point per mirror as-of-
+    // dropped every in-flight delivery and starved pending records
+    // (the stuck-traverse livelock).
+    _channelEstablished("c1")
+    _channelNavigate({ url: "/b", intent: "push" })
+    expect(_channelDeliveryCommittable(1)).toBe(true)
+    expect(_channelDeliveryCommittable(0)).toBe(false)
+    _channelNavigate({ url: "/b?page=2", intent: "silent", record: false })
+    // The point stays at the recorded statement's seq.
+    expect(_channelDeliveryCommittable(1)).toBe(true)
+  })
+
+  it("a sync statement folds its URL into a pending recorded frame without downgrading it", async () => {
+    // The mirror's URL is the newest truth, but the recorded
+    // statement's coverage is still owed — the flushed frame keeps the
+    // recorded intent (no sync brand), so the server's full path runs.
+    _channelEstablished("c1")
+    const fire = _channelNavigate({ url: "/b", intent: "replace" })
+    expect(fire).not.toBeNull()
+    _channelNavigate({ url: "/b?page=3", intent: "silent", record: false })
+    await flushOnce()
+    const urlFrames = sentEnvelopes()
+      .flatMap((e) => e.frames)
+      .filter((f) => f.kind === "url")
+    expect(urlFrames).toEqual([{ kind: "url", url: "/b?page=3", intent: "replace" }])
   })
 
   it("server url pushes are client-wins in both directions", () => {

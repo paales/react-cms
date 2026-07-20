@@ -48,6 +48,7 @@ import {
   _laneDeliveryCommitted,
   _laneDeliveryDropped,
   _laneDeliveryDroppedStale,
+  _lanePendingDelivery,
   _registerAttachRequester,
   _registerLiveStreamAbort,
   _reportAsOfDrop,
@@ -620,5 +621,40 @@ describe("bounded re-establishment", () => {
     await flushOnce()
     expect(_channelIsDegraded()).toBe(false)
     expect(deliveryFailed).toHaveBeenCalledExactlyOnceWith(frame)
+  })
+})
+
+describe("voided deliveries", () => {
+  it("a seqvoid names a queued lane delivery: watermark passes it and the entry is marked void", async () => {
+    // The server announced a lane's seq, then tore/cancelled the body
+    // before it could complete. The void must (a) advance the
+    // contiguous watermark past the seq — a permanent gap would fill
+    // the server's unacked window and coalesce every later lane into
+    // windowDirty forever (the measured skeletons-at-rest wedge) —
+    // and (b) mark the queued entry so a settled-but-truncated body
+    // (a cancelled lane closed with its muxend) is dropped, never
+    // committed as torn content.
+    await establishDrained("c1")
+    laneSeqEntry("torn-lane", 1)
+    laneSeqEntry("other", 2)
+    _channelWireEntry("seqvoid", enc("1"))
+    expect(_lanePendingDelivery("torn-lane")?.voided).toBe(true)
+    expect(_lanePendingDelivery("other")?.voided).toBeUndefined()
+    // The other lane commits; the cumulative ack covers BOTH seqs —
+    // the void filled the gap.
+    _laneDeliveryCommitted("other")
+    await flushOnce()
+    const acks = sentEnvelopes()
+      .flatMap((e) => e.frames)
+      .filter((f) => f.kind === "ack")
+    expect(acks.at(-1)).toMatchObject({ delivered: 2 })
+  })
+
+  it("a seqvoid for an already-consumed seq is a no-op", async () => {
+    await establishDrained("c1")
+    laneSeqEntry("done-lane", 1)
+    _laneDeliveryCommitted("done-lane")
+    _channelWireEntry("seqvoid", enc("1"))
+    expect(_lanePendingDelivery("done-lane")).toBeNull()
   })
 })

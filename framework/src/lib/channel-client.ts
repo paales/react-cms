@@ -140,6 +140,11 @@ export interface WireDelivery {
   asOf: number
   live?: boolean
   nav?: number
+  /** The server VOIDED this seq after announcing it (the body was
+   *  torn or cancelled before completing — a `seqvoid` entry named
+   *  it). The watermark already counts it processed; the commit path
+   *  must DROP the body rather than commit truncated content. */
+  voided?: boolean
 }
 
 /** Per-parton FIFO of lane deliveries read off the wire (`seq`
@@ -480,6 +485,14 @@ interface PendingNavRecord {
 }
 
 let navPoint = 0
+/** The envelope seq of the client's newest URL statement of ANY class
+ *  — recorded navigations AND fire-and-forget sync mirrors alike. The
+ *  server-push client-wins gate reads this (a push rendered before any
+ *  client statement loses), while the delivery-drop guard (`navPoint`)
+ *  advances only on RECORDED statements: a sync mirror declares its
+ *  URL change content-equivalent, so it must not as-of-drop in-flight
+ *  deliveries. */
+let lastUrlStatementSeq = 0
 let pendingNavFrame: UrlFrame | null = null
 let pendingNavRecords: PendingNavRecord[] = []
 /** One-shot claim the navigate-event listener sets when it routes a
@@ -574,10 +587,22 @@ function scheduleDrainRetry(): void {
   }, DRAIN_RETRY_MS)
 }
 
-/** The client's navigation point — the envelope seq of its latest url
- *  statement on the open connection (`0` = none since attach). */
+/** The client's navigation point — the envelope seq of its latest
+ *  RECORDED url statement on the open connection (`0` = none since
+ *  attach). Sync mirrors don't move it (they must not as-of-drop
+ *  in-flight deliveries). */
 export function _channelNavPoint(): number {
   return navPoint
+}
+
+/** The envelope seq of the client's latest url statement of ANY class
+ *  — recorded navigations and sync mirrors alike. The server-push
+ *  client-wins gate compares against THIS timeline (`_serverUrlPushApplies`),
+ *  so discrete responses (action POSTs) capture it at issue time: any
+ *  client statement after the issue makes the response's url push a
+ *  stale suggestion. */
+export function _channelUrlStatementPoint(): number {
+  return lastUrlStatementSeq
 }
 
 export function _channelClaimWindowNav(): void {
@@ -824,7 +849,7 @@ const cookieProducer: ChannelProducer = {
  *  it issued itself); `undefined` — a caller with no correlation —
  *  applies unconditionally. */
 export function _serverUrlPushApplies(asOf: number | undefined): boolean {
-  return asOf === undefined || asOf >= navPoint
+  return asOf === undefined || asOf >= lastUrlStatementSeq
 }
 
 /** The as-of commit guard for seq'd deliveries on the live stream —
@@ -854,6 +879,35 @@ export function _channelNavigate(init: {
   record?: boolean
 }): { streaming: Promise<void>; finished: Promise<void> } | null {
   if (documentNavMode) return null
+  // Every statement advances the URL-statement seq (the server-push
+  // client-wins gate); only a RECORDED statement advances the
+  // navigation point below.
+  lastUrlStatementSeq = envelopeSeq + 1
+  if (init.record === false) {
+    // A fire-and-forget URL-only SYNC (a scroller's bookmark mirror).
+    // It does NOT advance the navigation point: the URL change is
+    // declared content-equivalent (silent = no refetch), so deliveries
+    // rendered as-of the previous URL remain committable — advancing
+    // would as-of-drop every in-flight covering segment and lane,
+    // starving pending records (the stuck-traverse livelock) and
+    // discarding whole decoded trees per mirror (measured: 3.5k
+    // deliveries, 45s main-thread bursts under a traverse storm). The
+    // frame states `sync: true` so the server applies it without a
+    // covering segment; a pending RECORDED frame must not be
+    // downgraded by the sync — its coverage is still owed — so the
+    // sync folds its URL in and keeps the recorded intent.
+    if (pendingNavFrame !== null && pendingNavFrame.sync !== true) {
+      pendingNavFrame = { ...pendingNavFrame, url: init.url }
+    } else {
+      pendingNavFrame = { kind: "url", url: init.url, intent: init.intent, sync: true }
+    }
+    if (_getLiveConnectionId() !== null) {
+      scheduleChannelFlush()
+    } else {
+      _requestAttachNow()
+    }
+    return { streaming: Promise.resolve(), finished: Promise.resolve() }
+  }
   // Reserve the statement's envelope seq: flushes serialize and only
   // collect-flushes mint, so the next envelope is exactly
   // `envelopeSeq + 1` — and the navigation point must advance NOW
@@ -873,7 +927,6 @@ export function _channelNavigate(init: {
     // whatever establishment ever comes; the fire itself is a no-op.
     return { streaming: Promise.resolve(), finished: Promise.resolve() }
   }
-  if (init.record === false) return { streaming: Promise.resolve(), finished: Promise.resolve() }
   let resolveStreaming!: () => void
   let rejectStreaming!: (err: unknown) => void
   let resolveFinished!: () => void
@@ -1076,6 +1129,7 @@ export interface AttachIntent {
  */
 export function _channelNavSubsumedByAttach(): AttachIntent {
   navPoint = 0
+  lastUrlStatementSeq = 0
   const url = pendingNavFrame?.url ?? null
   pendingNavFrame = null
   const frames = [...pendingFrameFrames.values()]
@@ -1432,14 +1486,25 @@ export function _channelWireEntry(tag: string, body: Uint8Array): void {
     return
   }
   if (tag === TAG_SEQ_VOID) {
-    // Assigned-but-never-emitted delivery seqs (an action's
-    // consequence reservation whose lane was skipped) — count each
+    // Voided delivery seqs: assigned-but-never-emitted (an action's
+    // consequence reservation whose lane was skipped) or ANNOUNCED on
+    // a body the server then tore/cancelled before it could complete
+    // (a nav tear over an early-announced forced lane). Count each
     // PROCESSED so the contiguous watermark passes them and the
-    // consequence gates they anchored release.
+    // consequence gates they anchored release — and mark any still-
+    // queued lane delivery VOID so a settled-but-truncated body (a
+    // cancelled lane closed with its `muxend`) is dropped instead of
+    // committed as torn content.
     const text = new TextDecoder().decode(body)
     for (const token of text.split(" ")) {
       const seq = Number(token)
-      if (Number.isFinite(seq) && seq > 0) commitDelivery(seq)
+      if (!Number.isFinite(seq) || seq <= 0) continue
+      commitDelivery(seq)
+      for (const queue of pendingLaneSeqs.values()) {
+        for (const delivery of queue) {
+          if (delivery.seq === seq) delivery.voided = true
+        }
+      }
     }
     return
   }
@@ -2086,6 +2151,7 @@ export function _resetChannelClient(): void {
     document.documentElement.removeAttribute("data-parton-degraded")
   }
   navPoint = 0
+  lastUrlStatementSeq = 0
   pendingNavFrame = null
   pendingNavRecords = []
   pendingFrameFrames = new Map()

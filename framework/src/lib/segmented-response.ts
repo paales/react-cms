@@ -67,6 +67,7 @@ import {
   type ConnectionSession,
   capOverrideSet,
   type PendingFlip,
+  type PendingNavigation,
   takeConnectionCookieChanges,
   takeConnectionFlips,
   takeConnectionFrameNavs,
@@ -1689,6 +1690,14 @@ async function driveLaneStream(
           }
           if (assignedSeq !== null && announcedSeq === null) {
             session?.voidSeqs.add(assignedSeq)
+          } else if (announcedSeq !== null) {
+            // The seq is ON THE WIRE but its body cannot complete (nav
+            // tear, cancelled iteration). Void it: the client counts it
+            // processed — a permanent contiguity gap would wedge the
+            // ack watermark, filling the unacked window and coalescing
+            // every later lane into `windowDirty` forever — and drops
+            // the truncated body instead of committing it.
+            session?.voidSeqs.add(announcedSeq)
           }
           return
         }
@@ -2143,6 +2152,13 @@ async function driveLaneStream(
     const supersededBy = (): boolean => {
       if (session === null || session.pendingNav === null) return false
       if (session.pendingNav.seq <= consumedSeq) return false
+      // A SYNC statement that needs no segment of its own (same route,
+      // no forces) never supersedes: this render IS current coverage —
+      // aborting it for a bookmark mirror re-rendered the whole tree
+      // per mirror and starved the covering statement's settle (the
+      // stuck-traverse livelock). The consume loop applies the sync
+      // lightly after this segment lands.
+      if (navSyncApplicable(session.pendingNav, true)) return false
       // Bytes on the wire forfeit the right to truncate. A payload
       // segment's Flight document is delivered COMPLETE — that is what
       // the `settled` marker means — and once this segment's first bytes
@@ -2251,8 +2267,47 @@ async function driveLaneStream(
   // segment fp-skips them — a phantom is evicted only when the client
   // explicitly reports the delivery dropped (`ack.dropped`). Returns
   // false when the connection closed under it.
+  // A latched SYNC statement's lightweight applicability: URL-only
+  // synchronization (a scroller's bookmark mirror) applies to request
+  // state WITHOUT tearing lanes or emitting a whole-tree segment —
+  // measured under a traverse storm, the per-mirror tear + segment +
+  // re-lane cycle was the delivery-plane churn (~3.2× deliveries).
+  // Full-path exceptions: a route change (the lanes/subscription state
+  // belongs to the old route), a `__force` overlay (a refetch), or
+  // owed coverage (an earlier non-sync statement still awaits its
+  // covering segment — the sync's URL then rides the full path as the
+  // covering statement). `ignoreCoverage` is the mid-render supersede
+  // check: while a navigation segment is EMITTING, coverage is being
+  // provided by that very segment, so a sync latch must not abort it.
+  const navSyncApplicable = (nav: PendingNavigation, ignoreCoverage = false): boolean => {
+    if (session === null || nav.sync !== true) return false
+    if (!ignoreCoverage && session.pendingNavCoverage) return false
+    const target = new URL(nav.url, new URL(request.url).origin)
+    if (target.searchParams.has("__force")) return false
+    return computeRouteKey(target.href) === routeKey
+  }
+  // The lightweight apply: request state + as-of advance + slot-space
+  // follow. Lanes keep streaming; the region stays open; no segment.
+  const applySyncNavigation = (nav: PendingNavigation): void => {
+    if (session === null) return
+    const target = new URL(nav.url, new URL(request.url).origin)
+    target.searchParams.delete("__force")
+    setRequest(new Request(target, { headers: request.headers }))
+    request = getRequest()
+    session.consumedNavSeq = nav.seq
+    subscription.broadcastRoute?.move(`${scope}|${effectiveNavUrl(request.url)}`)
+  }
+
   const handleNavigation = async (): Promise<boolean> => {
     if (session === null) return true
+    // Drain lightweight sync statements first — they touch nothing but
+    // request state. When nothing else is latched, the consume is done.
+    while (session.pendingNav !== null && navSyncApplicable(session.pendingNav)) {
+      const nav = takeConnectionNavigation(session)
+      if (nav === null) break
+      applySyncNavigation(nav)
+    }
+    if (session.pendingNav === null) return true
     // Explicit forces whose lanes this consume tears were never
     // satisfied — they re-lane after the reopen alongside the new
     // statement's own forces.
@@ -2303,6 +2358,13 @@ async function driveLaneStream(
       while (true) {
         const nav = takeConnectionNavigation(session)
         if (nav === null) break
+        // A sync statement latched after this chain's covering segment
+        // landed (coverage cleared below) applies lightly — no second
+        // whole-tree render for a bookmark mirror.
+        if (navSyncApplicable(nav)) {
+          applySyncNavigation(nav)
+          continue
+        }
         const current = new URL(request.url)
         const target = new URL(nav.url, current.origin)
         // `__force` is the statement's one-shot overlay, never part of
@@ -2338,6 +2400,9 @@ async function driveLaneStream(
         const outcome = await emitNavSegment()
         if (outcome === "closed") return false
         if (outcome === "superseded") continue
+        // The covering segment landed — coverage is no longer owed, so
+        // later sync statements take the lightweight path.
+        session.pendingNavCoverage = false
       }
     } finally {
       // A later invalidation lane or reconcile on this connection folds
