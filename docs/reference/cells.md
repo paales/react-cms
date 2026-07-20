@@ -116,12 +116,13 @@ Resolving the same partition from N partons is therefore the intended
 join pattern, not N fetches (see `reference/scroller.md` § Joining
 the query).
 
-In dev, every ACTUAL GraphQL backend request logs
+Every ACTUAL GraphQL backend request logs
 `[parton] gql → <Operation> <vars>` when it goes out and
-`[parton] gql ← <Operation> <ms>` when it lands (server console,
-forwarded to the browser console in dev) — the ground truth for what
-triggered a fetch. Storage hits and single-flight sharers never log:
-absence of a line IS the dedupe.
+`[parton] gql ← <Operation> <ms>` when it lands (server console;
+dev additionally forwards it to the browser console) — the ground
+truth for what triggered a fetch, in prod-parity runs too. Storage
+hits and single-flight sharers never log: absence of a line IS the
+dedupe.
 
 > **Empty session → ephemeral.** `session.id` is the empty string for
 > an anonymous request with no `__frame_sid` cookie. A persistent cell

@@ -147,17 +147,18 @@ export function gqlCell<TResult, TVars extends Record<string, unknown>>(
  *       return aggregate(data)   // line cells already hydrated
  *     }
  */
-/** Dev observability: one line per ACTUAL backend query, at the
+/** Query observability: one line per ACTUAL backend query, at the
  *  moment it goes out and again when it lands — the ground truth for
  *  "what triggered a fetch" (cold resolves, seeded slices, joins).
  *  Single-flight and storage hits never reach here, so absence of a
- *  line IS the dedupe. Every gql request site funnels through this. */
+ *  line IS the dedupe. Every gql request site funnels through this.
+ *  Unconditional (prod too) — the data layer is under active study
+ *  and prod-parity runs need the same signal. */
 async function loggedRequest<TResult>(
   client: GqlClient,
   doc: TadaDocumentNode<TResult, any, any>,
   vars: Record<string, unknown>,
 ): Promise<TResult> {
-  if (!import.meta.env.DEV) return (await client.request(doc, vars as never)) as TResult
   const op =
     (doc as { definitions?: readonly { name?: { value?: string } }[] }).definitions?.find(
       (d) => d.name?.value,
